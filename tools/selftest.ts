@@ -9,7 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, test } from "node:test";
-import { check, gen, parseSpec, replay } from "./spec.ts";
+import { check, expandListHelpers, gen, parseSpec, replay } from "./spec.ts";
 
 const project = path.join(import.meta.dirname, "..");
 
@@ -24,7 +24,7 @@ async function failedStages(file: string, edit: (text: string) => string, accept
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, after);
   const lines: string[] = [];
-  await check(root, (l) => lines.push(l), accept);
+  await check(root, (l) => lines.push(l), accept ? "reviews" : false);
   fs.rmSync(root, { recursive: true });
   return [...new Set(lines.filter((l) => l.startsWith("✗")).map((l) => l.split(/\s+/)[1]))];
 }
@@ -165,7 +165,7 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     fs.cpSync(path.join(project, "spec"), path.join(root, "spec"), { recursive: true });
     const specFile = path.join(root, "spec/order.md");
     fs.appendFileSync(specFile, "\n## Story: Archive\n\n> As a shopper, I want cancelled orders out of my way.\n");
-    const prose = "Every unit costs the same, and one order holds at most 50 units.";
+    const prose = "Every unit costs the same, and one order holds at most 40 units.";
     const brief = `✗ review    2 item(s)\n    spec/order.md:210  Story: Archive\n      story has no rules: write them\n\n`
       + `RULE "Domain / Unit price and order size" (model changed)\nits prose now:\n${prose}\nits Quint now:\npure val maxUnits = 7\nEND RULE\n`;
     const agent = spawn(process.execPath, [path.join(project, "tools/agent-ollama.ts")],
@@ -182,6 +182,65 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.match(after, /## Story: Archive\n\n> As a shopper.*\n\n### A cancelled order can be archived\n\n```quint\npure def canArchive/);
     assert.ok(after.includes("at most 7 units.") && !after.includes(prose));
     fs.rmSync(root, { recursive: true });
+  });
+
+  test("lists, nested helpers, an imported library, laws, step rules and the proof ledger work together", async () => {
+    const F = "`".repeat(3);
+    const lib = `# Lib\n\n## Sums\n\n### The total of a list\n\n${F}quint
+pure def total(xs: List[int]): int = xs.foldl(0, (acc, x) => acc + x)
+pure def lawTheTotalOfOneNumberIsItself(n: int): bool = total(List()) == 0 and total(List(n)) == n
+${F}\n`;
+    const shop = `# Shop\n\n## Story: Fill a cart\n\n### A cart holds lines\n\n${F}quint
+import lib.* from "./lib"
+type Line = { sku: str, qty: int, tags: List[str] }
+type Cart = { lines: List[Line], count: int }
+pure val initial: Cart = { lines: List(), count: 0 }
+pure val skuValues = Set("a", "b")
+pure def canAdd(c: Cart, sku: str, qty: int): bool = qty > 0 and not(c.lines.some(l => l.sku == sku))
+pure def add(c: Cart, sku: str, qty: int): Cart =
+  { lines: c.lines.append({ sku: sku, qty: qty, tags: List(sku) }), count: c.count + 1 }
+pure def remove(c: Cart, sku: str): Cart = { lines: c.lines.select(l => l.sku != sku), count: c.count }
+pure def alwaysQuantitiesArePositive(c: Cart): bool = c.lines.every(l => l.qty > 0)
+pure def alwaysEveryTagNamesALine(c: Cart): bool = c.lines.every(l => l.tags.some(t => c.lines.some(m => m.sku == t)))
+pure def alwaysTheTotalIsNotNegative(c: Cart): bool = total(c.lines.listMap(l => l.qty)) >= 0
+pure def stepTheCountNeverGoesDown(before: Cart, after: Cart): bool = after.count >= before.count
+pure def sometimesTwoLines(c: Cart): bool = c.lines.length() == 2
+${F}\n`;
+    const run = async (edit: (files: Record<string, string>) => void, accept: false | "unproved" = false) => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "spec-selftest-"));
+      const files: Record<string, string> = { "lib.md": lib, "shop.md": shop };
+      edit(files);
+      fs.mkdirSync(path.join(root, "spec"));
+      for (const [name, text] of Object.entries(files)) fs.writeFileSync(path.join(root, "spec", name), text);
+      const lines: string[] = [];
+      if (accept) await check(root, () => {}, accept);
+      await check(root, (l) => lines.push(l));
+      fs.rmSync(root, { recursive: true });
+      return { failed: [...new Set(lines.filter((l) => l.startsWith("✗")).map((l) => l.split(/\s+/)[1]))], text: lines.join("\n") };
+    };
+    // The nested helpers (some inside some inside every) agree between Quint and TypeScript, and simulation passes.
+    const plain = await run(() => {});
+    assert.deepEqual(plain.failed, ["proof", "review"], plain.text);
+    assert.match(plain.text, /not proved/);
+    // Once the unproved obligations are recorded, only the review is left.
+    assert.deepEqual((await run(() => {}, "unproved")).failed, ["review"]);
+    const wrongStep = await run((f) => { f["shop.md"] = f["shop.md"].replace("count: c.count }", "count: c.count - 1 }"); });
+    assert.match(wrongStep.text, /✗ always +a step breaks/);
+    const wrongLaw = await run((f) => { f["lib.md"] = f["lib.md"].replace("total(List(n)) == n", "total(List(n)) == n + 1"); });
+    assert.match(wrongLaw.text, /✗ always +the law .* is false for \{"n":/);
+    const importsMachine = await run((f) => { f["other.md"] = `# Other\n\n## Group\n\n### Uses a machine\n\n${F}quint\nimport shop.* from "./shop"\npure val two = 2\n${F}\n`; });
+    assert.match(importsMachine.text, /only a library/);
+    const circle = await run((f) => { f["lib.md"] = f["lib.md"].replace("pure def total", 'import shop.* from "./shop"\npure def total'); });
+    assert.match(circle.text, /import each other in a circle/);
+  });
+
+  test("list helpers are expanded into built-in folds, innermost first, without moving a line", () => {
+    const out = expandListHelpers("pure def f(xs: List[T]): bool =\n  xs.every(t => t.ps.some(p =>\n    p == t.id))\n// xs.some(note in prose)");
+    assert.equal(out.split("\n").length, 4);
+    assert.ok(!/\.(every|some)\(/.test(out.split("\n").slice(0, 3).join("\n")), out);
+    assert.match(out, /std_every_\d+ and/);
+    assert.match(out, /std_some_\d+ or/);
+    assert.match(out, /\/\/ xs\.some\(note in prose\)$/);
   });
 
   test("nothing stale survives in gen/", async () => {

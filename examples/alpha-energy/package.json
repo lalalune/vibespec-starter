@@ -1,0 +1,18 @@
+{
+  "name": "alpha-energy-model",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "check": "spec check",
+    "gen": "spec gen",
+    "sync": "spec sync",
+    "accept": "spec accept"
+  },
+  "devDependencies": {
+    "onespec": "file:../..",
+    "@types/node": "^24.0.0"
+  }
+}

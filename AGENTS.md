@@ -29,6 +29,8 @@ Either way the person signs off with `npm run accept`.
 ## Hard rules
 
 - Never edit `gen/` or `spec/*.lock.json`. The tools write them.
+- Never run `npm run accept -- unproved` unless the user asks. It lowers the
+  assurance of the listed obligations from proved to simulated.
 - Do not run `npm run accept` unless the user asks you to, and then only
   after you have read each rule that `review` lists and its prose and Quint
   say the same thing.
@@ -61,7 +63,7 @@ failing stage, then run it again.
 | `sometimes` | No simulated trace reaches the goal. | A guard is too strict, a transition is missing, or the goal needs event values outside −1…6 (see `SAMPLES` in `tools/gen.ts`). |
 | `replay` | Generated TypeScript and Quint disagree. | This is a bug in `tools/gen.ts`, not in the spec. Fix the generator. |
 | `types` | `src/` or `test/` no longer fits the generated contract. | Update the application to the new contract. |
-| `proof`, generated module | A transition cannot be shown to preserve the named rule, although simulation found no counterexample. The rules are not inductive: some state satisfies every rule, is unreachable, and breaks a rule after one step. | Find the unstated fact about reachable states and add it as a new `always` rule, in prose and Quint. |
+| `proof`, generated module | An obligation holds in simulation but Dafny cannot prove it. Either the rules are not inductive (some unreachable state satisfies every rule and breaks one after a step), or the rule depends on a fold or a count that Dafny cannot see through. | First look for an unstated fact and add it as a rule. If there is none, follow "When a proof does not go through" in CONTRIBUTING.md. Do not run `npm run accept -- unproved` yourself: recording an obligation as simulated-only is the user's decision. List the obligations for them. |
 | `proof`, `src/` file | A hand-written `//@ ensures` or loop invariant does not hold. | Fix the code or the annotation. The full Dafny output is in `gen/proof/<file>.log`. |
 | `review` | Prose or model of the listed rules changed since they were last reconciled. | See below. |
 

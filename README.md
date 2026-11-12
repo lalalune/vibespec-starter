@@ -38,7 +38,7 @@ an agent: Claude Code (`claude`, signed in) if available, otherwise a local
 Ollama model with no account at all (see CONTRIBUTING.md).
 
 ```sh
-npm install        # also generates gen/, so editors resolve imports
+npm install        # also builds the `spec` command and generates gen/
 npm run check      # the whole pipeline, about 15 seconds on a quiet machine
 npm run sync       # check, let an agent translate whatever is out of step, repeat
 npm run accept     # sign off the reconciled rules
@@ -79,7 +79,7 @@ their failures would only restate the first one.
 | `sometimes` | Can each `sometimes` goal be reached at all? | `quint run` | a witness trace is a proof |
 | `replay` | Does the generated TypeScript behave like the Quint model? | replays 50 of those traces and every witness | sampled |
 | `types` | Does the application fit the generated contract? | `tsc` | exact |
-| `proof` | Does every transition preserve every `always` rule, and does hand-written logic meet its `//@` contract? | LemmaScript, Dafny | all states, all inputs |
+| `proof` | Does every transition preserve every `always` and `step` rule, does every law hold, and does hand-written logic meet its `//@` contract? | LemmaScript, Dafny | all states, all inputs; what Dafny cannot prove alone is listed, and passes only once recorded in `spec/unproved.lock.json` |
 | `tests` | Does the shell work? | `node --test` | examples |
 | `review` | Does every story have rules, and has every rule whose prose or model changed been reconciled? | `spec/<name>.lock.json` | exact |
 
@@ -95,14 +95,38 @@ Keep `spec/`, `src/`, `test/` and `tools/` in git, including the lock file.
 | `tools/spec.ts` | The pipeline: tangle, simulate, replay, prove, review, sync |
 | `tools/gen.ts` | Quint → TypeScript and the simulation harness |
 | `tools/agent-ollama.ts` | Optional agent for `sync` backed by a local model |
+| `examples/alpha-energy/` | A real application modelled with the same tools, as a separate package |
 | `tools/selftest.ts` | Mutation tests of the pipeline itself |
 | `src/ledger.ts` | Hand-written logic, proved against the generated contract |
 | `src/app.ts` | Unverified shell: storage, input validation, error reporting |
 
+## A real application
+
+`examples/alpha-energy` models a real 5,500-line project tracker (tasks in a
+hand-editable Google Sheet, driven from Slack) in three specs: a library of
+arithmetic with laws, the sheet itself with guarded app edits and unguarded
+hand edits, and the registry of projects.
+
+```sh
+npm run check:alpha
+```
+
+24 transitions, 16 `always` and `step` rules, 11 laws. 86 obligations are
+proved for all inputs and 85 are recorded as simulated only, because they
+depend on folds over the warning list. Modelling cells as lists rather than
+sets found a real bug in the application: a name typed twice in an owners
+cell made the notifier message that person twice.
+
+The toolchain is itself a package (`onespec`, command `spec`), and the example
+depends on it like any other project would. CONTRIBUTING.md covers lists,
+libraries, laws, step rules, the proof ledger and large applications.
+
 ## What is and is not guaranteed
 
 Proved for all states and inputs: the initial state satisfies every `always`
-rule, every transition preserves them, and hand-written `//@ ensures` hold.
+rule, every transition preserves them, and hand-written `//@ ensures` hold,
+except for obligations listed in `spec/unproved.lock.json`, which are
+simulated only. The order example has none.
 
 Trusted, not proved:
 
