@@ -378,12 +378,21 @@ async function sync(root: string): Promise<boolean> {
     const failed = [...new Set(lines.filter((l) => l.startsWith("✗")).map((l) => l.split(/\s+/)[1]))];
     const untranslated = /story has no rules|not formalized/.test(report);
     if (round > 1 && failed.join() === "review" && !untranslated) {
-      console.log(report + "\n\nsynced: read the changes to spec/ (git diff), then run `npm run accept` to sign them off");
+      const oneSided = (report.match(/(prose|model) changed:/g) ?? []).length;
+      console.log(report + "\n\nsynced: read the changes to spec/ (git diff), then run `npm run accept` to sign them off"
+        + (oneSided ? `\n${oneSided} rule(s) above still have only one half changed: the agent judged the other half already agrees, or missed it, so read those first` : ""));
       return true;
     }
-    console.log(`--- round ${round}: ${failed.join(", ")} need attention; asking the agent ---`);
+    console.log(`${report}\n\n--- round ${round}: ${failed.join(", ")} need attention; asking the agent ---`);
+    // Show both halves of every rule that moved, so the agent compares them rather than guessing.
+    const moved = readSpecs(root).flatMap((spec) => spec.rules).flatMap((r) => {
+      const at = report.indexOf(`  ${r.key}\n`);
+      const status = at < 0 ? null : report.slice(at + r.key.length + 3).match(/^ +(prose changed|model changed|prose and model both changed)/)?.[1];
+      return status ? [`RULE "${r.key}" (${status})\nits prose now:\n${r.prose.trim() || "(only the heading)"}\nits Quint now:\n${r.code.trim()}\nEND RULE`] : [];
+    });
+    const input = BRIEF + report + (moved.length ? `\n\nThe rules that changed, both halves:\n\n${moved.join("\n\n")}` : "");
     const [cmd, ...args] = AGENT.split(" ");
-    const agent = spawnSync(cmd, args, { cwd: root, encoding: "utf8", input: BRIEF + report, stdio: ["pipe", "inherit", "inherit"] });
+    const agent = spawnSync(cmd, args, { cwd: root, encoding: "utf8", input, stdio: ["pipe", "inherit", "inherit"] });
     if (agent.status !== 0) throw new Error(`the agent command failed (${AGENT}); set SPEC_AGENT to a command that reads a prompt on stdin and may edit files`);
   }
   console.log(`not synced after ${ROUNDS} rounds; run \`npm run check\` to see what is left`);

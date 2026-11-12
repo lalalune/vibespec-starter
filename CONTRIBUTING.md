@@ -142,6 +142,20 @@ edit files. The default is Claude Code in headless mode:
 SPEC_AGENT="claude -p --permission-mode acceptEdits --allowedTools Read,Edit,Write,Grep,Glob" npm run sync
 ```
 
+With no account, a local [Ollama](https://ollama.com) model can do the
+simpler translations. Start `ollama serve`, then:
+
+```sh
+SPEC_AGENT="node tools/agent-ollama.ts" npm run sync     # OLLAMA_MODEL picks the model, default qwen2.5:7b
+```
+
+That adapter asks the model one small question per item: rules for a story
+that has none, prose for a rule whose model changed (or the reverse), and a
+stronger guard for a new transition that a trace shows to be too permissive.
+A 7B model gets these right often, not always, and writes clumsy headings;
+the checks reject what is wrong and `review` leaves the wording to you. It
+does not attempt failed proofs.
+
 `node tools/spec.ts brief` prints exactly what the agent would be given, for
 pasting into an agent by hand.
 

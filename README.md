@@ -25,8 +25,8 @@ flowchart LR
 ```
 
 The example is an order checkout (`spec/order.md`): fill a draft, submit, pay
-in instalments, cancel, take items back out. From about 160 lines of Markdown
-the pipeline produces the
+in instalments, cancel, reopen, take items or money back out. From about 200
+lines of Markdown the pipeline produces the
 TypeScript domain module, proves that every transition preserves every rule,
 and proves two hand-written functions against that contract.
 
@@ -34,11 +34,12 @@ and proves two hand-written functions against that contract.
 
 Needs Node 24+ and [Dafny](https://github.com/dafny-lang/dafny) 4+ on the path
 (`brew install dafny`, or see Dafny's install page). `npm run sync` also needs
-an agent CLI; the default is Claude Code (`claude`), signed in.
+an agent: by default Claude Code (`claude`, signed in), or a local Ollama
+model with no account at all (see CONTRIBUTING.md).
 
 ```sh
 npm install        # also generates gen/, so editors resolve imports
-npm run check      # the whole pipeline, about 15 seconds
+npm run check      # the whole pipeline, about 15 seconds on a quiet machine
 npm run sync       # check, let an agent translate whatever is out of step, repeat
 npm run accept     # sign off the reconciled rules
 npm run demo       # a scripted session against the verified core
@@ -93,6 +94,7 @@ Keep `spec/`, `src/`, `test/` and `tools/` in git, including the lock file.
 | `spec/order.lock.json` | Review ledger written by `npm run accept` |
 | `tools/spec.ts` | The pipeline: tangle, simulate, replay, prove, review, sync |
 | `tools/gen.ts` | Quint → TypeScript and the simulation harness |
+| `tools/agent-ollama.ts` | Optional agent for `sync` backed by a local model |
 | `tools/selftest.ts` | Mutation tests of the pipeline itself |
 | `src/ledger.ts` | Hand-written logic, proved against the generated contract |
 | `src/app.ts` | Unverified shell: storage, input validation, error reporting |

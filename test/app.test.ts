@@ -42,3 +42,14 @@ test("items can be taken back out of a draft, but never more than it holds", () 
   assert.equal(book.dispatch("A1", { type: "removeItem", qty: 2 }).due, 5);
   assert.throws(() => book.dispatch("A1", { type: "removeItem", qty: 2 }), Rejected);
 });
+
+test("a cancelled order can be reopened, and a payment partly taken back", () => {
+  const book = new OrderBook();
+  book.dispatch("A1", { type: "addItem", qty: 2 });
+  book.dispatch("A1", { type: "submit" });
+  book.dispatch("A1", { type: "pay", amount: 6 });
+  assert.equal(book.dispatch("A1", { type: "takeBack", amount: 2 }).paid, 4);
+  assert.throws(() => book.dispatch("A1", { type: "takeBack", amount: 5 }), Rejected);
+  book.dispatch("A1", { type: "cancel" });
+  assert.deepEqual(book.dispatch("A1", { type: "reopen" }), { status: "Draft", units: 2, due: 10, paid: 0 });
+});

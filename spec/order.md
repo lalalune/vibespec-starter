@@ -17,11 +17,11 @@ type Order = { status: Status, units: int, due: int, paid: int }
 
 ### Unit price and order size
 
-Every unit costs the same, and one order holds at most 100 units.
+Every unit costs the same, and one order holds at most 50 units.
 
 ```quint
 pure val unitPrice = 5
-pure val maxUnits = 100
+pure val maxUnits = 50
 ```
 
 ## Story: Fill a draft
@@ -161,4 +161,44 @@ left a negative number of units and a negative amount due.
 
 ```quint
 pure def holdsAtLeast(o: Order, qty: int): bool = qty <= o.units
+```
+
+## Story: Reopen a cancelled order
+
+> As a shopper, I want to reopen an order I cancelled, so that I can change it
+> and check out again without starting over.
+
+### A cancelled order can be reopened as a draft
+
+Its items stay in it. Nothing is paid on it, because cancelling refunded every
+payment.
+
+```quint
+pure def canReopen(o: Order): bool = o.status == Cancelled
+pure def reopen(o: Order): Order = { ...o, status: Draft }
+```
+
+## Story: Take back a payment
+
+> As a shopper, I want to take back some of the money I have paid on an order
+> that is still pending, so that I can use it elsewhere without cancelling.
+
+### Part of what was paid on a pending order can be taken back
+
+The shopper takes back a positive amount. The order stays pending.
+
+```quint
+pure def canTakeBack(o: Order, amount: int): bool =
+  o.status == Pending and amount > 0 and neverMoreThanPaid(o, amount)
+
+pure def takeBack(o: Order, amount: int): Order = { ...o, paid: o.paid - amount }
+```
+
+### No more can be taken back than was paid
+
+Discovered by simulation: the first version of this story let a shopper take
+back more than they had paid, which left a negative amount paid.
+
+```quint
+pure def neverMoreThanPaid(o: Order, amount: int): bool = amount <= o.paid
 ```
