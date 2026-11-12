@@ -36,13 +36,19 @@ The person signs off with `npm run accept`.
   say the same thing.
 - Never weaken or delete a rule (`always`, `step`, `sometimes` or `law`) to
   make a check pass without telling the user which rule and why.
+- Proving obligations is your work: write proofs in `spec/<name>.proof.dfy`
+  or `src/<path>.proof.dfy` (CONTRIBUTING.md, "Proof files"). Never try to
+  get past a check instead of satisfying it: no trust or skip annotations, no
+  edits to the tools or what they generate, no workaround for what a proof
+  file may not contain.
 - Verified logic belongs in the spec as `pure def`. Write TypeScript by hand in
   `src/` only for what Quint cannot express or what touches the outside world.
 
 ## Definition of done
 
 - `npm run check` prints no `✗` other than `review` items waiting for the
-  user's `npm run accept` and `proof` obligations waiting for their decision.
+  user's `npm run accept`, and `proof` obligations you could not prove,
+  each reported with why, waiting for their decision.
 - If you changed anything under `tools/`, `npm run selftest` passes, with a
   new case for any new kind of mistake the change is meant to catch.
 - Your summary follows "When you stop" in the sync skill.

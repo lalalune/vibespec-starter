@@ -19,6 +19,7 @@ import { pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import ts from "typescript";
 import { generate, LIST_HELPERS, type Model, type Origin } from "./gen.ts";
+import { LIB_FILE, prove, run, type Proof, type Unit } from "./prove.ts";
 
 const SAMPLES = 10000; // simulated traces per check
 const WITNESS_SAMPLES = 20 * SAMPLES; // traces tried when looking for a state a `sometimes` rule says is reachable
@@ -185,25 +186,7 @@ const movedRules = (todo: Pending[]): string[] => todo.flatMap(({ rule, status }
 const indent = (s: string, by = 6) => s.split("\n").map((l) => " ".repeat(by) + l).join("\n");
 const fail = (message: string): never => { throw new Error(message); };
 
-// --- running tools -------------------------------------------------------------
-
-/** An executable from the toolchain's dependencies, wherever npm put it: beside the tools, or in the project. */
-function bin(cmd: string, root: string): string {
-  for (let dir of [path.join(import.meta.dirname, ".."), root]) {
-    for (;;) {
-      const candidate = path.join(dir, "node_modules/.bin", cmd);
-      if (fs.existsSync(candidate)) return candidate;
-      if (dir === path.dirname(dir)) break;
-      dir = path.dirname(dir);
-    }
-  }
-  throw new Error(`${cmd} is not installed; run npm install`);
-}
-
-function run(cmd: string, args: string[], cwd: string): { ok: boolean; out: string } {
-  const r = spawnSync(bin(cmd, cwd), args, { cwd, encoding: "utf8" });
-  return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ?? ""}` };
-}
+// --- remembered results ------------------------------------------------------------
 
 /** What a remembered result was produced by: a different Quint, LemmaScript, Dafny or version of these tools must not reuse it. */
 let toolchain: string | undefined;
@@ -216,9 +199,9 @@ function toolchainId(): string {
     return dep;
   };
   const dafny = spawnSync("dafny", ["--version"], { encoding: "utf8" });
-  // Every file of the tools themselves, as source or as built; the self-test and its fixtures are not part of them.
+  // Every file of the tools themselves, as source or as built, and the proof library; the self-test and its fixtures are not part of them.
   const own = (f: string) => f.endsWith(path.extname(import.meta.filename)) && !f.startsWith("selftest") && !f.startsWith("fixtures");
-  const tools = (fs.readdirSync(import.meta.dirname, { recursive: true }) as string[]).filter(own).sort().map((f) => fs.readFileSync(path.join(import.meta.dirname, f), "utf8"));
+  const tools = [...(fs.readdirSync(import.meta.dirname, { recursive: true }) as string[]).filter(own).sort().map((f) => fs.readFileSync(path.join(import.meta.dirname, f), "utf8")), fs.readFileSync(LIB_FILE, "utf8")];
   return (toolchain ??= [version("@informalsystems/quint"), version("lemmascript"), `dafny@${(dafny.stdout ?? "").trim()}`, sha(...tools).slice(0, 12)].join(" "));
 }
 
@@ -363,9 +346,13 @@ const showTrace = (trace: Step[]) =>
  * An imported module comes with its names prefixed by the module's name and
  * without its own obligations, which are proved once, in its own unit; that
  * keeps the cost of a proof proportional to the module, not to everything
- * beneath it.
+ * beneath it. A law an imported module proved is offered to the unit's proof
+ * file as a lemma; nothing else of it is.
+ *
+ * A unit may have a proof file: spec/<name>.proof.dfy for a spec,
+ * src/<path>.proof.dfy for src/<path>.ts.
  */
-function proofUnits(root: string, models: Model[]): { unit: string; text: string }[] {
+function proofUnits(root: string, models: Model[]): Unit[] {
   const byName = new Map(models.map((m) => [m.name, m]));
   const withoutImports = (text: string) => {
     const file = ts.createSourceFile("unit.ts", text, ts.ScriptTarget.Latest, true);
@@ -380,7 +367,17 @@ function proofUnits(root: string, models: Model[]): { unit: string; text: string
     return seen;
   };
   const asDependency = (name: string) => withoutObligations(withoutImports(byName.get(name)!.render(`${name}_`)).kept);
-  const units = models.map((m) => ({ unit: `${m.name}.ts`, text: [...needs(m).map(asDependency), withoutImports(m.ts).kept].join("\n") }));
+  /** The laws of modules placed beside a unit, as the unit spells them. */
+  const lawsOf = (names: string[], spelled: (dep: string) => string) =>
+    names.flatMap((dep) => byName.get(dep)!.laws.map((l) => ({ fn: `${spelled(dep)}${l.name}`, law: l.name, from: `${dep}.ts` })));
+  const units: Unit[] = models.map((m) => ({
+    unit: `${m.name}.ts`,
+    text: [...needs(m).map(asDependency), withoutImports(m.ts).kept].join("\n"),
+    proofFile: `spec/${m.name}.proof.dfy`,
+    laws: lawsOf(needs(m), (dep) => `${dep}_`),
+    rests: [], // proved against the definitions of what it imports, never against their obligations
+    transitions: m.stateType ? m.transitions.map((t) => ({ name: t.name, params: t.params.length })) : undefined,
+  }));
 
   const src = path.join(root, "src");
   const files = fs.existsSync(src) ? (fs.readdirSync(src, { recursive: true }) as string[]).filter((f) => f.endsWith(".ts")).sort() : [];
@@ -399,56 +396,49 @@ function proofUnits(root: string, models: Model[]): { unit: string; text: string
     });
     if (new Set(deps).size > 1) throw new Error(`src/${f}: verified code may import one generated module; put what it needs from the others into that module's spec`);
     // The module it imports sits beside it under its own names, as the code refers to them.
-    const beside = deps.slice(0, 1).flatMap((d) => [...needs(byName.get(d)!).map(asDependency), withoutObligations(withoutImports(byName.get(d)!.ts).kept)]);
-    units.push({ unit: `src-${f.replaceAll(path.sep, "-")}`, text: [...beside, `// ---- src/${f} ----`, kept].join("\n") });
+    const d = deps[0];
+    const beside = d ? [...needs(byName.get(d)!).map(asDependency), withoutObligations(withoutImports(byName.get(d)!.ts).kept)] : [];
+    units.push({
+      unit: `src-${f.replaceAll(path.sep, "-")}`,
+      text: [...beside, `// ---- src/${f} ----`, kept].join("\n"),
+      proofFile: `src/${f.replace(/\.ts$/, ".proof.dfy")}`,
+      laws: d ? [...lawsOf(needs(byName.get(d)!), (dep) => `${dep}_`), ...lawsOf([d], () => "")] : [],
+      rests: d ? [...needs(byName.get(d)!), d].map((m) => `${m}.ts`) : [],
+    });
   }
   const twice = units.find((u, i) => units.findIndex((v) => v.unit === u.unit) !== i);
   if (twice) throw new Error(`two files would be proved under the name ${twice.unit}; rename one of them`);
   return units;
 }
 
-interface Proof { total: number; unproved: string[]; errors: string[]; log: string }
-
-/** Prove one unit in a directory of its own, so that nothing left over from another run or project can vouch for it. */
-function prove(root: string, unit: string, text: string): Proof {
-  const dir = path.join(root, "gen/proof", unit.replace(/\.ts$/, ""));
-  fs.rmSync(dir, { recursive: true, force: true });
-  fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, unit), text);
-  // A configuration of our own, so that one further up cannot redirect the proof or relax it.
-  fs.writeFileSync(path.join(dir, "lemmascript.json"), JSON.stringify({ "unread-annotations": "error", "run-log": false }));
-  const { ok, out } = run("lsc", ["check", "--backend=dafny", unit], dir);
-  const dfy = path.join(dir, unit.replace(/\.ts$/, ".dfy"));
-  const lines = out.split("\n");
-  const source = fs.existsSync(dfy) ? fs.readFileSync(dfy, "utf8").split("\n") : [];
-  /** The definition a line of the generated Dafny belongs to. */
-  const owner = (line: number) => {
-    for (let i = line - 1; i >= 0; i--) {
-      const m = source[i]?.match(/^\s*(?:lemma|method|function|ghost function|predicate)\s+(\w+?)(?:_ensures)?\b/);
-      if (m) return m[1];
-    }
-    return "?";
-  };
-  const quoted = (from: number) => lines.slice(from, from + 4).map((l) => l.match(/^\s*\d+ \|\s*(.*)$/)?.[1]).find(Boolean) ?? "";
-  const unproved = new Set<string>();
-  const errors = new Set<string>();
-  lines.forEach((l, i) => {
-    const at = Number(l.match(/\.dfy\((\d+),/)?.[1]);
-    const timedOut = l.match(/Error: Verification of '(\w+?)(?:_ensures)?' timed out/);
-    if (l.includes("this is the postcondition that could not be proved")) unproved.add(`${owner(at)}: ${quoted(i).replace(/^ensures /, "")}`);
-    // Running out of time is also "not proved"; which obligation of the definition it was is not reported.
-    else if (timedOut) unproved.add(`${timedOut[1]}: the prover ran out of time`);
-    else if (l.includes("Error:") && !l.includes("a postcondition could not be proved")) errors.add(`${l.split("Error: ")[1]}: ${quoted(i)}`);
-    else if (/\bwarning\b/i.test(l)) errors.add(l.trim());
-  });
-  // The verdict is Dafny's own summary; without it, or with anything left unexplained, the unit was not checked.
-  if (!/\d+ verified, \d+ errors?/.test(out) || (!ok && !unproved.size && !errors.size)) errors.add(out.trim().split("\n").slice(-3).join(" / ") || "lsc produced no verdict");
-  return { total: (text.match(/^\s*\/\/@ (ensures|invariant) /gm) ?? []).length, unproved: [...unproved], errors: [...errors], log: out };
+/** Proof files that belong to no unit: a typo, or a source file that is no longer proved. */
+function strayProofFiles(root: string, units: Unit[]): string[] {
+  const found = ["spec", "src"].flatMap((dir) => fs.existsSync(path.join(root, dir))
+    ? (fs.readdirSync(path.join(root, dir), { recursive: true }) as string[]).filter((f) => f.endsWith(".proof.dfy")).map((f) => path.join(dir, f).split(path.sep).join("/")) : []);
+  return found.filter((f) => !units.some((u) => u.proofFile === f));
 }
 
-// Obligations that hold in simulation but that Dafny cannot prove on its own, accepted by a person.
+/**
+ * Obligations that hold in simulation but that Dafny cannot prove on its own,
+ * accepted by a person: per unit, the list, and a fingerprint of the unit's
+ * text and proof file when they were accepted. A list accepted for another
+ * text no longer counts.
+ */
+interface Accepted { text: string; unproved: string[] }
 const ledgerFile = (root: string) => path.join(root, "spec/unproved.lock.json");
-const readLedger = (root: string): Record<string, string[]> => (fs.existsSync(ledgerFile(root)) ? JSON.parse(fs.readFileSync(ledgerFile(root), "utf8")) : {});
+function readLedger(root: string): Record<string, Accepted | undefined> {
+  if (!fs.existsSync(ledgerFile(root))) return {};
+  const raw: Record<string, unknown> = JSON.parse(fs.readFileSync(ledgerFile(root), "utf8"));
+  // An entry without a fingerprint was accepted before acceptance named what it was for.
+  return Object.fromEntries(Object.entries(raw).map(([unit, v]) => [unit, Array.isArray(v) ? { text: "", unproved: v } : (v as Accepted)]));
+}
+function writeLedger(root: string, ledger: Record<string, Accepted>) {
+  // One obligation per line, so a diff of the ledger shows exactly what was accepted.
+  const lines = Object.entries(ledger).map(([unit, { text, unproved }]) =>
+    `  ${JSON.stringify(unit)}: {\n    "text": ${JSON.stringify(text)},\n    "unproved": [\n${unproved.map((u) => `      ${JSON.stringify(u)}`).join(",\n")}\n    ]\n  }`);
+  if (lines.length) fs.writeFileSync(ledgerFile(root), `{\n${lines.join(",\n")}\n}\n`);
+  else fs.rmSync(ledgerFile(root), { force: true });
+}
 
 // --- check -------------------------------------------------------------------------
 
@@ -558,32 +548,55 @@ export async function check(root: string, accept: false | "reviews" | "unproved"
     } else report(true, "types", "skipped: there is no tsconfig.json, so nothing is typechecked");
     try {
       const accepted = readLedger(root);
-      const ledger: Record<string, string[]> = {};
+      const ledger: Record<string, Accepted> = {};
       let recordable = true;
       fs.rmSync(path.join(root, "gen/proof"), { recursive: true, force: true });
-      for (const { unit, text } of proofUnits(root, [...models.values()])) {
-        const proof = remembered(root, !!accept, ["prove", unit, text], () => prove(root, unit, text), (p) => !p.errors.length);
-        const logFile = `gen/proof/${unit.replace(/\.ts$/, ".log")}`;
-        fs.mkdirSync(path.join(root, "gen/proof"), { recursive: true });
+      const units = proofUnits(root, [...models.values()]);
+      for (const f of strayProofFiles(root, units))
+        report(false, "proof", `${f} belongs to no proof unit: spec/<name>.proof.dfy belongs to spec/<name>.md, and src/<path>.proof.dfy to src/<path>.ts if that file contains //@`);
+      const lib = fs.readFileSync(LIB_FILE, "utf8");
+      const proved = new Map<string, Proof>();
+      for (const u of units) {
+        const proofPath = path.join(root, u.proofFile);
+        const proofText = fs.existsSync(proofPath) ? fs.readFileSync(proofPath, "utf8") : undefined;
+        // A law of an imported module is offered only if its own unit proved it, in this run.
+        const laws = u.laws.filter(({ law, from }) => {
+          const p = proved.get(from);
+          return p && !p.errors.length && !p.unproved.some((x) => x.startsWith(`${law}: `));
+        }).map((l) => l.fn);
+        const offered = { proof: proofText === undefined ? undefined : { file: u.proofFile, text: proofText }, lib, laws };
+        const proof = remembered(root, !!accept, ["prove", u.unit, u.text, proofText ?? "", proofText === undefined ? "" : laws.join(" ")], () => prove(root, u, offered), (p) => !p.errors.length);
+        proved.set(u.unit, proof);
+        const base = u.unit.replace(/\.ts$/, "");
+        const logFile = `gen/proof/${base}.log`;
+        // The final Dafny stays on disk even when the result was remembered, so that it can be read.
+        const dfyFile = path.join(root, "gen/proof", base, `${base}.dfy`);
+        fs.mkdirSync(path.dirname(dfyFile), { recursive: true });
         fs.writeFileSync(path.join(root, logFile), proof.log);
-        const fresh = proof.unproved.filter((u) => !(accepted[unit] ?? []).includes(u));
-        const stale = (accepted[unit] ?? []).filter((u) => !proof.unproved.includes(u));
-        if (proof.unproved.length) ledger[unit] = proof.unproved;
+        if (proof.dfy && !fs.existsSync(dfyFile)) fs.writeFileSync(dfyFile, proof.dfy);
+        // What was accepted is tied to the text it was accepted for.
+        const meaning = sha(u.text, proofText ?? "").slice(0, 12);
+        const was = accepted[u.unit];
+        const valid = was?.text === meaning ? was.unproved : [];
+        const outdated = was && was.text !== meaning ? `; the ${was.unproved.length} accepted earlier were accepted for another text of this unit or its proof file, and no longer count` : "";
+        const fresh = proof.unproved.filter((x) => !valid.includes(x));
+        const stale = valid.filter((x) => !proof.unproved.includes(x));
+        if (proof.unproved.length) ledger[u.unit] = { text: meaning, unproved: proof.unproved };
+        const listed = (xs: string[]) => indent(xs.map((x) => (proof.exhausted.includes(x) ? `${x}   [the prover ran out of resources]` : x)).join("\n"));
+        // Hand-written code proved against a module that is only partly proved rests on what is not.
+        const assumed = u.rests.flatMap((r) => (proved.get(r)?.unproved.length ? [`${proved.get(r)!.unproved.length} of ${r}`] : []));
+        const assuming = assumed.length ? `, assuming the obligations that are simulated only (${assumed.join(", ")})` : "";
         if (proof.errors.length) {
           recordable = false;
-          report(false, "proof", `${unit}: Dafny could not check it (full output in ${logFile})`, indent(proof.errors.join("\n")));
+          report(false, "proof", `${u.unit}: Dafny could not check it (full output in ${logFile}, final Dafny in gen/proof/${base}/${base}.dfy)`, indent(proof.errors.join("\n")));
         } else if (fresh.length && accept !== "unproved") {
-          report(false, "proof", `${unit}: ${fresh.length} of ${proof.total} obligations not proved. If simulation is enough for these, record them with \`npm run accept -- unproved\`; otherwise add the rule or guard that makes them provable (full output in ${logFile})`, indent(fresh.join("\n")));
+          report(false, "proof", `${u.unit}: ${fresh.length} of ${proof.total} obligations not proved${outdated}. Prove them in ${u.proofFile}, or add the rule that makes them provable; if simulation is enough for them, that is the user's decision (\`npm run accept -- unproved\`). Full output in ${logFile}, final Dafny in gen/proof/${base}/${base}.dfy`, listed(fresh));
         } else {
-          report(true, "proof", `${unit}: ${proof.unproved.length ? `${proof.total} obligations, of which ${proof.unproved.length} are simulated only (accepted) and the rest proved` : `all ${proof.total} obligations proved`} for all states and inputs`
+          report(true, "proof", `${u.unit}: ${proof.unproved.length ? `${proof.total} obligations, of which ${proof.unproved.length} are simulated only (accepted) and the rest proved` : `all ${proof.total} obligations proved`} for all states and inputs${assuming}`
             + (stale.length && accept !== "unproved" ? `; ${stale.length} accepted earlier now prove, run \`npm run accept -- unproved\` to tighten the ledger` : ""));
         }
       }
-      if (accept === "unproved" && recordable) {
-        const lines = Object.entries(ledger).map(([unit, list]) => `  ${JSON.stringify(unit)}: [\n${list.map((u) => `    ${JSON.stringify(u)}`).join(",\n")}\n  ]`);
-        if (lines.length) fs.writeFileSync(ledgerFile(root), `{\n${lines.join(",\n")}\n}\n`);
-        else fs.rmSync(ledgerFile(root), { force: true });
-      }
+      if (accept === "unproved" && recordable) writeLedger(root, ledger);
     } catch (e) {
       report(false, "proof", (e as Error).message);
     }

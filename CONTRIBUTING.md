@@ -64,7 +64,7 @@ smaller.
 
 Some names are refused, with a message saying why: the generated names
 (`init`, `step`, `inv`, `enabled`, `parseEvent`, `Event`, `current`, `event`,
-`state`, …), JavaScript globals and keywords (`Number`, `delete`, …), Quint
+`state`, …) and `ProofLib`, JavaScript globals and keywords (`Number`, `delete`, …), Quint
 built-ins (`to`, `next`, `all`, `size`, …), a parameter named like a variant,
 a variant field called `tag`, and near-misses of the conventions above such as
 `alwayspaid` or `CanPay`.
@@ -158,20 +158,121 @@ Things to know:
 Dafny proves arithmetic and simple list facts on its own. It usually cannot
 prove a rule that depends on a fold, a count or a search without help. When
 `proof` lists obligations as "not proved" although simulation found nothing,
-choose for each:
+for each one, in this order:
 
-1. **State the missing fact** as another `always` rule or a law, if there is
-   one. This is the inductiveness case above.
-2. **Move the arithmetic into a small function with a law**, in a library
-   spec. Small functions prove; the tracker example's `kernel` does this.
-3. **Write it by hand with loop invariants** in `src/`, where LemmaScript can
-   be told why it holds.
-4. **Accept simulation for it**: `npm run accept -- unproved` records the
-   obligations in `spec/unproved.lock.json`. The check then passes, says how
-   many obligations are simulated only, and fails again if a *new* one
-   appears. Read the list before recording it: an obligation that is false is
-   also "not proved". An entry that says the prover ran out of time covers
-   every obligation of that definition.
+1. **Prove it** in the unit's proof file (next section). This is the agent's
+   work, like any other translation.
+2. **State the missing fact**, if the obligation is false for some state that
+   satisfies every rule: no proof can help then. Add it as an `always` rule
+   or a law (the inductiveness case above). Moving arithmetic into a small
+   function with a law in a library spec, or writing a loop by hand in
+   `src/`, also gives Dafny smaller steps.
+3. **Accept simulation for it**: the user's decision, never the agent's.
+   `npm run accept -- unproved` records the obligations in
+   `spec/unproved.lock.json`, per unit, with a fingerprint of the unit's text
+   and proof file. The check then passes and says how many obligations are
+   simulated only. It fails again if a *new* one appears, or if the unit or
+   its proof file changes: what was accepted for one text does not carry over
+   to another. Read the list before recording it: an obligation that is false
+   is also "not proved".
+
+Counting is per obligation. Dafny checks every `ensures` on its own, a
+failing one is never assumed while another is checked, and the prover works
+to a fixed resource limit (`RESOURCE_LIMIT` in `tools/prove.ts`) rather than a
+time limit, so the answer does not depend on the machine. An obligation it
+could not finish is marked `[the prover ran out of resources]`.
+
+### Proof files
+
+`spec/<name>.proof.dfy` proves obligations of `gen/<name>.ts`;
+`src/<path>.proof.dfy` proves those of `src/<path>.ts`. A proof file that
+belongs to no unit is reported.
+
+**What the prover sees** is `gen/proof/<unit>/<unit>.dfy`, written by every
+`npm run check`, and Dafny's full output is `gen/proof/<unit>.log`. The file
+is, in order: what LemmaScript generated (the modules the unit imports, with
+names prefixed `<module>_` and without their obligations, then the unit
+itself), the bodies the proof file supplied, the lemmas the tools add, the
+proof file's helpers, and the library. Each obligation is one `ensures` of a
+generated `lemma <fn>_ensures`: for a transition, one per `always` and `step`
+rule, each conditional on `inv` and the guard; for a law, `<law>(...) == true`.
+
+**Grammar.** A proof file holds only `lemma` declarations, each with a body,
+and `//` comments. Anything else is refused with its file and line.
+
+- A lemma named like a generated `<fn>_ensures` supplies that lemma's body.
+  Its header must repeat the generated one exactly; copy it from the `.dfy`
+  (whitespace and comments do not matter). When a rule changes, the header
+  changes, and the old body is refused as stale.
+- Any other lemma is a helper, added after the generated text. Its name must
+  not be one the `.dfy` already declares.
+- Inside bodies: `assert`, `assert … by`, `calc`, `forall … ensures`, `if`,
+  `match`, `var`, `reveal`, calls to lemmas, and the attributes `{:trigger}`
+  and `{:induction}`.
+- Refused: block comments, `@`, any other attribute, character literals,
+  anything but ASCII outside comments and strings, and the words that
+  declare or trust something: `assume`, `expect`, `function`, `predicate`,
+  `method`, `ghost`, `const`, `type`, `datatype`, `include`, `import`,
+  `module`, `reads`, `modifies`, `opaque`, `axiom`, `verify` and the rest of
+  `FORBIDDEN` in `tools/prove.ts`.
+- After that, LemmaScript refuses the `.dfy` unless it is its own output plus
+  added lines, and `dafny audit` refuses anything assumed rather than proved.
+  A helper or library lemma that does not verify fails the unit; it is never
+  counted as an obligation.
+
+**What a proof can call:**
+
+- `ProofLib.<Name>(...)` from `tools/proof/lib.dfy`, added to every unit that
+  has a proof file: `Filter` (a heap-free view of `Std.Collections.Seq.Filter`,
+  see below), `Distinct`, `DistinctBy`, and lemmas about filters
+  (`FilterNil`, `FilterCons`, `FilterAppend`, `FilterMember`, `FilterSubset`,
+  `FilterNone`, `FilterOne`, `FilterTwo`, `FilterCountOneIffUnique`,
+  `FilterDistinctCountOne`, `FilterKeepsDistinctBy`, `FilterLengthPointwise`,
+  `FilterPointwise`, `FilterSamePredicate`, `FilterOfFilterShorter`) and folds
+  (`FoldLeftInflationary`, `FoldLeftAboveEach`, `FoldLeftMax`,
+  `FoldLeftPointwise`, `FoldLeftConcatEmpty`, `FoldLeftDedupDistinct`).
+  Read the file for what each states. A lemma general enough for any project
+  belongs there, with its proof; one about your spec belongs in your proof
+  file.
+- A law of an imported module, if its own unit proved it in the same run:
+  `<module>_<law>_ensures(args)` gives `<module>_<law>(args) == true`. (In a
+  `src` unit, the laws of the module it imports are `<law>_ensures`.)
+- The generated `_ensures` lemmas and Dafny's standard library.
+
+`step_ensures` gets a body from the tools that calls each transition's lemma;
+supply one to replace it.
+
+**Two Dafny facts** shape most proofs about lists:
+
+- `Std.Collections.Seq.Filter` is opaque and reads the heap, so a fact about it
+  proved in a lemma does not meet the same call inside a generated rule.
+  State facts about `ProofLib.Filter`, and connect them to the rule with a
+  helper whose `ensures` is the rule's body with `ProofLib.Filter` in place of
+  `Std.Collections.Seq.Filter`; it proves with an empty body:
+  `lemma KeysBridge(r: Registry) ensures alwaysAKeyNamesOneProject(r) == Std.Collections.Seq.All(r.entries, (a: Entry) => (|ProofLib.Filter((b: Entry) => (b.key == a.key), r.entries)| == 1)) { }`.
+- A lambda is the same term only if it is the same text: pass the lambda the
+  generated code uses, copied verbatim from the `.dfy`.
+
+**To prove an obligation:**
+
+1. Find its lemma in `gen/proof/<unit>/<unit>.dfy` (the check names the
+   definition and the clause).
+2. Copy the lemma's header into the proof file and write a body. For a
+   transition, the usual shape is
+   `if inv(s) && canX(s, …) { var after := x(s, …); …facts about after… }`.
+3. Run `npm run check`. Dafny's messages point into the `.dfy`; the log has
+   them all.
+
+`tools/fixtures/highest.md` is the smallest example: its law needs induction
+over a fold, and this proof file proves it (the selftest runs it):
+
+```dafny
+lemma lawTheHighestIsAtLeastTheStart_ensures(xs: seq<int>, start: int)
+  ensures (lawTheHighestIsAtLeastTheStart(xs, start) == true)
+{
+  ProofLib.FoldLeftMax((top: int, x: int) => (if (x > top) then x else top), start, xs);
+}
+```
 
 ## Using the generated code
 
@@ -220,7 +321,11 @@ event log, write TypeScript under `src/` with
   appears, because it would tell the prover to trust or skip something.
 - Keep I/O, classes and libraries out of these files; put them in the shell.
 - When a proof fails, the summary names the function and the annotation, and
-  the full Dafny output is in `gen/proof/<unit>.log`.
+  the full Dafny output is in `gen/proof/<unit>.log`. A proof that needs more
+  than annotations goes in `src/<path>.proof.dfy` (see "Proof files").
+- Such a unit is proved against the definitions of the module it imports.
+  If that module has obligations that are simulated only, its proof line says
+  that it is proved assuming them, with how many and where.
 
 Tests for the shell go in `test/*.test.ts` and run with Node's test runner.
 
@@ -281,7 +386,11 @@ npx quint verify gen/order.run.qnt --main order_run --invariant inv --max-steps 
 
 ## Changing the tools
 
-`tools/spec.ts` is the pipeline. `tools/gen.ts` is the translator: it reads
+`tools/spec.ts` is the pipeline. `tools/prove.ts` proves one unit: it
+checks and splices the proof file, runs LemmaScript, `dafny audit`, and
+checks again on its own every postcondition that a failing one could have
+hidden; `tools/proof/lib.dfy` is the library proof files call.
+`tools/gen.ts` is the translator: it reads
 what a module imports and defines, and hands the rest to one file each in
 `tools/gen/`: `types.ts` (everything decided by a type), `print.ts`
 (expressions), `classify.ts` (which definition is a transition, a guard or a

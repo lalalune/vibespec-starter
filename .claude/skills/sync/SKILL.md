@@ -17,7 +17,8 @@ needed: the tools detect what is out of step and you make the translations.
    `spec/*.md` (and `src/` or `test/` only when `types` or `tests` asks for it).
 3. Run `npm run check` again. Repeat until the only `✗` lines are `review`
    items saying `new`, `prose changed`, `model changed` or `prose and model
-   both changed`, and `proof` items listing obligations that are "not proved".
+   both changed`, and `proof` items listing obligations that you could not
+   prove (see below).
 4. Stop and report (see "When you stop"). Do not accept anything.
 
 Give up and report after five rounds on the same failure.
@@ -39,9 +40,9 @@ Give up and report after five rounds on the same failure.
 | `sometimes` not reached | A guard is too strict, a transition is missing, or the goal needs values the simulator does not try (define `<param>Values`). |
 | `replay` | Generated TypeScript and Quint disagree. That is a bug in the tools, not in the spec. Stop and report it. |
 | `types` | Update `src/` and `test/` to the new generated contract. |
-| `proof` … "not proved", generated module | Model → rule. It holds in simulation but not for every state. Look for a fact about reachable states that no rule states, and add it as an `always` rule: that is a discovered rule. If there is no such fact (the obligation depends on a fold or a count), leave it and list it in your report. |
-| `proof` … "Dafny could not check it" | The generated or hand-written code is not something Dafny accepts: an unguarded lookup, index or division, or a wrong annotation. The lines under it say which. |
-| `proof`, a `src-…` unit | Fix the hand-written code or its `//@` annotation. The full output is in `gen/proof/<unit>.log`. |
+| `proof` … "not proved" | It holds in simulation; it is yours to prove. First decide whether it is true for every state that satisfies all the rules. If it is not (you can name such a state), no proof can help: the missing fact about reachable states becomes a new `always` rule, a discovered rule. If it is, prove it in the unit's proof file, `spec/<name>.proof.dfy` or `src/<path>.proof.dfy`: copy the obligation's `lemma …_ensures` header from `gen/proof/<unit>/<unit>.dfy` and write its body, calling `ProofLib` lemmas and your own helper lemmas (CONTRIBUTING.md, "Proof files"). Only what you cannot prove goes in your report, with what you tried; recording it as simulated only is the user's last resort, not yours. |
+| `proof` … "Dafny could not check it" | The generated or hand-written code is not something Dafny accepts (an unguarded lookup, index or division, or a wrong annotation), or the proof file is refused or does not verify: a stale header, a forbidden construct, a helper lemma that fails. The lines under it say which, with the file and line. |
+| `proof`, a `src-…` unit | Fix the hand-written code, its `//@` annotation, or its proof file. The full output is in `gen/proof/<unit>.log`. |
 | `tests` | Fix the application or its test in `src/` and `test/`. |
 
 ## Rules for what you write
@@ -58,7 +59,8 @@ Give up and report after five rounds on the same failure.
 - Never weaken or delete an `always`, `step`, `sometimes` or `law` rule to
   make a check pass, unless it is the rule that is wrong, and then say so.
 - Never edit `gen/`, `.spec-cache/` or `spec/*.lock.json`, and never add a
-  `lemmascript.json`. The tools own them.
+  `lemmascript.json`. The tools own them. Proof files are yours to write.
+- Never try to get a proof past the checks instead of proving it.
 - Do not run `npm run accept` or `npm run accept -- unproved`. They are the
   user's sign-off.
 
@@ -70,7 +72,10 @@ Tell the user, in this order:
 2. **Rules discovered** by the checks, each with what went wrong without it.
    These need their confirmation most.
 3. **Rules changed**, and which half you changed to follow the other.
-4. **Not proved**: obligations that hold in simulation only, if any.
-5. **Could not formalize**: anything in a story you left out, and why.
+4. **Proved by hand**: proof files you wrote or changed, and which
+   obligations they prove.
+5. **Not proved**: obligations that hold in simulation only, if any, each
+   with why you could not prove it.
+6. **Could not formalize**: anything in a story you left out, and why.
 
 Then ask them to read the diff of `spec/` and run `npm run accept`.

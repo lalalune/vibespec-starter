@@ -78,7 +78,7 @@ their failures would only restate the first one.
 | `sometimes` | Can each `sometimes` goal be reached at all? | a witness trace is a proof |
 | `replay` | Does the generated TypeScript mean what the Quint means? | 400 sampled traces: every state, every law tried, and the result of every definition the simulator can evaluate. Definitions it cannot evaluate are listed |
 | `types` | Does the application fit the generated contract? | exact |
-| `proof` | Does every transition preserve every `always` and `step` rule, does every law hold, and does hand-written logic meet its `//@` contract? | all states, all inputs. What Dafny cannot prove alone is listed, and passes only once recorded in `spec/unproved.lock.json` |
+| `proof` | Does every transition preserve every `always` and `step` rule, does every law hold, and does hand-written logic meet its `//@` contract? | all states, all inputs, counted per obligation under a fixed resource limit. What Dafny cannot prove alone is proved in a proof file (`spec/<name>.proof.dfy`: lemmas only, checked to add nothing but proof), or listed; a listed obligation passes only once the user records it in `spec/unproved.lock.json`, for that text of the unit |
 | `tests` | Does the shell work? | examples |
 | `review` | Does every story have rules, and has every rule whose prose or model changed been reconciled? | exact |
 
@@ -91,9 +91,11 @@ Keep `spec/`, `src/`, `test/` and `tools/` in git, lock files included.
 |---|---|
 | `spec/order.md` | The source of truth: stories, rules, Quint |
 | `spec/order.lock.json` | Review ledger written by `npm run accept` |
-| `spec/unproved.lock.json` | Obligations accepted as simulated only, written by `npm run accept -- unproved`. Absent when there are none |
+| `spec/<name>.proof.dfy`, `src/<path>.proof.dfy` | Proofs, in Dafny lemmas, of obligations Dafny cannot prove alone. Written by the agent; optional |
+| `spec/unproved.lock.json` | Obligations accepted as simulated only, per unit and tied to its text, written by `npm run accept -- unproved`. Absent when there are none |
 | `.claude/skills/sync/SKILL.md` | How the agent in your session keeps stories, rules and model in step |
 | `tools/spec.ts` | The pipeline: tangle, simulate, compare, prove, review |
+| `tools/prove.ts`, `tools/proof/lib.dfy` | The proof stage for one unit, with the checks on proof files, and the library of general lemmas proof files call |
 | `tools/gen.ts`, `tools/gen/` | Quint → TypeScript and the simulation harness: types, expressions, classification, and the two outputs, one file each |
 | `tools/selftest.ts`, `tools/fixtures/` | Tests of the pipeline itself, and the small specs they use |
 | `src/ledger.ts` | Hand-written logic, proved against the generated contract |
@@ -126,7 +128,8 @@ patch and has been applied to the application.
 Proved for all states and inputs: the initial state satisfies every `always`
 rule, every transition preserves every `always` and `step` rule, every law
 holds, and hand-written `//@ ensures` hold, except for obligations listed in
-`spec/unproved.lock.json`. The order example has none.
+`spec/unproved.lock.json`. The order example has none. Proof files add only
+lemmas, and those are proved too.
 
 Trusted, not proved:
 

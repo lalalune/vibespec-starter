@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, describe, test } from "node:test";
+import { parseProofFile, splice } from "./prove.ts";
 import { acceptReviews, check, expandListHelpers, gen, init, parseSpec, readSpecs, replay, show, type Result } from "./spec.ts";
 
 const project = path.join(import.meta.dirname, "..");
@@ -140,9 +141,16 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.deepEqual(plain.failed, ["proof", "review"], plain.text);
     assert.ok(plain.said("proof", /not proved/), plain.text);
     // Once the unproved obligations are recorded, only the review is left.
-    const recorded = shop();
+    // Hand-written code proved against the shop says that it rests on what is simulated only there.
+    const recorded = shop((f) => { f["src/count.ts"] = 'import { type Cart } from "../gen/shop.ts";\n//@ pure\nexport function count(c: Cart): number {\n  //@ ensures \\result === c.count\n  return c.count;\n}\n'; });
     await check(recorded, "unproved");
-    assert.deepEqual((await run(recorded)).failed, ["review"]);
+    const accepted = await run(recorded);
+    assert.deepEqual(accepted.failed, ["review"], accepted.text);
+    assert.ok(accepted.said("proof", /^src-count\.ts: all 1 obligations proved for all states and inputs, assuming the obligations that are simulated only \([^)]*\d+ of shop\.ts\)/), accepted.text);
+    // What was recorded is tied to the text it was recorded for: once the unit's text changes, it no longer counts.
+    fs.appendFileSync(path.join(recorded, "spec/lib.md"), `\n### Two\n\n${F}quint\npure val two = 2\n${F}\n`);
+    const moved = await run(recorded);
+    assert.equal(moved.said("proof", /^shop\.ts: \d+ of \d+ obligations not proved; the \d+ accepted earlier were accepted for another text/)?.ok, false, moved.text);
     const wrongStep = await run(shop((f) => { f["spec/shop.md"] = f["spec/shop.md"].replace("count: c.count }", "count: c.count - 1 }"); }));
     assert.equal(wrongStep.said("always", /^a step breaks/)?.ok, false, wrongStep.text);
     const wrongLaw = await run(shop((f) => { f["spec/lib.md"] = f["spec/lib.md"].replace("total(List(n)) == n", "total(List(n)) == n + 1"); }));
@@ -258,6 +266,73 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     // So is an import of anything but a generated module, however it is indented.
     const lying = await run(copyOfProject("src/ledger.ts", (s) => s.replace("\n/** Rebuild", '\n  import { owed } from "/tmp/lies.ts";\n/** Rebuild')));
     assert.ok(lying.said("proof", /may only import generated modules/), lying.text);
+  });
+
+  test("a law that needs induction is proved by a proof file, and only then offered to the spec that imports it", async () => {
+    const highestProof = "// The fold keeps the larger of the two.\nlemma lawTheHighestIsAtLeastTheStart_ensures(xs: seq<int>, start: int)\n  ensures (lawTheHighestIsAtLeastTheStart(xs, start) == true)\n{\n  ProofLib.FoldLeftMax((top: int, x: int) => (if (x > top) then x else top), start, xs);\n}\n";
+    const ticketProof = "lemma issue_ensures(d: Desk)\n  ensures (inv(d) ==> alwaysTheLastNumberIsNotNegative(issue(d)))\n{\n  highest_lawTheHighestIsAtLeastTheStart_ensures(d.issued, d.last);\n}\n";
+    const project = (files: Record<string, string>) => fixtures(["highest", "ticket"], (f) => Object.assign(f, files));
+    // Without a proof file the law is not proved, and a proof file that belongs to nothing is pointed out.
+    const bare = await run(project({ "spec/typo.proof.dfy": "" }));
+    assert.equal(bare.said("proof", /^highest\.ts: 1 of 1 obligations not proved/)?.ok, false, bare.text);
+    assert.equal(bare.said("proof", /^spec\/typo\.proof\.dfy belongs to no proof unit/)?.ok, false, bare.text);
+    // With both proof files, everything proves, and the final Dafny is there to read.
+    const root = project({ "spec/highest.proof.dfy": highestProof, "spec/ticket.proof.dfy": ticketProof });
+    const proved = await run(root);
+    assert.deepEqual(proved.failed, ["review"], proved.text);
+    assert.ok(proved.said("proof", /^ticket\.ts: all 3 obligations proved/), proved.text);
+    assert.match(fs.readFileSync(path.join(root, "gen/proof/ticket/ticket.dfy"), "utf8"), /lemma \{:axiom\} highest_lawTheHighestIsAtLeastTheStart_ensures/);
+    // A law its own unit does not prove is not offered.
+    const unoffered = await run(project({ "spec/ticket.proof.dfy": ticketProof }));
+    assert.equal(unoffered.said("proof", /^ticket\.ts: Dafny could not check it[\s\S]*unresolved identifier: highest_lawTheHighestIsAtLeastTheStart_ensures/)?.ok, false, unoffered.text);
+    // A proof file that asks for trust is refused, with its file and line.
+    const trusting = await run(project({ "spec/highest.proof.dfy": highestProof.replace("ProofLib.FoldLeftMax", "assume false;\n  ProofLib.FoldLeftMax") }));
+    assert.equal(trusting.said("proof", /spec\/highest\.proof\.dfy:5: `assume` is not allowed/)?.ok, false, trusting.text);
+  });
+
+  test("a proof file may only add lemmas, and only bodies to the generated ones", () => {
+    const refused: [string, string, RegExp][] = [
+      ["a block comment", "lemma A() { /* } */ }", /block comments are not allowed/],
+      ["an @-attribute", "@Axiom\nlemma A() {}", /p\.dfy:1: `@` is not allowed/],
+      ["the axiom attribute", "lemma {:axiom} A() ensures false {}", /the attribute \{:axiom\} is not allowed/],
+      ["an attribute with spaces", "lemma A() { assert { : verify false } true; }", /the attribute \{:verify\} is not allowed/],
+      ["a character literal", "lemma A() { var c := 'a'; }", /character literals are not allowed/],
+      ["assume", "lemma A()\n  ensures false\n{\n  assume false;\n}", /p\.dfy:4: `assume` is not allowed/],
+      ["a function", "function F(): int { 1 }", /`function` is not allowed/],
+      ["a predicate", "lemma A() {}\npredicate P() { true }", /p\.dfy:2: `predicate` is not allowed/],
+      ["an include", 'include "other.dfy"', /`include` is not allowed/],
+      ["a module", "module M {}", /`module` is not allowed/],
+      ["expect", "lemma A() { expect false; }", /`expect` is not allowed/],
+      ["reads", "lemma A() reads {} {}", /`reads` is not allowed/],
+      ["a lemma with no body", "lemma A() ensures false", /lemma A has no body/],
+      ["an unclosed body", "lemma A() { if true { }", /unbalanced braces/],
+      ["a brace that closes nothing", "lemma A() { } }", /this \} closes nothing/],
+      ["anything else at the top level", "assert false;", /only `lemma` declarations/],
+      ["a lemma declared twice", "lemma A() {}\nlemma A() {}", /declared twice/],
+      ["a carriage return that would end a comment early", "lemma A() { // note\rassume false;\n}", /line breaks other than/],
+      ["a string that is not closed", 'lemma A() { var s := "x; }', /not closed/],
+    ];
+    for (const [what, text, message] of refused) assert.throws(() => parseProofFile(text, "p.dfy"), message, what);
+    assert.equal(parseProofFile("// a comment\nlemma A(xs: seq<int>)\n  ensures forall i {:trigger xs[i]} :: 0 <= i < |xs| ==> xs[i] == xs[i]\n{\n  reveal F();\n  calc { 1; 1; }\n  forall i | 0 <= i < |xs| ensures xs[i] == xs[i] {}\n  assert true by { var x := 1; if x > 0 { } match xs { case _ => } }\n}\n", "p.dfy").length, 1);
+
+    const gen = "function f(x: int): int\n{\n  x\n}\n\nlemma f_ensures(x: int)\n  ensures (f(x) >= x)\n{\n}\n";
+    const spliced = (text: string) => splice(gen, { proof: { file: "p.dfy", text }, axioms: [] });
+    // A body goes inside the generated lemma; a helper is appended; nothing generated changes.
+    const out = spliced("lemma f_ensures(x: int)\n  ensures (f(x) >= x)   // spacing and comments do not matter\n{\n  Helper(x);\n}\nlemma Helper(x: int) ensures f(x) == x { }\n");
+    assert.ok(out.startsWith(gen.replace("{\n}\n", "{\n  Helper(x);\n}\n")), out);
+    assert.match(out, /lemma Helper\(x: int\)/);
+    // A header that no longer matches the generated one is stale.
+    assert.throws(() => spliced("lemma f_ensures(x: int)\n  requires x > 0\n  ensures (f(x) >= x)\n{\n}\n"), /p\.dfy:1: lemma f_ensures does not repeat its generated header, so it is refused as stale/);
+    // A helper may not take a generated name, or the library's.
+    assert.throws(() => spliced("lemma f(x: int) { }"), /p\.dfy:1: lemma f: the name is already declared/);
+    assert.throws(() => spliced("lemma ProofLib() { }"), /the name is already declared/);
+  });
+
+  test("an obligation that fails is not assumed while the others are checked", async () => {
+    const { said, text } = await run(fixtures(["twins"]));
+    const found = said("proof", /^twins\.ts: 2 of 4 obligations not proved/);
+    assert.equal(found?.ok, false, text);
+    assert.match(found!.detail, /alwaysBIsAtMostThreeOrNinetyNine/);
   });
 
   test("verified code cannot assume, or import a look-alike of the generated module", async () => {

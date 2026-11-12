@@ -57,9 +57,9 @@ export const LIST_HELPERS: Record<string, { init: string; step: (acc: string, bo
   includes: { init: "false", step: (acc, body) => `${acc} or ${body}` },
 };
 
-/** Names a spec may not bind: the generated code and harness use them, or TypeScript reserves them. */
+/** Names a spec may not bind: the generated code, the harness or the proof library (ProofLib) use them, or TypeScript reserves them. */
 const TAKEN = new Set(`
-  init step probe inv enabled parseEvent initialHolds Event current event raw state prev moved out lawsHold Out Nothing
+  init step probe inv enabled parseEvent initialHolds Event current event raw state prev moved out lawsHold Out Nothing ProofLib
   Number Math Object Array JSON Record Set Map String Boolean Symbol Error undefined NaN Infinity globalThis
   break case catch class const continue debugger default delete do else enum export extends false finally for function
   if import in instanceof new null return super switch this throw true try typeof var void while with yield let static await
