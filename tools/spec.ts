@@ -3,9 +3,11 @@
 //
 //   node tools/spec.ts gen      tangle the specs and generate gen/<name>.ts
 //   node tools/spec.ts check    gen, then run every check (see README)
-//   node tools/spec.ts sync     check, hand what fails to an agent to translate
-//                               (story -> rules -> Quint -> prose), and repeat
-//   node tools/spec.ts brief    print what sync would hand to the agent
+//   node tools/spec.ts brief    check, and print the report as a work order for the
+//                               agent in your session (see .claude/skills/sync)
+//   node tools/spec.ts sync     unattended: check, hand what fails to the command in
+//                               SPEC_AGENT (or a built-in, model-free agent), repeat
+//   node tools/spec.ts init     add the sync skill and AGENTS.md to this project
 //   node tools/spec.ts accept   check, and if all else passes, record that the
 //                               prose and model of every rule have been reconciled
 //   node tools/spec.ts accept unproved
@@ -138,7 +140,7 @@ export function pending(root: string, spec: Spec): string[] {
   return out;
 }
 
-function acceptReviews(root: string, spec: Spec) {
+export function acceptReviews(root: string, spec: Spec) {
   // One rule per line, so a diff of the ledger shows exactly which rules were re-reviewed.
   const lines = spec.rules.map((r) => `  ${JSON.stringify(r.key)}: ${JSON.stringify(fingerprint(r))}`);
   fs.writeFileSync(lockFile(root, spec), `{\n${lines.join(",\n")}\n}\n`);
@@ -196,25 +198,22 @@ export function gen(root: string, spec: Spec, models = new Map<string, Model>())
 // --- traces: Quint simulates, the generated TypeScript must agree -------------------
 
 /** One state of a simulated trace, and what led to it: an event, or a law tried on some arguments. */
-interface Step { event?: { type: string }; law?: { name: string; args: Record<string, unknown> }; state?: unknown; lawsHold?: boolean }
-
-const decode = (v: any): any => {
-  if (v === null || typeof v !== "object") return v;
-  if (Array.isArray(v)) return v.map(decode);
-  if ("#bigint" in v) return Number(v["#bigint"]);
-  if ("tag" in v && "value" in v) return v.tag;
-  return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, decode(x)]));
-};
+interface Step { event?: { type: string }; asked?: { event: { type: string }; allowed: boolean }; law?: { name: string; args: Record<string, unknown> }; state?: unknown; lawsHold?: boolean }
 
 function readTrace(file: string, model: Model): Step[] {
   return JSON.parse(fs.readFileSync(file, "utf8")).states.map((st: any): Step => {
-    const picked = (ps: { name: string }[]) => Object.fromEntries(ps.map((p) => [p.name, decode(st["mbt::nondetPicks"][p.name].value)]));
-    const t = model.transitions.find((t) => t.name === st["mbt::actionTaken"]);
-    const l = model.laws.find((l) => l.name === st["mbt::actionTaken"]);
+    // Values are decoded by their type, and sets put in a fixed order, so that they compare equal to TypeScript's.
+    const read = (type: any, itf: any) => model.canon(type, model.decode(type, itf));
+    const picked = (ps: { name: string; type: any }[]) => Object.fromEntries(ps.map((p) => [p.name, read(p.type, st["mbt::nondetPicks"][p.name].value)]));
+    const taken: string = st["mbt::actionTaken"];
+    const t = model.transitions.find((t) => t.name === taken);
+    const a = model.transitions.find((t) => `ask_${t.name}` === taken);
+    const l = model.laws.find((l) => l.name === taken);
     return {
       event: t && { type: t.name, ...picked(t.params) },
+      asked: a && { event: { type: a.name, ...picked(a.params) }, allowed: st.allowed },
       law: l && { name: l.name, args: picked(l.params) },
-      state: model.state ? decode(st.state) : undefined,
+      state: model.state ? read(model.stateType, st.state) : undefined,
       lawsHold: st.lawsHold,
     };
   });
@@ -236,16 +235,20 @@ function simulate(root: string, model: Model, invariant: string, traces: number,
 }
 
 /** Replay one Quint trace through the TypeScript domain; throws at the first difference. */
-export function replay(domain: any, trace: Step[]) {
+export function replay(domain: any, trace: Step[], canon: (state: any) => any = (x) => x) {
   const differ = (what: string) => new Error(`TypeScript and Quint disagree ${what}`);
   let s = domain.initial;
-  for (const { event, law, state, lawsHold } of trace) {
+  for (const { event, asked, law, state, lawsHold } of trace) {
     if (event) {
       if (!domain.enabled(s, event)) throw differ(`on whether ${JSON.stringify(event)} is allowed in ${JSON.stringify(s)}`);
       s = domain.step(s, event);
+    } else if (asked) {
+      // An event that was only asked about: both sides must give the same answer, and a refused one must change nothing.
+      if (domain.enabled(s, asked.event) !== asked.allowed) throw differ(`on whether ${JSON.stringify(asked.event)} is allowed in ${JSON.stringify(s)}: Quint says ${asked.allowed}`);
+      if (!asked.allowed && !isDeepStrictEqual(domain.step(s, asked.event), s)) throw differ(`on ${JSON.stringify(asked.event)}: it is refused, yet TypeScript changes the state`);
     } else if (law && domain[law.name](...Object.values(law.args)) !== lawsHold)
       throw differ(`on ${law.name}${JSON.stringify(law.args)}: Quint says ${lawsHold}`);
-    if (state !== undefined && !isDeepStrictEqual(s, state)) throw differ(`after ${JSON.stringify(event ?? "init")}: TypeScript reached ${JSON.stringify(s)}, Quint reached ${JSON.stringify(state)}`);
+    if (state !== undefined && !isDeepStrictEqual(canon(s), state)) throw differ(`after ${JSON.stringify(event ?? "init")}: TypeScript reached ${JSON.stringify(s)}, Quint reached ${JSON.stringify(state)}`);
   }
 }
 
@@ -315,6 +318,23 @@ function proofUnits(root: string, models: Model[]): string[] {
     units.push(unit);
   }
   return units;
+}
+
+/**
+ * Prove one unit, or reuse the result of proving exactly the same text before. A unit's text is its own
+ * definitions and those of everything it imports, so a change anywhere beneath it is a different text.
+ * This is what keeps a check proportional to what changed: simulation takes a second per spec, proofs do not.
+ */
+function prove(root: string, unit: string): { out: string } {
+  const text = fs.readFileSync(path.join(root, "gen/proof", unit), "utf8");
+  const cached = path.join(root, ".spec-cache", `${createHash("sha256").update(text).digest("hex").slice(0, 24)}.log`);
+  if (!process.env.SPEC_NO_CACHE && fs.existsSync(cached)) return { out: fs.readFileSync(cached, "utf8") };
+  const { out } = run("lsc", ["check", "--backend=dafny", unit], path.join(root, "gen/proof"));
+  if (/\d+ verified, \d+ errors?/.test(out)) {
+    fs.mkdirSync(path.dirname(cached), { recursive: true });
+    fs.writeFileSync(cached, out);
+  }
+  return { out };
 }
 
 /** What Dafny reported: postconditions it could not prove (in the words of the annotations), and anything else. */
@@ -408,7 +428,7 @@ export async function check(root: string, log: (line: string) => void = console.
           : `${cite(w)} was not reached in ${WITNESS_SAMPLES} traces of ${STEPS} events: a guard is too strict, a transition is missing, or the goal needs values the simulator does not try`);
         if (found.broken) traces.push(...found.traces);
       }
-      for (const t of traces) replay(domain, t);
+      for (const t of traces) replay(domain, t, (x) => model.canon(model.stateType, x));
       report(true, "replay", `generated TypeScript reproduces ${traces.length} Quint traces`);
     } catch (e) {
       const mismatch = (e as Error).message.startsWith("TypeScript and Quint disagree");
@@ -426,7 +446,7 @@ export async function check(root: string, log: (line: string) => void = console.
       const ledger: Record<string, string[]> = {};
       let recordable = true;
       for (const unit of proofUnits(root, [...models.values()])) {
-        const proof = run("lsc", ["check", "--backend=dafny", unit], path.join(root, "gen/proof"));
+        const proof = prove(root, unit);
         const logFile = `gen/proof/${unit.replace(/\.ts$/, ".log")}`;
         fs.writeFileSync(path.join(root, logFile), proof.out);
         const proved = Number(proof.out.match(/(\d+) verified, \d+ errors?/)?.[1] ?? NaN);
@@ -497,16 +517,12 @@ export function readSpecs(root: string): Spec[] {
 
 // --- sync: the generative half ---------------------------------------------------------
 
-// Tried in order until one runs: Claude Code if it is installed and signed in, else a local Ollama model,
-// else no model at all: a built-in agent that can only add the rule the check itself proposes.
+// Syncing is normally done by the agent in the user's session, following the sync skill. `sync` is for running
+// unattended: it uses the command in SPEC_AGENT, or else a built-in agent that needs no model and can only add
+// the rule that the check itself proposes.
 const tool = (name: string) => [process.execPath, path.join(import.meta.dirname, `${name}${path.extname(import.meta.filename)}`)];
-const DEFAULT_AGENTS = [
-  ["claude", "-p", "--permission-mode", "acceptEdits", "--allowedTools", "Read,Edit,Write,Grep,Glob"],
-  tool("agent-ollama"),
-  tool("agent-lookahead"),
-];
 const ROUNDS = 5;
-const BRIEF = `You maintain this repository's spec. Read AGENTS.md and CONTRIBUTING.md first and follow them.
+const BRIEF = `You maintain this repository's spec. Read AGENTS.md, the sync skill it points to, and CONTRIBUTING.md, and follow them.
 Below is the report from \`npm run check\`. Resolve every line marked ✗ by editing files, mainly spec/*.md:
 - a story with no rules: write the ### rules it requires, in prose and Quint;
 - a rule that is not formalized: write Quint that says what its prose says;
@@ -514,17 +530,26 @@ Below is the report from \`npm run check\`. Resolve every line marked ✗ by edi
 - a trace that breaks a rule, or a transition that cannot be proved: add the missing rule or guard, in prose and
   Quint, under the story it belongs to, and say in its prose that the checks discovered it.
 Change src/ or test/ only if the types or tests stage requires it. Never edit gen/ or *.lock.json, never weaken an
-existing rule, and do not run any commands: the check is rerun for you after you finish.
-End with three short lists: rules added, rules discovered by the checks, rules changed.
+existing rule, and never run \`npm run accept\`.
 
 `;
+
+/** Both halves of every rule the report says has moved, so that whoever reconciles them compares rather than guesses. */
+function movedRules(root: string, report: string): string {
+  const moved = readSpecs(root).flatMap((spec) => spec.rules).flatMap((r) => {
+    const at = report.indexOf(`  ${r.key}\n`);
+    const status = at < 0 ? null : report.slice(at + r.key.length + 3).match(/^ +(prose changed|model changed|prose and model both changed)/)?.[1];
+    return status ? [`RULE "${r.key}" (${status})\nits prose now:\n${r.prose.trim() || "(only the heading)"}\nits Quint now:\n${r.code.trim()}\nEND RULE`] : [];
+  });
+  return moved.length ? `\n\nThe rules that changed, both halves:\n\n${moved.join("\n\n")}` : "";
+}
 
 /**
  * Check, give what fails to an agent, and repeat until only a human's sign-off
  * is left. The agent translates; \`npm run accept\` remains the person's decision.
  */
 async function sync(root: string): Promise<boolean> {
-  let agents = process.env.SPEC_AGENT ? [process.env.SPEC_AGENT.split(" ")] : DEFAULT_AGENTS;
+  let agents = process.env.SPEC_AGENT ? [process.env.SPEC_AGENT.split(" ")] : [tool("agent-lookahead")];
   for (let round = 1; round <= ROUNDS; round++) {
     const lines: string[] = [];
     if (await check(root, (l) => lines.push(l))) {
@@ -541,24 +566,18 @@ async function sync(root: string): Promise<boolean> {
       return true;
     }
     console.log(`${report}\n\n--- round ${round}: ${failed.join(", ")} need attention; asking the agent ---`);
-    // Show both halves of every rule that moved, so the agent compares them rather than guessing.
-    const moved = readSpecs(root).flatMap((spec) => spec.rules).flatMap((r) => {
-      const at = report.indexOf(`  ${r.key}\n`);
-      const status = at < 0 ? null : report.slice(at + r.key.length + 3).match(/^ +(prose changed|model changed|prose and model both changed)/)?.[1];
-      return status ? [`RULE "${r.key}" (${status})\nits prose now:\n${r.prose.trim() || "(only the heading)"}\nits Quint now:\n${r.code.trim()}\nEND RULE`] : [];
-    });
-    const input = BRIEF + report + (moved.length ? `\n\nThe rules that changed, both halves:\n\n${moved.join("\n\n")}` : "");
+    const input = BRIEF + report + movedRules(root, report);
     for (;;) {
       const [cmd, ...args] = agents[0];
       const agent = spawnSync(cmd, args, { cwd: root, encoding: "utf8", input, stdio: ["pipe", "inherit", "inherit"] });
       if (agent.status === 0) break;
-      if (agents.length === 1) throw new Error(`no agent could run (last tried: ${path.basename(cmd)}); sign in to Claude Code, start \`ollama serve\`, or set SPEC_AGENT to a command that reads a prompt on stdin and may edit files`);
+      if (agents.length === 1) throw new Error(`the agent command failed (${path.basename(cmd)}); SPEC_AGENT must be a command that reads a prompt on stdin and may edit files`);
       agents = agents.slice(1);
       const named = (agent: string[]) => path.basename(agent.at(-1)!.includes("agent-") ? agent.at(-1)! : agent[0], path.extname(agent.at(-1)!));
       console.log(`--- ${named([cmd, ...args])} could not run; using ${named(agents[0])} instead ---`);
     }
   }
-  console.log(`not synced after ${ROUNDS} rounds; run \`npm run check\` to see what is left`);
+  console.log(`not synced after ${ROUNDS} rounds. What is left needs the agent in your session (the sync skill) or a person; \`npm run brief\` shows it`);
   return false;
 }
 
@@ -575,13 +594,24 @@ if (import.meta.main) {
     else if (command === "accept") process.exitCode = (await check(root, console.log, process.argv[3] === "unproved" ? "unproved" : "reviews")) ? 0 : 1;
     else if (command === "sync") process.exitCode = (await sync(root)) ? 0 : 1;
     else if (command === "brief") {
-      // What `sync` would hand to the agent, for pasting into any agent by hand.
+      // The work order for the agent in the session: the report, and both halves of every rule that moved.
       const lines: string[] = [];
-      await check(root, (l) => lines.push(l));
-      console.log(BRIEF + lines.join("\n"));
+      const ok = await check(root, (l) => lines.push(l));
+      const report = lines.join("\n");
+      console.log(ok ? `${report}\n\nEverything is in step.` : BRIEF + report + movedRules(root, report));
+      process.exitCode = ok ? 0 : 1;
+    } else if (command === "init") {
+      // Give a project that uses the package the same operating procedure.
+      const pkg = path.join(import.meta.dirname, "..");
+      const skill = path.join(root, ".claude/skills/sync/SKILL.md");
+      fs.mkdirSync(path.dirname(skill), { recursive: true });
+      fs.copyFileSync(path.join(pkg, ".claude/skills/sync/SKILL.md"), skill);
+      for (const doc of ["AGENTS.md", "CONTRIBUTING.md"]) if (!fs.existsSync(path.join(root, doc))) fs.copyFileSync(path.join(pkg, doc), path.join(root, doc));
+      fs.mkdirSync(path.join(root, "spec"), { recursive: true });
+      console.log("added .claude/skills/sync/SKILL.md, and AGENTS.md and CONTRIBUTING.md where there were none");
     }
     else {
-      console.error("usage: spec.ts gen | check | sync | brief | accept");
+      console.error("usage: spec gen | check | brief | accept | accept unproved | sync | init");
       process.exitCode = 2;
     }
   } catch (e) {

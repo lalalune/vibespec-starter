@@ -11,17 +11,17 @@ An order has a **status**, the number of **units** in it, the amount **due**
 and the amount **paid** so far.
 
 ```quint
-type Status = Draft | Pending | Paid | Cancelled
+type Status = Draft | Pending | OnHold | Paid | Cancelled
 type Order = { status: Status, units: int, due: int, paid: int }
 ```
 
 ### Unit price and order size
 
-Every unit costs the same, and one order holds at most 40 units.
+Every unit costs the same, and one order holds at most 60 units.
 
 ```quint
 pure val unitPrice = 5
-pure val maxUnits = 40
+pure val maxUnits = 60
 ```
 
 ## Story: Fill a draft
@@ -213,4 +213,41 @@ pure def neverMoreThanPaid(o: Order, amount: int): bool = amount <= o.paid
 ```quint
 pure def canEmpty(o: Order): bool = o.status == Draft and o.units > 0
 pure def empty(o: Order): Order = { ...o, units: 0, due: 0 }
+```
+
+## Story: Put an order on hold
+
+> As shop staff, I want to put a pending order on hold while stock is checked
+> and release it afterwards, so that no payment is taken for something we may
+> not be able to send.
+
+### Staff can put a pending order on hold and release it again
+
+A released order is pending, exactly as it was.
+
+```quint
+pure def canHold(o: Order): bool = o.status == Pending
+pure def hold(o: Order): Order = { ...o, status: OnHold }
+
+pure def canRelease(o: Order): bool = o.status == OnHold
+pure def release(o: Order): Order = { ...o, status: Pending }
+
+pure def sometimesOnHold(o: Order): bool = o.status == OnHold
+```
+
+### No payment is taken while an order is on hold
+
+```quint
+pure def stepNothingIsPaidOnHold(before: Order, after: Order): bool =
+  before.status == OnHold implies after.paid == before.paid
+```
+
+### An order on hold still has a balance
+
+Discovered by the proof: nothing said that an order on hold is unpaid, so
+releasing one could not be shown to leave a pending order with a balance.
+
+```quint
+pure def alwaysOnHoldHasBalance(o: Order): bool =
+  o.status == OnHold implies o.paid < o.due
 ```

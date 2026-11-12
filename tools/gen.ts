@@ -19,6 +19,11 @@ export interface Model {
   sometimes: string[];
   steps: string[];
   laws: Law[];
+  /** A value from a Quint trace (ITF) as the generated TypeScript represents it. */
+  decode: (type: Json, itf: any) => any;
+  /** The same value with every set in a fixed order, so that two sets compare equal however they were built. */
+  canon: (type: Json, value: any) => any;
+  stateType: Json | undefined;
   /** What importers may refer to. */
   exports: { types: string[]; values: string[]; variants: string[]; typedefs: Json[] };
   ts: string;
@@ -50,11 +55,26 @@ const BINARY: Record<string, [string, number]> = {
   ilt: ["<", COMPARE], ilte: ["<=", COMPARE], igt: [">", COMPARE], igte: [">=", COMPARE],
   eq: ["===", EQ], neq: ["!==", EQ],
 };
+/** Quint's set operations, as array expressions that keep the "no value twice" property. */
+type SetArgs = { a: string; b: string; el: string; out: string };
+const SET_OPS: Record<string, (x: SetArgs) => string> = {
+  contains: ({ a, b }) => `${a}.includes(${b})`,
+  in: ({ a, b }) => `${a}.includes(${b})`,
+  size: ({ a }) => `${a}.length`,
+  union: ({ a, b, el }) => `[...${a}, ...${b}.filter((set_x: ${el}) => !${a}.includes(set_x))]`,
+  intersect: ({ a, b, el }) => `${a}.filter((set_x: ${el}) => ${b}.includes(set_x))`,
+  exclude: ({ a, b, el }) => `${a}.filter((set_x: ${el}) => !${b}.includes(set_x))`,
+  subseteq: ({ a, b, el }) => `${a}.every((set_x: ${el}) => ${b}.includes(set_x))`,
+  filter: ({ a, b }) => `${a}.filter(${b})`,
+  forall: ({ a, b }) => `${a}.every(${b})`,
+  exists: ({ a, b }) => `${a}.some(${b})`,
+  map: ({ a, b, out }) => `${a}.map(${b}).reduce((set_acc: ${out}[], set_x: ${out}) => set_acc.includes(set_x) ? set_acc : [...set_acc, set_x], ([] as ${out}[]))`,
+};
 const RESERVED = ["init", "step", "inv", "enabled", "isEvent", "Event", "initialHolds"];
 /** Values the simulator tries for a parameter of each scalar type (the proof covers all values). */
 const SAMPLES: Record<string, string> = { int: "(-1).to(6)", bool: "Set(true, false)", str: 'Set("", "a", "b")' };
 // Words that cannot be used as names in the generated TypeScript or its harness.
-const JS_WORDS = "break case catch class const continue debugger default delete do else enum export extends false finally for function if import in instanceof new null return super switch this throw true try typeof var void while with yield let static await state prev moved lawsHold".split(" ");
+const JS_WORDS = "break case catch class const continue debugger default delete do else enum export extends false finally for function if import in instanceof new null return super switch this throw true try typeof var void while with yield let static await state prev moved allowed lawsHold".split(" ");
 
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
 const fail = (msg: string): never => { throw new Error(msg); };
@@ -100,28 +120,37 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
   const shape = (t0: Json): string => {
     const t = resolve(t0);
     if (t.kind === "rec") return `{${fields(t).map((f) => `${f.fieldName}:${shape(f.fieldType)}`).sort()}}`;
-    if (t.kind === "sum") return `<${fields(t).map((f) => f.fieldName).sort()}>`;
+    if (t.kind === "sum") return `<${fields(t).map((f) => f.fieldName + (payload(f) ? shape(payload(f)) : "")).sort()}>`;
     if (t.kind === "list") return `[${shape(t.elem)}]`;
+    if (t.kind === "set") return `(${shape(t.elem)})`;
     return t.kind;
   };
+  /** The record a variant carries, if it carries one. */
+  function payload(variant: Json): Json | undefined {
+    const t = variant.fieldType;
+    if (t.kind === "tup" && !(t.fields.fields ?? []).length) return undefined;
+    return resolve(t).kind === "rec" ? resolve(t) : fail(`variant ${variant.fieldName}: a variant may carry a record, as in ${variant.fieldName}({ amount: int }), and nothing else`);
+  }
+  /** A sum type is a plain string union unless some variant carries data; then it is a tagged union. */
+  const tagged = (t: Json) => t.kind === "sum" && fields(t).some((f) => payload(f));
   const PRIMITIVE: Record<string, string> = { int: "number", bool: "boolean", str: "string" };
   const tsType = (t: Json): string => {
     if (t.kind === "const") return t.name;
     if (PRIMITIVE[t.kind]) return PRIMITIVE[t.kind];
-    if (t.kind === "list") return `${tsType(t.elem)}[]`;
+    if (t.kind === "list" || t.kind === "set") return `${tsType(t.elem)}[]`;
     const named = typedefs.find((d) => shape(d.type) === shape(t));
     return named ? named.name : fail(`unsupported type ${t.kind}: name it with \`type\`, or extend tsType in tools/gen.ts`);
   };
   const typeOf = (id: number): Json => ir.types[id]?.type ?? fail(`no inferred type for expression ${id}`);
-  const isScalar = (t: Json) => ["int", "bool", "str", "sum"].includes(resolve(t).kind);
+  const isScalar = (t: Json) => ["int", "bool", "str"].includes(resolve(t).kind) || (resolve(t).kind === "sum" && !tagged(resolve(t)));
 
   const emitTypedef = (d: Json): string => {
     const t = d.type;
-    if (t.kind === "sum") {
-      for (const f of fields(t))
-        if (fields(f.fieldType).length) fail(`${d.name}.${f.fieldName}: variants with payloads are not supported; use a record with a tag field`);
-      return `export type ${d.name} = ${fields(t).map((f) => JSON.stringify(f.fieldName)).join(" | ")};`;
+    if (tagged(t)) {
+      const variant = (f: Json) => `{ ${[`tag: ${JSON.stringify(f.fieldName)}`, ...(payload(f) ? fields(payload(f)).map((x: Json) => `${x.fieldName}: ${tsType(x.fieldType)}`) : [])].join("; ")} }`;
+      return `export type ${d.name} =\n${fields(t).map((f) => `  | ${variant(f)}`).join("\n")};`;
     }
+    if (t.kind === "sum") return `export type ${d.name} = ${fields(t).map((f) => JSON.stringify(f.fieldName)).join(" | ")};`;
     if (t.kind === "rec")
       return `export interface ${d.name} { ${fields(t).map((f) => `${f.fieldName}: ${tsType(f.fieldType)}`).join("; ")} }`;
     return `export type ${d.name} = ${tsType(t)};`;
@@ -130,6 +159,11 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
   // --- expressions ---------------------------------------------------------
   // `ex(e, min)` prints `e`, parenthesised only if it binds looser than `min`.
   const flat = (e: Json, op: string): Json[] => (e.kind === "app" && e.opcode === op ? e.args.flatMap((x: Json) => flat(x, op)) : [e]);
+  /** Names that stand for something else while a `match` arm is printed: the arm's binder is the matched value. */
+  const renamed = new Map<string, string>();
+  const matchedAs = new Map<string, string>(); // binder -> the variant its arm matched
+  const ownerOf = (variant: string): Json =>
+    typedefs.find((d) => d.type.kind === "sum" && fields(d.type).some((f: Json) => f.fieldName === variant)) ?? fail(`unknown variant ${variant}`);
   let nesting = 0;
   const ex = (e: Json, min = ARROW): string => {
     nesting++;
@@ -157,7 +191,12 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
         return [String(e.value), e.value < 0 ? UNARY : ATOM];
       case "bool": return [String(e.value), ATOM];
       case "str": return [JSON.stringify(e.value), ATOM];
-      case "name": return [variants.has(e.name) ? JSON.stringify(e.name) : e.name, ATOM];
+      case "name": {
+        if (renamed.has(e.name)) return [renamed.get(e.name)!, ATOM];
+        if (!variants.has(e.name)) return [e.name, ATOM];
+        const owner = ownerOf(e.name);
+        return [tagged(owner.type) ? `({ tag: ${JSON.stringify(e.name)} } as ${owner.name})` : JSON.stringify(e.name), ATOM];
+      }
       case "let": return fail(`\`val ${e.opdef.name}\` must be at the top of a definition, not inside an expression`);
       case "lambda": return [arrow(e.params, e.expr), ARROW];
       case "app": break;
@@ -219,6 +258,55 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
         return [`${recv()}.reduce(${ex(a[2])}, ${ex(a[1], TERNARY)})`, ATOM];
       }
     }
+    if (variants.has(op)) {
+      // A variant that carries a record: Paid({ receipt: 7 }) is { tag: "Paid", receipt: 7 }.
+      const owner = ownerOf(op);
+      const parts: string[] = [];
+      // Updating the matched value in place: Packed({ ...x, labels: … }) inside the Packed arm keeps the tag it has.
+      let base = a[0];
+      const updates: string[] = [];
+      while (base.kind === "app" && base.opcode === "with") {
+        updates.unshift(`${base.args[1].value}: ${ex(base.args[2], TERNARY)}`);
+        base = base.args[0];
+      }
+      if (base.kind === "name" && matchedAs.get(base.name) === op)
+        return [updates.length ? `({ ...${renamed.get(base.name)}, ${updates.join(", ")} } as ${owner.name})` : renamed.get(base.name)!, ATOM];
+      if (a[0].kind !== "app" || a[0].opcode !== "Rec") fail(`${op}(…): give the record field by field, or update the value matched in the ${op} arm`);
+      for (let i = 0; i < a[0].args.length; i += 2) parts.push(`${a[0].args[i].value}: ${ex(a[0].args[i + 1], TERNARY)}`);
+      return [`({ ${[`tag: ${JSON.stringify(op)}`, ...parts].join(", ")} } as ${owner.name})`, ATOM];
+    }
+    if (op === "matchVariant") {
+      // match o { | Draft(d) => … | _ => … } becomes a chain of tests on the tag, with d standing for o itself.
+      if (a[0].kind !== "name") fail("`match` must be on a name; bind the value with `val` first");
+      const subject = ex(a[0], ATOM);
+      const isTagged = tagged(resolve(typeOf(a[0].id)));
+      const arms: { test?: string; result: string }[] = [];
+      for (let i = 1; i < a.length; i += 2) {
+        const binder = a[i + 1].params[0]?.name;
+        if (binder && binder !== "_") { renamed.set(binder, subject); matchedAs.set(binder, a[i].value); }
+        const result = ex(a[i + 1].expr, OR);
+        if (binder) { renamed.delete(binder); matchedAs.delete(binder); }
+        arms.push({ test: a[i].value === "_" ? undefined : `${subject}${isTagged ? ".tag" : ""} === ${JSON.stringify(a[i].value)}`, result });
+      }
+      const last = arms.pop()!;
+      return [arms.reduceRight((rest, arm) => `${arm.test} ? ${arm.result} : ${rest}`, last.result), arms.length ? TERNARY : OR];
+    }
+    if (SET_OPS[op]) {
+      // A set is an array that never holds the same value twice. Only simple values can be in one.
+      const t = resolve(typeOf(op === "in" ? a[1].id : a[0].id));
+      if (t.kind !== "set") return fail(`\`${op}\` is supported on sets only`);
+      if (!isScalar(t.elem)) fail("sets of records or lists are not supported; use a list");
+      const el = tsType(t.elem);
+      const [x, y] = op === "in" ? [a[1], a[0]] : [a[0], a[1]];
+      return [SET_OPS[op]({ a: ex(x, ATOM), b: y && ex(y, y.kind === "lambda" ? ARROW : ATOM), el, out: op === "map" ? tsType(resolve(typeOf(e.id)).elem) : el }), ATOM];
+    }
+    if (op === "Set") {
+      const t = resolve(typeOf(e.id));
+      if (!isScalar(t.elem)) fail("sets of records or lists are not supported; use a list");
+      const items = [...new Set(a.map((x) => ex(x, TERNARY)))];
+      if (a.some((x) => !["int", "str", "bool", "name"].includes(x.kind)) && a.length > 1) fail("Set(…) with several computed members could hold the same value twice; write Set(a).union(Set(b))");
+      return [items.length ? `[${items.join(", ")}]` : `([] as ${tsType(t.elem)}[])`, ATOM];
+    }
     if (defNames.has(op)) return [`${op}(${a.map((x) => ex(x, TERNARY)).join(", ")})`, ATOM];
     if (sampleSets.has(op)) return fail(`${op} is a sample set for the simulator and cannot be used in a definition`);
     return fail(`unsupported Quint operator \`${op}\`: extend print() in tools/gen.ts`);
@@ -277,7 +365,8 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
         fail(`${guard.name} must take the same parameters as ${d.name}`);
       return { name: d.name, params, guard: guard?.name };
     });
-  for (const g of funs.filter((d) => /^can[A-Z]/.test(d.name)))
+  // In a library, `withdraw` and `canWithdraw` are a component's functions for a machine elsewhere to build on.
+  for (const g of initial ? funs.filter((d) => /^can[A-Z]/.test(d.name)) : [])
     if (!transitions.some((t) => t.guard === g.name)) fail(`${g.name}: no transition named ${g.name[3].toLowerCase()}${g.name.slice(4)}`);
 
   // --- TypeScript ----------------------------------------------------------
@@ -331,10 +420,12 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
     if (t.kind === "int") return `Number.isSafeInteger(${v})`;
     if (t.kind === "bool") return `typeof ${v} === "boolean"`;
     if (t.kind === "str") return `typeof ${v} === "string"`;
-    if (t.kind === "sum") return `(${fields(t).map((f) => `${v} === ${JSON.stringify(f.fieldName)}`).join(" || ")})`;
     const x = `x${depth}`;
-    if (t.kind === "list") return `Array.isArray(${v}) && ${v}.every((${x}: any) => ${wellFormed(x, t.elem, depth + 1)})`;
-    if (t.kind === "rec") return `typeof ${v} === "object" && ${v} !== null && ${fields(t).map((f) => wellFormed(`(${v} as any).${f.fieldName}`, f.fieldType, depth + 1)).join(" && ")}`;
+    const record = (r: Json) => fields(r).map((f) => wellFormed(`(${v} as any).${f.fieldName}`, f.fieldType, depth + 1));
+    if (tagged(t)) return `typeof ${v} === "object" && ${v} !== null && (${fields(t).map((f) => [`(${v} as any).tag === ${JSON.stringify(f.fieldName)}`, ...(payload(f) ? record(payload(f)!) : [])].join(" && ")).join(" || ")})`;
+    if (t.kind === "sum") return `(${fields(t).map((f) => `${v} === ${JSON.stringify(f.fieldName)}`).join(" || ")})`;
+    if (t.kind === "list" || t.kind === "set") return `Array.isArray(${v}) && ${v}.every((${x}: any) => ${wellFormed(x, t.elem, depth + 1)})`;
+    if (t.kind === "rec") return `typeof ${v} === "object" && ${v} !== null && ${record(t).join(" && ")}`;
     return fail(`a parameter of type ${t.kind} is not supported`);
   };
   const call = (t: Transition, fn: string) => `${fn}(${[sVar, ...t.params.map((p) => `e.${p.name}`)].join(", ")})`;
@@ -380,7 +471,8 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
     if (sampleSets.has(`${p.name}Values`)) return `M::${p.name}Values`;
     const byType = (t0: Json): string => {
       const t = resolve(t0);
-      if (t.kind === "sum") return `Set(${fields(t).map((f) => `M::${f.fieldName}`).join(", ")})`;
+      if (t.kind === "sum" && !tagged(t)) return `Set(${fields(t).map((f) => `M::${f.fieldName}`).join(", ")})`;
+      if (t.kind === "set") return `${byType(t.elem)}.powerset()`;
       if (t.kind === "list") {
         const of = byType(t.elem);
         return `Set(List()).union(${of}.map(x => List(x))).union(tuples(${of}, ${of}).map(p => List(p._1, p._2)))`;
@@ -391,34 +483,68 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
   };
   const picks = (ps: Param[]) => ps.map((p) => `nondet ${p.name} = ${sample(p)}.oneOf() `).join("");
   const braces = (ps: Param[], inner: string) => (ps.length ? `{ ${picks(ps)}${inner} }` : inner);
-  const frame = (changes: string[]) => `all { ${changes.join(", ")} }`;
-  const action = (t: Transition) => {
-    const args = ["state", ...t.params.map((p) => p.name)].join(", ");
-    return `  action ${t.name} = ${braces(t.params, frame([...(t.guard ? [`M::${t.guard}(${args})`] : []), `state' = M::${t.name}(${args})`, `prev' = state`, `moved' = true`, `lawsHold' = lawsHold`]))}`;
-  };
+  // Harness variables: the state, the state before the last event, whether an event has happened, whether the
+  // last law tried held, and what the guard said the last time one was only asked (see `ask_` below).
+  const vars = [...(state ? ["state", "prev", "moved", "allowed"] : []), "lawsHold"];
+  /** An action body: the given conditions and assignments, with every other variable left as it is. */
+  const frame = (conditions: string[], set: Record<string, string>) =>
+    `all { ${[...conditions, ...vars.map((v) => `${v}' = ${set[v] ?? v}`)].join(", ")} }`;
+  const argsOf = (t: Transition) => ["state", ...t.params.map((p) => p.name)].join(", ");
+  const action = (t: Transition) =>
+    `  action ${t.name} = ${braces(t.params, frame(t.guard ? [`M::${t.guard}(${argsOf(t)})`] : [], { state: `M::${t.name}(${argsOf(t)})`, prev: "state", moved: "true" }))}`;
+  // Asking a guard without taking the event: this is how refused events get into the traces, so that replay can
+  // check that TypeScript refuses exactly what Quint refuses.
+  const ask = (t: Transition) =>
+    `  action ask_${t.name} = ${braces(t.params, frame([], { allowed: `M::${t.guard}(${argsOf(t)})` }))}`;
   const lawAction = (l: Law) =>
-    `  action ${l.name} = ${braces(l.params, frame([`lawsHold' = M::${l.name}(${l.params.map((p) => p.name).join(", ")})`, ...(state ? [`state' = state`, `prev' = prev`, `moved' = moved`] : [])]))}`;
+    `  action ${l.name} = ${braces(l.params, frame([], { lawsHold: `M::${l.name}(${l.params.map((p) => p.name).join(", ")})` }))}`;
+  const guarded = transitions.filter((t) => t.guard);
+  const actions = [...transitions.map((t) => t.name), ...guarded.map((t) => `ask_${t.name}`), ...laws.map((l) => l.name)];
   const harness = [
     `// GENERATED from ${source}. Drives the spec's transitions and laws for simulation.`,
     `module ${name}_run {`,
     `  import ${name} as M from "./${name}"`,
-    ...(state ? [`  var state: M::${state}`, `  var prev: M::${state}`, `  var moved: bool`] : []),
+    ...(state ? [`  var state: M::${state}`, `  var prev: M::${state}`, `  var moved: bool`, `  var allowed: bool`] : []),
     `  var lawsHold: bool`,
-    `  action init = ${frame([`lawsHold' = true`, ...(state ? [`state' = M::initial`, `prev' = M::initial`, `moved' = false`] : [])])}`,
+    `  action init = ${frame([], { state: "M::initial", prev: "M::initial", moved: "false", allowed: "true", lawsHold: "true" })}`,
     ...transitions.map(action),
+    ...guarded.map(ask),
     ...laws.map(lawAction),
-    `  action step = any { ${[...transitions.map((t) => t.name), ...laws.map((l) => l.name), ...(transitions.length + laws.length ? [] : [`lawsHold' = lawsHold`])].join(", ")} }`,
+    `  action step = any { ${(actions.length ? actions : [frame([], {})]).join(", ")} }`,
     `  val inv = and { lawsHold, ${[...always.map((a) => `M::${a}(state)`), ...steps.map((r) => `(not(moved) or M::${r}(prev, state))`), "true"].join(", ")} }`,
     ...sometimes.map((w) => `  val never_${w} = not(M::${w}(state))`),
     `}`,
     ``,
   ].join("\n");
 
+  const decode = (t0: Json, v: any): any => {
+    const t = resolve(t0);
+    if (t.kind === "int") return Number(v["#bigint"] ?? v);
+    if (t.kind === "list") return v.map((x: any) => decode(t.elem, x));
+    if (t.kind === "set") return v["#set"].map((x: any) => decode(t.elem, x));
+    if (t.kind === "rec") return Object.fromEntries(fields(t).map((f) => [f.fieldName, decode(f.fieldType, v[f.fieldName])]));
+    if (tagged(t)) {
+      const carried = payload(fields(t).find((f) => f.fieldName === v.tag)!);
+      return { tag: v.tag, ...(carried ? decode(carried, v.value) : {}) };
+    }
+    return t.kind === "sum" ? v.tag : v;
+  };
+  const canon = (t0: Json, v: any): any => {
+    const t = resolve(t0);
+    if (t.kind === "list") return v.map((x: any) => canon(t.elem, x));
+    if (t.kind === "set") return [...v].sort((x, y) => (JSON.stringify(x) < JSON.stringify(y) ? -1 : 1));
+    if (t.kind === "rec") return Object.fromEntries(fields(t).map((f) => [f.fieldName, canon(f.fieldType, v[f.fieldName])]));
+    if (tagged(t)) {
+      const carried = payload(fields(t).find((f) => f.fieldName === v.tag)!);
+      return carried ? { tag: v.tag, ...canon(carried, v) } : v;
+    }
+    return v;
+  };
   const exports = {
     types: localTypedefs.map((d) => d.name as string),
     values: code.map((d) => d.name as string),
     variants: [...localVariants],
     typedefs: localTypedefs,
   };
-  return { name, imports, state, transitions, always, sometimes, steps, laws, exports, ts: out.join("\n"), harness };
+  return { name, imports, state, transitions, always, sometimes, steps, laws, exports, ts: out.join("\n"), harness, decode, canon, stateType: initial && typeOf(initial.id) };
 }

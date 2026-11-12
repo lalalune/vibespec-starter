@@ -86,7 +86,7 @@ td.num { font-variant-numeric: tabular-nums; }
   <h1>One spec, proved software</h1>
   <p class="lede">How user stories become formally verified TypeScript with one hand-written file, what alternatives were weighed, and what a working toy shows about the approach.</p>
 
-  <p>The goal was a system where stories, rules, formal models and code are different views of one truth, kept in step, with as little to maintain as possible. The result is a 204-line Markdown file that holds an order-checkout application's stories, rules and Quint model, and about 1,000 lines of tooling that turn it into a TypeScript module whose every transition is proved, by Dafny, to preserve every rule. The pipeline runs in about 15 seconds on a quiet machine.</p>
+  <p>The goal was a system where stories, rules, formal models and code are different views of one truth, kept in step, with as little to maintain as possible. The result is a 204-line Markdown file that holds an order-checkout application's stories, rules and Quint model, and about 1,200 lines of tooling that turn it into a TypeScript module whose every transition is proved, by Dafny, to preserve every rule. The pipeline runs in about 15 seconds on a quiet machine.</p>
 
   <h2>The design in one picture</h2>
   <figure class="wide">
@@ -292,8 +292,9 @@ export function step(s: Order, e: Event): Order</code></pre>
   <p>A model element with no rule cannot exist, because Quint is only read from blocks under a rule heading. That makes the sync structural in one direction and tracked in the other, with no IDs to maintain.</p>
 
   <h2>One session, both directions</h2>
-  <p>The check detects and an agent translates, and <code>npm run sync</code> joins the two. It runs the check, hands every failure to an agent with a fixed brief, reruns the check, and repeats for up to five rounds until only a person's sign-off is left. A story with no rules becomes rules. A rule with no Quint gets its Quint. A rule whose model moved gets its prose updated, and the reverse. A counterexample or an unprovable transition becomes a new rule marked as discovered. <code>sync</code> never accepts on the person's behalf.</p>
-  <p>The steps below are a real run on the example, adding a story the first version did not have. I made each translation myself, following the same procedure the brief gives an agent. The output is what the tool printed.</p>
+  <p>The check detects; the agent working in the session translates. That agent, Claude Code or any other that reads AGENTS.md, follows a skill kept in the repository, <code>.claude/skills/sync/SKILL.md</code>. It runs <code>npm run brief</code>, which checks everything and prints what is out of step, makes each translation, and repeats until only a person's sign-off is left. A story with no rules becomes rules. A rule with no Quint gets its Quint. A rule whose model moved gets its prose updated, and the reverse. A counterexample or an unprovable transition becomes a new rule marked as discovered. Nothing else has to be installed or signed in, and the agent never accepts on the person's behalf.</p>
+  <p>An earlier design had the tool start an agent as a separate program. That made syncing depend on a second signed-in tool, which it should not. That command, <code>npm run sync</code>, remains for unattended use only.</p>
+  <p>The steps below are real runs on the example. The output is what the tool printed.</p>
   <h3>Story to rules to model</h3>
   <p>A story is added as prose only: a shopper wants to take items back out of an order before submitting it.</p>
 <pre><code><span class="bad">✗ review</span>    1 item(s) to reconcile, then run `npm run accept`
@@ -325,8 +326,26 @@ export function step(s: Order, e: Event): Order</code></pre>
     spec/order.md:38  Story: Fill a draft / Items can only be added to a draft
       model changed: update the prose to match, or confirm it already does</code></pre>
   <p>The agent rewrites both sentences to mention the limit and renames the first heading to "Unit price and order size". The rename shows up as one rule new and one removed, and <code>accept</code> records them.</p>
+  <h3>A sync by the skill, start to finish</h3>
+  <p>With the skill in place I ran one myself. Two things were changed by hand, as a person would: a story was added in prose only (staff can put a pending order on hold while stock is checked, and release it), and <code>maxUnits</code> was changed from 40 to 60 in the Quint.</p>
+<pre><code><span class="c"># round 1</span>
+<span class="bad">✗ review</span>    2 item(s) to reconcile
+    spec/order.md:218  Story: Put an order on hold
+      story has no rules: write one ### rule for each thing the story requires
+    spec/order.md:18  Domain / Unit price and order size
+      model changed: update the prose to match, or confirm it already does
+
+<span class="c"># round 2, after writing the rules and their Quint, and updating the prose to "at most 60 units"</span>
+<span class="ok">✓ always</span>    no rule broken in 10000 simulated traces
+<span class="bad">✗ proof</span>     order.ts: 12 proved, 2 not proved.
+      (inv(o) ==> canRelease(o) ==> alwaysPendingHasBalance(release(o)))
+
+<span class="c"># round 3, after adding the rule the proof called for</span>
+<span class="ok">✓ proof</span>     order.ts: 14 obligations proved for all states and inputs
+<span class="bad">✗ review</span>    5 item(s) to reconcile, then run `npm run accept`</code></pre>
+  <p>The story became three rules: staff can hold and release a pending order; nothing is paid while it is on hold, which is a rule about each step; and an order can be on hold. Simulation passed, but the proof could not show that releasing an order leaves it with a balance, because nothing said that an order on hold is unpaid. That became a fourth rule, "An order on hold still has a balance", marked "Discovered by the proof". The five items left are for the person's sign-off, and I have not accepted them.</p>
   <h3>The same thing, unattended</h3>
-  <p>The steps above were then repeated by <code>npm run sync</code> itself, with a model doing the translating and nobody at the keyboard. Three hosted agent CLIs on the machine were unusable (two not signed in, one without model access), so the agent was a local 7-billion-parameter model, <code>qwen2.5:7b</code> under Ollama, through a small adapter that ships in <code>tools/agent-ollama.ts</code>. A model that small is close to the worst case for an agent, which makes it a fair test of the guardrails.</p>
+  <p>Earlier, before the skill, the same loop was run by <code>npm run sync</code> with a model doing the translating and nobody at the keyboard. Three hosted agent CLIs on the machine were unusable (two not signed in, one without model access), so the agent was a local 7-billion-parameter model, <code>qwen2.5:7b</code> under Ollama, through a small adapter that ships in <code>tools/agent-ollama.ts</code>. A model that small is close to the worst case for an agent, which makes it a fair test of the guardrails.</p>
   <p><strong>Run 1: a story to rules, and a model edit back to prose.</strong> A "Reopen a cancelled order" story was added as two lines of prose, and <code>maxUnits</code> was changed from 100 to 50 in the Quint by hand. In one round the model wrote <code>canReopen</code> and <code>reopen</code>, and rewrote the prose of the edited rule from "at most 100 units" to "at most 50 units". Every stage passed, with the sixth transition proved, and sync stopped for sign-off.</p>
   <p><strong>Run 2: the model finds a missing rule, and the agent adds it.</strong> A "Take back a payment" story was added as prose.</p>
 <pre><code>--- round 1: review need attention; asking the agent ---
@@ -558,18 +577,21 @@ synced: read the changes to spec/ (git diff), then run `npm run accept` to sign 
   <p>The specs covered the rules of a 5,500-line application in about 700 lines, because Slack, HTTP and storage are not rules. A large codebase would be many such specs, one per area with a life cycle, with libraries beneath them. Some of what that needs is built and some is not:</p>
   <ul>
     <li><strong>Built:</strong> specs are checked in dependency order; proof cost is per spec; assurance is reported per obligation in three levels (proved, simulated and accepted, tested shell).</li>
-    <li><strong>Not built:</strong> every check reruns every spec, where a large project would want only what changed and what depends on it; and one state machine cannot yet observe another, so a rule that spans two machines has to be stated in a third spec that contains both.</li>
+    <li><strong>Built since:</strong> proof results are kept under a fingerprint of a spec's generated text and everything it imports, so only what changed is proved again; and a rule that spans two machines can be stated and proved in a machine built from a shared component.</li>
+    <li><strong>Not built:</strong> simulation is rerun for every spec on every check (about a second each), and two independent machines cannot observe each other.</li>
     <li><strong>Not tried:</strong> anything near that size. The largest thing these tools have modelled is the 700 lines above.</li>
   </ul>
 
   <h2>Limits</h2>
   <ul>
-    <li><strong>The Quint subset is still a subset.</strong> Integers, booleans, strings, nested records, lists and payload-free sum types. No sets, maps, recursion or sum types with data, so the "data that exists only in some states" style of typed state is not expressible. Anything else is refused by name, never approximated. Each new operator is one case in the printer, but proofs over collections will need hand-written Dafny lemmas, which this toy does not exercise.</li>
+    <li><strong>The Quint subset is still a subset.</strong> Integers, booleans, strings, nested records, lists, sets of simple values, and sum types with or without data, so a state can carry only what is known at each stage. Not supported: maps, because a lookup of a missing key has no total translation (use a list of records with a key field), and recursion, which Quint itself does not have. Anything else is refused by name, never approximated. Each new operator is one case in the printer, but proofs over collections will need hand-written Dafny lemmas, which this toy does not exercise.</li>
     <li><strong>Half the obligations of a real model are simulated, not proved.</strong> The ledger makes that visible and stops it growing unnoticed; it does not make it smaller.</li>
+    <li><strong>Rules across machines need a containing machine.</strong> A component (a library with a type, its guards and its functions) can be held twice in one machine's state, and that machine can state and prove a rule spanning both. Two independent machines still cannot observe each other.</li>
     <li><strong>One state machine per spec.</strong> Interacting machines, concurrency and time are where Quint is strongest, and the generated harness does not use that strength. A spec could opt out of the generated harness and bring its own actions.</li>
     <li><strong>Simulation samples.</strong> Event parameters are tried from −1 to 6. The proof covers all values for the <code>always</code> rules; <code>quint verify</code> can check the model exhaustively to a depth.</li>
-    <li><strong>The generator is trusted between samples.</strong> Replay compares TypeScript with Quint on 50 simulated traces and every witness, and only for events the model allows. It is a test of the generator, not a proof of it.</li>
-    <li><strong>The translating agent is external.</strong> <code>sync</code> calls whatever command <code>SPEC_AGENT</code> names, and the quality of the rules it writes is that agent's. It has been run end to end only with a small local model. <code>sync</code> tries Claude Code first, but that CLI was signed out on the machine used, so that path has only been seen to fail over cleanly. The checks bound the damage: a wrong translation either fails a stage or waits in <code>review</code> for a person.</li>
+    <li><strong>The generator is trusted between samples.</strong> Replay compares TypeScript with Quint on 50 simulated traces and every witness: every state, every law tried, and every event the model allowed or refused. It is a test of the generator, not a proof of it, and nothing short of proving the translator would change that.</li>
+    <li><strong>Translation quality is the session agent's.</strong> The checks bound the damage, and the person signs off, but a rule that is wrong in both halves in the same way passes every check.</li>
+    <li><strong>Unattended sync is weaker than a session.</strong> <code>sync</code> calls whatever command <code>SPEC_AGENT</code> names, and the quality of the rules it writes is that agent's. It has been run end to end only with a small local model. <code>sync</code> tries Claude Code first, but that CLI was signed out on the machine used, so that path has only been seen to fail over cleanly. The checks bound the damage: a wrong translation either fails a stage or waits in <code>review</code> for a person.</li>
     <li><strong>Agreement of prose and Quint is a judgement.</strong> The ledger records that the comparison was made. LemmaScript's claimcheck tool could add an automated second opinion.</li>
   </ul>
   <p class="note">The repository's README covers the process, AGENTS.md is the operating procedure for agents, and CONTRIBUTING.md is the reference for writing specs and using the generated code.</p>

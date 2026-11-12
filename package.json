@@ -14,7 +14,8 @@
     "selftest": "node --test tools/selftest.ts",
     "build": "tsc -p tsconfig.build.json",
     "prepare": "npm run build && node tools/spec.ts gen",
-    "check:alpha": "cd examples/alpha-energy && node ../../tools/spec.ts check"
+    "check:alpha": "cd examples/alpha-energy && node ../../tools/spec.ts check",
+    "brief": "node tools/spec.ts brief"
   },
   "version": "0.1.0",
   "description": "Stories, rules and a Quint model in one Markdown file; verified TypeScript out.",
@@ -23,6 +24,7 @@
   },
   "files": [
     "dist",
+    ".claude/skills",
     "README.md",
     "AGENTS.md",
     "CONTRIBUTING.md"

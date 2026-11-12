@@ -62,6 +62,12 @@ machine. Another spec uses it with `import kernel.* from "./kernel"` in a
 `quint` block, and the generated TypeScript imports `gen/kernel.ts` the same
 way. Only libraries can be imported, and imports cannot form a circle.
 
+A library can be a **component**: a type with its guards and functions, such
+as an account with `canWithdraw` and `withdraw`, and no state of its own. A
+machine that has two accounts imports it, holds both in its state, and can
+then state a rule that spans them ("a transfer keeps the total"), which
+neither account could state alone. `tools/fixtures/bank.md` is an example.
+
 Names that are refused, with a message saying why: `init`, `step`, `inv`,
 `enabled`, `isEvent`, `Event`, `initialHolds`, `state`, TypeScript keywords
 (`delete`, `new`, …), Quint built-ins (`to`, `next`, `always`, …), a
@@ -70,11 +76,11 @@ as `alwayspaid` or `CanPay`.
 
 ### Supported Quint
 
-`int`, `bool`, `str`, records (nested as deep as you like), lists, and sum
-types whose variants carry no data; arithmetic `+ - * / %`, comparisons,
+`int`, `bool`, `str`, records (nested as deep as you like), lists, sets of
+simple values, and sum types, with or without data; arithmetic `+ - * / %`, comparisons,
 `and or not implies iff`, `if … else`, record construction, spread update and
-field access, calls to your own `pure def`s, and `val` bindings at the top of
-a definition. Integer literals must fit in 2^53.
+field access, `match`, calls to your own `pure def`s, and `val` bindings at
+the top of a definition. Integer literals must fit in 2^53.
 
 **Collections are lists**, which become arrays. A table is a list of records
 with an id field; a multi-valued cell is a list of names or numbers.
@@ -91,9 +97,21 @@ with an id field; a multi-valued cell is a list of names or numbers.
 `every`, `some`, `includes` and `listMap` are not Quint; the tool rewrites
 them into Quint's `foldl` before Quint sees the spec. Things to know:
 
-- **No sets or maps.** Quint's `Set` and `Map` have no faithful array form,
-  so they are refused. Write "no duplicates" as a rule where it matters; the
-  alpha-energy example found a real bug that a set-based model had hidden.
+- **Sets hold simple values only** (numbers, strings, booleans, plain
+  variants) and become arrays that never hold a value twice. `Set(…)`,
+  `union`, `intersect`, `exclude`, `filter`, `map`, `forall`, `exists`,
+  `contains`, `in`, `subseteq` and `size` are supported. Use a set when
+  duplicates are impossible in the real thing, and a list when they are not:
+  the alpha-energy example found a real bug that a set-based model had hidden.
+- **No maps.** A lookup of a missing key has no total translation. Use a list
+  of records with a key field, as the example's tasks are.
+- **A sum type whose variants carry records is a tagged union.**
+  `type Parcel = Packed({ weight: int }) | Lost` becomes
+  `{ tag: "Packed"; weight: number } | { tag: "Lost" }`, so each stage of a
+  life cycle can carry only what is known at that stage. Read it with
+  `match p { | Packed(x) => … | _ => … }`, on a name. Inside the `Packed` arm,
+  `Packed({ ...x, weight: 2 })` updates the value in place; a different
+  variant is built field by field.
 - **`==` compares numbers, strings, booleans and variants only.** Compare
   records field by field, and lists with `every`.
 - **Make list access total.** `xs.nth(i)` outside the list stops the
@@ -104,7 +122,7 @@ them into Quint's `foldl` before Quint sees the spec. Things to know:
   real loop is written by hand in `src/` and proved there.
 - **`/` and `%`** agree across Quint, JavaScript and Dafny only for
   non-negative numbers.
-- **No sum types with data.** Use a record with a tag field.
+- **Recursion does not exist in Quint.** See the point about loops.
 
 Anything else stops the `model` stage with the name of the construct, rather
 than being translated loosely. To add an operator, add a case to `print` in
@@ -215,50 +233,44 @@ such a package. To hand the generated code to yet another package, compile
 ## Large applications
 
 - **One spec per area**, each a few hundred lines: a state machine for each
-  thing that has a life cycle, libraries for what they share. `check` runs
-  them in dependency order and proves each one against the *definitions* of
-  what it imports, not their proofs, so the cost of a proof grows with the
-  spec, not with everything beneath it.
+  thing that has a life cycle, libraries and components for what they share.
+  `check` runs them in dependency order and proves each one against the
+  *definitions* of what it imports, not their proofs, so the cost of a proof
+  grows with the spec, not with everything beneath it.
+- **Only what changed is proved again.** A proof result is kept in
+  `.spec-cache/` under a fingerprint of the spec's generated text and of
+  everything it imports. Set `SPEC_NO_CACHE=1` to prove everything afresh.
+- **Rules that span machines** go in the machine that contains both, built
+  from components as described above.
 - **Three levels of assurance**, reported per obligation: proved for all
   inputs; simulated and accepted; and the shell, which is tested.
 - **The spec covers the rules, not the plumbing.** `examples/alpha-energy`
   models a 5,500-line application in about 700 lines of spec; its Slack,
   HTTP and Google Sheets code stays hand-written around the generated core.
 
-## Choosing the agent for `npm run sync`
+## Who syncs
 
-With no configuration, `sync` uses Claude Code in headless mode (`claude -p`).
-If that is not installed or not signed in it falls back to a local Ollama
-model, and if there is none, to a built-in agent that uses no model
-(`tools/agent-lookahead.ts`). It says which one it used. The built-in agent
+The agent working in your session does: Claude Code, or any agent that reads
+AGENTS.md. Its procedure is the `sync` skill in
+`.claude/skills/sync/SKILL.md`: run `npm run brief`, translate what the
+report asks for (story to rules, rule to Quint, a changed model back to prose,
+a counterexample to a new rule), repeat, then stop for your `npm run accept`.
+Nothing else needs to be installed or signed in. In a project that uses the
+package, `npx spec init` adds the skill and AGENTS.md.
+
+`npm run sync` is for running unattended. With no configuration it uses a
+built-in agent that needs no model (`tools/agent-lookahead.ts`). That agent
 cannot turn a story into rules. It does one thing: when a trace shows an
 event breaking an `always` rule, it adds the rule "this event is refused when
 its result would break that rule", in prose and Quint, and puts it in the
-event's guard. That repair is always sound and never insightful; reword it,
-or replace it with the real reason, at sign-off. To choose the agent yourself, set `SPEC_AGENT` to any
-command that reads the brief and check report on stdin, runs in the
-repository root, and can read and edit files:
+event's guard. The repair is always sound and never insightful; reword it, or
+replace it with the real reason, at sign-off.
 
-```sh
-SPEC_AGENT="claude -p --permission-mode acceptEdits --allowedTools Read,Edit,Write,Grep,Glob" npm run sync
-```
-
-The local [Ollama](https://ollama.com) fallback needs no account and can do
-the simpler translations. Start `ollama serve`; to use it on purpose:
-
-```sh
-SPEC_AGENT="node tools/agent-ollama.ts" npm run sync     # OLLAMA_MODEL picks the model, default qwen2.5:7b
-```
-
-That adapter asks the model one small question per item: rules for a story
-that has none, prose for a rule whose model changed (or the reverse), and a
-stronger guard for a new transition that a trace shows to be too permissive.
-A 7B model gets these right often, not always, and writes clumsy headings;
-the checks reject what is wrong and `review` leaves the wording to you. It
-does not attempt failed proofs.
-
-`node tools/spec.ts brief` prints exactly what the agent would be given, for
-pasting into an agent by hand.
+To have a program do the translating unattended, set `SPEC_AGENT` to any
+command that reads the brief on stdin, runs in the repository root, and can
+edit files. `tools/agent-ollama.ts` is one for a local
+[Ollama](https://ollama.com) model (`OLLAMA_MODEL`, default `qwen2.5:7b`); a
+model that small gets simple translations right often, not always.
 
 ## Checking harder
 

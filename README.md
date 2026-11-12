@@ -33,15 +33,12 @@ and proves two hand-written functions against that contract.
 ## Run it
 
 Needs Node 24+ and [Dafny](https://github.com/dafny-lang/dafny) 4+ on the path
-(`brew install dafny`, or see Dafny's install page). `npm run sync` also needs
-an agent to translate stories: Claude Code (`claude`, signed in) if available,
-otherwise a local Ollama model (see CONTRIBUTING.md). Without either it can
-still add rules that the checks discover.
+(`brew install dafny`, or see Dafny's install page).
 
 ```sh
 npm install        # also builds the `spec` command and generates gen/
 npm run check      # the whole pipeline, about 15 seconds on a quiet machine
-npm run sync       # check, let an agent translate whatever is out of step, repeat
+npm run brief      # the same, as a work order for the agent in your session
 npm run accept     # sign off the reconciled rules
 npm run demo       # a scripted session against the verified core
 npm run selftest   # breaks the example one way at a time and checks each break is caught
@@ -51,23 +48,23 @@ npm run selftest   # breaks the example one way at a time and checks each break 
 
 1. **Change any embodiment.** Add a story in prose, a rule in prose, or edit
    the Quint, in any order and as little as you like.
-2. **`npm run sync`.** It runs the check and hands every failure to an agent
-   with a brief: a story with no rules becomes rules, a rule with no Quint
-   gets its Quint, a rule whose model moved gets its prose updated (and the
-   reverse), and a counterexample trace or unprovable transition becomes a
-   new rule marked as discovered. With no agent available at all, a built-in
-   one still does the last of these. It repeats, for at most five rounds, until
-   only your sign-off is left. `npm run check` on its own does the detecting
-   without the translating, if you would rather translate by hand.
-3. **Sign off.** Read the diff of `spec/`, then **`npm run accept`**. It
-   records the rules as reconciled only if every other stage passes. `sync`
-   never accepts on your behalf.
+2. **The agent in your session syncs.** It follows the `sync` skill
+   ([.claude/skills/sync/SKILL.md](.claude/skills/sync/SKILL.md), linked from
+   [AGENTS.md](AGENTS.md)): it runs `npm run brief`, which checks everything
+   and prints what is out of step, and makes each translation. A story with
+   no rules becomes rules. A rule with no Quint gets its Quint. A rule whose
+   model moved gets its prose updated, and the reverse. A counterexample
+   trace or an unprovable transition becomes a new rule, marked as
+   discovered. It repeats until only your sign-off is left. No other program
+   or account is involved.
+3. **Sign off.** Read the diff of `spec/` and what the agent reports, then
+   **`npm run accept`**. It records the rules as reconciled only if every
+   other stage passes. The agent never accepts on your behalf.
 4. **Use the result.** The application imports `gen/<name>.ts`. When the
    contract changes, `tsc` points at every place the application must follow.
 
-[AGENTS.md](AGENTS.md) is this loop as an operating procedure, including what
-to do for each kind of failure. [CONTRIBUTING.md](CONTRIBUTING.md) is the
-reference for writing specs and using the generated code.
+[CONTRIBUTING.md](CONTRIBUTING.md) is the reference for writing specs and
+using the generated code.
 
 ## What `npm run check` checks
 
@@ -94,10 +91,10 @@ Keep `spec/`, `src/`, `test/` and `tools/` in git, including the lock file.
 |---|---|
 | `spec/order.md` | The source of truth: stories, rules, Quint |
 | `spec/order.lock.json` | Review ledger written by `npm run accept` |
-| `tools/spec.ts` | The pipeline: tangle, simulate, replay, prove, review, sync |
+| `.claude/skills/sync/SKILL.md` | How the agent in your session keeps stories, rules and model in step |
+| `tools/spec.ts` | The pipeline: tangle, simulate, replay, prove, review |
 | `tools/gen.ts` | Quint → TypeScript and the simulation harness |
-| `tools/agent-ollama.ts` | Optional agent for `sync` backed by a local model |
-| `tools/agent-lookahead.ts` | Built-in agent for `sync` that needs no model: writes the rule a counterexample calls for |
+| `tools/agent-lookahead.ts`, `tools/agent-ollama.ts` | For running `npm run sync` unattended: a model-free agent, and one backed by a local model |
 | `examples/alpha-energy/` | A real application modelled with the same tools, as a separate package |
 | `tools/selftest.ts` | Mutation tests of the pipeline itself |
 | `src/ledger.ts` | Hand-written logic, proved against the generated contract |
@@ -139,8 +136,8 @@ Trusted, not proved:
 - **The prose.** Whether the Quint under a rule means what the sentence above
   it says is a judgement. The `review` stage makes sure someone made it.
 - **`tools/gen.ts`.** Simulation checks the Quint model; the proof checks the
-  TypeScript. `replay` ties the two together on sampled traces only, and only
-  for events the model allows.
+  TypeScript. `replay` ties the two together on sampled traces: every state,
+  every law tried, and every event the model allowed or refused.
 - **The shell** (`src/app.ts`), LemmaScript and Dafny. The proofs treat
   `number` as an integer; the generated `isEvent` rejects anything else at the
   boundary, and arithmetic is exact up to 2^53.

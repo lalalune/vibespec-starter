@@ -9,7 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, test } from "node:test";
-import { check, expandListHelpers, gen, parseSpec, replay } from "./spec.ts";
+import { acceptReviews, check, expandListHelpers, gen, parseSpec, readSpecs, replay } from "./spec.ts";
 
 const project = path.join(import.meta.dirname, "..");
 
@@ -17,6 +17,8 @@ const project = path.join(import.meta.dirname, "..");
 async function failedStages(file: string, edit: (text: string) => string, accept = false): Promise<string[]> {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "spec-selftest-"));
   for (const dir of ["spec", "src"]) fs.cpSync(path.join(project, dir), path.join(root, dir), { recursive: true });
+  // Start from a reconciled spec, whatever is awaiting sign-off in the project itself.
+  for (const spec of readSpecs(root)) acceptReviews(root, spec);
   const target = path.join(root, file);
   const before = fs.existsSync(target) ? fs.readFileSync(target, "utf8") : "";
   const after = edit(before);
@@ -97,7 +99,7 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
   });
 
   test("Quint outside the supported subset is refused, not mistranslated", async () => {
-    const failed = await failedStages("spec/order.md", (s) => s.replace("pure val unitPrice = 5", "pure val unitPrice = Set(5).size()"));
+    const failed = await failedStages("spec/order.md", (s) => s.replace("pure val unitPrice = 5", "pure val unitPrice = 5^1"));
     assert.ok(failed.includes("model"), failed.join());
   });
 
@@ -165,7 +167,7 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     fs.cpSync(path.join(project, "spec"), path.join(root, "spec"), { recursive: true });
     const specFile = path.join(root, "spec/order.md");
     fs.appendFileSync(specFile, "\n## Story: Archive\n\n> As a shopper, I want cancelled orders out of my way.\n");
-    const prose = "Every unit costs the same, and one order holds at most 40 units.";
+    const prose = fs.readFileSync(specFile, "utf8").match(/Every unit costs the same, and one order holds at most \d+ units\./)![0];
     const brief = `✗ review    2 item(s)\n    spec/order.md:210  Story: Archive\n      story has no rules: write them\n\n`
       + `RULE "Domain / Unit price and order size" (model changed)\nits prose now:\n${prose}\nits Quint now:\npure val maxUnits = 7\nEND RULE\n`;
     const agent = spawn(process.execPath, [path.join(project, "tools/agent-ollama.ts")],
@@ -256,6 +258,42 @@ ${F}\n`;
     const after = fs.readFileSync(file, "utf8");
     assert.match(after, /### Pay is refused when it would break "paid within due"\n\nDiscovered by simulation/);
     assert.match(after, /pure def payKeepsPaidWithinDue\(o: Order, amount: int\): bool = alwaysPaidWithinDue\(pay\(o, amount\)\)/);
+    fs.rmSync(root, { recursive: true });
+  });
+
+  test("a state whose stages carry different data, with match and sets, is simulated, replayed and fully proved", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "spec-selftest-"));
+    fs.mkdirSync(path.join(root, "spec"));
+    fs.copyFileSync(path.join(import.meta.dirname, "fixtures/parcel.md"), path.join(root, "spec/parcel.md"));
+    const lines: string[] = [];
+    await check(root, (l) => lines.push(l));
+    assert.deepEqual(lines.filter((l) => l.startsWith("✗")).map((l) => l.split(/\s+/)[1]), ["review"], lines.join("\n"));
+    assert.match(lines.join("\n"), /✓ proof +parcel\.ts: \d+ obligations proved for all states and inputs$/m);
+    const generated = fs.readFileSync(path.join(root, "gen/parcel.ts"), "utf8");
+    assert.match(generated, /\| \{ tag: "Shipped"; weight: number; labels: string\[\]; hops: number \}/);
+    fs.rmSync(root, { recursive: true });
+  });
+
+  test("a machine built from a component states and proves a rule that spans two of them", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "spec-selftest-"));
+    fs.mkdirSync(path.join(root, "spec"));
+    for (const f of ["account.md", "bank.md"]) fs.copyFileSync(path.join(import.meta.dirname, "fixtures", f), path.join(root, "spec", f));
+    const lines: string[] = [];
+    await check(root, (l) => lines.push(l));
+    assert.deepEqual([...new Set(lines.filter((l) => l.startsWith("✗")).map((l) => l.split(/\s+/)[1]))], ["review"], lines.join("\n"));
+    assert.match(lines.join("\n"), /spec\/bank\.md: 2 transitions, 1 always, 1 step, 1 sometimes/);
+    fs.rmSync(root, { recursive: true });
+  });
+
+  test("replay notices a guard that refuses what Quint allows, or allows what Quint refuses", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "spec-selftest-"));
+    fs.cpSync(path.join(project, "spec"), path.join(root, "spec"), { recursive: true });
+    gen(root, parseSpec(root, "spec/order.md"));
+    const domain = await import(path.join(root, "gen/order.ts"));
+    const asked = (event: { type: string }, allowed: boolean) => [{ state: domain.initial }, { asked: { event, allowed } }];
+    replay(domain, asked({ type: "submit" }, false));
+    assert.throws(() => replay(domain, asked({ type: "submit" }, true)), /disagree on whether/);
+    assert.throws(() => replay({ ...domain, enabled: () => true }, asked({ type: "submit" }, false)), /disagree on whether/);
     fs.rmSync(root, { recursive: true });
   });
 
