@@ -25,10 +25,12 @@ import { generate, LIST_HELPERS, type Model, type Origin } from "./gen.ts";
 import { fail } from "./gen/types.ts";
 import { LIB_FILE, prove, run, runAsync, type Proof, type Unit } from "./prove.ts";
 
-const SAMPLES = 10000; // simulated traces per check
-const WITNESS_SAMPLES = 20 * SAMPLES; // traces tried when looking for a state a `sometimes` rule says is reachable
-const COMPARED_SAMPLES = 2000; // traces simulated with definitions evaluated along the way
-const REPLAYED = 200; // traces of each kind replayed through the generated TypeScript
+// How much is simulated. SPEC_QUICK=1 simulates a tenth as much, for iterating; `accept` never does.
+let SAMPLES = 10000; // simulated traces per check
+let WITNESS_SAMPLES = 20 * SAMPLES; // traces tried when looking for a state a `sometimes` rule says is reachable
+let COMPARED_SAMPLES = 2000; // traces simulated with definitions evaluated along the way
+let REPLAYED = 200; // traces of each kind replayed through the generated TypeScript
+let QUICK = false;
 const STEPS = 20; // events per trace
 /** The annotations hand-written verified code may use. Ones that tell the prover to trust or skip something are not proofs. */
 const ANNOTATIONS = ["backend", "pure", "requires", "ensures", "invariant", "decreases", "type", "ghost", "assert"];
@@ -762,6 +764,9 @@ export async function check(root: string, accept: false | "reviews" | "unproved"
 }
 
 async function checkLocked(root: string, accept: false | "reviews" | "unproved", log: (result: Result) => void): Promise<boolean> {
+  QUICK = !accept && !!process.env.SPEC_QUICK && process.env.SPEC_QUICK !== "0";
+  [SAMPLES, COMPARED_SAMPLES, REPLAYED] = QUICK ? [1000, 200, 50] : [10000, 2000, 200];
+  WITNESS_SAMPLES = 20 * SAMPLES;
   let allOk = true;
   const report = (ok: boolean, stage: Result["stage"], summary: string, detail = "", where?: string, keepDetail = false) => {
     allOk &&= ok;
@@ -841,7 +846,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
           say(false, "always", `${bad?.why ?? "a rule is broken"}: fix the model, or add the rule that forbids this trace`, `${bad ? showTrace(bad.t) + hint + "\n" : ""}      ${sim.again}`);
           return said;
         }
-        say(true, "always", `no rule broken in ${SAMPLES + COMPARED_SAMPLES} simulated traces`);
+        say(true, "always", `no rule broken in ${SAMPLES + COMPARED_SAMPLES} simulated traces${QUICK ? " (SPEC_QUICK: a tenth of a full check; `npm run accept` simulates in full)" : ""}`);
         for (const { w, run } of witnesses) {
           const reached = run.broken && run.traces.some((t) => domain[w](t.at(-1)?.state));
           say(reached, "sometimes", reached ? `${w} is reachable`

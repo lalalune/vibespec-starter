@@ -379,7 +379,9 @@ a package. To hand the generated code to yet another package, compile
   what the spec means, everything it imports and the versions of the tools.
   Prose and the line numbers generated code cites are left out of the
   fingerprint, so editing prose re-runs neither simulation nor proofs.
-  Simulation runs overlap. Set
+  Simulation runs overlap. `SPEC_QUICK=1` simulates a tenth as much while
+  iterating on a large spec; the result says so, and `accept` always
+  simulates in full. Set
   `SPEC_NO_CACHE=1` to run everything afresh, which also gives the simulator
   new random traces. `accept` always runs afresh.
 - **Three levels of assurance**, reported per obligation: proved for all
