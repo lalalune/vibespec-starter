@@ -6,3 +6,4 @@ dist/
 .lemmascript/
 _apalache-out/
 !/tools/gen/
+.claude/worktrees/
