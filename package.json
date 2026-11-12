@@ -7,6 +7,7 @@
   },
   "scripts": {
     "check": "node tools/spec.ts check",
+    "watch": "node tools/spec.ts watch",
     "gen": "node tools/spec.ts gen",
     "accept": "node tools/spec.ts accept",
     "new": "node tools/spec.ts new",

@@ -33,6 +33,7 @@ The person signs off with `npm run accept`.
 | Command | What it does |
 |---|---|
 | `npm run check` | Every stage, cheapest first; remembers what passed, so a re-run costs only what changed |
+| `npm run watch` | `check` again on every change to `spec/`, `src/` or `test/`, in one warm process; for a person iterating |
 | `npm run gen` | Only regenerate `gen/` from the specs |
 | `npm run accept` | The user's sign-off on reconciled rules. Not yours to run |
 | `npm run accept -- unproved` | The user's decision to accept obligations as simulated only. Not yours to run |

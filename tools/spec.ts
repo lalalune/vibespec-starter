@@ -8,6 +8,7 @@
 //                          //@ contracts in src/ have been reconciled
 //   spec accept unproved   check afresh and record the obligations that hold in
 //                          simulation but that Dafny cannot prove on its own
+//   spec watch             check, then check again on every change to spec/, src/ or test/
 //   spec new <name>        write spec/<name>.md, a small spec that passes every check
 //   spec init              set a project up: the sync skill, a section of AGENTS.md, scripts
 //
@@ -1188,7 +1189,43 @@ const isMain = (): boolean => {
   }
 };
 
-const USAGE = "usage: spec check [--json] | gen | accept | accept unproved | new <name> | init";
+const USAGE = "usage: spec check [--json] | watch | gen | accept | accept unproved | new <name> | init";
+
+/**
+ * Check, then check again whenever spec/, src/, test/ or tsconfig.json changes. One process stays warm between runs
+ * (the compiler, the toolchain's fingerprint and the cache are already loaded), edits that arrive during a run start
+ * one more run after it, and what is unchanged comes from the cache as in any check.
+ */
+async function watch(root: string) {
+  let running = false;
+  let again = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const once = async () => {
+    if (running) { again = true; return; }
+    running = true;
+    do {
+      again = false;
+      const started = Date.now();
+      console.log(`\n--- ${new Date().toLocaleTimeString()} ---`);
+      try {
+        const { next } = await check(root, false, (r) => console.log(show(r)));
+        console.log(`\nnext: ${next}\n(${((Date.now() - started) / 1000).toFixed(1)}s; watching spec/, src/, test/ and tsconfig.json; Ctrl-C to stop)`);
+      } catch (e) {
+        console.error((e as Error).message);
+      }
+    } while (again);
+    running = false;
+  };
+  const changed = (file?: string | null) => {
+    // Editors write temporary files beside the real one; only sources matter.
+    if (file && !/\.(md|ts|dfy|json)$/.test(file)) return;
+    clearTimeout(timer);
+    timer = setTimeout(once, 200);
+  };
+  for (const dir of ["spec", "src", "test"]) if (fs.existsSync(path.join(root, dir))) fs.watch(path.join(root, dir), { recursive: true }, (_, f) => changed(f));
+  if (fs.existsSync(path.join(root, "tsconfig.json"))) fs.watch(path.join(root, "tsconfig.json"), () => changed());
+  await once();
+}
 
 if (isMain()) {
   const root = process.cwd();
@@ -1214,6 +1251,8 @@ if (isMain()) {
     } else if (command === "init" && takes([])) {
       const done = init(root);
       console.log(done.length ? `added: ${done.join(", ")}` : "nothing to add: everything is already there");
+    } else if (command === "watch" && takes([])) {
+      await watch(root);
     } else if (command === "new" && takes(["*"])) {
       console.log(`wrote ${newSpec(root, args[0])}; run \`npm run check\``);
     } else {

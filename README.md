@@ -38,6 +38,7 @@ Needs Node 24+ and [Dafny](https://github.com/dafny-lang/dafny) 4+ on the path
 ```sh
 npm install        # also builds the `spec` command and generates gen/
 npm run check      # the whole pipeline; a few seconds when nothing changed
+npm run watch      # the same, again on every change to spec/, src/ or test/
 npm run accept     # sign off the reconciled rules
 npm run demo       # a scripted session against the verified core
 npm run selftest   # breaks things one at a time and checks each break is caught
