@@ -392,7 +392,11 @@ export async function check(root: string, log: (line: string) => void = console.
       if (sim.broken || bad) {
         const lastEvent = bad?.t.findLast((s) => s.event)?.event?.type;
         const guard = model.transitions.find((t) => t.name === lastEvent)?.guard;
-        const hint = lastEvent && !bad?.why?.startsWith("the law") ? `\n      the last event is ${cite(lastEvent)}${guard ? `; its guard ${guard} let it through` : "; it has no guard"}` : "";
+        // When an event walks into a state that breaks an `always` rule, one repair is always available and can be
+        // made mechanically: refuse the event when its result would break the rule. `agent-lookahead` applies it.
+        const brokenRule = bad && lastEvent ? model.always.find((a) => !domain[a](bad.t[bad.t.length - 1].state)) : undefined;
+        const hint = lastEvent && !bad?.why?.startsWith("the law") ? `\n      the last event is ${cite(lastEvent)}${guard ? `; its guard ${guard} let it through` : "; it has no guard"}`
+          + (brokenRule ? `\n      a rule that would forbid it: refuse ${lastEvent} when its result would break ${brokenRule}` : "") : "";
         report(false, "always", `${bad?.why ?? "a rule is broken"}: fix the model, or add the rule that forbids this trace`, bad ? showTrace(bad.t) + hint : "");
         continue;
       }
@@ -493,10 +497,13 @@ export function readSpecs(root: string): Spec[] {
 
 // --- sync: the generative half ---------------------------------------------------------
 
-// Tried in order until one runs: Claude Code if it is installed and signed in, else a local Ollama model.
+// Tried in order until one runs: Claude Code if it is installed and signed in, else a local Ollama model,
+// else no model at all: a built-in agent that can only add the rule the check itself proposes.
+const tool = (name: string) => [process.execPath, path.join(import.meta.dirname, `${name}${path.extname(import.meta.filename)}`)];
 const DEFAULT_AGENTS = [
   ["claude", "-p", "--permission-mode", "acceptEdits", "--allowedTools", "Read,Edit,Write,Grep,Glob"],
-  [process.execPath, path.join(import.meta.dirname, `agent-ollama${path.extname(import.meta.filename)}`)],
+  tool("agent-ollama"),
+  tool("agent-lookahead"),
 ];
 const ROUNDS = 5;
 const BRIEF = `You maintain this repository's spec. Read AGENTS.md and CONTRIBUTING.md first and follow them.
@@ -547,7 +554,8 @@ async function sync(root: string): Promise<boolean> {
       if (agent.status === 0) break;
       if (agents.length === 1) throw new Error(`no agent could run (last tried: ${path.basename(cmd)}); sign in to Claude Code, start \`ollama serve\`, or set SPEC_AGENT to a command that reads a prompt on stdin and may edit files`);
       agents = agents.slice(1);
-      console.log(`--- ${path.basename(cmd)} could not run; using ${path.basename(agents[0].at(-1)!)} instead ---`);
+      const named = (agent: string[]) => path.basename(agent.at(-1)!.includes("agent-") ? agent.at(-1)! : agent[0], path.extname(agent.at(-1)!));
+      console.log(`--- ${named([cmd, ...args])} could not run; using ${named(agents[0])} instead ---`);
     }
   }
   console.log(`not synced after ${ROUNDS} rounds; run \`npm run check\` to see what is left`);

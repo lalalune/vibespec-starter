@@ -243,6 +243,22 @@ ${F}\n`;
     assert.match(out, /\/\/ xs\.some\(note in prose\)$/);
   });
 
+  test("with no model at all, sync turns a counterexample into a rule that passes simulation and proof", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "spec-selftest-"));
+    fs.cpSync(path.join(project, "spec"), path.join(root, "spec"), { recursive: true });
+    const file = path.join(root, "spec/order.md");
+    fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace("o.status == Pending and amount > 0 and o.paid + amount <= o.due", "o.status == Pending and amount > 0"));
+    const run = spawnSync(process.execPath, [path.join(project, "tools/spec.ts"), "sync"], { cwd: root, encoding: "utf8", env: { ...process.env, SPEC_AGENT: `node ${path.join(project, "tools/agent-lookahead.ts")}` } });
+    assert.equal(run.status, 0, run.stdout + run.stderr);
+    assert.match(run.stdout, /a rule that would forbid it: refuse pay when its result would break alwaysPaidWithinDue/);
+    assert.match(run.stdout, /✓ proof +order\.ts/);
+    assert.match(run.stdout, /synced: read the changes/);
+    const after = fs.readFileSync(file, "utf8");
+    assert.match(after, /### Pay is refused when it would break "paid within due"\n\nDiscovered by simulation/);
+    assert.match(after, /pure def payKeepsPaidWithinDue\(o: Order, amount: int\): bool = alwaysPaidWithinDue\(pay\(o, amount\)\)/);
+    fs.rmSync(root, { recursive: true });
+  });
+
   test("nothing stale survives in gen/", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "spec-selftest-"));
     fs.cpSync(path.join(project, "spec"), path.join(root, "spec"), { recursive: true });

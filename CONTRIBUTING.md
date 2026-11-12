@@ -46,7 +46,7 @@ role of a definition comes from its name and signature:
 | `type Order = { … }`, `type Status = A \| B` | the vocabulary | `interface Order`, `type Status = "A" \| "B"` |
 | `pure val initial: Order = …` | the initial state (required); its type is *the state type* | `initial`, and a proof that it satisfies every `always` rule |
 | `pure def pay(o: Order, amount: int): Order` | a transition: any `pure def` from the state to the state | `pay(o, amount)`, an `Event` variant `{ type: "pay", amount }`, a case in `step`, `enabled` and `isEvent`, and a proof that it preserves every `always` rule |
-| `pure def canPay(o: Order, amount: int): bool` | the guard of `pay` (same parameters); optional | `canPay`, used by `enabled`, `step` and as the precondition of `pay` |
+| `pure def canPay(o: Order, amount: int): bool` | the guard of `pay` (same parameters); optional | `canPay`, used by `enabled` and `step`; what is proved about `pay` is proved for the cases the guard allows. A guard may call its own transition to look at the result |
 | `pure def alwaysPaidWithinDue(o: Order): bool` | a rule that holds in every reachable state | a conjunct of `inv`; simulated and proved |
 | `pure def sometimesPaid(o: Order): bool` | a state that must be reachable | a reachability check with a witness trace |
 | `pure def stepNeverGoesBack(before: Order, after: Order): bool` | a rule about every single step: it relates the state before a transition to the state after | a postcondition on every transition; simulated and proved |
@@ -227,9 +227,15 @@ such a package. To hand the generated code to yet another package, compile
 
 ## Choosing the agent for `npm run sync`
 
-With no configuration, `sync` uses Claude Code in headless mode (`claude -p`)
-and, if that is not installed or not signed in, falls back to a local Ollama
-model and says so. To choose the agent yourself, set `SPEC_AGENT` to any
+With no configuration, `sync` uses Claude Code in headless mode (`claude -p`).
+If that is not installed or not signed in it falls back to a local Ollama
+model, and if there is none, to a built-in agent that uses no model
+(`tools/agent-lookahead.ts`). It says which one it used. The built-in agent
+cannot turn a story into rules. It does one thing: when a trace shows an
+event breaking an `always` rule, it adds the rule "this event is refused when
+its result would break that rule", in prose and Quint, and puts it in the
+event's guard. That repair is always sound and never insightful; reword it,
+or replace it with the real reason, at sign-off. To choose the agent yourself, set `SPEC_AGENT` to any
 command that reads the brief and check report on stdin, runs in the
 repository root, and can read and edit files:
 

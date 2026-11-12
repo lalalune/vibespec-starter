@@ -309,11 +309,12 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
     const { params, result } = sig(d);
     const t = transitions.find((t) => t.name === d.name);
     const args = params.map((p) => p.name).join(", ");
-    // One `ensures` per rule, so a failed proof names the rule that the transition breaks.
+    // One `ensures` per rule, so a failed proof names the rule that the transition breaks. The transition has no
+    // precondition: its guarantees are conditional instead, so that a guard may itself look at the transition's result.
+    const given = t && `(inv(${params[0].name})${t.guard ? ` && ${t.guard}(${args})` : ""}) ==> `;
     const contract = t ? [
-      `  //@ requires inv(${params[0].name})${t.guard ? ` && ${t.guard}(${args})` : ""}`,
-      ...always.map((a) => `  //@ ensures ${a}(\\result)`),
-      ...steps.map((r) => `  //@ ensures ${r}(${params[0].name}, \\result)`),
+      ...always.map((a) => `  //@ ensures ${given}${a}(\\result)`),
+      ...steps.map((r) => `  //@ ensures ${given}${r}(${params[0].name}, \\result)`),
     ] : laws.some((l) => l.name === d.name) ? [`  //@ ensures \\result === true`] : [];
     out.push(
       ``,

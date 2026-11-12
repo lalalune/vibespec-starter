@@ -351,6 +351,21 @@ synced: read the changes to spec/ (git diff), then run `npm run accept` to sign 
   <p>In round 2 the model strengthened the guard and wrote, in the spec: "Discovered by simulation: The rule must prevent the takeBackPayment action from reducing the paid amount to a negative value."</p>
   <p><strong>What the sign-off was for.</strong> The small model's work was correct enough to pass every check and still not what a person would write. Its headings were in capitals, and its transition took back a fixed amount instead of one the shopper chooses. At sign-off I rewrote the headings, gave <code>takeBack</code> an amount, and moved the discovered constraint into its own rule, "No more can be taken back than was paid". The checks passed again and <code>accept</code> recorded it. Both stories are now part of the example.</p>
   <p><strong>Run 3: no configuration at all.</strong> <code>sync</code> now tries Claude Code first and, if it cannot run, falls back to the local model and says so. A "Start over" story (empty a draft in one go) and another hand edit to <code>maxUnits</code> were then synced with a bare <code>npm run sync</code>. It printed the Claude Code sign-in failure, switched agents, wrote the rule and the prose in one round, passed every stage and stopped for sign-off. At sign-off I renamed the model's <code>START_OVER</code> to <code>empty</code> and rewrote its heading. That story is in the example too, which now has 20 rules and 8 transitions.</p>
+  <p><strong>Run 4: no model and no person.</strong> <code>sync</code> now ends its chain of agents with one that uses no model. With Claude Code signed out and no local model running, a bare <code>npm run sync</code> was given a spec whose payment guard had lost "may not exceed the balance":</p>
+<pre><code><span class="bad">✗ always</span>    a reachable state breaks "Story: Check out / The amount paid is never negative
+            and never more than is due" (spec/order.md:87) …
+      a rule that would forbid it: refuse pay when its result would break alwaysPaidWithinDue
+
+--- round 1: always, review need attention; asking the agent ---
+Failed to authenticate: OAuth session expired and could not be refreshed
+--- claude could not run; using agent-ollama instead ---
+no Ollama server at http://localhost:11434
+--- agent-ollama could not run; using agent-lookahead instead ---
+[agent-lookahead] added the rule payKeepsPaidWithinDue to order.md and to the guard of pay
+<span class="ok">✓ proof</span>     order.ts: 12 obligations proved for all states and inputs
+
+synced: read the changes to spec/ (git diff), then run `npm run accept` to sign them off</code></pre>
+  <p>The rule it wrote, under the story the event belongs to, is "Pay is refused when it would break 'paid within due'", with the Quint <code>alwaysPaidWithinDue(pay(o, amount))</code> added to the guard. It is always a sound repair and never an insightful one: it says what must not happen, not why. It cannot turn a story into rules; that still needs a model or a person.</p>
   <p><strong>What did not work.</strong> In earlier attempts, with a looser prompt, the same model invented a false invariant, duplicated a rule, and tried to weaken an existing rule. None of it got through: the checks failed, or the change sat in <code>review</code> as "model changed". The model's output format also varied between runs until the adapter gave it a template to fill in. A stronger agent needs none of this hand-holding: given the same brief, a fresh Claude agent translated the reopen story correctly in one pass, though that run was started by hand because its CLI was not signed in.</p>
 
   <h2>How the checks discover rules</h2>
@@ -507,6 +522,7 @@ synced: read the changes to spec/ (git diff), then run `npm run accept` to sign 
       <tr><td>"An app edit never adds a problem": a fact about one step, not one state</td><td><code>step…(before, after)</code> rules, checked across every transition</td></tr>
       <tr><td>Two kinds of writer, one guarded and one not</td><td>No new feature: both are transitions, and a <code>last</code> field in the state says who wrote</td></tr>
       <tr><td>Proofs Dafny cannot find alone</td><td>A ledger, <code>spec/unproved.lock.json</code>: such obligations are listed, pass only once a person records them as simulated-only, and fail again if a new one appears</td></tr>
+      <tr><td>The tool proposing a missing rule itself</td><td>When a trace shows an event breaking a rule, the check proposes "refuse this event when its result would break that rule", and a built-in agent that uses no model writes it into the spec. For that a guard must be able to call its own transition, so generated transitions are now total and their guarantees conditional on the guard</td></tr>
       <tr><td>Proof cost that grows with the whole program</td><td>Each spec is proved against the definitions of what it imports, not their proofs</td></tr>
       <tr><td>Use from another repository</td><td>The toolchain is a package with a <code>spec</code> command; the example is a separate package that depends on it, verified by installing a packed tarball into an empty project</td></tr>
     </tbody>
@@ -531,10 +547,11 @@ synced: read the changes to spec/ (git diff), then run `npm run accept` to sign 
     <li>The proof stage refused my own hand-written <code>columnName</code>, which called the proved function without establishing its precondition.</li>
   </ul>
   <h3>How much is proved</h3>
-  <p>86 obligations are proved for all inputs. 85 hold across 10,000 simulated traces but Dafny cannot prove them unaided, mostly because they depend on folding over the warning list. They are recorded in the ledger, and the check reports the split on every run:</p>
-<pre><code><span class="ok">✓ proof</span>     kernel.ts: 9 obligations proved for all states and inputs, 3 simulated only (accepted)
-<span class="ok">✓ proof</span>     projects.ts: 16 obligations proved for all states and inputs, 12 simulated only (accepted)
-<span class="ok">✓ proof</span>     tracker.ts: 54 obligations proved for all states and inputs, 70 simulated only (accepted)
+  <p>62 obligations are proved for all inputs. 82 hold across 10,000 simulated traces but Dafny cannot prove them unaided, mostly because they depend on folding over the warning list. The check reports the split and fails its <code>proof</code> stage until a person records that simulation is enough for them. I have deliberately not recorded that for the example: it is the owner's decision.</p>
+<pre><code><span class="bad">✗ proof</span>     kernel.ts: 9 proved, 3 not proved. If simulation is enough for these, record them
+            with `npm run accept -- unproved`; otherwise add the rule or guard that makes them provable
+<span class="bad">✗ proof</span>     projects.ts: 12 proved, 12 not proved. …
+<span class="bad">✗ proof</span>     tracker.ts: 34 proved, 67 not proved. …
 <span class="ok">✓ proof</span>     columns.ts: 7 obligations proved for all states and inputs</code></pre>
   <p>That is close to where the application itself had settled: it proves its arithmetic kernel and model-checks the rest. Raising the proved share means writing the hard parts by hand with loop invariants, which the tools support but do not do for you.</p>
   <h3>What this says about 500,000 lines</h3>

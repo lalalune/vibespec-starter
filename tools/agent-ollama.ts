@@ -25,6 +25,9 @@ async function ask(prompt: string): Promise<string> {
   const response = await fetch(`${HOST}/api/generate`, {
     method: "POST",
     body: JSON.stringify({ model: MODEL, prompt, stream: false, options: { temperature: 0.1, num_ctx: 8192 } }),
+  }).catch(() => {
+    console.error(`no Ollama server at ${HOST}`);
+    process.exit(1);
   });
   if (!response.ok) throw new Error(`Ollama at ${HOST} answered ${response.status}; is \`ollama serve\` running and ${MODEL} pulled?`);
   return ((await response.json()).response as string).trim();

@@ -34,8 +34,9 @@ and proves two hand-written functions against that contract.
 
 Needs Node 24+ and [Dafny](https://github.com/dafny-lang/dafny) 4+ on the path
 (`brew install dafny`, or see Dafny's install page). `npm run sync` also needs
-an agent: Claude Code (`claude`, signed in) if available, otherwise a local
-Ollama model with no account at all (see CONTRIBUTING.md).
+an agent to translate stories: Claude Code (`claude`, signed in) if available,
+otherwise a local Ollama model (see CONTRIBUTING.md). Without either it can
+still add rules that the checks discover.
 
 ```sh
 npm install        # also builds the `spec` command and generates gen/
@@ -54,7 +55,8 @@ npm run selftest   # breaks the example one way at a time and checks each break 
    with a brief: a story with no rules becomes rules, a rule with no Quint
    gets its Quint, a rule whose model moved gets its prose updated (and the
    reverse), and a counterexample trace or unprovable transition becomes a
-   new rule marked as discovered. It repeats, for at most five rounds, until
+   new rule marked as discovered. With no agent available at all, a built-in
+   one still does the last of these. It repeats, for at most five rounds, until
    only your sign-off is left. `npm run check` on its own does the detecting
    without the translating, if you would rather translate by hand.
 3. **Sign off.** Read the diff of `spec/`, then **`npm run accept`**. It
@@ -95,6 +97,7 @@ Keep `spec/`, `src/`, `test/` and `tools/` in git, including the lock file.
 | `tools/spec.ts` | The pipeline: tangle, simulate, replay, prove, review, sync |
 | `tools/gen.ts` | Quint → TypeScript and the simulation harness |
 | `tools/agent-ollama.ts` | Optional agent for `sync` backed by a local model |
+| `tools/agent-lookahead.ts` | Built-in agent for `sync` that needs no model: writes the rule a counterexample calls for |
 | `examples/alpha-energy/` | A real application modelled with the same tools, as a separate package |
 | `tools/selftest.ts` | Mutation tests of the pipeline itself |
 | `src/ledger.ts` | Hand-written logic, proved against the generated contract |
@@ -111,9 +114,12 @@ hand edits, and the registry of projects.
 npm run check:alpha
 ```
 
-24 transitions, 16 `always` and `step` rules, 11 laws. 86 obligations are
-proved for all inputs and 85 are recorded as simulated only, because they
-depend on folds over the warning list. Modelling cells as lists rather than
+24 transitions, 16 `always` and `step` rules, 11 laws. Everything holds in
+simulation. 62 obligations are proved for all inputs; 82 more hold in
+simulation but Dafny cannot prove them alone, because they depend on folds
+over the warning list. The check lists those and stays red on `proof` until
+you decide, in that directory, to record them with
+`npm run accept -- unproved`. Modelling cells as lists rather than
 sets found a real bug in the application: a name typed twice in an owners
 cell made the notifier message that person twice.
 

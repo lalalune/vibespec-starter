@@ -40,8 +40,10 @@ around these rules.
 
 ## How much is proved
 
-86 obligations are proved for all inputs. 85 hold in 10,000 simulated traces
+62 obligations are proved for all inputs. 82 hold in 10,000 simulated traces
 but Dafny cannot prove them on its own, mostly because they depend on folding
-over the warning list; they are recorded in `spec/unproved.lock.json`. That
-split is close to the application's own experience: it proves its arithmetic
-kernel and model-checks the rest.
+over the warning list. `npm run check` lists them and fails its `proof` stage
+until someone decides that simulation is enough for them and records that
+with `npm run accept -- unproved`. That decision has deliberately not been
+made here. The split is close to the application's own experience: it proves
+its arithmetic kernel and model-checks the rest.
