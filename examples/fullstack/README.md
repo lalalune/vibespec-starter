@@ -75,14 +75,16 @@ build step) and Dafny on the path. The page loads React 18 from esm.sh.
 
 ## Limits of the spec language met here
 
-- **An imported machine's types may only mention its own types**
-  (`tools/gen.ts:115`, `requalify`). `import client as C` qualifies every
-  type name inside `Client` with `C::`, including `Todo` and `Op`, which
-  `client` itself imported from `todo`, and the check stops with
-  `unknown type C::Op`. The workaround: the server and client state types
-  write the to-do and edit records out in full (the tools match them back to
-  `Todo` and `Op` by shape), and the edit's kind is a string, because a
-  variant type cannot be written out inline.
+- **An imported machine's types could only mention its own types.** This
+  example found the bug: `import client as C` qualified every type name
+  inside `Client` with `C::`, including `Todo` and `Op`, which `client`
+  imported from `todo`, and the check stopped with `unknown type C::Op`. The
+  tools now bring an imported machine's imported types along (selftest: "a
+  machine whose state holds a library's type can be imported under a name").
+  The specs here still use the workaround they were written with: the server
+  and client state types write the to-do and edit records out in full (the
+  tools match them back to `Todo` and `Op` by shape), and the edit's kind is
+  a string. Simplifying them is a good first exercise.
 - **A machine cannot be imported with `.*`**, and two machines whose
   transitions share names (`create`, `initial`) could not be anyway; the
   system spec uses `S::` and `C::`.

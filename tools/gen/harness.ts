@@ -90,7 +90,8 @@ export function harness(
     // Half events, half evaluations, so that definitions are evaluated on states well into a trace and not just near its start.
     `  action probe = ${events.length && evals.length ? `any { step, ${any(evals.map((v) => `eval_${v.name}`))} }` : any([...events, ...evals.map((v) => `eval_${v.name}`)])}`,
     `  val inv = and { lawsHold, ${[...always.map((a) => `M::${a}(state)`), ...steps.map((r) => `(not(moved) or M::${r}(prev, state))`), "true"].join(", ")} }`,
-    ...sometimes.map((w) => `  val never_${w} = not(M::${w}(state))`),
+    // A witness search also stops at a broken rule, so that no run can step over one unreported.
+    ...sometimes.map((w) => `  val never_${w} = inv and not(M::${w}(state))`),
     `}`,
     ``,
   ].join("\n");

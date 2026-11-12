@@ -14,6 +14,11 @@ const project = path.join(import.meta.dirname, "..");
 const read = (file: string) => fs.readFileSync(path.join(project, file), "utf8");
 const F = "`".repeat(3);
 const roots: string[] = [];
+/** The node_modules this project resolves from, wherever up the tree it is (a git worktree has none of its own). */
+const nodeModules = (function find(dir: string): string {
+  const here = path.join(dir, "node_modules");
+  return fs.existsSync(here) ? here : dir === path.dirname(dir) ? assert.fail("no node_modules: run npm install") : find(path.dirname(dir));
+})(project);
 after(() => roots.forEach((root) => fs.rmSync(root, { recursive: true, force: true })));
 
 /** A scratch project holding the given files. */
@@ -23,6 +28,11 @@ function scratch(files: Record<string, string>): string {
   for (const [file, text] of Object.entries(files)) {
     fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
     fs.writeFileSync(path.join(root, file), text);
+  }
+  // Hand-written code is typechecked, as in a project set up with `spec init`.
+  if (Object.keys(files).some((f) => f.startsWith("src/")) && !files["tsconfig.json"]) {
+    fs.writeFileSync(path.join(root, "tsconfig.json"), read("tsconfig.json"));
+    fs.symlinkSync(nodeModules, path.join(root, "node_modules"), "dir");
   }
   return root;
 }
@@ -37,7 +47,9 @@ const oneRule = (name: string, heading: string, quint: string) => scratch({ [`sp
 /** A copy of this project's spec and src, reconciled whatever awaits sign-off here, with `edit` applied to one file. */
 function copyOfProject(file?: string, edit: (text: string) => string = (s) => s): string {
   const root = scratch({});
-  for (const dir of ["spec", "src"]) fs.cpSync(path.join(project, dir), path.join(root, dir), { recursive: true });
+  for (const dir of ["spec", "src", "test", "tsconfig.json"]) fs.cpSync(path.join(project, dir), path.join(root, dir), { recursive: true });
+  // So that the `types` and `tests` stages run as they do here: with the same compiler and Node types.
+  fs.symlinkSync(nodeModules, path.join(root, "node_modules"), "dir");
   for (const spec of readSpecs(root)) acceptReviews(root, spec);
   if (!file) return root;
   const target = path.join(root, file);
@@ -124,6 +136,74 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     }
   });
 
+  test("a rule written as a `pure val` is refused rather than generated as a constant, and a constant named alike is not", async () => {
+    const { said, text } = await run(oneRule("t", "A rule", "pure val initial: int = 0\npure val alwaysNever = false"));
+    assert.equal(said("model", /is a `pure def` with parameters/)?.ok, false, text);
+    const constant = await run(oneRule("t", "A rule", "pure val stepLimit = 3\npure def lawPositive(k: int): bool = stepLimit > 0"));
+    assert.ok(!constant.failed.includes("model"), constant.text);
+  });
+
+  test("a comment or string left open at the end of a quint block is refused, so prose can never become model", async () => {
+    // Prose is tangled as `// …`; inside an open block comment, `// */ code` would be code that no review or cache key sees as such.
+    const { said, text } = await run(copyOfProject("spec/order.md", (s) => s.replace("pure val unitPrice = 5", "pure val unitPrice = 5\n/*")));
+    assert.equal(said("model", /a comment is still open at the end of this quint block/)?.ok, false, text);
+  });
+
+  test("a quint block under a nested list item is part of the model", async () => {
+    const failed = await failedStages("spec/order.md", (s) => s + "\n### Nothing is ever fine\n\n- because:\n  - nested:\n\n    ```quint\n    pure def alwaysBogus(o: Order): bool = false\n    ```\n");
+    assert.ok(failed.includes("always"), failed.join());
+  });
+
+  test("a rule broken only on the way to a `sometimes` goal is still reported", async () => {
+    // Only the witness search goes deep enough: the goal is three steps away and the break is on the way.
+    const quint = "pure val initial: int = 0\npure def up(n: int): int = n + 1\npure def canUp(n: int): bool = n < 5\npure def alwaysBelowThree(n: int): bool = n < 3\npure def sometimesFour(n: int): bool = n == 4";
+    const { failed, text } = await run(oneRule("t", "Counting", quint));
+    assert.ok(failed.includes("always"), text);
+    assert.ok(!failed.includes("sometimes") || failed.includes("always"), text);
+  });
+
+  test("hand-written code that changes what it is checked against is refused or flagged", async () => {
+    const reexport = await failedStages("src/ledger.ts", (s) => s + '\nexport * from "./app.ts";\n');
+    assert.ok(reexport.includes("proof"), reexport.join());
+    const { said, text } = await run(copyOfProject("src/ledger.ts", (s) => s.replace(/(\/\/@ ensures)/, "//@ requires true\n$1")));
+    assert.ok(said("proof", /^src-ledger\.ts: .*under 2 \/\/@ requires/), text);
+  });
+
+  test("the application's types and tests are checked", async () => {
+    assert.ok((await failedStages("src/app.ts", (s) => s + "\nconst wrong: number = \"x\";\n")).includes("types"));
+    const failing = await run(copyOfProject("test/app.test.ts", (s) => s + '\ntest("fails", () => { throw new Error("no"); });\n'));
+    assert.ok(failing.failed.includes("tests"), failing.text);
+    const untyped = copyOfProject();
+    fs.rmSync(path.join(untyped, "tsconfig.json"));
+    assert.ok((await run(untyped)).failed.includes("types"));
+  });
+
+  test("Markdown the tools would read differently from a viewer is refused or read as a viewer does", async () => {
+    const cr = await failedStages("spec/order.md", (s) => s.replace("Every unit costs the same", "Every unit costs the same\rpure val sneaky = 1"));
+    assert.deepEqual(cr, ["model"]);
+    // A fence with an info string does not close a quint block, so what follows is still Quint (and here not valid Quint).
+    const fence = await failedStages("spec/order.md", (s) => s.replace("pure val unitPrice = 5", "pure val unitPrice = 5\n```text\nnot quint"));
+    assert.ok(fence.includes("model"), fence.join());
+  });
+
+  test("a story whose title starts another story's title still needs rules of its own", async () => {
+    const story = "\n## Story: Wrap\n\n> As a shopper, I want my order wrapped.\n\n## Story: Wrap / gifts\n\n### Gifts are wrapped\n\n```quint\npure def lawWrapped(n: int): bool = true\n```\n";
+    const { said, text } = await run(copyOfProject("spec/order.md", (s) => s + story));
+    assert.ok(said("review", /  Story: Wrap\n\s+story has no rules/), text);
+  });
+
+  test("a machine whose state holds a library's type can be imported under a name", async () => {
+    const spec = (title: string, quint: string) => `# ${title}\n\n## Story\n\n### ${title}\n\n${F}quint\n${quint}\n${F}\n`;
+    const root = scratch({
+      "spec/lib.md": spec("Library", "type T = { n: int }\npure def lawZeroIsZero(k: int): bool = k * 0 == 0"),
+      "spec/mach.md": spec("Machine", 'import lib.* from "./lib"\ntype St = { t: T }\npure val initial: St = { t: { n: 0 } }\npure def bump(s: St): St = { t: { n: s.t.n + 1 } }'),
+      "spec/sys.md": spec("System", 'import mach as M from "./mach"\ntype Sys = { a: M::St }\npure val initial: Sys = { a: M::initial }\npure def go(s: Sys): Sys = { a: M::bump(s.a) }'),
+    });
+    const { failed, said, text } = await run(root);
+    assert.deepEqual(failed, ["review"], text);
+    assert.ok(said("proof", /^sys\.ts: all \d+ obligations proved/), text);
+  });
+
   test("a quint block indented inside a list is still part of the model", async () => {
     const failed = await failedStages("spec/order.md", (s) => s + "\n### Nothing is ever fine\n\n- because:\n\n  ```quint\n  pure def alwaysBogus(o: Order): bool = false\n  ```\n");
     assert.ok(failed.includes("always"), failed.join());
@@ -202,7 +282,7 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     const { failed, said, text } = await run(fixtures(["stock"]));
     assert.deepEqual(failed, ["proof", "review"], text);
     assert.ok(said("replay", /every law, and \d+ definitions/)?.ok, text);
-    assert.ok(!/lawBoxesAndLooseMakeTheWhole/.test(text), "the division law is proved, so it is not listed as unproved");
+    assert.ok(!said("proof", /lawBoxesAndLooseMakeTheWhole/), "the division law is proved, so it is not listed as unproved");
   });
 
   test("a map key that every object has, a getter on an event, and an extra field are all harmless", async () => {
@@ -337,9 +417,9 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
 
   test("verified code cannot assume, or import a look-alike of the generated module", async () => {
     const assumed = await failedStages("src/ledger.ts", (s) => s.replace("return order.due - order.paid;", "//@ assume false\n  return order.paid - order.due;"));
-    assert.deepEqual(assumed, ["proof"]);
-    const lookalike = await failedStages("src/ledger.ts", (s) => s.replace('"../gen/order.ts"', '"./order.ts"'));
-    assert.deepEqual(lookalike, ["proof"]);
+    assert.deepEqual(assumed, ["proof", "tests"]); // the code is also wrong, and the application's tests say so
+    const lookalike = await run(copyOfProject("src/ledger.ts", (s) => s.replace('"../gen/order.ts"', '"./order.ts"')));
+    assert.ok(lookalike.said("proof", /may only import generated modules/), lookalike.text);
   });
 
   test("verified code in a subdirectory of src is proved too", async () => {
@@ -349,7 +429,7 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
 
   test("hand-written logic that breaks its contract is caught by the proof", async () => {
     const failed = await failedStages("src/ledger.ts", (s) => s.replace("return order.due - order.paid;", "return order.paid - order.due;"));
-    assert.deepEqual(failed, ["proof"]);
+    assert.deepEqual(failed, ["proof", "tests"]);
   });
 
   test("moving a line break so that a comment swallows half a guard is a change to the model", async () => {
@@ -360,7 +440,7 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
 
   test("a deleted rule is flagged for review", async () => {
     const failed = await failedStages("spec/order.md", (s) => s.replace(/### An order can be cancelled[\s\S]*$/, ""));
-    assert.deepEqual(failed, ["review"]);
+    assert.deepEqual(failed, ["tests", "review"]); // the application's test of cancelling fails too
   });
 
   test("accept records nothing while another stage fails, and records when all pass", async () => {
@@ -370,10 +450,23 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.deepEqual(failed, ["always", "review"]);
   });
 
-  test("init adds what a project lacks and replaces nothing", () => {
+  test("init adds what a project lacks, keeps its own AGENTS.md and brings only the section on specs up to date", () => {
     const root = scratch({ "AGENTS.md": "mine\n", "package.json": `{"scripts":{"check":"mine"}}` });
     const added = init(root);
-    assert.equal(fs.readFileSync(path.join(root, "AGENTS.md"), "utf8"), "mine\n");
+    const agents = () => fs.readFileSync(path.join(root, "AGENTS.md"), "utf8");
+    assert.ok(agents().startsWith("mine\n") && agents().includes("<!-- onespec:start") && agents().includes("sync"), agents());
+    fs.writeFileSync(path.join(root, "AGENTS.md"), agents().replace(/(<!-- onespec:start[^\n]*\n)[\s\S]*?(<!-- onespec:end -->)/, "$1outdated\n$2") + "\nmore of mine\n");
+    assert.deepEqual(init(root), ["AGENTS.md (its section on specs)"]);
+    assert.ok(!agents().includes("outdated") && agents().endsWith("more of mine\n"), agents());
+    // Markers that do not pair up, or a whole copy from an earlier version, are left for a person to sort out.
+    fs.writeFileSync(path.join(root, "AGENTS.md"), agents().replace("<!-- onespec:end -->", ""));
+    assert.throws(() => init(root), /fix the markers by hand/);
+    fs.writeFileSync(path.join(root, "AGENTS.md"), "# Operating procedure for agents\n\nThe person signs off with `npm run accept`.\n");
+    assert.throws(() => init(root), /without markers/);
+    // A file with Windows line endings keeps them.
+    fs.writeFileSync(path.join(root, "AGENTS.md"), "mine\r\n");
+    init(root);
+    assert.ok(!/[^\r]\n/.test(agents()), "every line ends in \\r\\n");
     assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).scripts.check, "mine");
     assert.ok(fs.existsSync(path.join(root, ".claude/skills/sync/SKILL.md")) && added.includes("tsconfig.json"), added.join());
     assert.deepEqual(init(root), []);

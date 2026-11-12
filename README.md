@@ -42,6 +42,7 @@ npm run accept     # sign off the reconciled rules
 npm run demo       # a scripted session against the verified core
 npm run selftest   # breaks things one at a time and checks each break is caught
 npm run check:dashboard   # the same pipeline on examples/dashboard
+npm run check:fullstack   # and on examples/fullstack, a React + Node app
 ```
 
 ## The process
@@ -74,7 +75,7 @@ their failures would only restate the first one.
 | Stage | Question | Strength |
 |---|---|---|
 | `model` | Is the spec well-typed and inside the supported subset? | exact; anything unsupported is refused by name |
-| `always` | Does a reachable state break an `always` rule, a step break a `step` rule, or a sampled argument break a law? | 10,000 random traces; a failure comes with the shortest trace |
+| `always` | Does a reachable state break an `always` rule, a step break a `step` rule, or a sampled argument break a law? | 12,000 random traces, plus every witness search below, which stops at a broken rule too; a failure comes with the shortest trace |
 | `sometimes` | Can each `sometimes` goal be reached at all? | a witness trace is a proof |
 | `replay` | Does the generated TypeScript mean what the Quint means? | 400 sampled traces: every state, every law tried, and the result of every definition the simulator can evaluate. Definitions it cannot evaluate are listed |
 | `types` | Does the application fit the generated contract? | exact |
@@ -101,6 +102,22 @@ Keep `spec/`, `src/`, `test/` and `tools/` in git, lock files included.
 | `src/ledger.ts` | Hand-written logic, proved against the generated contract |
 | `src/app.ts` | Unverified shell: storage, input parsing, error reporting |
 | `examples/dashboard/` | A larger, synthesized example modelled with the same tools, as a separate package |
+| `examples/fullstack/` | A React frontend and a Node backend modelled together, network faults included, as a separate package |
+| `docs/roadmap.md` | Review findings: what has been fixed, and what to do next for speed and for larger applications |
+
+## A frontend and a backend together
+
+`examples/fullstack` is a shared to-do list: a `node:http` server, and a
+React page whose `useReducer` reducer is the generated client `step`. Four
+specs model it end to end: the to-do library, the server (idempotent
+requests, a version that counts changes), one browser tab (optimistic edits
+queued while offline, acknowledged, refused, rebased on snapshots), and a
+system of the server, two tabs and a network that loses, duplicates and
+reorders messages. Its rules say every copy of the list, in a tab or in
+flight, is exactly the server's list at that version, and a `sometimes` rule
+shows two tabs that both edited converging. All 124 obligations are proved,
+including a hand-written loop that applies a batch of pushes; its README says
+how the halves fit and what the language could not yet say.
 
 ## A larger example
 

@@ -9,8 +9,9 @@
 // the ones after it are checked, every postcondition of a lemma that has a
 // failure is checked again on its own.
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 /** The library of general lemmas that proof files call as ProofLib.<Name>. */
@@ -48,6 +49,27 @@ export function run(cmd: string, args: string[], cwd: string): { ok: boolean; ou
   const exe = cmd === "dafny" ? cmd : bin(cmd, cwd);
   const r = spawnSync(exe, args, { cwd, encoding: "utf8", maxBuffer: 1 << 28 });
   return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ?? ""}` };
+}
+
+/** Overlapping runs, at most one per core across everything in this process (several checks at once included). */
+const slots = { free: Math.max(1, os.availableParallelism()), waiting: [] as (() => void)[] };
+const acquire = () => (slots.free > 0 ? (slots.free--, Promise.resolve()) : new Promise<void>((go) => slots.waiting.push(go)));
+const release = () => { const next = slots.waiting.shift(); if (next) next(); else slots.free++; };
+
+/** `run`, without blocking, so that independent runs can overlap. */
+export async function runAsync(cmd: string, args: string[], cwd: string): Promise<{ ok: boolean; out: string }> {
+  const exe = cmd === "dafny" ? cmd : bin(cmd, cwd);
+  await acquire();
+  return new Promise((resolve) => {
+    const child = spawn(exe, args, { cwd });
+    let out = "";
+    child.stdout.setEncoding("utf8").on("data", (d) => (out += d));
+    child.stderr.setEncoding("utf8").on("data", (d) => (out += d));
+    let done = false;
+    const finish = (r: { ok: boolean; out: string }) => { if (!done) { done = true; release(); resolve(r); } };
+    child.on("error", (e) => finish({ ok: false, out: out + e }));
+    child.on("close", (status) => finish({ ok: status === 0, out }));
+  });
 }
 
 // --- proof files ---------------------------------------------------------------
@@ -315,7 +337,7 @@ const finished = (out: string) => /\d+ verified, \d+ errors?/.test(out);
  * definition are checked, so those may pass only because of it. Check each of
  * them again in a copy of the definition that has it as its only postcondition.
  */
-function recheck(dir: string, dfy: string, file: string, generated: Set<string>, failing: Map<string, Set<number>>): { verdict: Verdict; log: string } | undefined {
+async function recheck(dir: string, dfy: string, file: string, generated: Set<string>, failing: Map<string, Set<number>>): Promise<{ verdict: Verdict; log: string } | undefined> {
   const lines = dfy.split("\n");
   let prefix = "isolated";
   while (dfy.includes(prefix)) prefix = `x${prefix}`;
@@ -344,15 +366,22 @@ function recheck(dir: string, dfy: string, file: string, generated: Set<string>,
   const derived = `${dfy.trimEnd()}\n\n${copies.join("\n\n")}\n`;
   const name = file.replace(/\.dfy$/, ".isolated.dfy");
   fs.writeFileSync(path.join(dir, name), derived);
-  const { out } = run("dafny", [...verifyArgs(derived), "--filter-symbol", prefix, name], dir);
+  const { out } = await runAsync("dafny", [...verifyArgs(derived), "--filter-symbol", prefix, name], dir);
   const verdict = readVerdict(out, derived, name, new Set([...generated, ...copyOf.keys()]), (n) => copyOf.get(n) ?? n);
   if (!finished(out)) verdict.errors.add(`the postconditions checked one by one gave no verdict: ${out.trim().split("\n").slice(-3).join(" / ")}`);
   return { verdict, log: out };
 }
 
-/** Findings of `dafny audit` in the unit's own file, other than the lemmas the tools add on purpose. */
-function audit(dir: string, dfy: string, file: string, allowed: Set<string>): { findings: string[]; log: string } {
-  const { out } = run("dafny", ["audit", ...(dfy.includes("Std.") ? ["--standard-libraries"] : []), "--unicode-char:true", file], dir);
+/**
+ * Findings of `dafny audit` in the unit's own file, other than the lemmas the tools add on purpose. It reads a copy
+ * of its own, so that it can run while LemmaScript checks the original.
+ */
+async function audit(dir: string, dfy: string, file: string, allowed: Set<string>): Promise<{ findings: string[]; log: string }> {
+  const copy = file.replace(/\.dfy$/, ".audit.dfy");
+  fs.writeFileSync(path.join(dir, copy), dfy);
+  const { out: raw } = await runAsync("dafny", ["audit", ...(dfy.includes("Std.") ? ["--standard-libraries"] : []), "--unicode-char:true", copy], dir);
+  // Read as if it had audited the original, which has the same text.
+  const out = raw.split(copy).join(file);
   const findings = out.split("\n").filter((l) => l.startsWith(`${file}(`) && /: (Warning|Error): /.test(l))
     .filter((l) => !/: Warning: (\w+): Declaration has explicit `\{:axiom\}` attribute/.test(l) || !allowed.has(l.match(/: Warning: (\w+):/)![1]));
   if (!/Dafny auditor completed/.test(out)) findings.push(`dafny audit gave no verdict: ${out.trim().split("\n").slice(-3).join(" / ")}`);
@@ -382,6 +411,10 @@ export interface Unit {
   laws: { fn: string; law: string; from: string }[];
   /** The units whose assurance this one's rests on. */
   rests: string[];
+  /** The unit's text as far as its proof depends on it: generated code without the comments that cite the spec. */
+  meaning: string;
+  /** How many `//@ requires` hand-written code assumes of its callers. */
+  requires?: number;
   /** For a state machine: its transitions and how many parameters each takes after the state. */
   transitions?: { name: string; params: number }[];
 }
@@ -405,7 +438,7 @@ export function stepBody(gen: string, transitions: { name: string; params: numbe
 }
 
 /** Prove one unit in a directory of its own, so that nothing left over from another run or project can vouch for it. */
-export function prove(root: string, u: Unit, offered: { proof?: { file: string; text: string }; lib?: string; laws: string[] }): Proof {
+export async function prove(root: string, u: Unit, offered: { proof?: { file: string; text: string }; lib?: string; laws: string[] }): Promise<Proof> {
   const dir = path.join(root, "gen/proof", u.unit.replace(/\.ts$/, ""));
   const base = u.unit.replace(/\.ts$/, "");
   const file = `${base}.dfy`;
@@ -416,7 +449,7 @@ export function prove(root: string, u: Unit, offered: { proof?: { file: string; 
   fs.writeFileSync(path.join(dir, "lemmascript.json"), JSON.stringify({ "unread-annotations": "error", "run-log": false }));
   const total = (u.text.match(/^\s*\/\/@ (ensures|invariant) /gm) ?? []).length;
   const result = (errors: string[], log: string, dfy = ""): Proof => ({ total, unproved: [], exhausted: [], errors, log, dfy });
-  const generated = run("lsc", ["gen", "--backend=dafny", u.unit], dir);
+  const generated = await runAsync("lsc", ["gen", "--backend=dafny", u.unit], dir);
   const genFile = path.join(dir, `${file}.gen`);
   if (!generated.ok || !fs.existsSync(genFile)) return result([generated.out.trim().split("\n").slice(-3).join(" / ") || "lsc generated nothing"], generated.out);
   const gen = fs.readFileSync(genFile, "utf8");
@@ -430,15 +463,17 @@ export function prove(root: string, u: Unit, offered: { proof?: { file: string; 
     return result([(e as Error).message], generated.out);
   }
   fs.writeFileSync(path.join(dir, file), dfy);
+  // Every unit, with or without a proof file: should LemmaScript ever emit something trusted, it fails here.
+  const audited = audit(dir, dfy, file, axiomNames);
   // LemmaScript keeps this .dfy, refuses it unless it is its own fresh output plus added lines, and runs Dafny.
-  const checked = run("lsc", ["check", "--backend=dafny", `--time-limit=${TIME_LIMIT}`, `--extra-flags=${DAFNY_FLAGS.join(" ")}`, u.unit], dir);
+  const checked = await runAsync("lsc", ["check", "--backend=dafny", `--time-limit=${TIME_LIMIT}`, `--extra-flags=${DAFNY_FLAGS.join(" ")}`, u.unit], dir);
   let log = `${generated.out}${checked.out}`;
   const declared = declaredNames(gen);
   const v = readVerdict(checked.out, dfy, file, declared);
   // The verdict is Dafny's own summary; without it, or with anything left unexplained, the unit was not checked.
   if (!v.errors.size && (!finished(checked.out) || (!checked.ok && !v.unproved.size))) v.errors.add(checked.out.trim().split("\n").slice(-3).join(" / ") || "lsc produced no verdict");
   if (!v.errors.size && v.failing.size) {
-    const again = recheck(dir, dfy, file, declared, v.failing);
+    const again = await recheck(dir, dfy, file, declared, v.failing);
     if (again) {
       log += `\n---- each postcondition of a definition with a failure, checked on its own ----\n${again.log}`;
       for (const [k, def] of again.verdict.unproved) v.unproved.set(k, def);
@@ -446,10 +481,8 @@ export function prove(root: string, u: Unit, offered: { proof?: { file: string; 
       for (const e of again.verdict.errors) v.errors.add(e);
     }
   }
-  if (offered.proof) {
-    const audited = audit(dir, dfy, file, axiomNames);
-    log += `\n---- dafny audit ----\n${audited.log}`;
-    for (const f of audited.findings) v.errors.add(f);
-  }
+  const { findings, log: auditLog } = await audited;
+  log += `\n---- dafny audit ----\n${auditLog}`;
+  for (const f of findings) v.errors.add(f);
   return { total, unproved: [...v.unproved.keys()], exhausted: [...v.exhausted], errors: [...v.errors], log, dfy };
 }

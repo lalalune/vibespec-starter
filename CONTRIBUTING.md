@@ -333,7 +333,8 @@ Tests for the shell go in `test/*.test.ts` and run with Node's test runner.
 ## Who syncs
 
 The agent working in your session does: Claude Code, or any agent that reads
-AGENTS.md. Its procedure is the `sync` skill in
+AGENTS.md. Claude Code reads `AGENTS.md` itself, so no `CLAUDE.md` is needed;
+a project that has one keeps it, and both are read. Its procedure is the `sync` skill in
 `.claude/skills/sync/SKILL.md`: run `npm run check`, translate what the
 report asks for (story to rules, rule to Quint, a changed model back to prose,
 a counterexample to a new rule), repeat, then stop for your `npm run accept`.
@@ -346,14 +347,16 @@ registry; install it from a path or a tarball made with `npm pack`.
 
 ```sh
 npm install --save-dev /path/to/onespec-0.1.0.tgz
-npx spec init      # adds the sync skill, AGENTS.md, CONTRIBUTING.md, a tsconfig.json,
-                   # .gitignore entries and package scripts; replaces nothing
+npx spec init      # adds the sync skill, CONTRIBUTING.md, a tsconfig.json, .gitignore
+                   # entries and package scripts, and a section to AGENTS.md (created
+                   # if missing); replaces nothing of the project's own
 npm run check
 ```
 
 `spec` expects `spec/*.md`, and optionally `src/`, `test/*.test.ts` and a
 `tsconfig.json`, in the directory it is run from. Without a `tsconfig.json`
-nothing is typechecked, and the check says so. `examples/dashboard` is such
+nothing is typechecked, so the `types` stage fails if there is a `src/` or
+`test/` for it to check. `examples/dashboard` is such
 a package. To hand the generated code to yet another package, compile
 `gen/*.ts` with `tsc` and export the result; it has no dependencies.
 
@@ -367,7 +370,10 @@ a package. To hand the generated code to yet another package, compile
   everything beneath it.
 - **Only what changed is checked again.** A spec that passed simulation, and
   each proof result, is remembered in `.spec-cache/` under a fingerprint of
-  the spec, everything it imports and the versions of the tools. Set
+  what the spec means, everything it imports and the versions of the tools.
+  Prose and the line numbers generated code cites are left out of the
+  fingerprint, so editing prose re-runs neither simulation nor proofs.
+  Simulation runs overlap. Set
   `SPEC_NO_CACHE=1` to run everything afresh, which also gives the simulator
   new random traces. `accept` always runs afresh.
 - **Three levels of assurance**, reported per obligation: proved for all
