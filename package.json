@@ -1,0 +1,21 @@
+{
+  "name": "state-example",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "check": "node tools/spec.ts check",
+    "gen": "node tools/spec.ts gen",
+    "sync": "node tools/spec.ts sync",
+    "accept": "node tools/spec.ts accept",
+    "demo": "npm run -s gen && node src/demo.ts",
+    "postinstall": "node tools/spec.ts gen",
+    "selftest": "node --test tools/selftest.ts"
+  },
+  "devDependencies": {
+    "@informalsystems/quint": "^0.33.1",
+    "@types/node": "^24.0.0",
+    "lemmascript": "^0.6.8",
+    "typescript": "^5.9.0"
+  }
+}

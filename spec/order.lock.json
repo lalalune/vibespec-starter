@@ -1,0 +1,18 @@
+{
+  "Domain / Order": ["9d6706e1f76c","d02e01a6abc7"],
+  "Domain / Unit price and order size": ["fdf8e5700e74","5ae6fe153ee3"],
+  "Story: Fill a draft / A new order is an empty draft": ["e3b0c44298fc","fcaa192ed2cd"],
+  "Story: Fill a draft / Items can only be added to a draft": ["afe2cb7e3509","60ffdb8791d1"],
+  "Story: Fill a draft / The amount due is always the price of the units": ["e3b0c44298fc","7626b0a4ba06"],
+  "Story: Check out / Only a non-empty draft can be submitted": ["55da230b8a2a","154c5a2dfb31"],
+  "Story: Check out / A payment never exceeds the balance": ["abf1ae7b00df","0343a556a0b3"],
+  "Story: Check out / The amount paid is never negative and never more than is due": ["e3b0c44298fc","350b6e741fc2"],
+  "Story: Check out / A pending order still has a balance": ["e3b0c44298fc","a49614d4c89f"],
+  "Story: Check out / A paid order is paid in full": ["e3b0c44298fc","f835e8079c7c"],
+  "Story: Check out / An order can be paid off": ["e3b0c44298fc","f666fb37c8b5"],
+  "Story: Cancel / A pending order can be cancelled, refunding every payment": ["e3b0c44298fc","22dbaa6128fd"],
+  "Story: Cancel / Drafts and cancelled orders hold no money": ["e3b0c44298fc","0d83112a07dc"],
+  "Story: Cancel / An order can be cancelled": ["e3b0c44298fc","26f34c17c924"],
+  "Story: Change my mind / Items can be removed from a draft": ["0b7a75a10992","109920cf74ea"],
+  "Story: Change my mind / No more can be removed than the order holds": ["30ac180c4a4b","a5d2b385360a"]
+}
