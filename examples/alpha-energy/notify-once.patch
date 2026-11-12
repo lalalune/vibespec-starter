@@ -1,0 +1,32 @@
+diff --git a/src/notify.js b/src/notify.js
+index dd5dbe6..e88fd35 100644
+--- a/src/notify.js
++++ b/src/notify.js
+@@ -49,7 +49,8 @@ export function plan(db, { now, tz, url, sendHour = 9 }) {
+   const at = new Date(now).getTime();
+   const { date: today, weekday, hour } = local(now, tz);
+   const owner = new Map(db.Owners.map((o) => [o.Name, o]));
+-  const slack = (names) => names.map((n) => owner.get(n)).filter((o) => o?.['Slack ID']);
++  // A cell is typed by hand, so a name can be there twice; each person is still told once.
++  const slack = (names) => [...new Set(names)].map((n) => owner.get(n)).filter((o) => o?.['Slack ID']);
+ 
+   for (const t of db.Tasks) {
+     // 1. Edits, once they have been quiet for 15 minutes. One message for the whole burst.
+diff --git a/test/notify.test.js b/test/notify.test.js
+index 49fd727..bebbbc3 100644
+--- a/test/notify.test.js
++++ b/test/notify.test.js
+@@ -38,6 +38,13 @@ test('hand edits in the sheet notify every owner; owners without Slack are skipp
+   assert.match(job.messages[0].text, /in the sheet/);
+ });
+ 
++test('a name typed twice in an Owners cell is told once', () => {
++  const db = quiet(fixture());
++  Object.assign(find(db, 'Tasks', 'T-002'), { Owners: 'Liza Horowitz, Liza Horowitz', 'Updated At': at(0.5), 'Updated By': 'sheet' });
++  const [job] = plan(db, { now: at(30) });
++  assert.deepEqual(job.messages.map((m) => m.user), ['U1']);
++});
++
+ test('a new task tells its owners they were added', () => {
+   const made = apply(quiet(fixture()), { type: 'create', table: 'Tasks', values: { Project: 'Brawand', Name: 'Call insurer', Owners: 'Cody Kemp' } }, { now: at(0), actor: 'Liza Horowitz' });
+   const [job] = plan(made.db, { now: at(16) });

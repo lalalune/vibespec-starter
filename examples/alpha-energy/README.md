@@ -29,7 +29,10 @@ around these rules.
   could not see this. Here a cell is a list, the rule "nothing is sent twice"
   failed in simulation, and the same input run through the real notifier
   produced two messages to one person. The spec now has the rule "A person
-  named twice in a cell is told once".
+  named twice in a cell is told once". The application itself has not been
+  changed; [notify-once.patch](notify-once.patch) is a one-line fix with a
+  test, checked against a copy of the application (the test fails without
+  the fix and passes with it). Apply it there with `git apply`.
 - **A wrong rename in the first draft of this model.** Renaming a person onto
   a name already typed in a cell left the name there twice. The real
   application removes duplicates whenever it writes a cell; the model now does
