@@ -1,22 +1,23 @@
 # One project's sheet
 
-Tasks and the people who own them, for one project. The data lives in a Google
-Sheet that stays hand-editable, so there are two kinds of writer: the app,
-whose edits are guarded, and a person typing in the sheet, whose edits are not.
-Task IDs are numbers here (`T-012` is 12) and times are ticks.
+The tasks of one project and the people responsible for them. Everything is
+stored in a shared spreadsheet that anyone may edit directly, so changes come
+from two kinds of writer: the dashboard, which checks its edits, and a person
+editing the spreadsheet, who is not checked. Task numbers are plain integers
+here (task `#12` is 12) and time is counted in ticks.
 
 ## Domain
 
 ### Tasks, owners and notes
 
-A task names its owners, the tasks it depends on (its parents) and the tasks
-it is related to. Children are the inverse of parents and are never stored.
-A note is one message sent to one person.
+Each task lists its owners, the tasks it waits on (its parents) and the tasks
+linked to it as related. Children are derived from parents and not stored. A
+note is a single message to a single person.
 
 ```quint
 import kernel.* from "./kernel"
 
-type Status = DecisionNeeded | ToConfirm | NotStarted | InProgress | Done
+type Status = Blocked | Review | Todo | Doing | Done
 type Writer = App | Sheet | Fix | Clock | Notifier
 type Task = {
   id: int, status: Status, owners: List[str], parents: List[int], related: List[int], due: int,
@@ -31,14 +32,14 @@ type Tracker = { tasks: List[Task], owners: List[str], lastId: int, now: int, se
 
 ```quint
 pure val initial: Tracker =
-  { tasks: List(), owners: List("liza", "cody", "wes"), lastId: 0, now: 0, sent: List(), last: Clock }
+  { tasks: List(), owners: List("ana", "ben", "cal"), lastId: 0, now: 0, sent: List(), last: Clock }
 ```
 
 ### Timing
 
-Owners are told about an edit after 3 quiet ticks. A day is 2 ticks, short
-enough for the simulator to live through several. Reminders
-go out up to 3 days ahead, and a missed day-of reminder up to 2 days late.
+An edit is announced once 3 ticks pass without further changes. A day lasts
+2 ticks, so the simulator can cover several days. Reminders are sent up to 3
+days early, and a missed reminder for the day itself up to 2 days late.
 
 ```quint
 pure val debounce = 3
@@ -50,14 +51,14 @@ pure def today(at: int): int = at / ticksPerDay
 
 ### What the simulator tries
 
-Four task numbers, the three people and one typo.
+Four task numbers, the three team members and one misspelling.
 
 ```quint
 pure val idValues = Set(1, 2, 3, 4)
 pure val otherValues = idValues
-pure val actorValues = Set("liza", "cody", "wes")
-pure val ownerValues = Set("liza", "cody", "wes", "lisa")
-pure val nameValues = Set("liza", "cody", "wes", "lisa")
+pure val actorValues = Set("ana", "ben", "cal")
+pure val ownerValues = Set("ana", "ben", "cal", "ama")
+pure val nameValues = Set("ana", "ben", "cal", "ama")
 ```
 
 ### Small helpers
@@ -75,14 +76,15 @@ pure def touched(t: Task, actor: str, at: int): Task = { ...t, updatedAt: at, up
 
 ## Story: See what is wrong with the data
 
-> As someone looking after a project, I want every broken link listed with a
-> fix, so that hand edits in the sheet do not quietly rot the data.
+> As the person keeping a project tidy, I want each broken reference shown
+> together with a fix, so that direct spreadsheet edits do not silently
+> degrade the data.
 
 ### Everything a task depends on, however far back
 
-A task that lists itself is reported as its own problem, so self-links are left
-out here. The search repeats once per task in the sheet, which is enough to
-reach every ancestor.
+A task that names itself is flagged as a separate problem, so links to itself
+are skipped here. The search runs once for each task in the spreadsheet,
+which is enough rounds to find every ancestor.
 
 ```quint
 pure def parentsOfAll(s: Tracker, ids: List[int]): List[int] =
@@ -95,9 +97,9 @@ pure def ancestors(s: Tracker, id: int): List[int] =
 
 ### The problems of one task
 
-An owner that is not a person in the sheet; a parent or related task that does
-not exist; a task that depends on or is related to itself; a dependency that
-comes back round; a related link that the other task does not return.
+An owner who is not a member of the project; a parent or related task that is
+missing; a task that waits on or is related to itself; a chain of dependencies
+that loops; a related link that the other task does not link back.
 
 ```quint
 type Code = UnknownOwner | UnknownParent | UnknownRelated | SelfParent | SelfRelated | Cycle | OneSided
@@ -121,9 +123,9 @@ pure def problems(s: Tracker): List[Problem] =
 
 ### The warning list is empty exactly when the data is well formed
 
-Well formed, said directly: every owner is a person, every link points at a
-task, nothing links to itself, no dependency comes back round, and every
-related link is returned.
+Well formed, stated directly: each owner is a member, each link leads to an
+existing task, no task links to itself, no dependency chain loops, and each
+related link is mirrored.
 
 ```quint
 pure def wellFormed(s: Tracker): bool =
@@ -141,16 +143,16 @@ pure def alwaysTheWarningListIsTheTruth(s: Tracker): bool =
   (problems(s).length() == 0) iff wellFormed(s)
 ```
 
-## Story: Edit through the app
+## Story: Edit through the dashboard
 
-> As a team member, I want to change tasks from Slack or the web view and be
-> refused when a change would break a link, so that the app never makes the
-> data worse.
+> As a team member, I want to edit tasks from the chat app or the web
+> dashboard and be stopped when an edit would break a reference, so that the
+> dashboard itself never damages the data.
 
 ### Only a hand edit can make the data worse
 
-An app edit never adds a problem, even to data that is already broken. Nor do
-time passing, notifying and fixing.
+An edit made through the dashboard never introduces a problem, even when the
+data is already broken. Neither do the clock, the notifier or a fix.
 
 ```quint
 pure def sameProblem(a: Problem, b: Problem): bool =
@@ -166,9 +168,9 @@ pure def stepOnlyAHandEditCorrupts(before: Tracker, after: Tracker): bool =
 
 ### A new task gets a number that was never issued and that nothing points at
 
-Otherwise a dangling link left by a hand edit, or an old message quoting a
-deleted task, would attach itself to the new task. Only a known person can
-create a task.
+Otherwise a dangling reference left by a direct edit, or an old message
+mentioning a deleted task, would suddenly refer to the new task. Only a member
+of the project can create a task.
 
 ```quint
 pure def numbersInUse(s: Tracker): List[int] =
@@ -179,7 +181,7 @@ pure def canCreate(s: Tracker, actor: str): bool = s.owners.includes(actor)
 pure def create(s: Tracker, actor: str): Tracker =
   val id = nextNumber(numbersInUse(s), s.lastId)
   { ...s, last: App, lastId: id, tasks: s.tasks.append({
-    id: id, status: NotStarted, owners: List(), parents: List(), related: List(), due: 0,
+    id: id, status: Todo, owners: List(), parents: List(), related: List(), due: 0,
     updatedAt: s.now, updatedBy: actor, notifiedAt: -1, toldSoon: List(), toldDue: List(),
   }) }
 ```
@@ -218,9 +220,10 @@ pure def setDue(s: Tracker, id: int, due: int, actor: str): Tracker =
   { ...s, last: App, tasks: s.tasks.listMap(t => if (t.id == id) touched({ ...t, due: due }, actor, s.now) else t) }
 ```
 
-### An owner added through the app must be a person in the sheet
+### An owner added through the dashboard must be a project member
 
-A typo already sitting in the cell may stay until it is fixed.
+A misspelled name that is already in the cell may remain until someone fixes
+it.
 
 ```quint
 pure def canAddOwner(s: Tracker, id: int, owner: str, actor: str): bool =
@@ -271,7 +274,7 @@ pure def unrelate(s: Tracker, id: int, other: int, actor: str): Tracker =
     else t) }
 ```
 
-### Deleting a task through the app removes every link to it
+### Deleting a task through the dashboard removes every link to it
 
 ```quint
 pure def canDeleteTask(s: Tracker, id: int): bool = hasTask(s, id)
@@ -281,10 +284,10 @@ pure def deleteTask(s: Tracker, id: int): Tracker =
     .listMap(t => { ...t, parents: drop(t.parents, id), related: drop(t.related, id) }) }
 ```
 
-### Renaming or removing a person through the app rewrites every cell that names them
+### Renaming or removing a person through the dashboard rewrites every cell that names them
 
-A cell the app writes never names the same person twice, even when the new
-name was already typed there by hand.
+A cell written by the dashboard never lists one person twice, even if the new
+name had already been entered there directly.
 
 ```quint
 pure def canRenameOwner(s: Tracker, owner: str, name: str): bool =
@@ -302,15 +305,16 @@ pure def deleteOwner(s: Tracker, owner: str): Tracker =
     tasks: s.tasks.listMap(t => { ...t, owners: dropName(t.owners, owner) }) }
 ```
 
-## Story: Edit the sheet by hand
+## Story: Edit the spreadsheet directly
 
-> As someone who lives in spreadsheets, I want to type straight into the
-> sheet, typos and all, and have the app accept it and show me what to fix.
+> As someone who prefers working in the spreadsheet, I want to edit it
+> directly, mistakes included, and have the dashboard take it and point out
+> what needs fixing.
 
 ### A hand edit is accepted whatever it says
 
-Any name can be typed as an owner, even one that is already there, and any
-number as a link. A row can be deleted, which leaves links to it dangling.
+Any name may be entered as an owner, including one already present, and any
+number as a link. Rows may be removed, leaving references to them dangling.
 
 ```quint
 pure def canHandAddOwner(s: Tracker, id: int, name: str): bool = hasTask(s, id)
@@ -347,10 +351,11 @@ pure def sometimesTheDataHasAProblem(s: Tracker): bool = problems(s).length() > 
 
 ### A one-click fix removes its problem and adds none
 
-The fix is chosen by its place in the warning list; a place that is not in
-the list fixes nothing. A cycle has no automatic fix: a person chooses which link to drop. Every other
-problem is fixed by removing the bad link, except a one-sided related link,
-which is fixed by adding the link back on the other task.
+A fix is picked by its position in the warning list; a position outside the
+list fixes nothing. A loop has no automatic fix, because someone must decide
+which link to remove. Every other problem is fixed by deleting the faulty
+link, except a one-sided related link, which is fixed by adding the missing
+link on the other task.
 
 ```quint
 pure val noProblem: Problem = { code: Cycle, task: 0, ref: 0, name: "" }
@@ -379,8 +384,8 @@ pure def sometimesAProblemIsFixed(s: Tracker): bool = s.last == Fix and problems
 
 ## Story: Be told what changed and what is due
 
-> As a task owner, I want a message after someone else edits my task, three
-> days before it is due and on the day, each of them once.
+> As a task owner, I want a message when another person changes my task, a
+> few days ahead of its due date and on the date itself, each exactly once.
 
 ### Time passes
 
@@ -390,9 +395,9 @@ pure def tick(s: Tracker): Tracker = { ...s, last: Clock, now: s.now + 1 }
 
 ### One pass of the notifier sends everything that is due and records that it was sent
 
-An edit is announced to the task's owners who are people in the sheet, except
-whoever made it. A reminder goes to every such owner. A task that is done, or
-has no due date, gets no reminder.
+An edit is announced to the task's owners who are project members, apart from
+the person who made it. A reminder goes to all such owners. A finished task,
+or one without a due date, gets no reminder.
 
 ```quint
 pure def knownOwners(s: Tracker, t: Task): List[str] = distinctNames(t.owners.select(o => s.owners.includes(o)))
@@ -424,9 +429,9 @@ pure def notify(s: Tracker): Tracker =
 
 ### A person named twice in a cell is told once
 
-Discovered by simulation: a name typed twice in an owners cell made the
-notifier send that person the same message twice. The notifier now reads each
-cell as a set of people.
+Discovered by simulation: when a name appeared twice in an owners cell, the
+notifier sent that person an identical message twice. The notifier now treats
+each cell as a set of people.
 
 ```quint
 pure def alwaysNoOneIsToldTwiceInOnePass(s: Tracker): bool =
@@ -444,9 +449,9 @@ pure def sometimesAnOwnerIsToldOfAnEdit(s: Tracker): bool = s.sent.some(n => n.k
 
 ### Nothing is sent twice
 
-An edit is announced once per person per settled version. A reminder is sent
-once per person per due date, even if the task is moved away from that date
-and back, because the sheet remembers every date already reminded for.
+Each settled version of an edit is announced to each person once. A reminder
+goes to each person once per due date, even when the date is changed and later
+changed back, because the spreadsheet keeps every date already reminded for.
 
 ```quint
 pure def alwaysNothingIsSentTwice(s: Tracker): bool =

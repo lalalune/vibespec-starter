@@ -6,7 +6,7 @@ the procedure an agent follows is in [AGENTS.md](AGENTS.md) and the `sync`
 skill it points to.
 
 "The order example" below is `spec/order.md` in this repository. "The tracker
-example" is `examples/alpha-energy/spec/tracker.md`.
+example" is `examples/dashboard/spec/tracker.md`.
 
 ## Writing a spec
 
@@ -121,8 +121,9 @@ Things to know:
 - **A set holds simple values only**, and `Set(a, b)` with members that are
   not literals is refused, because the two could be equal: write
   `Set(a).union(Set(b))`. Use a set when duplicates are impossible in the
-  real thing and a list when they are not. The tracker example found a real
-  bug that a set-based model had hidden.
+  real thing and a list when they are not. In the tracker example, modelling
+  an owners cell as a list exposed that a name typed twice is notified twice,
+  which a set-based model cannot express.
 - **A map is a lookup table.** It cannot be listed or iterated; keep a list of
   keys beside it, or use a list of records with a key field. An event cannot
   carry one. In the generated state its keys carry a `$` in front, so that no
@@ -247,7 +248,7 @@ npm run check
 
 `spec` expects `spec/*.md`, and optionally `src/`, `test/*.test.ts` and a
 `tsconfig.json`, in the directory it is run from. Without a `tsconfig.json`
-nothing is typechecked, and the check says so. `examples/alpha-energy` is such
+nothing is typechecked, and the check says so. `examples/dashboard` is such
 a package. To hand the generated code to yet another package, compile
 `gen/*.ts` with `tsc` and export the result; it has no dependencies.
 
@@ -266,9 +267,10 @@ a package. To hand the generated code to yet another package, compile
   new random traces. `accept` always runs afresh.
 - **Three levels of assurance**, reported per obligation: proved for all
   inputs; simulated and accepted; and the shell, which is tested.
-- **The spec covers the rules, not the plumbing.** The tracker example models
-  a 5,500-line application in about 700 lines of spec; its Slack, HTTP and
-  Google Sheets code stays hand-written around the generated core.
+- **The spec covers the rules, not the plumbing.** The dashboard example
+  states its rules in about 700 lines of spec; chat, HTTP and spreadsheet
+  access would stay hand-written around the generated core, as its
+  `src/notify.ts` does for sending messages.
 
 ## Checking harder
 
