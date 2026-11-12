@@ -118,7 +118,8 @@ makes one of them provable, the check says so.
 
 Modelling cells as lists rather than sets found a real bug in the
 application: a name typed twice in an owners cell made the notifier message
-that person twice. A one-line fix is in the example as a patch.
+that person twice. The one-line fix, with a test, is in the example as a
+patch and has been applied to the application.
 
 ## What is and is not guaranteed
 
