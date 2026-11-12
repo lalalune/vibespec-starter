@@ -2,9 +2,7 @@
 // project's spec into a scratch directory, breaks one thing, and asserts which
 // stage of `check` fails. Run with `npm run selftest`.
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
-import http from "node:http";
-import type { AddressInfo } from "node:net";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -61,6 +59,17 @@ pure def alwaysCountsOpenings(d: Door): bool = d.opened - (0 - 1) > 0 and (d.mod
 pure def sometimesLocked(d: Door): bool = d.mode == Locked and d.alarm
 \`\`\`
 `;
+
+/** Run `check` on a scratch project made of the named fixture specs. */
+async function checkFixtures(files: string[]): Promise<string[]> {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "spec-selftest-"));
+  fs.mkdirSync(path.join(root, "spec"));
+  for (const f of files) fs.copyFileSync(path.join(import.meta.dirname, "fixtures", f), path.join(root, "spec", f));
+  const lines: string[] = [];
+  await check(root, (l) => lines.push(l));
+  fs.rmSync(root, { recursive: true });
+  return lines;
+}
 
 describe("each check catches its own kind of mistake", { concurrency: true }, () => {
   test("a fresh spec with enum and bool parameters and an unguarded transition passes everything but review", async () => {
@@ -149,43 +158,6 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     fs.rmSync(root, { recursive: true });
   });
 
-  test("the local-model agent turns a brief into edits: rules for a story, prose for a changed model", async () => {
-    const F = "`".repeat(3);
-    // A canned stand-in for Ollama, so the adapter's parsing and editing are tested without a model.
-    const server = http.createServer((req, res) => {
-      let body = "";
-      req.on("data", (c) => (body += c)).on("end", () => {
-        const prompt: string = JSON.parse(body).prompt;
-        const response = prompt.includes("has no rules yet")
-          ? `### ### A cancelled order can be archived\n\n${F}quint\npure def canArchive(o: Order): bool = o.status == Cancelled\npure def archive(o: Order): Order = { ...o, units: 0, due: 0 }\n${F}`
-          : `${F}\nEvery unit costs the same, and one order holds at most 7 units.\n${F}`;
-        res.end(JSON.stringify({ response }));
-      });
-    });
-    await new Promise<void>((done) => server.listen(0, done));
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "spec-selftest-"));
-    fs.cpSync(path.join(project, "spec"), path.join(root, "spec"), { recursive: true });
-    const specFile = path.join(root, "spec/order.md");
-    fs.appendFileSync(specFile, "\n## Story: Archive\n\n> As a shopper, I want cancelled orders out of my way.\n");
-    const prose = fs.readFileSync(specFile, "utf8").match(/Every unit costs the same, and one order holds at most \d+ units\./)![0];
-    const brief = `✗ review    2 item(s)\n    spec/order.md:210  Story: Archive\n      story has no rules: write them\n\n`
-      + `RULE "Domain / Unit price and order size" (model changed)\nits prose now:\n${prose}\nits Quint now:\npure val maxUnits = 7\nEND RULE\n`;
-    const agent = spawn(process.execPath, [path.join(project, "tools/agent-ollama.ts")],
-      { cwd: root, env: { ...process.env, OLLAMA_HOST: `http://localhost:${(server.address() as AddressInfo).port}` } });
-    agent.stdin.end(brief);
-    let out = "";
-    agent.stdout.on("data", (c) => (out += c));
-    agent.stderr.on("data", (c) => (out += c));
-    const status = await new Promise((done) => agent.on("close", done));
-    server.close();
-    const after = fs.readFileSync(specFile, "utf8");
-    assert.equal(status, 0, out);
-    assert.match(out, /made 2 edit/);
-    assert.match(after, /## Story: Archive\n\n> As a shopper.*\n\n### A cancelled order can be archived\n\n```quint\npure def canArchive/);
-    assert.ok(after.includes("at most 7 units.") && !after.includes(prose));
-    fs.rmSync(root, { recursive: true });
-  });
-
   test("lists, nested helpers, an imported library, laws, step rules and the proof ledger work together", async () => {
     const F = "`".repeat(3);
     const lib = `# Lib\n\n## Sums\n\n### The total of a list\n\n${F}quint
@@ -231,7 +203,7 @@ ${F}\n`;
     const wrongLaw = await run((f) => { f["lib.md"] = f["lib.md"].replace("total(List(n)) == n", "total(List(n)) == n + 1"); });
     assert.match(wrongLaw.text, /✗ always +the law .* is false for \{"n":/);
     const importsMachine = await run((f) => { f["other.md"] = `# Other\n\n## Group\n\n### Uses a machine\n\n${F}quint\nimport shop.* from "./shop"\npure val two = 2\n${F}\n`; });
-    assert.match(importsMachine.text, /only a library/);
+    assert.match(importsMachine.text, /is imported under a name/);
     const circle = await run((f) => { f["lib.md"] = f["lib.md"].replace("pure def total", 'import shop.* from "./shop"\npure def total'); });
     assert.match(circle.text, /import each other in a circle/);
   });
@@ -285,15 +257,30 @@ ${F}\n`;
     fs.rmSync(root, { recursive: true });
   });
 
-  test("replay notices a guard that refuses what Quint allows, or allows what Quint refuses", async () => {
+  test("one machine uses another under a name, keeps its rules, and adds rules about the pair", async () => {
+    const lines = await checkFixtures(["lamp.md", "room.md"]);
+    assert.deepEqual([...new Set(lines.filter((l) => l.startsWith("✗")).map((l) => l.split(/\s+/)[1]))], ["review"], lines.join("\n"));
+    assert.match(lines.join("\n"), /✓ proof +room\.ts: \d+ obligations proved for all states and inputs$/m);
+  });
+
+  test("a map is looked up safely, and division and remainder agree with Quint for negative numbers", async () => {
+    const lines = await checkFixtures(["stock.md"]);
+    const text = lines.join("\n");
+    assert.deepEqual([...new Set(lines.filter((l) => l.startsWith("✗")).map((l) => l.split(/\s+/)[1]))], ["proof", "review"], text);
+    assert.match(text, /✓ replay .* every law, and \d+ of \d+ definitions/);
+    assert.ok(!/lawBoxesAndLooseMakeTheWhole/.test(text), "the division law is proved, so it is not listed as unproved");
+  });
+
+  test("replay notices a definition whose TypeScript result differs from Quint's", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "spec-selftest-"));
     fs.cpSync(path.join(project, "spec"), path.join(root, "spec"), { recursive: true });
-    gen(root, parseSpec(root, "spec/order.md"));
+    const model = gen(root, parseSpec(root, "spec/order.md"));
     const domain = await import(path.join(root, "gen/order.ts"));
-    const asked = (event: { type: string }, allowed: boolean) => [{ state: domain.initial }, { asked: { event, allowed } }];
-    replay(domain, asked({ type: "submit" }, false));
-    assert.throws(() => replay(domain, asked({ type: "submit" }, true)), /disagree on whether/);
-    assert.throws(() => replay({ ...domain, enabled: () => true }, asked({ type: "submit" }, false)), /disagree on whether/);
+    assert.ok(model.evals.some((v) => v.name === "canSubmit"), "guards are among the definitions compared");
+    const evaluated = (result: boolean) => [{ state: domain.initial }, { evaluated: { name: "canSubmit", picks: {}, result } }];
+    replay(domain, evaluated(false), model);
+    assert.throws(() => replay(domain, evaluated(true), model), /disagree on canSubmit/);
+    assert.throws(() => replay({ ...domain, canSubmit: () => true }, evaluated(false), model), /disagree on canSubmit/);
     fs.rmSync(root, { recursive: true });
   });
 

@@ -25,7 +25,16 @@ import { generate, LIST_HELPERS, type Model, type Origin } from "./gen.ts";
 const SAMPLES = 10000; // simulated traces per check
 const WITNESS_SAMPLES = 20 * SAMPLES; // traces tried when looking for a state a `sometimes` rule says is reachable
 const STEPS = 20; // events per trace
-const REPLAYED = 50; // of those, how many are replayed through the generated TypeScript
+const REPLAYED = 200; // traces replayed through the generated TypeScript
+const COMPARED_SAMPLES = 2000; // traces simulated to choose those from
+/** What a cached result was produced by: a different Quint, LemmaScript or version of these tools must not reuse it. */
+const TOOLCHAIN = ["@informalsystems/quint", "lemmascript"].map((dep) => {
+  for (let dir = import.meta.dirname; dir !== path.dirname(dir); dir = path.dirname(dir)) {
+    const file = path.join(dir, "node_modules", dep, "package.json");
+    if (fs.existsSync(file)) return `${dep}@${JSON.parse(fs.readFileSync(file, "utf8")).version}`;
+  }
+  return dep;
+}).join(" ") + ` tools@${createHash("sha256").update(fs.readFileSync(import.meta.filename)).update(fs.readFileSync(path.join(import.meta.dirname, `gen${path.extname(import.meta.filename)}`))).digest("hex").slice(0, 12)}`;
 const ANNOTATIONS = ["backend", "pure", "requires", "ensures", "invariant", "decreases", "type", "ghost", "assert"];
 
 // --- the spec file -----------------------------------------------------------
@@ -198,7 +207,14 @@ export function gen(root: string, spec: Spec, models = new Map<string, Model>())
 // --- traces: Quint simulates, the generated TypeScript must agree -------------------
 
 /** One state of a simulated trace, and what led to it: an event, or a law tried on some arguments. */
-interface Step { event?: { type: string }; asked?: { event: { type: string }; allowed: boolean }; law?: { name: string; args: Record<string, unknown> }; state?: unknown; lawsHold?: boolean }
+interface Step {
+  event?: { type: string };
+  law?: { name: string; args: Record<string, unknown> };
+  /** A definition the simulator evaluated: what was picked for its sampled parameters, and what Quint got. */
+  evaluated?: { name: string; picks: Record<string, unknown>; result: unknown };
+  state?: unknown;
+  lawsHold?: boolean;
+}
 
 function readTrace(file: string, model: Model): Step[] {
   return JSON.parse(fs.readFileSync(file, "utf8")).states.map((st: any): Step => {
@@ -207,11 +223,11 @@ function readTrace(file: string, model: Model): Step[] {
     const picked = (ps: { name: string; type: any }[]) => Object.fromEntries(ps.map((p) => [p.name, read(p.type, st["mbt::nondetPicks"][p.name].value)]));
     const taken: string = st["mbt::actionTaken"];
     const t = model.transitions.find((t) => t.name === taken);
-    const a = model.transitions.find((t) => `ask_${t.name}` === taken);
+    const v = model.evals.find((v) => `eval_${v.name}` === taken);
     const l = model.laws.find((l) => l.name === taken);
     return {
       event: t && { type: t.name, ...picked(t.params) },
-      asked: a && { event: { type: a.name, ...picked(a.params) }, allowed: st.allowed },
+      evaluated: v && { name: v.name, picks: picked(v.params.filter((p) => p.from === "pick")), result: read(v.result, st.out.value) },
       law: l && { name: l.name, args: picked(l.params) },
       state: model.state ? read(model.stateType, st.state) : undefined,
       lawsHold: st.lawsHold,
@@ -220,11 +236,11 @@ function readTrace(file: string, model: Model): Step[] {
 }
 
 /** Simulate the harness until `invariant` breaks; returns the traces Quint wrote. */
-function simulate(root: string, model: Model, invariant: string, traces: number, samples = SAMPLES): { broken: boolean; traces: Step[][] } {
-  const dir = path.join(root, "gen/traces", `${model.name}.${invariant}`);
+function simulate(root: string, model: Model, invariant: string, traces: number, samples = SAMPLES, step = "step"): { broken: boolean; traces: Step[][] } {
+  const dir = path.join(root, "gen/traces", `${model.name}.${invariant}.${step}`);
   fs.rmSync(dir, { recursive: true, force: true });
   fs.mkdirSync(dir, { recursive: true });
-  const r = run("quint", ["run", `gen/${model.name}.run.qnt`, "--main", `${model.name}_run`, "--invariant", invariant,
+  const r = run("quint", ["run", `gen/${model.name}.run.qnt`, "--main", `${model.name}_run`, "--step", step, "--invariant", invariant,
     "--max-samples", String(samples), "--max-steps", String(STEPS), "--mbt", "--n-traces", String(traces),
     "--out-itf", path.join(dir, "{seq}.itf.json")], root);
   const broken = r.out.includes("[violation]");
@@ -234,21 +250,27 @@ function simulate(root: string, model: Model, invariant: string, traces: number,
   return { broken, traces: files.map((f) => readTrace(path.join(dir, f), model)) };
 }
 
-/** Replay one Quint trace through the TypeScript domain; throws at the first difference. */
-export function replay(domain: any, trace: Step[], canon: (state: any) => any = (x) => x) {
+/**
+ * Replay one Quint trace through the TypeScript domain; throws at the first difference. With the model, sets are
+ * compared whatever their order and every definition the simulator evaluated is evaluated here too.
+ */
+export function replay(domain: any, trace: Step[], model?: Model) {
   const differ = (what: string) => new Error(`TypeScript and Quint disagree ${what}`);
+  const canon = (type: any, value: unknown) => (model ? model.canon(type, value) : value);
   let s = domain.initial;
-  for (const { event, asked, law, state, lawsHold } of trace) {
+  let before = s;
+  for (const { event, evaluated, law, state, lawsHold } of trace) {
     if (event) {
       if (!domain.enabled(s, event)) throw differ(`on whether ${JSON.stringify(event)} is allowed in ${JSON.stringify(s)}`);
-      s = domain.step(s, event);
-    } else if (asked) {
-      // An event that was only asked about: both sides must give the same answer, and a refused one must change nothing.
-      if (domain.enabled(s, asked.event) !== asked.allowed) throw differ(`on whether ${JSON.stringify(asked.event)} is allowed in ${JSON.stringify(s)}: Quint says ${asked.allowed}`);
-      if (!asked.allowed && !isDeepStrictEqual(domain.step(s, asked.event), s)) throw differ(`on ${JSON.stringify(asked.event)}: it is refused, yet TypeScript changes the state`);
+      [before, s] = [s, domain.step(s, event)];
+    } else if (evaluated && model) {
+      const v = model.evals.find((v) => v.name === evaluated.name)!;
+      const args = v.params.map((p) => (p.from === "state" ? s : p.from === "prev" ? before : evaluated.picks[p.name]));
+      const got = canon(v.result, domain[v.name](...args));
+      if (!isDeepStrictEqual(got, evaluated.result)) throw differ(`on ${v.name}(${args.map((a) => JSON.stringify(a)).join(", ")}): TypeScript gives ${JSON.stringify(got)}, Quint gives ${JSON.stringify(evaluated.result)}`);
     } else if (law && domain[law.name](...Object.values(law.args)) !== lawsHold)
       throw differ(`on ${law.name}${JSON.stringify(law.args)}: Quint says ${lawsHold}`);
-    if (state !== undefined && !isDeepStrictEqual(canon(s), state)) throw differ(`after ${JSON.stringify(event ?? "init")}: TypeScript reached ${JSON.stringify(s)}, Quint reached ${JSON.stringify(state)}`);
+    if (state !== undefined && !isDeepStrictEqual(canon(model?.stateType, s), state)) throw differ(`after ${JSON.stringify(event ?? "init")}: TypeScript reached ${JSON.stringify(s)}, Quint reached ${JSON.stringify(state)}`);
   }
 }
 
@@ -286,16 +308,22 @@ function proofUnits(root: string, models: Model[]): string[] {
   fs.rmSync(dir, { recursive: true, force: true });
   fs.mkdirSync(dir, { recursive: true });
   const byName = new Map(models.map((m) => [m.name, m]));
-  const text = (n: string) => fs.readFileSync(path.join(root, `gen/${n}.ts`), "utf8").replace(IMPORT, "");
-  const asDependency = (n: string) => text(n).replace(/^\s*\/\/@ ensures .*\n/gm, "");
-  /** A module's imports, transitively, dependencies first. */
-  const closure = (names: string[], seen: string[] = []): string[] => {
-    for (const n of names) if (!seen.includes(n)) { closure(byName.get(n)!.imports, seen); seen.push(n); }
+  const strip = (text: string) => text.replace(IMPORT, "");
+  /** What a module needs beside it: each module it imports, under the prefix it imports it by, dependencies first. */
+  type Part = { module: string; prefix: string };
+  const needs = (m: Model, seen: Part[] = []): Part[] => {
+    for (const link of m.links) {
+      const part = { module: link.module, prefix: link.alias ? `${link.alias}_` : "" };
+      if (seen.some((p) => p.module === part.module && p.prefix === part.prefix)) continue;
+      needs(byName.get(link.module)!, seen);
+      seen.push(part);
+    }
     return seen;
   };
+  const asDependency = (p: Part) => strip(byName.get(p.module)!.render(p.prefix)).replace(/^\s*\/\/@ ensures .*\n/gm, "");
   const units: string[] = [];
   for (const m of models) {
-    fs.writeFileSync(path.join(dir, `${m.name}.ts`), [...closure(m.imports).map(asDependency), text(m.name)].join("\n"));
+    fs.writeFileSync(path.join(dir, `${m.name}.ts`), [...needs(m).map(asDependency), strip(m.ts)].join("\n"));
     units.push(`${m.name}.ts`);
   }
   const src = path.join(root, "src");
@@ -314,7 +342,12 @@ function proofUnits(root: string, models: Model[]): string[] {
       return name;
     });
     const unit = f.replaceAll(path.sep, "_");
-    fs.writeFileSync(path.join(dir, unit), [...closure(deps).map(asDependency), `// ---- src/${f} ----`, code.replace(IMPORT, "")].join("\n"));
+    const beside: Part[] = [];
+    for (const d of deps) {
+      needs(byName.get(d)!, beside);
+      if (!beside.some((p) => p.module === d && p.prefix === "")) beside.push({ module: d, prefix: "" });
+    }
+    fs.writeFileSync(path.join(dir, unit), [...beside.map(asDependency), `// ---- src/${f} ----`, strip(code)].join("\n"));
     units.push(unit);
   }
   return units;
@@ -327,7 +360,7 @@ function proofUnits(root: string, models: Model[]): string[] {
  */
 function prove(root: string, unit: string): { out: string } {
   const text = fs.readFileSync(path.join(root, "gen/proof", unit), "utf8");
-  const cached = path.join(root, ".spec-cache", `${createHash("sha256").update(text).digest("hex").slice(0, 24)}.log`);
+  const cached = path.join(root, ".spec-cache", `${createHash("sha256").update(TOOLCHAIN + text).digest("hex").slice(0, 24)}.log`);
   if (!process.env.SPEC_NO_CACHE && fs.existsSync(cached)) return { out: fs.readFileSync(cached, "utf8") };
   const { out } = run("lsc", ["check", "--backend=dafny", unit], path.join(root, "gen/proof"));
   if (/\d+ verified, \d+ errors?/.test(out)) {
@@ -406,7 +439,7 @@ export async function check(root: string, log: (line: string) => void = console.
     if (!model.state && !model.laws.length) continue;
     // A spec whose model and harness are unchanged, and that passed, is not simulated again.
     const closure = (names: string[]): string => names.map((n) => { const dep = specs.find((x) => x.name === n)!; return closure(dep.imports) + dep.qnt; }).join("");
-    const fingerprint = createHash("sha256").update([closure(spec.imports), spec.qnt, model.harness, SAMPLES, WITNESS_SAMPLES, STEPS].join("\n")).digest("hex").slice(0, 24);
+    const fingerprint = createHash("sha256").update([TOOLCHAIN, closure(spec.imports), spec.qnt, model.harness, SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, STEPS].join("\n")).digest("hex").slice(0, 24);
     const passed = path.join(root, ".spec-cache", `sim-${fingerprint}.json`);
     if (!process.env.SPEC_NO_CACHE && fs.existsSync(passed)) {
       for (const [stage, summary] of JSON.parse(fs.readFileSync(passed, "utf8"))) report(true, stage, `${summary} (unchanged since it last passed)`);
@@ -415,7 +448,7 @@ export async function check(root: string, log: (line: string) => void = console.
     const said: [string, string, boolean][] = [];
     const reportSim = (ok: boolean, stage: string, summary: string, detail = "") => { said.push([stage, summary, ok]); return report(ok, stage, summary, detail); };
     try {
-      const sim = simulate(root, model, "inv", REPLAYED);
+      const sim = simulate(root, model, "inv", 1);
       // Of the traces that break a rule, show the shortest, and only up to the break.
       const bad = sim.traces.flatMap((t) => { const b = firstBreak(domain, model, t, cite); return b ? [{ t: t.slice(0, b.steps), why: b.why }] : []; })
         .sort((x, y) => x.t.length - y.t.length)[0];
@@ -431,15 +464,17 @@ export async function check(root: string, log: (line: string) => void = console.
         continue;
       }
       reportSim(true, "always", `no rule broken in ${SAMPLES} simulated traces`);
-      const traces = sim.traces;
+      // A second run, in which the simulator also evaluates every definition it can, supplies the traces to replay.
+      const traces = simulate(root, model, "inv", REPLAYED, COMPARED_SAMPLES, "probe").traces;
       for (const w of model.sometimes) {
         const found = simulate(root, model, `never_${w}`, 1, WITNESS_SAMPLES); // stops at the first witness, so a large budget is cheap
         reportSim(found.broken, "sometimes", found.broken ? `${w} is reachable`
           : `${cite(w)} was not reached in ${WITNESS_SAMPLES} traces of ${STEPS} events: a guard is too strict, a transition is missing, or the goal needs values the simulator does not try`);
         if (found.broken) traces.push(...found.traces);
       }
-      for (const t of traces) replay(domain, t, (x) => model.canon(model.stateType, x));
-      reportSim(true, "replay", `generated TypeScript reproduces ${traces.length} Quint traces`);
+      for (const t of traces) replay(domain, t, model);
+      const compared = new Set(traces.flatMap((t) => t.flatMap((s) => (s.evaluated ? [s.evaluated.name] : []))));
+      reportSim(true, "replay", `generated TypeScript agrees with Quint on ${traces.length} traces: every state${model.laws.length ? ", every law" : ""}, and ${compared.size} of ${model.evals.length} definitions evaluated on them`);
     } catch (e) {
       const mismatch = (e as Error).message.startsWith("TypeScript and Quint disagree");
       reportSim(false, mismatch ? "replay" : "always", mismatch ? "this is a bug in tools/gen.ts, not in the spec" : "the simulator could not run", indent((e as Error).message));
