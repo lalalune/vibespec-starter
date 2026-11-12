@@ -1,6 +1,6 @@
 {
-  "Domain / Order": ["9d6706e1f76c","d02e01a6abc7"],
-  "Domain / Unit price and order size": ["b379b561a46f","2cad7b773520"],
+  "Domain / Order": ["9d6706e1f76c","8fd81fe95a77"],
+  "Domain / Unit price and order size": ["512ae41064ba","19a262d0782b"],
   "Story: Fill a draft / A new order is an empty draft": ["e3b0c44298fc","fcaa192ed2cd"],
   "Story: Fill a draft / Items can only be added to a draft": ["afe2cb7e3509","bbff76a289bd"],
   "Story: Fill a draft / The amount due is always the price of the units": ["e3b0c44298fc","041c05666241"],
@@ -18,5 +18,8 @@
   "Story: Reopen a cancelled order / A cancelled order can be reopened as a draft": ["86a9cd7b8a2e","6d3bfe1c78c5"],
   "Story: Take back a payment / Part of what was paid on a pending order can be taken back": ["df9450cb4332","de8ae586606b"],
   "Story: Take back a payment / No more can be taken back than was paid": ["e855cfe01313","aaa433f0c9c6"],
-  "Story: Start over / A draft that holds items can be emptied in one go": ["e3b0c44298fc","433ef90ce63f"]
+  "Story: Start over / A draft that holds items can be emptied in one go": ["a814f1e472b6","759f2514d278"],
+  "Story: Put an order on hold / Staff can put a pending order on hold and release it again": ["3145f9e5c406","8806c315f395"],
+  "Story: Put an order on hold / No payment is taken while an order is on hold": ["e3b0c44298fc","cb645ca40a0d"],
+  "Story: Put an order on hold / An order on hold still has a balance": ["09af2cc06426","7d1822c636b8"]
 }
