@@ -2,7 +2,9 @@
 // project's spec into a scratch directory, breaks one thing, and asserts which
 // stage of `check` fails. Run with `npm run selftest`.
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -142,6 +144,43 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.match(run.stdout, /synced: read the changes/);
     assert.match(fs.readFileSync(path.join(root, "spec/order.md"), "utf8"), /due: o\.due \}/);
     assert.ok(!fs.readFileSync(path.join(root, "spec/order.lock.json"), "utf8").includes("gift wrapped"), "sync must not accept on the person's behalf");
+    fs.rmSync(root, { recursive: true });
+  });
+
+  test("the local-model agent turns a brief into edits: rules for a story, prose for a changed model", async () => {
+    const F = "`".repeat(3);
+    // A canned stand-in for Ollama, so the adapter's parsing and editing are tested without a model.
+    const server = http.createServer((req, res) => {
+      let body = "";
+      req.on("data", (c) => (body += c)).on("end", () => {
+        const prompt: string = JSON.parse(body).prompt;
+        const response = prompt.includes("has no rules yet")
+          ? `### ### A cancelled order can be archived\n\n${F}quint\npure def canArchive(o: Order): bool = o.status == Cancelled\npure def archive(o: Order): Order = { ...o, units: 0, due: 0 }\n${F}`
+          : `${F}\nEvery unit costs the same, and one order holds at most 7 units.\n${F}`;
+        res.end(JSON.stringify({ response }));
+      });
+    });
+    await new Promise<void>((done) => server.listen(0, done));
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "spec-selftest-"));
+    fs.cpSync(path.join(project, "spec"), path.join(root, "spec"), { recursive: true });
+    const specFile = path.join(root, "spec/order.md");
+    fs.appendFileSync(specFile, "\n## Story: Archive\n\n> As a shopper, I want cancelled orders out of my way.\n");
+    const prose = "Every unit costs the same, and one order holds at most 50 units.";
+    const brief = `✗ review    2 item(s)\n    spec/order.md:210  Story: Archive\n      story has no rules: write them\n\n`
+      + `RULE "Domain / Unit price and order size" (model changed)\nits prose now:\n${prose}\nits Quint now:\npure val maxUnits = 7\nEND RULE\n`;
+    const agent = spawn(process.execPath, [path.join(project, "tools/agent-ollama.ts")],
+      { cwd: root, env: { ...process.env, OLLAMA_HOST: `http://localhost:${(server.address() as AddressInfo).port}` } });
+    agent.stdin.end(brief);
+    let out = "";
+    agent.stdout.on("data", (c) => (out += c));
+    agent.stderr.on("data", (c) => (out += c));
+    const status = await new Promise((done) => agent.on("close", done));
+    server.close();
+    const after = fs.readFileSync(specFile, "utf8");
+    assert.equal(status, 0, out);
+    assert.match(out, /made 2 edit/);
+    assert.match(after, /## Story: Archive\n\n> As a shopper.*\n\n### A cancelled order can be archived\n\n```quint\npure def canArchive/);
+    assert.ok(after.includes("at most 7 units.") && !after.includes(prose));
     fs.rmSync(root, { recursive: true });
   });
 
