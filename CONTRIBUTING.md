@@ -237,9 +237,11 @@ such a package. To hand the generated code to yet another package, compile
   `check` runs them in dependency order and proves each one against the
   *definitions* of what it imports, not their proofs, so the cost of a proof
   grows with the spec, not with everything beneath it.
-- **Only what changed is proved again.** A proof result is kept in
-  `.spec-cache/` under a fingerprint of the spec's generated text and of
-  everything it imports. Set `SPEC_NO_CACHE=1` to prove everything afresh.
+- **Only what changed is checked again.** A spec that passed simulation, and
+  each proof result, is remembered in `.spec-cache/` under a fingerprint of
+  the spec and of everything it imports. A repeat check of an unchanged
+  project takes a second or two. Set `SPEC_NO_CACHE=1` to run everything
+  afresh, which also gives the simulator a new set of random traces.
 - **Rules that span machines** go in the machine that contains both, built
   from components as described above.
 - **Three levels of assurance**, reported per obligation: proved for all

@@ -404,6 +404,16 @@ export async function check(root: string, log: (line: string) => void = console.
     const parts = [[model.transitions.length, "transitions"], [model.always.length, "always"], [model.steps.length, "step"], [model.sometimes.length, "sometimes"], [model.laws.length, "laws"]];
     report(true, "model", `${spec.file}: ${parts.filter(([n]) => n).map((p) => p.join(" ")).join(", ") || "definitions only"}`);
     if (!model.state && !model.laws.length) continue;
+    // A spec whose model and harness are unchanged, and that passed, is not simulated again.
+    const closure = (names: string[]): string => names.map((n) => { const dep = specs.find((x) => x.name === n)!; return closure(dep.imports) + dep.qnt; }).join("");
+    const fingerprint = createHash("sha256").update([closure(spec.imports), spec.qnt, model.harness, SAMPLES, WITNESS_SAMPLES, STEPS].join("\n")).digest("hex").slice(0, 24);
+    const passed = path.join(root, ".spec-cache", `sim-${fingerprint}.json`);
+    if (!process.env.SPEC_NO_CACHE && fs.existsSync(passed)) {
+      for (const [stage, summary] of JSON.parse(fs.readFileSync(passed, "utf8"))) report(true, stage, `${summary} (unchanged since it last passed)`);
+      continue;
+    }
+    const said: [string, string, boolean][] = [];
+    const reportSim = (ok: boolean, stage: string, summary: string, detail = "") => { said.push([stage, summary, ok]); return report(ok, stage, summary, detail); };
     try {
       const sim = simulate(root, model, "inv", REPLAYED);
       // Of the traces that break a rule, show the shortest, and only up to the break.
@@ -417,22 +427,26 @@ export async function check(root: string, log: (line: string) => void = console.
         const brokenRule = bad && lastEvent ? model.always.find((a) => !domain[a](bad.t[bad.t.length - 1].state)) : undefined;
         const hint = lastEvent && !bad?.why?.startsWith("the law") ? `\n      the last event is ${cite(lastEvent)}${guard ? `; its guard ${guard} let it through` : "; it has no guard"}`
           + (brokenRule ? `\n      a rule that would forbid it: refuse ${lastEvent} when its result would break ${brokenRule}` : "") : "";
-        report(false, "always", `${bad?.why ?? "a rule is broken"}: fix the model, or add the rule that forbids this trace`, bad ? showTrace(bad.t) + hint : "");
+        reportSim(false, "always", `${bad?.why ?? "a rule is broken"}: fix the model, or add the rule that forbids this trace`, bad ? showTrace(bad.t) + hint : "");
         continue;
       }
-      report(true, "always", `no rule broken in ${SAMPLES} simulated traces`);
+      reportSim(true, "always", `no rule broken in ${SAMPLES} simulated traces`);
       const traces = sim.traces;
       for (const w of model.sometimes) {
         const found = simulate(root, model, `never_${w}`, 1, WITNESS_SAMPLES); // stops at the first witness, so a large budget is cheap
-        report(found.broken, "sometimes", found.broken ? `${w} is reachable`
+        reportSim(found.broken, "sometimes", found.broken ? `${w} is reachable`
           : `${cite(w)} was not reached in ${WITNESS_SAMPLES} traces of ${STEPS} events: a guard is too strict, a transition is missing, or the goal needs values the simulator does not try`);
         if (found.broken) traces.push(...found.traces);
       }
       for (const t of traces) replay(domain, t, (x) => model.canon(model.stateType, x));
-      report(true, "replay", `generated TypeScript reproduces ${traces.length} Quint traces`);
+      reportSim(true, "replay", `generated TypeScript reproduces ${traces.length} Quint traces`);
     } catch (e) {
       const mismatch = (e as Error).message.startsWith("TypeScript and Quint disagree");
-      report(false, mismatch ? "replay" : "always", mismatch ? "this is a bug in tools/gen.ts, not in the spec" : "the simulator could not run", indent((e as Error).message));
+      reportSim(false, mismatch ? "replay" : "always", mismatch ? "this is a bug in tools/gen.ts, not in the spec" : "the simulator could not run", indent((e as Error).message));
+    }
+    if (said.every(([, , ok]) => ok)) {
+      fs.mkdirSync(path.dirname(passed), { recursive: true });
+      fs.writeFileSync(passed, JSON.stringify(said.map(([stage, summary]) => [stage, summary])));
     }
   }
 

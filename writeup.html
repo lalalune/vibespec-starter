@@ -578,7 +578,8 @@ synced: read the changes to spec/ (git diff), then run `npm run accept` to sign 
   <ul>
     <li><strong>Built:</strong> specs are checked in dependency order; proof cost is per spec; assurance is reported per obligation in three levels (proved, simulated and accepted, tested shell).</li>
     <li><strong>Built since:</strong> proof results are kept under a fingerprint of a spec's generated text and everything it imports, so only what changed is proved again; and a rule that spans two machines can be stated and proved in a machine built from a shared component.</li>
-    <li><strong>Not built:</strong> simulation is rerun for every spec on every check (about a second each), and two independent machines cannot observe each other.</li>
+    <li><strong>Also built:</strong> a spec that passed simulation is not simulated again until it or something it imports changes. A repeat check of the three-spec example takes under two seconds.</li>
+    <li><strong>Not built:</strong> two independent machines cannot observe each other; they have to be composed in a machine that holds both.</li>
     <li><strong>Not tried:</strong> anything near that size. The largest thing these tools have modelled is the 700 lines above.</li>
   </ul>
 
