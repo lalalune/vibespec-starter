@@ -1,8 +1,8 @@
 # All the projects
 
-The app keeps one thing of its own: the list of projects, each saying which
-Google Sheet holds it and which Slack channel talks about it. Everything else
-lives in the sheets.
+The dashboard stores just one thing itself: the list of projects, each naming
+the shared spreadsheet that holds its tasks and the chat channel where it is
+discussed. All other data lives in the spreadsheets.
 
 ## Domain
 
@@ -18,7 +18,7 @@ pure val initial: Registry = { entries: List(), last: Admin }
 
 ### What the simulator tries
 
-Three project keys, three sheets, two channels, and no channel at all.
+Three project keys, three spreadsheets, two channels, and the empty channel.
 
 ```quint
 pure val keyValues = Set("a", "b", "c")
@@ -28,12 +28,13 @@ pure val channelValues = Set("", "C1", "C2")
 
 ## Story: Connect a sheet as a project
 
-> As an admin, I want to connect a sheet and a channel as a project, and be
-> refused if either already belongs to another project.
+> As an administrator, I want to register a spreadsheet and a chat channel
+> as a project, and be stopped if either is already used by another project.
 
 ### A sheet is connected as at most one project
 
-Two projects writing to one sheet would each issue the same task numbers.
+If two projects shared one spreadsheet, both would hand out the same task
+numbers.
 
 ```quint
 pure def hasKey(r: Registry, key: str): bool = r.entries.some(e => e.key == key)
@@ -66,8 +67,9 @@ pure def disconnect(r: Registry, key: str): Registry =
 
 ## Story: Know which project a channel means
 
-> As someone typing `/energy` in a channel, I want the app to act on that
-> channel's project, and to ask rather than guess when it cannot tell.
+> As someone running the `/tasks` command in a channel, I want the dashboard
+> to use that channel's project, and to ask instead of guessing when it is
+> unclear.
 
 ### The admin screen never gives two projects the same channel
 
@@ -88,7 +90,8 @@ pure def stepTheAdminScreenNeverSharesAChannel(before: Registry, after: Registry
 
 ### A channel typed into a sheet by hand is accepted, even if another project has it
 
-A project's channel is a cell on its sheet, so a person can type anything.
+The channel of a project is stored in a cell of its spreadsheet, so anyone
+can type any value there.
 
 ```quint
 pure def canHandSetChannel(r: Registry, key: str, channel: str): bool = hasKey(r, key)
@@ -99,10 +102,10 @@ pure def handSetChannel(r: Registry, key: str, channel: str): Registry =
 pure def sometimesTwoProjectsClaimAChannel(r: Registry): bool = sharedChannels(r).length() > 0
 ```
 
-### The app never guesses which project a shared channel means
+### The dashboard never guesses which project a shared channel means
 
-It answers with the one project that claims the channel, and with nothing when
-none or several do.
+It returns the single project that claims the channel, and nothing when no
+project or more than one does.
 
 ```quint
 pure def claimants(r: Registry, channel: str): List[Entry] =

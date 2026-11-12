@@ -84,10 +84,10 @@ td.num { font-variant-numeric: tabular-nums; }
 <main>
   <p class="kicker">Design note · state-example · 12 Nov 2026</p>
   <h1>One spec, proved software</h1>
-  <p class="lede">A way to turn user stories into formally verified TypeScript with one hand-written source of truth, and what building it on a toy and on a real application showed.</p>
+  <p class="lede">A way to turn user stories into formally verified TypeScript with one hand-written source of truth, and what building it on a toy and on a larger, synthesized example showed.</p>
 
   <p>You write one Markdown file per application: its stories, the rules each story implies, and under every rule the few lines of <a href="https://quint-lang.org">Quint</a> that say the same thing exactly. A tool derives everything else: a Quint model that is simulated, a TypeScript module of types, guards and transitions, and proofs, by <a href="https://github.com/midspiral/LemmaScript">LemmaScript</a> and Dafny, that every transition preserves every rule. The agent working in your session keeps the stories, rules and model in step, and you sign off.</p>
-  <p>The toy is an order checkout: 253 lines of Markdown give 10 transitions and 10 rules, all proved. The real application is a 5,500-line project tracker modelled in about 700 lines of spec. The tooling is about 1,400 lines of TypeScript in two files.</p>
+  <p>The toy is an order checkout: 253 lines of Markdown give 10 transitions and 10 rules, all proved. The larger example is a synthesized team task dashboard modelled in about 700 lines of spec. The tooling is about 1,400 lines of TypeScript in two files.</p>
 
   <h2>The design in one picture</h2>
   <figure class="wide">
@@ -389,29 +389,29 @@ export function inv(s: Order): boolean</code></pre>
   </ul>
   <p>Hand-written logic that Quint cannot express, such as a loop over an event log, is ordinary TypeScript in <code>src/</code> with LemmaScript annotations. It imports one generated module and is proved in a bundle with it, in a directory of its own with its own prover configuration. Annotations that tell the prover to trust or skip something are refused wherever they appear.</p>
 
-  <h2>A real application</h2>
-  <p>To see what a real application needs, the same tools were pointed at one: a project tracker of about 5,500 lines whose data lives in hand-editable Google Sheets and which is used from Slack. It is modelled in <code>examples/alpha-energy</code>, a separate package that depends on the toolchain as any project would.</p>
+  <h2>A larger example</h2>
+  <p>To see what a less tidy application needs, the same tools were pointed at a synthesized one, modelled on a common kind of application: a team task dashboard whose tasks live in a shared spreadsheet that people also edit by hand, with a chat app for commands and notifications and a web dashboard for viewing. Its names and data are made up. It is modelled in <code>examples/dashboard</code>, a separate package that depends on the toolchain as any project would.</p>
   <div class="tablewrap">
   <table>
     <thead><tr><th>Spec</th><th>Kind</th><th>Covers</th></tr></thead>
     <tbody>
       <tr><td><code>kernel.md</code></td><td>library, 10 laws</td><td>The number a new row gets, when an edit is announced, which reminder is due, paging, request freshness</td></tr>
-      <tr><td><code>tracker.md</code></td><td>machine, 20 transitions</td><td>One sheet: guarded app edits, unguarded hand edits, the warning list and its fixes, notifications</td></tr>
+      <tr><td><code>tracker.md</code></td><td>machine, 20 transitions</td><td>One sheet: guarded dashboard edits, unguarded hand edits, the warning list and its fixes, notifications</td></tr>
       <tr><td><code>projects.md</code></td><td>machine, 4 transitions</td><td>The project list: one sheet per project, one project per channel, never guessing</td></tr>
       <tr><td><code>src/columns.ts</code></td><td>hand-written, proved</td><td>Column letters, which need a loop</td></tr>
     </tbody>
   </table>
   </div>
-  <p>Slack, HTTP, storage and the web view are not modelled; they are the shell around these rules. Two kinds of writer, the guarded app and a person typing in the sheet, needed no feature of their own: both are transitions, and a field in the state says who wrote last, so a step rule can say "an app edit never adds a problem".</p>
+  <p>Chat, HTTP, storage and the web dashboard are not modelled; they are the shell around these rules, and the example includes a small hand-written piece of it, <code>src/notify.ts</code>, which turns the model's notes into chat messages. Two kinds of writer, the guarded dashboard and a person typing in the sheet, needed no feature of their own: both are transitions, and a field in the state says who wrote last, so a step rule can say "a dashboard edit never adds a problem".</p>
   <h3>What the checks found</h3>
-  <p><strong>A real bug in the application.</strong> The application's own model keeps a task's owners in a set. A cell in a sheet is not a set: a person can type <code>Liza, Liza</code>. With cells modelled as lists, the rule "nothing is sent twice" failed in simulation within seconds. The application removes duplicates whenever it writes a cell, but not when its notifier reads one. Run unmodified on a task whose owners cell was typed as <code>Liza Horowitz, Liza Horowitz</code>, the application's notifier planned messages to <code>["U1","U1"]</code>. The spec now has the rule "A person named twice in a cell is told once". The one-line fix, with a test, is in the example as a patch and has been applied to the application: the test fails without it, and all 69 of the application's tests pass with it.</p>
+  <p><strong>A name typed twice is notified twice.</strong> A natural first model keeps a task's owners in a set. A cell in a spreadsheet is not a set: a person can type <code>ana, ana</code>. With cells modelled as lists, the rule "nothing is sent twice" failed in simulation within seconds: removing duplicates when a cell is written is not enough if the notifier does not also remove them when it reads one. A set-based model cannot express that case. The spec now has the rule "A person named twice in a cell is told once", and the example's shell, <code>src/notify.ts</code>, sends each person one message; its test types a name twice and checks that the person is told once.</p>
   <p><strong>A flaw in Quint.</strong> A Quint definition that takes a lambda gives the wrong answer, silently, when used inside its own argument, as in <code>tasks.some(t => t.parents.some(…))</code>. So <code>every</code>, <code>some</code>, <code>includes</code> and <code>listMap</code> are not Quint definitions: the tool rewrites them into Quint's built-in fold before Quint sees the spec, and they come out in TypeScript as native array methods.</p>
   <p><strong>A flaw in the generator.</strong> Quint divides towards zero; the generator floored. Sampled laws had not hit a negative dividend. Division and remainder now go through helpers that are exact in Quint, TypeScript and Dafny, and one law that had been unprovable proved once the translation was right.</p>
-  <p><strong>A bounded model generates bounded code.</strong> The application's model found a task's ancestors with four rounds of unrolling, enough for its four tasks and wrong for a fifth. Here the search folds over the task list, so it runs once per task however many there are.</p>
+  <p><strong>A bounded model generates bounded code.</strong> A model that finds a task's ancestors with a fixed number of rounds of unrolling, say four, is enough for four tasks and wrong for a fifth, and the code generated from it inherits the bound. Here the search folds over the task list, so it runs once per task however many there are.</p>
   <h3>How much is proved</h3>
-  <p>Everything holds in simulation, and the TypeScript agrees with Quint on all 102 definitions the simulator can evaluate. Of 272 proof obligations, 191 are proved for all inputs. The other 81 hold in simulation but Dafny cannot prove them unaided, mostly because they depend on folding over the warning list, and two of them are the prover running out of time. Its owner judged simulation enough for them and recorded them in the example's <code>spec/unproved.lock.json</code>, so its check is green and every run still counts them. That is close to where the application itself had settled: it proves its arithmetic kernel and model-checks the rest.</p>
+  <p>Everything holds in simulation. Not every obligation is proved for all inputs; those that hold only in simulation are listed in the example's <code>spec/unproved.lock.json</code>, and every run of its check counts them.</p>
   <h3>What this says about 500,000 lines</h3>
-  <p>The specs covered the rules of a 5,500-line application in about 700 lines, because Slack, HTTP and storage are not rules. A large codebase would be many such specs, one per area with a life cycle, with libraries beneath them and machines importing machines. What that needs from the tools is in place: dependency order, per-spec proof cost, incremental checking, and assurance reported per obligation. What has not happened is anyone trying it at that size. The largest thing these tools have modelled is the 700 lines above.</p>
+  <p>The specs state the rules of the dashboard in about 700 lines, because chat, HTTP and storage are not rules. A large codebase would be many such specs, one per area with a life cycle, with libraries beneath them and machines importing machines. What that needs from the tools is in place: dependency order, per-spec proof cost, incremental checking, and assurance reported per obligation. What has not happened is anyone trying it at that size. The largest thing these tools have modelled is the example above.</p>
 
   <h2>Does each check earn its place?</h2>
   <p><code>npm run selftest</code> copies the example into scratch directories, breaks one thing at a time, and asserts which stage fails. All 31 cases pass; these are the main ones.</p>
@@ -440,7 +440,7 @@ export function inv(s: Order): boolean</code></pre>
   <h2>Limits</h2>
   <ul>
     <li><strong>The generator is tested, not proved.</strong> Replay compares TypeScript with Quint on every state, law and definition that 200 sampled traces touch. A definition whose arguments the simulator cannot supply is compared only where events use it. Nothing short of proving the translator would close this.</li>
-    <li><strong>Half the obligations of a real model are simulated, not proved.</strong> The ledger makes that visible and stops it growing unnoticed. Making it smaller means hand-written proofs.</li>
+    <li><strong>Many obligations of a larger model are simulated, not proved.</strong> The ledger makes that visible and stops it growing unnoticed. Making it smaller means hand-written proofs.</li>
     <li><strong>The Quint subset is a subset.</strong> A map cannot be iterated, sets hold simple values only, and there is no recursion because Quint has none. Anything outside the subset is refused by name, never approximated.</li>
     <li><strong>Simulation samples.</strong> Event parameters are tried from −1 to 6 unless the spec says otherwise. The proof covers all values where it succeeds; <code>quint verify</code> can check a model exhaustively to a depth.</li>
     <li><strong>Agreement of prose and Quint is a judgement.</strong> The ledger records that the comparison was made. A rule that is wrong in both halves in the same way passes every check.</li>

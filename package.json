@@ -13,7 +13,7 @@
     "selftest": "node --test tools/selftest.ts",
     "build": "rm -rf dist && tsc -p tsconfig.build.json && mkdir -p dist/proof && cp tools/proof/lib.dfy dist/proof/",
     "prepare": "npm run build && node tools/spec.ts gen",
-    "check:alpha": "cd examples/alpha-energy && node ../../tools/spec.ts check"
+    "check:dashboard": "cd examples/dashboard && node ../../tools/spec.ts check"
   },
   "version": "0.1.0",
   "description": "Stories, rules and a Quint model in one Markdown file; verified TypeScript out.",

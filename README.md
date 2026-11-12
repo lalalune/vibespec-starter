@@ -41,7 +41,7 @@ npm run check      # the whole pipeline; a few seconds when nothing changed
 npm run accept     # sign off the reconciled rules
 npm run demo       # a scripted session against the verified core
 npm run selftest   # breaks things one at a time and checks each break is caught
-npm run check:alpha   # the same pipeline on examples/alpha-energy
+npm run check:dashboard   # the same pipeline on examples/dashboard
 ```
 
 ## The process
@@ -100,28 +100,28 @@ Keep `spec/`, `src/`, `test/` and `tools/` in git, lock files included.
 | `tools/selftest.ts`, `tools/fixtures/` | Tests of the pipeline itself, and the small specs they use |
 | `src/ledger.ts` | Hand-written logic, proved against the generated contract |
 | `src/app.ts` | Unverified shell: storage, input parsing, error reporting |
-| `examples/alpha-energy/` | A real application modelled with the same tools, as a separate package |
+| `examples/dashboard/` | A larger, synthesized example modelled with the same tools, as a separate package |
 
-## A real application
+## A larger example
 
-`examples/alpha-energy` models a real 5,500-line project tracker (tasks in a
-hand-editable Google Sheet, driven from Slack) in three specs: a library of
-arithmetic with laws, the sheet itself with guarded app edits and unguarded
-hand edits, and the registry of projects. It has 24 transitions, 15 `always`
-and `step` rules and 11 laws.
+`examples/dashboard` is a synthesized team task dashboard, modelled on a
+common kind of application: tasks live in a shared spreadsheet that people
+also edit by hand, a chat app carries commands and notifications, and a web
+dashboard shows the state. Its names and data are made up. It has three
+specs: a library of arithmetic with laws, one project's sheet with guarded
+dashboard edits and unguarded hand edits, and the registry of projects. It
+has 24 transitions, 15 `always` and `step` rules and 11 laws.
 
-Everything holds in simulation, and the TypeScript agrees with Quint on all
-102 definitions the simulator can evaluate. Of 272 proof obligations, 191 are
-proved for all inputs. The other 81 hold in simulation but Dafny cannot prove
-them alone, because they depend on folds over the warning list. The owner
-judged simulation enough for them and recorded them, so they are listed in
-the example's `spec/unproved.lock.json` and its check is green. If a change
-makes one of them provable, the check says so.
+Everything holds in simulation. Not every obligation is proved for all
+inputs; those that hold only in simulation are listed in the example's
+`spec/unproved.lock.json`, and `npm run check:dashboard` reports where each
+stands.
 
-Modelling cells as lists rather than sets found a real bug in the
-application: a name typed twice in an owners cell made the notifier message
-that person twice. The one-line fix, with a test, is in the example as a
-patch and has been applied to the application.
+Modelling an owners cell as a list rather than a set exposed that a name
+typed twice is notified twice; a set-based model cannot express that case.
+The spec now has the rule "A person named twice in a cell is told once", and
+the example's hand-written shell, `src/notify.ts`, sends each person one
+message, with a test for a name typed twice.
 
 ## What is and is not guaranteed
 
