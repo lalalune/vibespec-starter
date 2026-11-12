@@ -47,8 +47,9 @@ Everything holds in simulation, and the generated TypeScript agrees with Quint
 on all 102 definitions the simulator can evaluate. Of 272 proof obligations,
 191 are proved for all inputs. The other 81 hold in 10,000 simulated traces
 but Dafny cannot prove them on its own, mostly because they depend on folding
-over the warning list. `npm run check` lists them and fails its `proof` stage
-until someone decides that simulation is enough for them and records that
-with `npm run accept -- unproved`. That decision has deliberately not been
-made here. The split is close to the application's own experience: it proves
+over the warning list. The owner decided that simulation is enough for them
+and recorded them with `npm run accept -- unproved`, so they are listed in
+`spec/unproved.lock.json` and the check passes. Proving more of them, by
+moving the folds into hand-written code with proof hints in `src/`, would
+shrink that file. The split is close to the application's own experience: it proves
 its arithmetic kernel and model-checks the rest.

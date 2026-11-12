@@ -111,9 +111,10 @@ and `step` rules and 11 laws.
 Everything holds in simulation, and the TypeScript agrees with Quint on all
 102 definitions the simulator can evaluate. Of 272 proof obligations, 191 are
 proved for all inputs. The other 81 hold in simulation but Dafny cannot prove
-them alone, because they depend on folds over the warning list. The check
-lists them and stays red on `proof` until you decide, in that directory,
-whether to record them with `npm run accept -- unproved`.
+them alone, because they depend on folds over the warning list. The owner
+judged simulation enough for them and recorded them, so they are listed in
+the example's `spec/unproved.lock.json` and its check is green. If a change
+makes one of them provable, the check says so.
 
 Modelling cells as lists rather than sets found a real bug in the
 application: a name typed twice in an owners cell made the notifier message
