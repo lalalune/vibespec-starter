@@ -43,7 +43,9 @@ around these rules.
 
 ## How much is proved
 
-62 obligations are proved for all inputs. 82 hold in 10,000 simulated traces
+Everything holds in simulation, and the generated TypeScript agrees with Quint
+on all 101 definitions the simulator can evaluate. Of 292 proof obligations,
+213 are proved for all inputs. The other 79 hold in 10,000 simulated traces
 but Dafny cannot prove them on its own, mostly because they depend on folding
 over the warning list. `npm run check` lists them and fails its `proof` stage
 until someone decides that simulation is enough for them and records that

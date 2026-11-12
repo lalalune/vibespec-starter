@@ -53,3 +53,12 @@ test("a cancelled order can be reopened, and a payment partly taken back", () =>
   book.dispatch("A1", { type: "cancel" });
   assert.deepEqual(book.dispatch("A1", { type: "reopen" }), { status: "Draft", units: 2, due: 10, paid: 0 });
 });
+
+test("an event is copied on the way in, so nothing the caller keeps can change it", () => {
+  const book = new OrderBook();
+  book.dispatch("A1", { type: "addItem", qty: 2 });
+  book.dispatch("A1", { type: "submit" });
+  let reads = 0;
+  const sly = { type: "pay", get amount() { return reads++ === 0 ? 1 : 1_000_000; }, extra: "ignored" };
+  assert.deepEqual(book.dispatch("A1", sly), { status: "Pending", units: 2, due: 10, paid: 1 });
+});

@@ -1,5 +1,5 @@
 // The unverified shell: storage and error reporting around the verified core.
-import { type Event, type Order, enabled, isEvent } from "../gen/order.ts";
+import { type Event, type Order, enabled, parseEvent } from "../gen/order.ts";
 import { balance, replay } from "./ledger.ts";
 
 export class Rejected extends Error {}
@@ -12,9 +12,10 @@ export class OrderBook {
     return replay(this.logs.get(id) ?? []);
   }
 
-  /** `event` may come straight from the network: it is validated before the rules see it. */
-  dispatch(id: string, event: unknown): Order {
-    if (!isEvent(event)) throw new Rejected(`not a well-formed event: ${JSON.stringify(event)}`);
+  /** `input` may come straight from the network: it is parsed into an event before the rules see it. */
+  dispatch(id: string, input: unknown): Order {
+    const event = parseEvent(input);
+    if (!event) throw new Rejected("not a well-formed event");
     const order = this.get(id);
     if (!enabled(order, event)) throw new Rejected(`${event.type} is not allowed for a ${order.status} order`);
     this.logs.set(id, [...(this.logs.get(id) ?? []), event]);

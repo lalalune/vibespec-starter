@@ -82,123 +82,107 @@ td.num { font-variant-numeric: tabular-nums; }
 </style>
 
 <main>
-  <p class="kicker">Design note · state-example · 11 Nov 2026</p>
+  <p class="kicker">Design note · state-example · 12 Nov 2026</p>
   <h1>One spec, proved software</h1>
-  <p class="lede">How user stories become formally verified TypeScript with one hand-written file, what alternatives were weighed, and what a working toy shows about the approach.</p>
+  <p class="lede">A way to turn user stories into formally verified TypeScript with one hand-written source of truth, and what building it on a toy and on a real application showed.</p>
 
-  <p>The goal was a system where stories, rules, formal models and code are different views of one truth, kept in step, with as little to maintain as possible. The result is a 204-line Markdown file that holds an order-checkout application's stories, rules and Quint model, and about 1,200 lines of tooling that turn it into a TypeScript module whose every transition is proved, by Dafny, to preserve every rule. The pipeline runs in about 15 seconds on a quiet machine.</p>
+  <p>You write one Markdown file per application: its stories, the rules each story implies, and under every rule the few lines of <a href="https://quint-lang.org">Quint</a> that say the same thing exactly. A tool derives everything else: a Quint model that is simulated, a TypeScript module of types, guards and transitions, and proofs, by <a href="https://github.com/midspiral/LemmaScript">LemmaScript</a> and Dafny, that every transition preserves every rule. The agent working in your session keeps the stories, rules and model in step, and you sign off.</p>
+  <p>The toy is an order checkout: 253 lines of Markdown give 10 transitions and 10 rules, all proved. The real application is a 5,500-line project tracker modelled in about 700 lines of spec. The tooling is about 1,400 lines of TypeScript in two files.</p>
 
   <h2>The design in one picture</h2>
   <figure class="wide">
     <div class="scroll">
-    <svg viewBox="0 0 940 400" role="img" aria-label="Pipeline from the spec file through the Quint model and generated TypeScript to the application, with the checks that connect them">
+    <svg viewBox="0 0 940 410" role="img" aria-label="Pipeline from the spec file through the Quint model and generated TypeScript to the application, with the checks that connect them and the loop that keeps the spec in step">
       <defs>
         <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="head"/></marker>
         <marker id="ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="head-proved"/></marker>
         <marker id="as" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="head-sampled"/></marker>
         <marker id="at" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="head-trusted"/></marker>
       </defs>
+      <rect class="box-src" x="20" y="130" width="190" height="96" rx="6"/>
+      <text class="t-title" x="34" y="154">spec/order.md</text>
+      <text class="t-sub" x="34" y="173">stories</text>
+      <text class="t-sub" x="34" y="189">rules in prose</text>
+      <text class="t-sub" x="34" y="205">Quint under each rule</text>
+      <text class="t-sub" x="20" y="120">written by hand</text>
 
-      <!-- artefacts -->
-      <rect class="box-src" x="20" y="120" width="190" height="96" rx="6"/>
-      <text class="t-title" x="34" y="144">spec/order.md</text>
-      <text class="t-sub" x="34" y="163">stories</text>
-      <text class="t-sub" x="34" y="179">rules in prose</text>
-      <text class="t-sub" x="34" y="195">Quint under each rule</text>
-      <text class="t-sub" x="20" y="110">written by hand</text>
+      <rect class="box-gen" x="275" y="130" width="170" height="96" rx="6"/>
+      <text class="t-title" x="289" y="154">Quint model</text>
+      <text class="t-sub" x="289" y="173">your pure definitions</text>
+      <text class="t-sub" x="289" y="189">+ generated harness</text>
+      <text class="t-sub" x="289" y="205">(state, events, probes)</text>
 
-      <rect class="box-gen" x="275" y="120" width="170" height="96" rx="6"/>
-      <text class="t-title" x="289" y="144">Quint model</text>
-      <text class="t-sub" x="289" y="163">your pure definitions</text>
-      <text class="t-sub" x="289" y="179">+ generated harness</text>
-      <text class="t-sub" x="289" y="195">(state, actions, step)</text>
+      <rect class="box-gen" x="510" y="130" width="180" height="96" rx="6"/>
+      <text class="t-title" x="524" y="154">gen/order.ts</text>
+      <text class="t-sub" x="524" y="173">types, Event union</text>
+      <text class="t-sub" x="524" y="189">guards, transitions, rules</text>
+      <text class="t-sub" x="524" y="205">inv, enabled, step, parseEvent</text>
+      <text class="t-sub" x="275" y="120">derived, never edited</text>
 
-      <rect class="box-gen" x="510" y="120" width="180" height="96" rx="6"/>
-      <text class="t-title" x="524" y="144">gen/order.ts</text>
-      <text class="t-sub" x="524" y="163">types, Event union</text>
-      <text class="t-sub" x="524" y="179">guards, transitions</text>
-      <text class="t-sub" x="524" y="195">inv, enabled, step</text>
-      <text class="t-sub" x="275" y="110">derived, never edited</text>
+      <rect class="box" x="755" y="130" width="165" height="96" rx="6"/>
+      <text class="t-title" x="769" y="154">src/</text>
+      <text class="t-sub" x="769" y="173">hand-written logic,</text>
+      <text class="t-sub" x="769" y="189">proved; and the shell</text>
+      <text class="t-sub" x="769" y="205">(storage, errors, I/O)</text>
+      <text class="t-sub" x="755" y="120">written by hand</text>
 
-      <rect class="box" x="755" y="120" width="165" height="96" rx="6"/>
-      <text class="t-title" x="769" y="144">src/</text>
-      <text class="t-sub" x="769" y="163">ledger.ts: verified logic</text>
-      <text class="t-sub" x="769" y="179">app.ts: shell (storage,</text>
-      <text class="t-sub" x="769" y="195">errors, I/O)</text>
-      <text class="t-sub" x="755" y="110">written by hand</text>
+      <path class="flow" d="M210 178H273" marker-end="url(#a)"/><text class="t-sub" x="222" y="170">tangle</text>
+      <path class="flow" d="M445 178H508" marker-end="url(#a)"/><text class="t-sub" x="452" y="170">generate</text>
+      <path class="flow" d="M690 178H753" marker-end="url(#a)"/><text class="t-sub" x="702" y="170">import</text>
 
-      <!-- flow -->
-      <path class="flow" d="M210 168H273" marker-end="url(#a)"/><text class="t-sub" x="222" y="160">tangle</text>
-      <path class="flow" d="M445 168H508" marker-end="url(#a)"/><text class="t-sub" x="452" y="160">generate</text>
-      <path class="flow" d="M690 168H753" marker-end="url(#a)"/><text class="t-sub" x="702" y="160">import</text>
+      <path class="chk p-sampled" d="M360 226V278" marker-end="url(#as)"/>
+      <rect class="f-sampled" x="262" y="280" width="196" height="72" rx="6" stroke-width="1.2"/>
+      <text class="t-title" x="274" y="302">simulate</text>
+      <text class="t-sub" x="274" y="320">always, step, law: a trace if broken</text>
+      <text class="t-sub" x="274" y="334">sometimes: a witness trace</text>
 
-      <!-- checks below -->
-      <path class="chk p-sampled" d="M360 216V268" marker-end="url(#as)"/>
-      <rect class="f-sampled" x="262" y="270" width="196" height="58" rx="6" stroke-width="1.2"/>
-      <text class="t-title" x="274" y="292">simulate</text>
-      <text class="t-sub" x="274" y="310">always: counterexample trace</text>
-      <text class="t-sub" x="274" y="323">sometimes: witness trace</text>
+      <path class="chk p-sampled" d="M458 316H520Q540 316 540 296V228" marker-end="url(#as)"/>
+      <text class="t-sub" x="262" y="372">compare: every state, law and definition,</text>
+      <text class="t-sub" x="262" y="386">Quint against TypeScript</text>
 
-      <path class="chk p-sampled" d="M458 300H520Q540 300 540 280V218" marker-end="url(#as)"/>
-      <text class="t-sub" x="466" y="345">replay: same traces, same states</text>
+      <path class="chk p-proved" d="M620 226V278" marker-end="url(#ap)"/>
+      <path class="chk p-proved" d="M838 226V260Q838 278 820 278H740" marker-end="url(#ap)"/>
+      <rect class="f-proved" x="560" y="280" width="180" height="72" rx="6" stroke-width="1.2"/>
+      <text class="t-title" x="572" y="302">prove</text>
+      <text class="t-sub" x="572" y="320">LemmaScript + Dafny</text>
+      <text class="t-sub" x="572" y="334">all states, all inputs</text>
 
-      <path class="chk p-proved" d="M620 216V268" marker-end="url(#ap)"/>
-      <path class="chk p-proved" d="M838 216V250Q838 268 820 268H740" marker-end="url(#ap)"/>
-      <rect class="f-proved" x="560" y="270" width="180" height="58" rx="6" stroke-width="1.2"/>
-      <text class="t-title" x="572" y="292">prove</text>
-      <text class="t-sub" x="572" y="310">LemmaScript + Dafny</text>
-      <text class="t-sub" x="572" y="323">all states, all inputs</text>
+      <path class="chk p-trusted" d="M60 130V72Q60 54 78 54H152Q170 54 170 72V128" marker-end="url(#at)"/>
+      <rect class="f-trusted" x="22" y="14" width="212" height="56" rx="6" stroke-width="1.2"/>
+      <text class="t-title" x="34" y="34">sync, then sign off</text>
+      <text class="t-sub" x="34" y="50">the session's agent translates;</text>
+      <text class="t-sub" x="34" y="63">a person accepts</text>
 
-      <!-- review loop above -->
-      <path class="chk p-trusted" d="M60 120V70Q60 52 78 52H152Q170 52 170 70V118" marker-end="url(#at)"/>
-      <rect class="f-trusted" x="40" y="22" width="150" height="44" rx="6" stroke-width="1.2"/>
-      <text class="t-title" x="52" y="42">review</text>
-      <text class="t-sub" x="52" y="58">prose ⇄ Quint, per rule</text>
-
-      <!-- legend -->
       <rect class="f-proved" x="560" y="24" width="14" height="14" rx="3"/><text class="t-sub" x="582" y="36">proved for every state and input</text>
-      <rect class="f-sampled" x="560" y="46" width="14" height="14" rx="3"/><text class="t-sub" x="582" y="58">checked on 10,000 simulated traces</text>
+      <rect class="f-sampled" x="560" y="46" width="14" height="14" rx="3"/><text class="t-sub" x="582" y="58">checked on simulated traces</text>
       <rect class="f-trusted" x="560" y="68" width="14" height="14" rx="3"/><text class="t-sub" x="582" y="80">a judgement, tracked so it is not skipped</text>
     </svg>
     </div>
     <figcaption>Solid arrows derive one artefact from another. Dashed arrows are checks. Only the two boxes with solid outlines are written by hand.</figcaption>
   </figure>
 
-  <h2>Approaches considered</h2>
-  <p>The request names five embodiments of the same truth: stories, rules, an ontology, state models and code. Each pair that is maintained separately needs a diff and a sync. The design question is how few of them can be hand-written.</p>
+  <h2>Why this shape</h2>
+  <p>The request names five embodiments of the same truth: stories, rules, an ontology, state models and code. Each pair that is maintained separately needs a diff and a sync, so the design question is how few can be hand-written.</p>
   <div class="tablewrap wide">
   <table>
     <thead><tr><th>Approach</th><th>Hand-written sources</th><th>What goes wrong</th><th>Verdict</th></tr></thead>
     <tbody>
-      <tr><td><strong>A. Layered documents</strong><br>stories.md, rules.md, model.qnt, contract types, logic, linked by IDs</td><td class="num">5</td><td>Four sync problems. ID bookkeeping is busywork, and an LLM regenerating one layer from another is not repeatable.</td><td>Rejected</td></tr>
-      <tr><td><strong>B. Custom DSL</strong><br>one YAML or JSON machine definition that emits Quint, TypeScript and docs</td><td class="num">1</td><td>You maintain a language. Guards and invariants end up as strings of some other language inside YAML.</td><td>Rejected</td></tr>
-      <tr><td><strong>C. TypeScript only</strong><br>domain.ts with LemmaScript; XState-style machine</td><td class="num">2</td><td>No traces: a failed proof says what is unprovable, not how to get there. No reachability, so rules that forbid everything pass. Stories live elsewhere.</td><td>Good, but mute on design errors</td></tr>
-      <tr><td><strong>D. Quint model + hand-written TypeScript</strong><br>types generated, transition bodies written by hand and proved</td><td class="num">3</td><td>Every transition is written twice, in Quint and in TypeScript, and kept equal by tests. For a deterministic rule the contract and the body are the same expression.</td><td>Rejected for the core, kept for the edges</td></tr>
-      <tr><td><strong>E. One literate spec</strong><br>Markdown with Quint under each rule; everything else generated</td><td class="num">1</td><td>The generator supports a subset of Quint and must be trusted or tested.</td><td><span class="tag chosen">chosen</span></td></tr>
+      <tr><td><strong>Layered documents</strong><br>stories, rules, model, contract types, logic, linked by IDs</td><td class="num">5</td><td>Four sync problems, ID bookkeeping, and no repeatable way to regenerate one layer from another.</td><td>Rejected</td></tr>
+      <tr><td><strong>A custom DSL</strong><br>one YAML machine definition that emits Quint, TypeScript and docs</td><td class="num">1</td><td>You maintain a language, and guards end up as strings of another language inside YAML.</td><td>Rejected</td></tr>
+      <tr><td><strong>TypeScript only</strong><br>a verified domain module, no model</td><td class="num">2</td><td>A failed proof says what is unprovable, not how to get there. Nothing checks reachability, so rules that forbid everything pass. Stories live elsewhere.</td><td>Good, but mute on design errors</td></tr>
+      <tr><td><strong>Quint model plus hand-written TypeScript</strong></td><td class="num">3</td><td>Every transition is written twice and kept equal by tests.</td><td>Rejected for the core, kept for the edges</td></tr>
+      <tr><td><strong>One literate spec</strong><br>Markdown with Quint under each rule; everything else generated</td><td class="num">1</td><td>The generator supports a subset of Quint and has to be tested.</td><td><span class="tag chosen">chosen</span></td></tr>
     </tbody>
   </table>
   </div>
-  <p>Three observations settled it.</p>
   <ol>
-    <li><strong>Prose and formal text cannot be derived from each other, only compared.</strong> Translating a sentence into Quint is a judgement. So the cheapest arrangement is to put the two halves of a rule next to each other in one file and track whether someone has compared them since either changed. Adjacency replaces IDs.</li>
-    <li><strong>A deterministic transition is its own contract.</strong> If the model says <code>pay</code> returns <code>{ ...o, paid: o.paid + amount }</code>, the strongest postcondition for a hand-written <code>pay</code> is that same expression. Writing it twice adds a sync problem and no information. So the transitions are generated too, and hand-written code starts where Quint stops.</li>
-    <li><strong>Simulation and proof find different mistakes.</strong> Quint gives a trace in milliseconds but only samples. Dafny covers every state but gives no trace. Used on the same definitions they are complementary, and the second one costs nothing extra to set up because the TypeScript it needs is generated.</li>
+    <li><strong>Prose and formal text cannot be derived from each other, only compared.</strong> So the two halves of a rule sit next to each other in one file, and the tool tracks whether anyone has compared them since either changed. Adjacency replaces IDs.</li>
+    <li><strong>A deterministic transition is its own contract.</strong> If the model says what <code>pay</code> returns, the strongest postcondition for a hand-written <code>pay</code> is that same expression. So transitions are generated, and hand-written code starts where Quint stops.</li>
+    <li><strong>Simulation and proof find different mistakes.</strong> Simulation gives a trace in milliseconds but only samples. Proof covers every state but gives no trace. Run on the same definitions, they are complementary.</li>
   </ol>
 
-  <h2>What a rule looks like</h2>
-  <p>A spec is Markdown. A <code>##</code> heading is a story, a <code>###</code> heading is a rule, and the <code>quint</code> block under a rule is its formal half. There is no state variable and no action in the spec: only types and pure definitions. The role of each definition comes from its name.</p>
-  <div class="tablewrap">
-  <table>
-    <thead><tr><th>You write</th><th>It means</th></tr></thead>
-    <tbody>
-      <tr><td><code>pure val initial: Order</code></td><td>The initial state. Its type is the state type.</td></tr>
-      <tr><td><code>pure def pay(o: Order, …): Order</code></td><td>A transition, and an event the application can send.</td></tr>
-      <tr><td><code>pure def canPay(o: Order, …): bool</code></td><td>The guard of <code>pay</code>.</td></tr>
-      <tr><td><code>pure def alwaysX(o: Order): bool</code></td><td>Holds in every reachable state.</td></tr>
-      <tr><td><code>pure def sometimesX(o: Order): bool</code></td><td>Some reachable state satisfies it.</td></tr>
-    </tbody>
-  </table>
-  </div>
+  <h2>Writing a spec</h2>
+  <p>A <code>##</code> heading is a story, a <code>###</code> heading is a rule, and the <code>quint</code> block under a rule is its formal half. There are no state variables and no actions: only types and pure definitions, whose role comes from their name.</p>
   <div class="pair wide">
     <div>
       <span class="label">spec/order.md, written by hand</span>
@@ -235,7 +219,7 @@ pure def alwaysPendingHasBalance(o: Order): bool =
     <div>
       <span class="label">gen/order.ts, generated</span>
 <pre><code><span class="c">/** Story: Check out / A payment never exceeds
-    the balance (spec/order.md:71) */</span>
+    the balance (spec/order.md:73) */</span>
 <span class="c">//@ pure</span>
 export function canPay(o: Order, amount: number): boolean {
   return o.status === "Pending" &amp;&amp; amount &gt; 0
@@ -244,185 +228,76 @@ export function canPay(o: Order, amount: number): boolean {
 
 <span class="c">//@ pure</span>
 export function pay(o: Order, amount: number): Order {
-  <span class="ok">//@ requires inv(o) &amp;&amp; canPay(o, amount)</span>
-  <span class="ok">//@ ensures alwaysDueMatchesUnits(\result)</span>
-  <span class="ok">//@ ensures alwaysPaidWithinDue(\result)</span>
-  <span class="ok">//@ ensures alwaysPendingHasBalance(\result)</span>
-  <span class="ok">//@ ensures alwaysPaidInFull(\result)</span>
-  <span class="ok">//@ ensures alwaysNoMoneyHeldOutsideCheckout(\result)</span>
+  <span class="ok">//@ ensures (inv(o) &amp;&amp; canPay(o, amount))
+  //@   ==&gt; alwaysPendingHasBalance(\result)</span>
+  <span class="c">// … one such line for every rule</span>
   const paid = o.paid + amount;
   return { ...o, paid: paid,
     status: paid === o.due ? "Paid" : "Pending" };
 }
 
 export type Event =
-  | { type: "addItem"; qty: number }
-  | { type: "submit" }
   | { type: "pay"; amount: number }
-  | { type: "cancel" }
-  | { type: "removeItem"; qty: number };
+  | { type: "submit" } | …;
+export function parseEvent(x: unknown): Event | undefined
 export function enabled(s: Order, e: Event): boolean
-export function step(s: Order, e: Event): Order</code></pre>
+export function step(s: Order, e: Event): Order
+export function inv(s: Order): boolean</code></pre>
     </div>
   </div>
-  <p>The <code>//@</code> lines are LemmaScript annotations. Dafny proves each one: starting from any order that satisfies every rule, a permitted payment of any amount leaves an order that satisfies every rule. One <code>ensures</code> per rule means a failed proof names the rule a transition breaks.</p>
-  <p>Three small mechanisms do most of the ergonomic work:</p>
-  <ul>
-    <li><strong>Line-preserving tangle.</strong> The Markdown becomes Quint by turning every non-code line into a comment on the same line number. A Quint error is reported as <code>spec/order.md:78:51</code>.</li>
-    <li><strong>Generated harness.</strong> The state variable, one action per transition, <code>step</code>, and the invariant are generated, so a transition cannot be left out of the simulation and trace events line up with the TypeScript <code>Event</code> type by construction.</li>
-    <li><strong>Doc comments carry the rule.</strong> Hovering <code>pay</code> in an editor shows its story, rule and spec line.</li>
-    <li><strong>A generated gate for untrusted input.</strong> The proofs treat <code>number</code> as an integer, so the module also exports <code>isEvent(x: unknown)</code>, which checks an incoming value's shape and that every number is a safe integer before the rules see it.</li>
-  </ul>
-
-  <h2>Keeping prose and model in step</h2>
-  <p>Each rule has two fingerprints, one for its prose and one for its Quint, stored in <code>spec/order.lock.json</code> when someone runs <code>npm run accept</code>. The <code>review</code> stage compares the current fingerprints with the stored ones and says which way each rule moved.</p>
   <div class="tablewrap">
   <table>
-    <thead><tr><th>Status</th><th>Meaning</th><th>Who acts</th></tr></thead>
+    <thead><tr><th>You write</th><th>It means</th></tr></thead>
     <tbody>
-      <tr><td><code>not formalized</code></td><td>A rule was added in prose only.</td><td>Agent writes the Quint, then the checks run.</td></tr>
-      <tr><td><code>prose changed</code></td><td>The sentence was edited, the Quint was not.</td><td>Agent updates the Quint if the meaning moved.</td></tr>
-      <tr><td><code>model changed</code></td><td>The Quint was edited, the sentence was not.</td><td>Agent rewrites the sentence if the meaning moved.</td></tr>
-      <tr><td><code>both changed</code> / <code>new</code></td><td>Both halves moved, or the rule is new.</td><td>Agent or person confirms they agree.</td></tr>
-      <tr><td><code>removed or renamed</code></td><td>A reconciled rule is no longer in the spec.</td><td>Agent or person confirms it is meant to be gone.</td></tr>
+      <tr><td><code>pure val initial: Order</code></td><td>The initial state. Its type is the state type. A spec without one is a library.</td></tr>
+      <tr><td><code>pure def pay(o: Order, …): Order</code></td><td>A transition, and an event the application can send.</td></tr>
+      <tr><td><code>pure def canPay(o: Order, …): bool</code></td><td>The guard of <code>pay</code>.</td></tr>
+      <tr><td><code>pure def alwaysX(o: Order): bool</code></td><td>Holds in every reachable state.</td></tr>
+      <tr><td><code>pure def stepX(before: Order, after: Order): bool</code></td><td>Holds across every single transition.</td></tr>
+      <tr><td><code>pure def sometimesX(o: Order): bool</code></td><td>Some reachable state satisfies it.</td></tr>
+      <tr><td><code>pure def lawX(…): bool</code></td><td>True for every value of its parameters.</td></tr>
+      <tr><td><code>pure val idValues = Set(1, 2, 3)</code></td><td>What the simulator tries for a parameter named <code>id</code>.</td></tr>
     </tbody>
   </table>
   </div>
-  <p><code>npm run accept</code> runs the whole check and records the listed rules only if every other stage passes, so a rule cannot be marked reconciled while its model is broken.</p>
-  <p>A model element with no rule cannot exist, because Quint is only read from blocks under a rule heading. That makes the sync structural in one direction and tracked in the other, with no IDs to maintain.</p>
+  <p>Four mechanisms do most of the ergonomic work. Tangling keeps every line on its own line number, so a Quint error is reported as <code>spec/order.md:78:51</code>. The state variable, one action per transition and the invariants are generated, so a transition cannot be left out of the simulation. Every generated export carries a doc comment naming its story, rule and spec line. And because the proofs assume whole numbers and plain data, the module exports <code>parseEvent</code>, which turns an untrusted value into an event or nothing: it checks the shape and that every number is a safe integer, and returns a fresh copy with exactly the event's fields, so nothing the caller keeps can change it afterwards.</p>
 
-  <h2>One session, both directions</h2>
-  <p>The check detects; the agent working in the session translates. That agent, Claude Code or any other that reads AGENTS.md, follows a skill kept in the repository, <code>.claude/skills/sync/SKILL.md</code>. It runs <code>npm run brief</code>, which checks everything and prints what is out of step, makes each translation, and repeats until only a person's sign-off is left. A story with no rules becomes rules. A rule with no Quint gets its Quint. A rule whose model moved gets its prose updated, and the reverse. A counterexample or an unprovable transition becomes a new rule marked as discovered. Nothing else has to be installed or signed in, and the agent never accepts on the person's behalf.</p>
-  <p>An earlier design had the tool start an agent as a separate program. That made syncing depend on a second signed-in tool, which it should not. That command, <code>npm run sync</code>, remains for unattended use only.</p>
-  <p>The steps below are real runs on the example. The output is what the tool printed.</p>
-  <h3>Story to rules to model</h3>
-  <p>A story is added as prose only: a shopper wants to take items back out of an order before submitting it.</p>
-<pre><code><span class="bad">✗ review</span>    1 item(s) to reconcile, then run `npm run accept`
-    spec/order.md:137  Story: Change my mind
-      story has no rules: write one ### rule for each thing the story requires</code></pre>
-  <p>The agent writes the rule the story implies, "Items can be removed from a draft", still in prose.</p>
-<pre><code><span class="bad">✗ review</span>    1 item(s) to reconcile, then run `npm run accept`
-    spec/order.md:142  Story: Change my mind / Items can be removed from a draft
-      not formalized: add a quint block that says what the prose says</code></pre>
-  <p>The agent writes Quint that says exactly what the sentence says: a draft, a positive quantity, subtract. The model answers with what the sentence left out.</p>
-<pre><code><span class="bad">✗ always</span>    a reachable state breaks "Story: Fill a draft / The amount due is always
-            the price of the units" (spec/order.md:49), "Story: Check out / The amount
-            paid is never negative and never more than is due" (spec/order.md:85)
-      initial                        -> {"due":0,"paid":0,"status":"Draft","units":0}
-      {"type":"removeItem","qty":6}  -> {"due":-30,"paid":0,"status":"Draft","units":-6}
-      the last event is "Story: Change my mind / Items can be removed from a draft"
-      (spec/order.md:142); its guard canRemoveItem let it through</code></pre>
-  <p>The agent adds the discovered rule under the same story, "No more can be removed than the order holds", with a note that simulation found it, and one line of Quint. Everything passes, the two new transitions' obligations are proved, and <code>accept</code> records both rules.</p>
-<pre><code><span class="ok">✓ proof</span>     order.ts: 14 obligations proved for all states and inputs
-<span class="ok">✓ proof</span>     ledger.ts: 17 obligations proved for all states and inputs
-<span class="ok">✓ review</span>    spec/order.md: recorded 2 item(s) as reconciled
-    spec/order.md:142  Story: Change my mind / Items can be removed from a draft
-    spec/order.md:155  Story: Change my mind / No more can be removed than the order holds</code></pre>
-  <h3>Model to rules</h3>
-  <p>Then the Quint is edited by hand: a <code>maxUnits = 100</code> constant, and <code>canAddItem</code> refuses to exceed it. The checks and proofs pass, and the review points at the prose that no longer tells the whole truth.</p>
-<pre><code><span class="bad">✗ review</span>    2 item(s) to reconcile, then run `npm run accept`
-    spec/order.md:18  Domain / Unit price
-      model changed: update the prose to match, or confirm it already does
-    spec/order.md:38  Story: Fill a draft / Items can only be added to a draft
-      model changed: update the prose to match, or confirm it already does</code></pre>
-  <p>The agent rewrites both sentences to mention the limit and renames the first heading to "Unit price and order size". The rename shows up as one rule new and one removed, and <code>accept</code> records them.</p>
-  <h3>A sync by the skill, start to finish</h3>
-  <p>With the skill in place I ran one myself. Two things were changed by hand, as a person would: a story was added in prose only (staff can put a pending order on hold while stock is checked, and release it), and <code>maxUnits</code> was changed from 40 to 60 in the Quint.</p>
-<pre><code><span class="c"># round 1</span>
-<span class="bad">✗ review</span>    2 item(s) to reconcile
-    spec/order.md:218  Story: Put an order on hold
-      story has no rules: write one ### rule for each thing the story requires
-    spec/order.md:18  Domain / Unit price and order size
-      model changed: update the prose to match, or confirm it already does
+  <h3>What data a spec can describe</h3>
+  <div class="tablewrap wide">
+  <table>
+    <thead><tr><th>In a spec</th><th>In TypeScript</th><th>Worth knowing</th></tr></thead>
+    <tbody>
+      <tr><td><code>int</code>, <code>bool</code>, <code>str</code>, records</td><td><code>number</code>, <code>boolean</code>, <code>string</code>, interfaces</td><td>Records nest. <code>/</code> and <code>%</code> go towards zero, as in Quint, exactly, including for negative numbers.</td></tr>
+      <tr><td><code>type Status = Draft | Paid</code></td><td><code>"Draft" | "Paid"</code></td><td></td></tr>
+      <tr><td><code>type Parcel = Packed({ weight: int }) | Lost</code></td><td><code>{ tag: "Packed"; weight: number } | { tag: "Lost" }</code></td><td>Each stage carries only what is known at that stage. Read with <code>match</code>.</td></tr>
+      <tr><td><code>List[T]</code></td><td><code>T[]</code></td><td><code>append</code>, <code>concat</code>, <code>select</code>, <code>foldl</code>, <code>nth</code>, <code>every</code>, <code>some</code>, <code>includes</code>, <code>listMap</code>. A table is a list of records.</td></tr>
+      <tr><td><code>Set[T]</code> of simple values</td><td><code>T[]</code> that never holds a value twice</td><td>Use a set only when duplicates are impossible in the real thing.</td></tr>
+      <tr><td><code>str -&gt; T</code></td><td><code>Record&lt;string, T&gt;</code></td><td>Lookup, update and "is this key present". A map cannot be iterated. Keys are stored with a <code>$</code> in front, so none can collide with a property every object has.</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>Three rules of thumb follow from what can be proved. <strong>Guard every partial operation in the definition that uses it</strong>: an index outside a list, a missing map key or a zero divisor stops the simulator and cannot be proved safe, so test first and return a default. <strong>There are no loops and no recursion in Quint</strong>: to repeat something until done, fold over a list that is long enough; what needs a real loop is written by hand in <code>src/</code> and proved there. <strong>Keep simulation bounds out of guards</strong>, because a guard is shipped code.</p>
 
-<span class="c"># round 2, after writing the rules and their Quint, and updating the prose to "at most 60 units"</span>
-<span class="ok">✓ always</span>    no rule broken in 10000 simulated traces
-<span class="bad">✗ proof</span>     order.ts: 12 proved, 2 not proved.
-      (inv(o) ==> canRelease(o) ==> alwaysPendingHasBalance(release(o)))
-
-<span class="c"># round 3, after adding the rule the proof called for</span>
-<span class="ok">✓ proof</span>     order.ts: 14 obligations proved for all states and inputs
-<span class="bad">✗ review</span>    5 item(s) to reconcile, then run `npm run accept`</code></pre>
-  <p>The story became three rules: staff can hold and release a pending order; nothing is paid while it is on hold, which is a rule about each step; and an order can be on hold. Simulation passed, but the proof could not show that releasing an order leaves it with a balance, because nothing said that an order on hold is unpaid. That became a fourth rule, "An order on hold still has a balance", marked "Discovered by the proof". The five items left are for the person's sign-off, and I have not accepted them.</p>
-  <h3>The same thing, unattended</h3>
-  <p>Earlier, before the skill, the same loop was run by <code>npm run sync</code> with a model doing the translating and nobody at the keyboard. Three hosted agent CLIs on the machine were unusable (two not signed in, one without model access), so the agent was a local 7-billion-parameter model, <code>qwen2.5:7b</code> under Ollama, through a small adapter that ships in <code>tools/agent-ollama.ts</code>. A model that small is close to the worst case for an agent, which makes it a fair test of the guardrails.</p>
-  <p><strong>Run 1: a story to rules, and a model edit back to prose.</strong> A "Reopen a cancelled order" story was added as two lines of prose, and <code>maxUnits</code> was changed from 100 to 50 in the Quint by hand. In one round the model wrote <code>canReopen</code> and <code>reopen</code>, and rewrote the prose of the edited rule from "at most 100 units" to "at most 50 units". Every stage passed, with the sixth transition proved, and sync stopped for sign-off.</p>
-  <p><strong>Run 2: the model finds a missing rule, and the agent adds it.</strong> A "Take back a payment" story was added as prose.</p>
-<pre><code>--- round 1: review need attention; asking the agent ---
-[agent-ollama] qwen2.5:7b made 1 edit(s)
-<span class="bad">✗ always</span>    a reachable state breaks "Story: Check out / The amount paid is never
-            negative and never more than is due" (spec/order.md:87)
-      initial                        -> {"due":0,"paid":0,"status":"Draft","units":0}
-      {"type":"addItem","qty":1}     -> {"due":5,"paid":0,"status":"Draft","units":1}
-      {"type":"submit"}              -> {"due":5,"paid":0,"status":"Pending","units":1}
-      {"type":"pay","amount":4}      -> {"due":5,"paid":4,"status":"Pending","units":1}
-      {"type":"takeBackPayment"}     -> {"due":5,"paid":-1,"status":"Pending","units":1}
-      the last event is "Story: Take back a payment / TAKE BACK A PAYMENT"
-      (spec/order.md:186); its guard canTakeBackPayment let it through
-
---- round 2: always, review need attention; asking the agent ---
-[agent-ollama] qwen2.5:7b made 1 edit(s)
-<span class="ok">✓ always</span>    no rule broken in 10000 simulated traces
-<span class="ok">✓ proof</span>     order.ts: 18 obligations proved for all states and inputs
-<span class="bad">✗ review</span>    1 item(s) to reconcile, then run `npm run accept`
-
-synced: read the changes to spec/ (git diff), then run `npm run accept` to sign them off</code></pre>
-  <p>In round 2 the model strengthened the guard and wrote, in the spec: "Discovered by simulation: The rule must prevent the takeBackPayment action from reducing the paid amount to a negative value."</p>
-  <p><strong>What the sign-off was for.</strong> The small model's work was correct enough to pass every check and still not what a person would write. Its headings were in capitals, and its transition took back a fixed amount instead of one the shopper chooses. At sign-off I rewrote the headings, gave <code>takeBack</code> an amount, and moved the discovered constraint into its own rule, "No more can be taken back than was paid". The checks passed again and <code>accept</code> recorded it. Both stories are now part of the example.</p>
-  <p><strong>Run 3: no configuration at all.</strong> <code>sync</code> now tries Claude Code first and, if it cannot run, falls back to the local model and says so. A "Start over" story (empty a draft in one go) and another hand edit to <code>maxUnits</code> were then synced with a bare <code>npm run sync</code>. It printed the Claude Code sign-in failure, switched agents, wrote the rule and the prose in one round, passed every stage and stopped for sign-off. At sign-off I renamed the model's <code>START_OVER</code> to <code>empty</code> and rewrote its heading. That story is in the example too, which now has 20 rules and 8 transitions.</p>
-  <p><strong>Run 4: no model and no person.</strong> <code>sync</code> now ends its chain of agents with one that uses no model. With Claude Code signed out and no local model running, a bare <code>npm run sync</code> was given a spec whose payment guard had lost "may not exceed the balance":</p>
-<pre><code><span class="bad">✗ always</span>    a reachable state breaks "Story: Check out / The amount paid is never negative
-            and never more than is due" (spec/order.md:87) …
-      a rule that would forbid it: refuse pay when its result would break alwaysPaidWithinDue
-
---- round 1: always, review need attention; asking the agent ---
-Failed to authenticate: OAuth session expired and could not be refreshed
---- claude could not run; using agent-ollama instead ---
-no Ollama server at http://localhost:11434
---- agent-ollama could not run; using agent-lookahead instead ---
-[agent-lookahead] added the rule payKeepsPaidWithinDue to order.md and to the guard of pay
-<span class="ok">✓ proof</span>     order.ts: 12 obligations proved for all states and inputs
-
-synced: read the changes to spec/ (git diff), then run `npm run accept` to sign them off</code></pre>
-  <p>The rule it wrote, under the story the event belongs to, is "Pay is refused when it would break 'paid within due'", with the Quint <code>alwaysPaidWithinDue(pay(o, amount))</code> added to the guard. It is always a sound repair and never an insightful one: it says what must not happen, not why. It cannot turn a story into rules; that still needs a model or a person.</p>
-  <p><strong>What did not work.</strong> In earlier attempts, with a looser prompt, the same model invented a false invariant, duplicated a rule, and tried to weaken an existing rule. None of it got through: the checks failed, or the change sat in <code>review</code> as "model changed". The model's output format also varied between runs until the adapter gave it a template to fill in. A stronger agent needs none of this hand-holding: given the same brief, a fresh Claude agent translated the reopen story correctly in one pass, though that run was started by hand because its CLI was not signed in.</p>
-
-  <h2>How the checks discover rules</h2>
-  <p>The session above shows a rule being discovered as it happens. Others among the nineteen rules in the example are of the same kind. Removing either one shows how each verifier finds its own sort of gap, and both removals are kept as regression tests of the pipeline.</p>
-  <h3>Simulation finds a missing guard</h3>
-  <p>With <code>canSubmit</code> written as "the order is a draft", the run takes under a second and prints the shortest way to the problem:</p>
-<pre><code><span class="bad">✗ always</span>    a reachable state breaks "Story: Check out / A pending order still
-            has a balance" (spec/order.md:91): fix the model, or add the rule
-            that forbids this trace
-      initial                        -> {"due":0,"paid":0,"status":"Draft","units":0}
-      {"type":"submit"}              -> {"due":0,"paid":0,"status":"Pending","units":0}</code></pre>
-  <p>An empty order can be submitted and then can never be paid. The fix is a rule a product owner would recognise, "Only a non-empty draft can be submitted", and one more conjunct in the guard.</p>
-  <h3>Proof finds an unstated assumption</h3>
-  <p>Remove the rule "Drafts and cancelled orders hold no money" and 10,000 simulated traces still pass, because no trace ever puts money on a draft. The proof does not pass:</p>
-<pre><code><span class="ok">✓ always</span>    no rule broken in 10000 simulated traces
-<span class="ok">✓ replay</span>    generated TypeScript reproduces 52 Quint traces
-<span class="bad">✗ proof</span>     order.ts: not proved (full output in gen/proof/order.log)
-      alwaysPendingHasBalance(submit(o))</code></pre>
-  <p>Dafny considers a draft that already has its full amount paid. Nothing in the remaining rules says that cannot happen, and submitting it would produce a pending order with no balance. The rules were true but not inductive. Stating the missing fact as a rule fixes the proof and documents something the stories took for granted.</p>
-
-  <h2>Hand-written logic and the trust boundary</h2>
-  <p>Logic that fits in Quint belongs in the spec. What does not fit, such as a loop over an event log, is written in TypeScript against the generated contract and proved the same way:</p>
-<pre><code>export function replay(events: Event[]): Order {
-  <span class="ok">//@ ensures inv(\result)</span>
-  let order: Order = initial;
-  let i = 0;
-  while (i &lt; events.length) {
-    <span class="ok">//@ invariant 0 &lt;= i &amp;&amp; i &lt;= events.length</span>
-    <span class="ok">//@ invariant inv(order)</span>
-    order = step(order, events[i]);
-    i = i + 1;
-  }
-  return order;
-}</code></pre>
-  <p>LemmaScript verifies one file at a time and does not carry definitions across imports, so the pipeline proves such a file in a bundle with the generated module it imports. At run time the import is an ordinary import.</p>
+  <h2>What is checked, and how strongly</h2>
+  <p><code>npm run check</code> runs these stages cheapest first. A broken model stops the later stages, since their failures would only restate the first.</p>
+  <div class="tablewrap wide">
+  <table>
+    <thead><tr><th>Stage</th><th>Question</th><th>Strength</th></tr></thead>
+    <tbody>
+      <tr><td><code>model</code></td><td>Is the spec well-typed and inside the supported subset?</td><td>exact; anything unsupported is refused by name</td></tr>
+      <tr><td><code>always</code></td><td>Does a reachable state break an <code>always</code> rule, a step break a <code>step</code> rule, or a sampled argument break a law?</td><td><span class="tag sampled">sampled</span> 10,000 traces; a failure comes with the shortest trace</td></tr>
+      <tr><td><code>sometimes</code></td><td>Can each goal be reached at all?</td><td>a witness trace is a proof</td></tr>
+      <tr><td><code>replay</code></td><td>Does the generated TypeScript mean what the Quint means?</td><td><span class="tag sampled">sampled</span> 400 traces: every state, every law tried, and every definition the simulator can evaluate, compared result by result; the ones it cannot evaluate are listed</td></tr>
+      <tr><td><code>types</code></td><td>Does the application fit the generated contract?</td><td>exact</td></tr>
+      <tr><td><code>proof</code></td><td>Does every transition preserve every rule, does every law hold, and does hand-written code meet its annotations?</td><td><span class="tag proved">proved</span> for all states and inputs; what Dafny cannot prove alone is listed</td></tr>
+      <tr><td><code>tests</code></td><td>Does the shell work?</td><td>examples</td></tr>
+      <tr><td><code>review</code></td><td>Does every story have rules, and has every rule that changed been reconciled?</td><td><span class="tag trusted">tracked</span></td></tr>
+    </tbody>
+  </table>
+  </div>
   <figure class="wide">
     <div class="scroll">
-    <svg viewBox="0 0 940 210" role="img" aria-label="Three bands: proved, sampled and trusted, with what falls in each">
+    <svg viewBox="0 0 940 210" role="img" aria-label="Three bands: proved, sampled and trusted, with what falls in each for the order example">
       <rect class="f-proved" x="20" y="20" width="290" height="170" rx="6" stroke-width="1.2"/>
       <text class="t-title" x="36" y="46">Proved, all states and inputs</text>
       <text x="36" y="72">The initial state satisfies every rule</text>
@@ -430,95 +305,92 @@ synced: read the changes to spec/ (git diff), then run `npm run accept` to sign 
       <text x="36" y="116">step never leaves the rules</text>
       <text x="36" y="138">replay(events) satisfies every rule</text>
       <text x="36" y="160">balance ≥ 0, and 0 once paid</text>
-      <text class="t-sub" x="36" y="180">21 Dafny obligations</text>
+      <text class="t-sub" x="36" y="180">77 obligations</text>
 
       <rect class="f-sampled" x="325" y="20" width="290" height="170" rx="6" stroke-width="1.2"/>
       <text class="t-title" x="341" y="46">Sampled or witnessed</text>
       <text x="341" y="72">No reachable state breaks a rule</text>
       <text x="341" y="94">Each sometimes-goal is reachable</text>
-      <text x="341" y="116">TypeScript and Quint agree on</text>
-      <text x="341" y="134">every simulated trace</text>
+      <text x="341" y="116">TypeScript agrees with Quint on</text>
+      <text x="341" y="134">all 32 definitions and every state</text>
       <text x="341" y="158">The shell works on example sessions</text>
-      <text class="t-sub" x="341" y="180">10,000 traces, 52 replayed, 6 tests</text>
+      <text class="t-sub" x="341" y="180">10,000 traces, 403 compared, 7 tests</text>
 
       <rect class="f-trusted" x="630" y="20" width="290" height="170" rx="6" stroke-width="1.2"/>
       <text class="t-title" x="646" y="46">Trusted</text>
       <text x="646" y="72">The Quint means what the prose says</text>
-      <text x="646" y="94">tools/gen.ts beyond sampled traces</text>
+      <text x="646" y="94">The generator, beyond what is compared</text>
       <text x="646" y="116">The shell: storage, errors, I/O</text>
       <text x="646" y="138">LemmaScript, Dafny, Quint</text>
-      <text x="646" y="160">Exact arithmetic only up to 2^53</text>
-      <text class="t-sub" x="646" y="180">review ledger tracks the first one</text>
+      <text x="646" y="160">Sums staying below 2^53</text>
+      <text class="t-sub" x="646" y="180">the review ledger tracks the first one</text>
     </svg>
     </div>
-    <figcaption>What the green check marks do and do not mean for the order example.</figcaption>
+    <figcaption>What a clean check does and does not mean for the order example.</figcaption>
   </figure>
+  <h3>When a proof does not go through</h3>
+  <p>Dafny proves arithmetic and simple list facts unaided. It usually cannot prove a rule that depends on a fold or a count. When <code>proof</code> lists an obligation as "not proved" although simulation found nothing, there are four answers: state the missing fact as another rule; move the arithmetic into a small function with a law; write it by hand with loop invariants; or accept simulation for it. The last is a person's decision, recorded with <code>npm run accept -- unproved</code> in a ledger, <code>spec/unproved.lock.json</code>. The check then reports how many obligations are simulated only, and fails again if a new one appears.</p>
 
-  <h2>Does each check earn its place?</h2>
-  <p><code>npm run selftest</code> copies the example into scratch directories, breaks one thing at a time, and asserts which stage fails. All eighteen cases pass; the table shows the main ones.</p>
-  <div class="tablewrap">
-  <table>
-    <thead><tr><th>Mistake introduced</th><th>Caught by</th></tr></thead>
-    <tbody>
-      <tr><td>A guard loses a condition</td><td><span class="tag sampled">always</span> with a two-step trace</td></tr>
-      <tr><td>A rule needed only for induction is deleted</td><td><span class="tag proved">proof</span> only; simulation passes</td></tr>
-      <tr><td>A guard is made too strict to ever finish paying</td><td><span class="tag sampled">sometimes</span></td></tr>
-      <tr><td>Prose is edited, Quint is not</td><td><span class="tag trusted">review</span> only</td></tr>
-      <tr><td>A rule is added with no Quint</td><td><span class="tag trusted">review</span> only</td></tr>
-      <tr><td>Quint outside the supported subset</td><td><code>model</code>, refused with the operator name</td></tr>
-      <tr><td>Hand-written <code>balance</code> subtracts the wrong way</td><td><span class="tag proved">proof</span> only; names the annotation</td></tr>
-      <tr><td>TypeScript <code>step</code> diverges from the model</td><td><span class="tag sampled">replay</span></td></tr>
-      <tr><td>A story is added with no rules</td><td><span class="tag trusted">review</span></td></tr>
-      <tr><td>A rule is deleted</td><td><span class="tag trusted">review</span></td></tr>
-      <tr><td>A rule is named <code>alwayspaid…</code> instead of <code>alwaysPaid…</code>; an integer beyond 2^53; a parameter named like a variant; a TypeScript keyword as a name; a duplicate rule heading</td><td><code>model</code>, each refused with a reason</td></tr>
-      <tr><td>Hand-written code uses <code>//@ assume</code>, or imports a look-alike of the generated module</td><td><span class="tag proved">proof</span> refuses to run</td></tr>
-      <tr><td><code>accept</code> while another stage fails</td><td>nothing is recorded</td></tr>
-      <tr><td>A second, fresh spec with enum and boolean parameters</td><td>passes everything except <span class="tag trusted">review</span></td></tr>
-    </tbody>
-  </table>
-  </div>
-
-  <h2>Review and revision</h2>
-  <p>The first working version was reviewed for anything that could be removed, merged or made automatic. These changes came out of that pass.</p>
+  <h2>Keeping stories, rules and model in step</h2>
+  <p>The check detects; the agent working in the session translates. That agent, Claude Code or any other that reads AGENTS.md, follows a skill kept in the repository, <code>.claude/skills/sync/SKILL.md</code>. It runs <code>npm run check</code>, which reports what is out of step together with both halves of every rule that moved, makes each translation, and repeats until only a person's sign-off is left. Nothing else has to be installed or signed in.</p>
   <div class="tablewrap wide">
   <table>
-    <thead><tr><th>First design</th><th>Revised</th><th>Why</th></tr></thead>
-    <tbody id="revisions">
-      <tr><td>Separate rules file and model file linked by rule IDs</td><td>One Markdown file, Quint under each rule</td><td>Removes a source of truth and all ID bookkeeping.</td></tr>
-      <tr><td>Hand-written Quint <code>var</code>, <code>init</code>, actions and <code>step</code></td><td>Harness generated from the pure definitions</td><td>It was boilerplate, and a transition missing from <code>step</code> was a silent hole.</td></tr>
-      <tr><td>Generated types only; transition bodies written by hand in TypeScript</td><td>Transitions generated; hand-written code only beyond Quint's reach</td><td>The body and its strongest contract were the same expression written twice.</td></tr>
-      <tr><td>One <code>ensures inv(\result)</code> per transition</td><td>One <code>ensures</code> per rule</td><td>A failed proof now names the rule and the transition.</td></tr>
-      <tr><td>All stages always run</td><td>Stages after a broken model are skipped</td><td>A model error used to be restated by three later stages, including a misleading one.</td></tr>
-      <tr><td>Raw Quint and Dafny output on failure</td><td>Traces rendered as events, broken rule cited by spec line, unproved annotations listed, full log on disk</td><td>The first screen of output should say what to change.</td></tr>
-      <tr><td>Fully parenthesised generated expressions</td><td>Precedence-aware printing</td><td>The generated module is read by people.</td></tr>
-      <tr><td><code>status</code> command beside <code>check</code></td><td>Removed</td><td><code>check</code> always ends with the same report.</td></tr>
-      <tr><td><code>tsx</code> to run the tools</td><td>Node 24 runs the TypeScript directly</td><td>One dependency fewer, no build step.</td></tr>
-    </tbody>
-  </table>
-  </div>
-  <h3>Second pass: an independent review</h3>
-  <p>A separate reviewer, given only the repository, then tried to make wrong inputs pass. It found the ways below. Each is now closed and has a regression case in the self-test.</p>
-  <div class="tablewrap wide">
-  <table>
-    <thead><tr><th>What got through</th><th>Now</th></tr></thead>
+    <thead><tr><th>The report says</th><th>Direction</th><th>The agent</th></tr></thead>
     <tbody>
-      <tr><td>A proof could cover a hand-written look-alike of the generated module, matched by file name</td><td>Verified code may import only the exact <code>gen/&lt;name&gt;.ts</code></td></tr>
-      <tr><td><code>//@ assume false</code> made any hand-written proof pass</td><td>Only annotations that state or prove something are allowed</td></tr>
-      <tr><td>Deleting a rule left the review green</td><td>Reported as <code>removed or renamed</code> until accepted</td></tr>
-      <tr><td>A rule named with the wrong capital became an unchecked helper</td><td>Near-misses of the naming convention are refused</td></tr>
-      <tr><td>A simulator crash read as "no rule broken"</td><td>Anything but "held" or "violated", with a trace, fails the stage</td></tr>
-      <tr><td>An integer beyond 2^53 and a parameter named like a variant were mistranslated</td><td>Both refused by the translator</td></tr>
-      <tr><td>Fractional quantities passed straight into the proved core at run time</td><td>Generated <code>isEvent</code> gate, used by the shell</td></tr>
-      <tr><td>A duplicate rule heading could never be reconciled; an indented <code>quint</code> block was silently dropped; <code>src/</code> subdirectories were not proved</td><td>Refused, read, and proved respectively</td></tr>
-      <tr><td><code>accept</code> could be run on a failing spec</td><td><code>accept</code> is the check plus recording, and records only when all else passes</td></tr>
-      <tr><td>Stale files in <code>gen/</code> survived a renamed spec; <code>gen/</code> was missing after a fresh clone</td><td>Rebuilt from nothing on every check, and generated on <code>npm install</code></td></tr>
+      <tr><td>story has no rules</td><td>story → rules</td><td>writes one rule per thing the story requires, then each rule's Quint</td></tr>
+      <tr><td>not formalized</td><td>rule → model</td><td>writes Quint that says exactly what the sentence says</td></tr>
+      <tr><td>prose changed</td><td>rule → model</td><td>changes the Quint if the meaning moved</td></tr>
+      <tr><td>model changed</td><td>model → rule</td><td>rewrites the sentence so a reader of the prose alone is not misled</td></tr>
+      <tr><td>a trace breaks a rule</td><td>model → rule</td><td>writes the reason as a new rule and guard, marked "Discovered by simulation"</td></tr>
+      <tr><td>an obligation is not proved</td><td>model → rule</td><td>looks for an unstated fact about reachable states and adds it, marked "Discovered by the proof"</td></tr>
+      <tr><td>removed or renamed</td><td></td><td>checks that no story still depends on the rule</td></tr>
     </tbody>
   </table>
   </div>
-  <p>Two of the reviewer's simplifications were declined on purpose. Merging the two fingerprints per rule into one would lose the direction of a change, which is what makes the sync bidirectional. Folding CONTRIBUTING.md into the other two documents would undo the split the project was asked to have; the duplicated passages between the three were removed instead.</p>
+  <p>Each rule has two fingerprints, one for its prose and one for its Quint, stored when a person runs <code>npm run accept</code>. That is how the report knows which half moved. <code>accept</code> runs the whole check afresh, ignoring anything remembered from earlier runs, and records nothing unless every other stage passes. The agent never runs it. A model element with no rule cannot exist, because Quint is only read from blocks under a rule heading.</p>
 
-  <h2>From the toy to a real application</h2>
-  <p>The order example has four integers. To see what a real application needs, the same tools were pointed at one: a project tracker of about 5,500 lines whose data lives in hand-editable Google Sheets and which is used from Slack. It already had hand-written Quint models and a small proved kernel, so its rules were known. It is modelled in <code>examples/alpha-energy</code> as three specs, about 700 lines.</p>
+  <h3>One sync, start to finish</h3>
+  <p>Two things were changed by hand, as a person would: a story was added in prose only (staff can put a pending order on hold while stock is checked, and release it), and a constant was changed in the Quint.</p>
+<pre><code><span class="c"># round 1</span>
+<span class="bad">✗ review</span>    2 item(s) to reconcile
+    spec/order.md:218  Story: Put an order on hold
+      story has no rules: write one ### rule for each thing the story requires
+    spec/order.md:18  Domain / Unit price and order size
+      model changed: update the prose to match, or confirm it already does
+
+<span class="c"># round 2, after writing three rules with their Quint and updating the prose</span>
+<span class="ok">✓ always</span>    no rule broken in 10000 simulated traces
+<span class="bad">✗ proof</span>     order.ts: 12 proved, 2 not proved.
+      (inv(o) ==> canRelease(o) ==> alwaysPendingHasBalance(release(o)))
+
+<span class="c"># round 3, after adding the rule the proof called for</span>
+<span class="ok">✓ proof</span>     order.ts: all 72 obligations proved for all states and inputs
+<span class="bad">✗ review</span>    5 item(s) to reconcile, then run `npm run accept`</code></pre>
+  <p>The story became three rules: staff can hold and release a pending order; nothing is paid while it is on hold, which is a rule about each step; and an order can be on hold. Simulation passed, but the proof could not show that releasing an order leaves it with a balance, because nothing said that an order on hold is unpaid. That became a fourth rule, "An order on hold still has a balance". The five items left are the person's to accept.</p>
+  <h3>The two ways a rule is discovered</h3>
+  <p><strong>Simulation finds a missing guard</strong> and shows the shortest way to the problem, then proposes the bluntest possible repair:</p>
+<pre><code><span class="bad">✗ always</span>    a reachable state breaks "Story: Check out / A pending order still
+            has a balance" (spec/order.md:93)
+      initial                        -> {"due":0,"paid":0,"status":"Draft","units":0}
+      {"type":"submit"}              -> {"due":0,"paid":0,"status":"Pending","units":0}
+      the last event is "Story: Check out / Only a non-empty draft can be submitted"
+      (spec/order.md:63); its guard canSubmit let it through
+      if no better reason can be found: refuse submit when its result would break alwaysPendingHasBalance</code></pre>
+  <p>The agent should state the reason ("only a non-empty draft can be submitted"). The last line is a fallback that is always sound and never insightful. It is expressible because a guard may call its own transition to look at the result.</p>
+  <p><strong>The proof finds an unstated assumption.</strong> Delete the rule "Drafts and cancelled orders hold no money" and 10,000 traces still pass, because no trace ever puts money on a draft. The proof does not pass: Dafny considers a draft that already has its full amount paid, which nothing forbids. The rules were true but not inductive, and stating the missing fact is the fix.</p>
+
+  <h2>Composing specs</h2>
+  <ul>
+    <li><strong>A library</strong> is a spec with no state: definitions and laws. Others take its names as they are with <code>import kernel.* from "./kernel"</code>.</li>
+    <li><strong>Any spec, a state machine included, can be imported under a name.</strong> With <code>import lamp as L from "./lamp"</code>, a room holds two lamps in its state, moves them with <code>L::toggle</code>, requires <code>L::alwaysFlipsAreCounted</code> of each, and adds rules about the pair that neither lamp could state. This is how one machine uses and observes another.</li>
+    <li><strong>Each spec is proved against the definitions of what it imports, not their proofs</strong>, so the cost of a proof grows with the spec and not with everything beneath it.</li>
+    <li><strong>Only what changed is checked again.</strong> A spec that passed simulation, and each proof result, is remembered under a fingerprint of the spec, everything it imports and the versions of the tools. A repeat check of an unchanged three-spec project takes about two seconds.</li>
+    <li><strong>The toolchain is a package</strong> with a <code>spec</code> command. In another repository, <code>npx spec init</code> adds the sync skill, AGENTS.md, a tsconfig and package scripts, replacing nothing, and <code>npm run check</code> runs the pipeline.</li>
+  </ul>
+  <p>Hand-written logic that Quint cannot express, such as a loop over an event log, is ordinary TypeScript in <code>src/</code> with LemmaScript annotations. It imports one generated module and is proved in a bundle with it, in a directory of its own with its own prover configuration. Annotations that tell the prover to trust or skip something are refused wherever they appear.</p>
+
+  <h2>A real application</h2>
+  <p>To see what a real application needs, the same tools were pointed at one: a project tracker of about 5,500 lines whose data lives in hand-editable Google Sheets and which is used from Slack. It is modelled in <code>examples/alpha-energy</code>, a separate package that depends on the toolchain as any project would.</p>
   <div class="tablewrap">
   <table>
     <thead><tr><th>Spec</th><th>Kind</th><th>Covers</th></tr></thead>
@@ -530,72 +402,73 @@ synced: read the changes to spec/ (git diff), then run `npm run accept` to sign 
     </tbody>
   </table>
   </div>
-  <h3>What had to be added</h3>
+  <p>Slack, HTTP, storage and the web view are not modelled; they are the shell around these rules. Two kinds of writer, the guarded app and a person typing in the sheet, needed no feature of their own: both are transitions, and a field in the state says who wrote last, so a step rule can say "an app edit never adds a problem".</p>
+  <h3>What the checks found</h3>
+  <p><strong>A real bug in the application.</strong> The application's own model keeps a task's owners in a set. A cell in a sheet is not a set: a person can type <code>Liza, Liza</code>. With cells modelled as lists, the rule "nothing is sent twice" failed in simulation within seconds. The application removes duplicates whenever it writes a cell, but not when its notifier reads one. Run unmodified on a task whose owners cell was typed as <code>Liza Horowitz, Liza Horowitz</code>, the application's notifier planned messages to <code>["U1","U1"]</code>. The spec now has the rule "A person named twice in a cell is told once". The application has not been changed; a one-line fix with a test is in the example as a patch, checked against a copy.</p>
+  <p><strong>A flaw in Quint.</strong> A Quint definition that takes a lambda gives the wrong answer, silently, when used inside its own argument, as in <code>tasks.some(t => t.parents.some(…))</code>. So <code>every</code>, <code>some</code>, <code>includes</code> and <code>listMap</code> are not Quint definitions: the tool rewrites them into Quint's built-in fold before Quint sees the spec, and they come out in TypeScript as native array methods.</p>
+  <p><strong>A flaw in the generator.</strong> Quint divides towards zero; the generator floored. Sampled laws had not hit a negative dividend. Division and remainder now go through helpers that are exact in Quint, TypeScript and Dafny, and one law that had been unprovable proved once the translation was right.</p>
+  <p><strong>A bounded model generates bounded code.</strong> The application's model found a task's ancestors with four rounds of unrolling, enough for its four tasks and wrong for a fifth. Here the search folds over the task list, so it runs once per task however many there are.</p>
+  <h3>How much is proved</h3>
+  <p>Everything holds in simulation, and the TypeScript agrees with Quint on all 101 definitions the simulator can evaluate. Of 292 proof obligations, 213 are proved for all inputs. The other 79 hold in simulation but Dafny cannot prove them unaided, mostly because they depend on folding over the warning list, and two of them are the prover running out of time. They are listed on every check, and the example's <code>proof</code> stage stays red until its owner decides whether simulation is enough for them. That is close to where the application itself had settled: it proves its arithmetic kernel and model-checks the rest.</p>
+  <h3>What this says about 500,000 lines</h3>
+  <p>The specs covered the rules of a 5,500-line application in about 700 lines, because Slack, HTTP and storage are not rules. A large codebase would be many such specs, one per area with a life cycle, with libraries beneath them and machines importing machines. What that needs from the tools is in place: dependency order, per-spec proof cost, incremental checking, and assurance reported per obligation. What has not happened is anyone trying it at that size. The largest thing these tools have modelled is the 700 lines above.</p>
+
+  <h2>Does each check earn its place?</h2>
+  <p><code>npm run selftest</code> copies the example into scratch directories, breaks one thing at a time, and asserts which stage fails. All 31 cases pass; these are the main ones.</p>
   <div class="tablewrap wide">
   <table>
-    <thead><tr><th>Need</th><th>What the tools now do</th></tr></thead>
+    <thead><tr><th>Mistake introduced</th><th>Caught by</th></tr></thead>
     <tbody>
-      <tr><td>Tables of rows, multi-valued cells, nested records</td><td>Lists, which become arrays: <code>append</code>, <code>concat</code>, <code>select</code>, <code>foldl</code>, <code>nth</code>, and <code>every</code>, <code>some</code>, <code>includes</code>, <code>listMap</code></td></tr>
-      <tr><td>Shared definitions across many specs</td><td>A spec without <code>initial</code> is a library; others import it, and the generated TypeScript imports the same way</td></tr>
-      <tr><td>Facts about functions, not states</td><td><code>law…</code> definitions: proved to be true for every argument, and sampled by the simulator</td></tr>
-      <tr><td>"An app edit never adds a problem": a fact about one step, not one state</td><td><code>step…(before, after)</code> rules, checked across every transition</td></tr>
-      <tr><td>Two kinds of writer, one guarded and one not</td><td>No new feature: both are transitions, and a <code>last</code> field in the state says who wrote</td></tr>
-      <tr><td>Proofs Dafny cannot find alone</td><td>A ledger, <code>spec/unproved.lock.json</code>: such obligations are listed, pass only once a person records them as simulated-only, and fail again if a new one appears</td></tr>
-      <tr><td>The tool proposing a missing rule itself</td><td>When a trace shows an event breaking a rule, the check proposes "refuse this event when its result would break that rule", and a built-in agent that uses no model writes it into the spec. For that a guard must be able to call its own transition, so generated transitions are now total and their guarantees conditional on the guard</td></tr>
-      <tr><td>Proof cost that grows with the whole program</td><td>Each spec is proved against the definitions of what it imports, not their proofs</td></tr>
-      <tr><td>Use from another repository</td><td>The toolchain is a package with a <code>spec</code> command; the example is a separate package that depends on it, verified by installing a packed tarball into an empty project</td></tr>
+      <tr><td>A guard loses a condition</td><td><span class="tag sampled">always</span> with a two-step trace</td></tr>
+      <tr><td>A rule needed only for induction is deleted</td><td><span class="tag proved">proof</span>; simulation passes</td></tr>
+      <tr><td>A guard is made too strict to ever finish paying</td><td><span class="tag sampled">sometimes</span></td></tr>
+      <tr><td>A step rule or a law is made false</td><td><span class="tag sampled">always</span>, naming the rule, or the law and its arguments</td></tr>
+      <tr><td>Prose is edited and Quint is not; a rule has no Quint; a story has no rules; a rule is deleted</td><td><span class="tag trusted">review</span></td></tr>
+      <tr><td>Quint outside the subset; an integer beyond 2^53; a parameter named like a variant; a near-miss of a naming convention; a TypeScript keyword as a name; a duplicate rule heading; an import circle</td><td><code>model</code>, each refused with a reason</td></tr>
+      <tr><td>A definition whose TypeScript result differs from Quint's</td><td><span class="tag sampled">replay</span></td></tr>
+      <tr><td>Hand-written code subtracts the wrong way, uses <code>//@ assume</code>, or imports a look-alike of the generated module</td><td><span class="tag proved">proof</span></td></tr>
+      <tr><td><code>accept</code> while another stage fails</td><td>nothing is recorded</td></tr>
+      <tr><td>A rule heading written to end its comment and run code</td><td>it stays a comment</td></tr>
+      <tr><td>A proof forged from inside the project: a file named after the spec, a prover configuration, an annotation hidden behind a comment, an import of a file full of claims</td><td><span class="tag proved">proof</span>, each refused or still failing</td></tr>
+      <tr><td>A map key such as <code>constructor</code>, an event with a getter, an event with extra fields</td><td>harmless: the key is just a key, and <code>parseEvent</code> returns a plain copy</td></tr>
+      <tr><td>A line break moved so that a comment swallows half a guard</td><td><span class="tag trusted">review</span>: the model changed</td></tr>
     </tbody>
   </table>
   </div>
-  <h3>What the checks found</h3>
-  <p><strong>A real bug in the application.</strong> The application's own model keeps a task's owners in a set. A cell in a sheet is not a set: a person can type <code>Liza, Liza</code>. With cells modelled as lists, the rule "nothing is sent twice" failed in simulation within seconds:</p>
-<pre><code><span class="bad">✗ always</span>    a reachable state breaks "Story: Be told what changed and what is due /
-            Nothing is sent twice" (spec/tracker.md:435)
-      …
-      {"type":"renameOwner","owner":"wes","name":"liza"} -> … "owners":["liza","liza"] …
-      {"type":"notify"} -> "sent":[{"kind":"Soon","task":1,"to":"liza","version":3},
-                                   {"kind":"Soon","task":1,"to":"liza","version":3}]</code></pre>
-  <p>That first trace was partly my model's fault: the application removes duplicates whenever it writes a cell, and my rename did not. But the application's notifier does not remove them when it <em>reads</em> a cell. I ran the application's own notifier, unmodified, on a task whose owners cell was typed as <code>Liza Horowitz, Liza Horowitz</code>, and it planned messages to <code>["U1","U1"]</code>: the same person twice. The spec now carries the rule "A person named twice in a cell is told once", marked as discovered. The application itself was not changed.</p>
-  <p><strong>A flaw in Quint itself.</strong> A Quint definition that takes a lambda gives the wrong answer, silently, when it is used inside its own argument, as in <code>tasks.some(t => t.parents.some(…))</code>. Both of Quint's evaluators do it. My first design defined the list helpers that way, and the simulator stopped with an error that led to a small reproduction. The helpers are now rewritten into Quint's built-in <code>foldl</code> before Quint sees the spec, and come out in TypeScript as native array methods.</p>
-  <p><strong>Smaller things, each now a rule of thumb in CONTRIBUTING.md.</strong></p>
-  <ul>
-    <li>List access must be total. The lookup behind the one-click fix now tests its index and returns a default, which is also what lets it be proved safe.</li>
-    <li>A bounded model generates bounded code. The original model found a task's ancestors with four rounds of unrolling, enough for its four tasks and wrong for a fifth. Here the search folds over the task list, so it runs once per task however many there are.</li>
-    <li>A simulation bound written as a guard, such as "stop after day 6", would end up in the shipped code. Bounds belong in the values the simulator tries.</li>
-    <li>Random simulation reaches shallow states easily and deep ones rarely. A day-of reminder needed several clock ticks in a row; reachability searches now get twenty times the budget, which costs nothing when a witness exists.</li>
-    <li>The proof stage refused my own hand-written <code>columnName</code>, which called the proved function without establishing its precondition.</li>
-  </ul>
-  <h3>How much is proved</h3>
-  <p>62 obligations are proved for all inputs. 82 hold across 10,000 simulated traces but Dafny cannot prove them unaided, mostly because they depend on folding over the warning list. The check reports the split and fails its <code>proof</code> stage until a person records that simulation is enough for them. I have deliberately not recorded that for the example: it is the owner's decision.</p>
-<pre><code><span class="bad">✗ proof</span>     kernel.ts: 9 proved, 3 not proved. If simulation is enough for these, record them
-            with `npm run accept -- unproved`; otherwise add the rule or guard that makes them provable
-<span class="bad">✗ proof</span>     projects.ts: 12 proved, 12 not proved. …
-<span class="bad">✗ proof</span>     tracker.ts: 34 proved, 67 not proved. …
-<span class="ok">✓ proof</span>     columns.ts: 7 obligations proved for all states and inputs</code></pre>
-  <p>That is close to where the application itself had settled: it proves its arithmetic kernel and model-checks the rest. Raising the proved share means writing the hard parts by hand with loop invariants, which the tools support but do not do for you.</p>
-  <h3>What this says about 500,000 lines</h3>
-  <p>The specs covered the rules of a 5,500-line application in about 700 lines, because Slack, HTTP and storage are not rules. A large codebase would be many such specs, one per area with a life cycle, with libraries beneath them. Some of what that needs is built and some is not:</p>
-  <ul>
-    <li><strong>Built:</strong> specs are checked in dependency order; proof cost is per spec; assurance is reported per obligation in three levels (proved, simulated and accepted, tested shell).</li>
-    <li><strong>Built since:</strong> proof results are kept under a fingerprint of a spec's generated text and everything it imports, so only what changed is proved again; and a rule that spans two machines can be stated and proved in a machine built from a shared component.</li>
-    <li><strong>Also built:</strong> a spec that passed simulation is not simulated again until it or something it imports changes. A repeat check of the three-spec example takes under two seconds.</li>
-    <li><strong>Not built:</strong> two independent machines cannot observe each other; they have to be composed in a machine that holds both.</li>
-    <li><strong>Not tried:</strong> anything near that size. The largest thing these tools have modelled is the 700 lines above.</li>
-  </ul>
+  <p>The fixtures that must pass cover the features: a parcel whose stages carry different data, a room built from two lamp machines, a bank built from an account component, and a stock count with a map and negative division.</p>
 
   <h2>Limits</h2>
   <ul>
-    <li><strong>The Quint subset is still a subset.</strong> Integers, booleans, strings, nested records, lists, sets of simple values, and sum types with or without data, so a state can carry only what is known at each stage. Not supported: maps, because a lookup of a missing key has no total translation (use a list of records with a key field), and recursion, which Quint itself does not have. Anything else is refused by name, never approximated. Each new operator is one case in the printer, but proofs over collections will need hand-written Dafny lemmas, which this toy does not exercise.</li>
-    <li><strong>Half the obligations of a real model are simulated, not proved.</strong> The ledger makes that visible and stops it growing unnoticed; it does not make it smaller.</li>
-    <li><strong>Rules across machines need a containing machine.</strong> A component (a library with a type, its guards and its functions) can be held twice in one machine's state, and that machine can state and prove a rule spanning both. Two independent machines still cannot observe each other.</li>
-    <li><strong>One state machine per spec.</strong> Interacting machines, concurrency and time are where Quint is strongest, and the generated harness does not use that strength. A spec could opt out of the generated harness and bring its own actions.</li>
-    <li><strong>Simulation samples.</strong> Event parameters are tried from −1 to 6. The proof covers all values for the <code>always</code> rules; <code>quint verify</code> can check the model exhaustively to a depth.</li>
-    <li><strong>The generator is trusted between samples.</strong> Replay compares TypeScript with Quint on 50 simulated traces and every witness: every state, every law tried, and every event the model allowed or refused. It is a test of the generator, not a proof of it, and nothing short of proving the translator would change that.</li>
-    <li><strong>Translation quality is the session agent's.</strong> The checks bound the damage, and the person signs off, but a rule that is wrong in both halves in the same way passes every check.</li>
-    <li><strong>Unattended sync is weaker than a session.</strong> <code>sync</code> calls whatever command <code>SPEC_AGENT</code> names, and the quality of the rules it writes is that agent's. It has been run end to end only with a small local model. <code>sync</code> tries Claude Code first, but that CLI was signed out on the machine used, so that path has only been seen to fail over cleanly. The checks bound the damage: a wrong translation either fails a stage or waits in <code>review</code> for a person.</li>
-    <li><strong>Agreement of prose and Quint is a judgement.</strong> The ledger records that the comparison was made. LemmaScript's claimcheck tool could add an automated second opinion.</li>
+    <li><strong>The generator is tested, not proved.</strong> Replay compares TypeScript with Quint on every state, law and definition that 200 sampled traces touch. A definition whose arguments the simulator cannot supply is compared only where events use it. Nothing short of proving the translator would close this.</li>
+    <li><strong>Half the obligations of a real model are simulated, not proved.</strong> The ledger makes that visible and stops it growing unnoticed. Making it smaller means hand-written proofs.</li>
+    <li><strong>The Quint subset is a subset.</strong> A map cannot be iterated, sets hold simple values only, and there is no recursion because Quint has none. Anything outside the subset is refused by name, never approximated.</li>
+    <li><strong>Simulation samples.</strong> Event parameters are tried from −1 to 6 unless the spec says otherwise. The proof covers all values where it succeeds; <code>quint verify</code> can check a model exhaustively to a depth.</li>
+    <li><strong>Agreement of prose and Quint is a judgement.</strong> The ledger records that the comparison was made. A rule that is wrong in both halves in the same way passes every check.</li>
+    <li><strong>Numbers are JavaScript numbers.</strong> <code>parseEvent</code> admits only safe integers, but sums of them can pass 2^53, where the proofs' integers and JavaScript's part ways.</li>
+    <li><strong>The working directory is trusted.</strong> Anyone who can edit the generated files, the cache or the tools can make a check say what they like. <code>accept</code> ignores the cache, and continuous integration should too.</li>
+    <li><strong>Concurrency and time</strong> are where Quint is strongest and this profile does not use it: every spec is one sequential state machine.</li>
   </ul>
-  <p class="note">The repository's README covers the process, AGENTS.md is the operating procedure for agents, and CONTRIBUTING.md is the reference for writing specs and using the generated code.</p>
+
+  <h2>Decisions that changed along the way</h2>
+  <div class="tablewrap wide">
+  <table>
+    <thead><tr><th>First</th><th>Now</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td>Separate rules and model files linked by IDs</td><td>One Markdown file, Quint under each rule</td><td>Removes a source of truth and all ID bookkeeping.</td></tr>
+      <tr><td>Hand-written Quint state, actions and <code>step</code></td><td>Generated harness</td><td>It was boilerplate, and a transition missing from <code>step</code> was a silent hole.</td></tr>
+      <tr><td>Generated types, hand-written transitions</td><td>Generated transitions</td><td>The body and its strongest contract were the same expression written twice.</td></tr>
+      <tr><td>The tool starts an agent as a separate program</td><td>The session's agent syncs, by a skill; there is no unattended mode</td><td>Syncing should not depend on a second signed-in tool, and an agent fed the spec's prose on a pipe is a way to inject instructions.</td></tr>
+      <tr><td>Transitions require their guard</td><td>Transitions are total; guarantees are conditional on the guard</td><td>A guard can then look at its transition's result, which the look-ahead rule needs.</td></tr>
+      <tr><td>List helpers defined in Quint</td><td>Rewritten into Quint's fold before Quint runs</td><td>Quint mis-evaluates a lambda-taking definition used inside its own argument.</td></tr>
+      <tr><td>Replay compares states along traces</td><td>Replay compares every definition's result as well</td><td>Helpers, guards and rules are translated too, and refused events never appear in a trace.</td></tr>
+      <tr><td>Only libraries can be imported</td><td>Any spec can be imported under a name</td><td>So that one machine can use and observe another.</td></tr>
+      <tr><td>Proofs run in the project, results trusted by their text</td><td>Each unit is proved in a directory of its own with its own configuration; warnings are errors; results are remembered per toolchain version</td><td>An independent review forged a passing proof four different ways. Each is now a test.</td></tr>
+      <tr><td>Division floors</td><td>Division and remainder go towards zero, exactly as in Quint</td><td>The translation was wrong for negative numbers, and sampled laws had not hit one.</td></tr>
+      <tr><td>Unproved obligations fail the check</td><td>They fail until a person records them, then are counted on every run</td><td>A real model has obligations Dafny cannot find alone; hiding them or blocking on them are both wrong.</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="note">In the repository, README.md covers the process, AGENTS.md and the sync skill are the operating procedure for agents, and CONTRIBUTING.md is the reference for writing specs and using the generated code.</p>
 </main>
 
 </body></html>

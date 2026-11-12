@@ -7,10 +7,8 @@
   },
   "scripts": {
     "check": "spec check",
-    "brief": "spec brief",
     "gen": "spec gen",
-    "accept": "spec accept",
-    "sync": "spec sync"
+    "accept": "spec accept"
   },
   "devDependencies": {
     "onespec": "file:../..",

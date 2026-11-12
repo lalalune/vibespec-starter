@@ -26,6 +26,8 @@ export interface Model {
   steps: string[];
   laws: Law[];
   evals: Eval[];
+  /** Definitions the simulator cannot evaluate on their own, because it has no values for a parameter. */
+  uncompared: string[];
   /** A value from a Quint trace (ITF) as the generated TypeScript represents it. */
   decode: (type: Json, itf: any) => any;
   /** The same value with every set in a fixed order, so that two sets compare equal however they were built. */
@@ -77,11 +79,15 @@ const SET_OPS: Record<string, (x: SetArgs) => string> = {
   exists: ({ a, b }) => `${a}.some(${b})`,
   map: ({ a, b, out }) => `${a}.map(${b}).reduce((set_acc: ${out}[], set_x: ${out}) => set_acc.includes(set_x) ? set_acc : [...set_acc, set_x], ([] as ${out}[]))`,
 };
-const RESERVED = ["init", "step", "probe", "inv", "enabled", "isEvent", "Event", "initialHolds"];
 /** Values the simulator tries for a parameter of each scalar type (the proof covers all values). */
 const SAMPLES: Record<string, string> = { int: "(-1).to(6)", bool: "Set(true, false)", str: 'Set("", "a", "b")' };
-// Words that cannot be used as names in the generated TypeScript or its harness.
-const JS_WORDS = "break case catch class const continue debugger default delete do else enum export extends false finally for function if import in instanceof new null return super switch this throw true try typeof var void while with yield let static await state prev moved out lawsHold".split(" ");
+/** Names a spec may not bind: the generated code and harness use them, or TypeScript reserves them. */
+const TAKEN = new Set(`
+  init step probe inv enabled parseEvent initialHolds Event current event raw state prev moved out lawsHold Out Nothing
+  Number Math Object Array JSON Record Set Map String Boolean Symbol Error undefined NaN Infinity globalThis
+  break case catch class const continue debugger default delete do else enum export extends false finally for function
+  if import in instanceof new null return super switch this throw true try typeof var void while with yield let static await
+`.split(/\s+/).filter(Boolean));
 
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
 const fail = (msg: string): never => { throw new Error(msg); };
@@ -97,7 +103,11 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
     if (dep.state) fail(`import of ${d.protoName}: a spec with a state of its own is imported under a name, as in \`import ${d.protoName} as X from "./${d.protoName}"\``);
     return { module: dep.name, alias: undefined as string | undefined };
   });
-  const imports = [...new Set(links.map((l) => l.module))];
+  const imports = links.map((l) => l.module);
+  const twice = imports.find((m, i) => imports.indexOf(m) !== i);
+  if (twice) fail(`${twice} is imported twice; import a spec once, either as it is or under one name`);
+  const aliasOf = new Map(links.flatMap((l) => (l.alias ? [[l.alias, l.module] as const] : [])));
+  const cameFrom = new Map(links.flatMap((l) => (l.alias ? [] : deps.get(l.module)!.exports.values.map((v) => [v, l.module] as const))));
   const qualify = (alias: string | undefined, n: string) => (alias ? `${alias}::${n}` : n);
   const localTypedefs = decls.filter((d) => d.kind === "typedef");
   for (const d of localTypedefs) d.module = name; // so that the harness can name a type by the module that defines it
@@ -117,25 +127,29 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
   /** A top-level name of this module as the TypeScript spells it: prefixed when the module is rendered for a proof bundle. */
   let prefix = "";
   const L = (n: string) => prefix + n;
-  /** A reference to a definition: this module's, a library's, or one imported under a name. */
-  const ref = (n: string) => (n.includes("::") ? n.replace("::", "_") : localNames.has(n) ? L(n) : n);
-  const typeName = (d: Json): string => (d.alias ? `${d.alias}_${d.base}` : d.module === name ? L(d.name) : d.name);
+  /** A reference to a definition. One from another module is spelled <module>_<name>, however it was imported. */
+  const ref = (n: string) => {
+    const [base, alias] = n.split("::").reverse();
+    return alias ? `${aliasOf.get(alias)}_${base}` : localNames.has(n) ? L(n) : cameFrom.has(n) ? `${cameFrom.get(n)}_${n}` : n;
+  };
+  const typeName = (d: Json): string => (d.module === name ? L(d.name) : `${d.module}_${d.base}`);
   const tag = (variant: string) => JSON.stringify(variant.split("::").pop());
   const defs = decls.filter((d) => d.kind === "def" && !localVariants.has(d.name));
   for (const d of decls.filter((d) => !["def", "typedef", "import"].includes(d.kind)))
     fail(`${d.name ?? d.kind}: only types, imports, \`pure val\` and \`pure def\` belong in a spec (state and actions are generated)`);
-  for (const d of defs) {
+  for (const d of defs)
     if (d.qualifier !== "puredef" && d.qualifier !== "pureval")
       fail(`${d.name}: only types, \`pure val\` and \`pure def\` belong in a spec (state and actions are generated)`);
-    if (RESERVED.includes(d.name) || /^(eval|quotient|remainder)_/.test(d.name)) fail(`${d.name}: this name is reserved for generated code`);
-  }
-  /** A name the spec binds (definition, parameter or local `val`) must survive translation unchanged. */
+  /** A name the spec binds (a type, definition, parameter or local `val`) must survive translation unchanged. */
   const bind = (n: string): string =>
-    JS_WORDS.includes(n) ? fail(`\`${n}\` cannot be used as a name: it is a word in TypeScript or in the generated harness`)
-    : variants.has(n) ? fail(`\`${n}\` is a variant of a type and cannot also name a parameter or value`) : n;
+    TAKEN.has(n) || /^(eval|quotient|remainder|lookup\d+|std|set|Out)_|^x\d+$/.test(n) ? fail(`\`${n}\` cannot be used as a name: TypeScript or the generated code uses it`)
+    : variants.has(n) ? fail(`\`${n}\` is a variant of a type and cannot also name a parameter or value`)
+    : imports.some((m) => n.startsWith(`${m}_`)) ? fail(`\`${n}\` cannot be used as a name: names beginning ${imports.find((m) => n.startsWith(`${m}_`))}_ are how the generated code refers to that module`)
+    : n;
   defs.forEach((d) => bind(d.name));
-  // `<param>Values` tells the simulator what to try for a parameter. It never reaches TypeScript, so any Quint is allowed in it.
-  const isSampleSet = (d: Json) => d.qualifier === "pureval" && d.name.endsWith("Values");
+  localTypedefs.forEach((d) => bind(d.name));
+  // A set named `<param>Values` tells the simulator what to try for a parameter. It never reaches TypeScript, so any Quint is allowed in it.
+  const isSampleSet = (d: Json) => d.qualifier === "pureval" && d.name.endsWith("Values") && ir.types[d.id]?.type?.kind === "set";
   const sampleSets = new Set(defs.filter(isSampleSet).map((d) => d.name as string));
   const code = defs.filter((d) => !isSampleSet(d));
   const localNames = new Set(code.map((d) => d.name as string));
@@ -160,7 +174,9 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
   function payload(variant: Json): Json | undefined {
     const t = variant.fieldType;
     if (t.kind === "tup" && !(t.fields.fields ?? []).length) return undefined;
-    return resolve(t).kind === "rec" ? resolve(t) : fail(`variant ${variant.fieldName}: a variant may carry a record, as in ${variant.fieldName}({ amount: int }), and nothing else`);
+    const carried = resolve(t).kind === "rec" ? resolve(t) : fail(`variant ${variant.fieldName}: a variant may carry a record, as in ${variant.fieldName}({ amount: int }), and nothing else`);
+    if (fields(carried).some((f) => f.fieldName === "tag")) fail(`variant ${variant.fieldName}: a field cannot be called \`tag\`, which is how the variant itself is recorded`);
+    return carried;
   }
   /** A sum type is a plain string union unless some variant carries data; then it is a tagged union. */
   const tagged = (t: Json) => t.kind === "sum" && fields(t).some((f) => payload(f));
@@ -198,8 +214,13 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
     const [base, alias] = variant.split("::").reverse();
     return typedefs.find((d) => d.type.kind === "sum" && d.alias === alias && fields(d.type).some((f: Json) => f.fieldName === base)) ?? fail(`unknown variant ${variant}`);
   };
+  // A key is stored with a "$" in front, so that no key can be mistaken for something every object has, such as
+  // "constructor" or "__proto__".
+  const mapKey = (k: Json) => `"$" + ${ex(k, ADD + 1)}`;
   /** Which arithmetic helpers this module needs. They are emitted once, under names of its own. */
   const arithmetic = new Set<string>();
+  /** The value types of the maps this module looks things up in; each gets a lookup helper. */
+  const lookups: string[] = [];
   const helper = (which: string) => L(`${which}_${name}`);
   let nesting = 0;
   const ex = (e: Json, min = ARROW): string => {
@@ -229,7 +250,7 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
       case "bool": return [String(e.value), ATOM];
       case "str": return [JSON.stringify(e.value), ATOM];
       case "name": {
-        if (renamed.has(e.name)) return [renamed.get(e.name)!, ATOM];
+        if (renamed.has(e.name)) return fail(`\`${e.name}\` is what a match arm carries; use its fields (${e.name}.field), or rebuild the variant, rather than the value as a whole`);
         if (!variants.has(e.name)) return [ref(e.name), ATOM];
         const owner = ownerOf(e.name);
         return [tagged(owner.type) ? `({ tag: ${tag(e.name)} } as ${typeName(owner)})` : tag(e.name), ATOM];
@@ -248,23 +269,35 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
     }
     const recv = () => ex(a[0], ATOM);
     switch (op) {
-      case "iuminus": return [`-${ex(a[0], ATOM)}`, UNARY];
+      case "iuminus": return [`0 - ${ex(a[0], ADD + 1)}`, ADD]; // not -x: in JavaScript that gives -0 for 0
       // Quint divides towards zero, and its remainder takes the sign of the dividend. JavaScript's floor and Dafny's
       // division do neither for negative numbers, so both go through helpers that are exact in all three.
       case "idiv": arithmetic.add("quotient"); return [`${helper("quotient")}(${ex(a[0], TERNARY)}, ${ex(a[1], TERNARY)})`, ATOM];
       case "imod": arithmetic.add("quotient").add("remainder"); return [`${helper("remainder")}(${ex(a[0], TERNARY)}, ${ex(a[1], TERNARY)})`, ATOM];
       // A map is a record keyed by strings. Looking a key up is only safe where the same definition has tested for it.
-      case "Map": return [a.reduce((m, pair) => `{ ...${m}, [${ex(pair.args[0], TERNARY)}]: ${ex(pair.args[1], TERNARY)} }`, `({} as ${tsType(typeOf(e.id))})`), ATOM];
-      case "put": case "set": return [`{ ...${recv()}, [${ex(a[1], TERNARY)}]: ${ex(a[2], TERNARY)} }`, ATOM];
-      case "get": return [`${recv()}[${ex(a[1])}]`, ATOM];
+      case "Map": return [a.reduce((m, pair) => `{ ...${m}, [${mapKey(pair.args[0])}]: ${ex(pair.args[1], TERNARY)} }`, `({} as ${tsType(typeOf(e.id))})`), ATOM];
+      case "put": case "set": return [`{ ...${recv()}, [${mapKey(a[1])}]: ${ex(a[2], TERNARY)} }`, ATOM];
+      case "get": return [`${recv()}[${mapKey(a[1])}]`, ATOM];
       case "keys": return fail("a map cannot be listed or iterated, only asked about one key: write `m.keys().contains(k)`, and keep a list of keys beside the map if you need to go through them");
       case "not": return [`!${ex(a[0], ATOM)}`, UNARY];
       case "and": return [flat(e, "and").map((x) => ex(x, AND + 1)).join(" && "), AND];
       case "or": return [flat(e, "or").map((x) => ex(x, AND + 1)).join(" || "), OR];
       case "implies": return [`!${ex(a[0], ATOM)} || ${ex(a[1], AND + 1)}`, OR];
       case "iff": return [`${ex(a[0], EQ + 1)} === ${ex(a[1], EQ + 1)}`, EQ];
-      case "ite": return [`${ex(a[0], OR)} ? ${ex(a[1], OR)} : ${ex(a[2], OR)}`, TERNARY];
-      case "field": return [`${recv()}.${a[1].value}`, ATOM];
+      case "ite": {
+        // `if (m.keys().contains(k)) m.get(k) else d` is a lookup with a default. It goes through a helper in which
+        // the key is one name, which is the form both TypeScript and the prover can see is safe.
+        const test = a[0].kind === "app" && (a[0].opcode === "contains" || a[0].opcode === "in") ? a[0] : undefined;
+        const [keys, key] = test ? (test.opcode === "in" ? [test.args[1], test.args[0]] : [test.args[0], test.args[1]]) : [];
+        const get = a[1].kind === "app" && a[1].opcode === "get" ? a[1] : undefined;
+        if (keys?.opcode === "keys" && get && ex(get.args[0]) === ex(keys.args[0]) && ex(get.args[1]) === ex(key)) {
+          const of = tsType(resolve(typeOf(keys.args[0].id)).res);
+          if (!lookups.includes(of)) lookups.push(of);
+          return [`${helper(`lookup${lookups.indexOf(of)}`)}(${ex(keys.args[0], TERNARY)}, ${ex(key, TERNARY)}, ${ex(a[2], TERNARY)})`, ATOM];
+        }
+        return [`${ex(a[0], OR)} ? ${ex(a[1], OR)} : ${ex(a[2], OR)}`, TERNARY];
+      }
+      case "field": return [`${a[0].kind === "name" && renamed.has(a[0].name) ? renamed.get(a[0].name) : recv()}.${a[1].value}`, ATOM];
       case "Rec": {
         const pairs = [];
         for (let i = 0; i < a.length; i += 2) pairs.push(`${a[i].value}: ${ex(a[i + 1], TERNARY)}`);
@@ -326,9 +359,12 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
       const arms: { test?: string; result: string }[] = [];
       for (let i = 1; i < a.length; i += 2) {
         const binder = a[i + 1].params[0]?.name;
+        // Inside the arm the binder stands for the matched value; an outer arm's binder of the same name comes back after.
+        const outer = binder ? [renamed.get(binder), matchedAs.get(binder)] as const : undefined;
         if (binder && binder !== "_") { renamed.set(binder, subject); matchedAs.set(binder, a[i].value); }
         const result = ex(a[i + 1].expr, OR);
-        if (binder) { renamed.delete(binder); matchedAs.delete(binder); }
+        if (binder && outer![0] !== undefined) { renamed.set(binder, outer![0]); matchedAs.set(binder, outer![1]!); }
+        else if (binder) { renamed.delete(binder); matchedAs.delete(binder); }
         arms.push({ test: a[i].value === "_" ? undefined : `${subject}${isTagged ? ".tag" : ""} === ${JSON.stringify(a[i].value)}`, result });
       }
       const last = arms.pop()!;
@@ -336,7 +372,7 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
     }
     if ((op === "contains" || op === "in") && (op === "in" ? a[1] : a[0]).opcode === "keys") {
       const [keys, key] = op === "in" ? [a[1], a[0]] : [a[0], a[1]];
-      return [`${ex(key, COMPARE + 1)} in ${ex(keys.args[0], COMPARE + 1)}`, COMPARE];
+      return [`(${mapKey(key)}) in ${ex(keys.args[0], COMPARE + 1)}`, COMPARE];
     }
     if (SET_OPS[op]) {
       // A set is an array that never holds the same value twice. Only simple values can be in one.
@@ -351,7 +387,8 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
       const t = resolve(typeOf(e.id));
       if (!isScalar(t.elem)) fail("sets of records or lists are not supported; use a list");
       const items = [...new Set(a.map((x) => ex(x, TERNARY)))];
-      if (a.some((x) => !["int", "str", "bool", "name"].includes(x.kind)) && a.length > 1) fail("Set(…) with several computed members could hold the same value twice; write Set(a).union(Set(b))");
+      const literal = (x: Json) => ["int", "str", "bool"].includes(x.kind) || (x.kind === "name" && variants.has(x.name));
+      if (a.length > 1 && !a.every(literal)) fail("Set(…) with several members that are not literals could hold the same value twice; write Set(a).union(Set(b))");
       return [items.length ? `[${items.join(", ")}]` : `([] as ${tsType(t.elem)}[])`, ATOM];
     }
     if (defNames.has(op)) return [`${ref(op)}(${a.map((x) => ex(x, TERNARY)).join(", ")})`, ATOM];
@@ -417,16 +454,18 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
     if (!transitions.some((t) => t.guard === g.name)) fail(`${g.name}: no transition named ${g.name[3].toLowerCase()}${g.name.slice(4)}`);
 
   // --- TypeScript ----------------------------------------------------------
-  const doc = (d: string) => (origin(d) ? `/** ${origin(d)!.rule} (${source}:${origin(d)!.line}) */\n` : "");
-  const sVar = "s";
+  // A heading is prose from the spec; it must not be able to end the comment it is quoted in.
+  const doc = (d: string) => (origin(d) ? `/** ${origin(d)!.rule.replace(/\*\//g, "* /").replace(/[\r\n]+/g, " ")} (${source}:${origin(d)!.line}) */\n` : "");
+  const sVar = "current";
   /** The module's TypeScript, with its own top-level names under the given prefix. */
   const render = (as: string): string => {
   prefix = as;
   arithmetic.clear();
+  lookups.length = 0;
   const stateName = initial ? tsType(typeOf(initial.id)) : "";
   const importLine = (l: { module: string; alias?: string }) => {
     const x = deps.get(l.module)!.exports;
-    const item = (n: string, isType: boolean) => `${isType ? "type " : ""}${n}${l.alias ? ` as ${l.alias}_${n}` : ""}`;
+    const item = (n: string, isType: boolean) => `${isType ? "type " : ""}${n} as ${l.module}_${n}`;
     return `import { ${[...x.types.map((t) => item(t, true)), ...x.values.map((v) => item(v, false))].join(", ")} } from "./${l.module}.ts";`;
   };
   const out: string[] = [
@@ -478,41 +517,61 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
     if (t.kind === "bool") return `typeof ${v} === "boolean"`;
     if (t.kind === "str") return `typeof ${v} === "string"`;
     const x = `x${depth}`;
-    const record = (r: Json) => fields(r).map((f) => wellFormed(`(${v} as any).${f.fieldName}`, f.fieldType, depth + 1));
-    if (tagged(t)) return `typeof ${v} === "object" && ${v} !== null && (${fields(t).map((f) => [`(${v} as any).tag === ${JSON.stringify(f.fieldName)}`, ...(payload(f) ? record(payload(f)!) : [])].join(" && ")).join(" || ")})`;
+    const record = (r: Json) => fields(r).map((f) => wellFormed(`${v}.${f.fieldName}`, f.fieldType, depth + 1));
+    if (tagged(t)) return `typeof ${v} === "object" && ${v} !== null && (${fields(t).map((f) => [`${v}.tag === ${JSON.stringify(f.fieldName)}`, ...(payload(f) ? record(payload(f)!) : [])].join(" && ")).join(" || ")})`;
     if (t.kind === "sum") return `(${fields(t).map((f) => `${v} === ${JSON.stringify(f.fieldName)}`).join(" || ")})`;
-    if (t.kind === "list" || t.kind === "set") return `Array.isArray(${v}) && ${v}.every((${x}: any) => ${wellFormed(x, t.elem, depth + 1)})`;
+    if (t.kind === "list" || t.kind === "set")
+      return `Array.isArray(${v}) && ${v}.every((${x}: any) => ${wellFormed(x, t.elem, depth + 1)})${t.kind === "set" ? ` && new Set(${v}).size === ${v}.length` : ""}`;
     if (t.kind === "rec") return `typeof ${v} === "object" && ${v} !== null && ${record(t).join(" && ")}`;
-    if (t.kind === "fun") return `typeof ${v} === "object" && ${v} !== null && !Array.isArray(${v}) && Object.values(${v}).every((${x}: any) => ${wellFormed(x, t.res, depth + 1)})`;
+    if (t.kind === "fun") return fail("an event cannot carry a map; send a list of records instead");
     return fail(`a parameter of type ${t.kind} is not supported`);
   };
-  const call = (t: Transition, fn: string) => `${L(fn)}(${[sVar, ...t.params.map((p) => `e.${p.name}`)].join(", ")})`;
-  const when = (t: Transition) => `e.type === ${JSON.stringify(t.name)}`;
+  /** A copy of a checked value that has the fields its type names and no others. */
+  const copy = (v: string, t0: Json, depth = 0): string => {
+    const t = resolve(t0);
+    const x = `x${depth}`;
+    const record = (r: Json) => fields(r).map((f) => `${f.fieldName}: ${copy(`${v}.${f.fieldName}`, f.fieldType, depth + 1)}`);
+    if (tagged(t)) return `(${fields(t).slice(0, -1).map((f) => `${v}.tag === ${JSON.stringify(f.fieldName)} ? { ${[`tag: ${v}.tag`, ...(payload(f) ? record(payload(f)!) : [])].join(", ")} } : `).join("")}{ ${[`tag: ${v}.tag`, ...(payload(fields(t).at(-1)!) ? record(payload(fields(t).at(-1)!)!) : [])].join(", ")} })`;
+    if (t.kind === "list" || t.kind === "set") return `${v}.map((${x}: any) => ${copy(x, t.elem, depth + 1)})`;
+    if (t.kind === "rec") return `({ ${record(t).join(", ")} })`;
+    return v;
+  };
+  const call = (t: Transition, fn: string) => `${L(fn)}(${[sVar, ...t.params.map((p) => `event.${p.name}`)].join(", ")})`;
+  const when = (t: Transition) => `event.type === ${JSON.stringify(t.name)}`;
   if (state) out.push(
     ``,
     `/** Do the rules allow this event in this state? */`,
     `//@ pure`,
-    `export function ${L("enabled")}(${sVar}: ${stateName}, e: ${L("Event")}): boolean {`,
+    `export function ${L("enabled")}(${sVar}: ${stateName}, event: ${L("Event")}): boolean {`,
     ...transitions.map((t) => `  if (${when(t)}) return ${t.guard ? call(t, t.guard) : "true"};`),
     `  return false;`,
     `}`,
     ``,
     `/** Apply an event. An event the rules do not allow leaves the state unchanged. */`,
     `//@ pure`,
-    `export function ${L("step")}(${sVar}: ${stateName}, e: ${L("Event")}): ${stateName} {`,
+    `export function ${L("step")}(${sVar}: ${stateName}, event: ${L("Event")}): ${stateName} {`,
     `  //@ requires ${L("inv")}(${sVar})`,
     `  //@ ensures ${L("inv")}(\\result)`,
     ...transitions.map((t) => `  if (${when(t)}${t.guard ? ` && ${call(t, t.guard)}` : ""}) return ${call(t, t.name)};`),
     `  return ${sVar};`,
     `}`,
     ``,
-    `/** Is this untrusted value a well-formed event? Use it where events enter the program. */`,
+    `/**`,
+    ` * Turn an untrusted value into an event, or undefined if it is not one. Use it wherever events enter the program:`,
+    ` * the proofs assume whole numbers and plain data, and this is what makes that true. The result is a fresh copy`,
+    ` * with exactly the fields the event has, so nothing the caller keeps can change it afterwards.`,
+    ` */`,
     `//@ skip`,
-    `export function ${L("isEvent")}(x: unknown): x is ${L("Event")} {`,
-    `  const e = x as Record<string, any> | null;`,
-    `  if (typeof e !== "object" || e === null) return false;`,
-    ...transitions.map((t) => `  if (e.type === ${JSON.stringify(t.name)}) return ${t.params.map((p) => wellFormed(`e.${p.name}`, p.type)).join(" && ") || "true"};`),
-    `  return false;`,
+    `export function ${L("parseEvent")}(x: unknown): ${L("Event")} | undefined {`,
+    `  let raw: any;`,
+    `  try {`,
+    `    raw = JSON.parse(JSON.stringify(x));`,
+    `  } catch {`,
+    `    return undefined;`,
+    `  }`,
+    `  if (typeof raw !== "object" || raw === null) return undefined;`,
+    ...transitions.map((t) => `  if (raw.type === ${JSON.stringify(t.name)}${t.params.map((p) => ` && ${wellFormed(`raw.${p.name}`, p.type)}`).join("")}) return { ${[`type: ${JSON.stringify(t.name)}`, ...t.params.map((p) => `${p.name}: ${copy(`raw.${p.name}`, p.type)}`)].join(", ")} };`),
+    `  return undefined;`,
     `}`,
     ``,
     `/** Proof obligation: the initial state satisfies every \`always\` rule. */`,
@@ -521,6 +580,15 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
     `  return ${L("initial")};`,
     `}`,
   );
+  lookups.forEach((of, i) => out.push(
+    ``,
+    `/** What a map holds for a key, or \`otherwise\` if it holds nothing for it. */`,
+    `//@ pure`,
+    `export function ${helper(`lookup${i}`)}(m: Record<string, ${of}>, k: string, otherwise: ${of}): ${of} {`,
+    `  const key = "$" + k;`,
+    `  return key in m ? m[key] : otherwise;`,
+    `}`,
+  ));
   if (arithmetic.has("quotient")) out.push(
     ``,
     `/** Whole-number division as Quint does it: towards zero. */`,
@@ -575,6 +643,7 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
   // Every definition whose arguments the simulator can supply is evaluated during simulation, on reachable states
   // and sampled values, so that TypeScript's result can be compared with Quint's. This is the main test of the
   // translation: it covers helpers, guards and rules, not just the states that events lead to.
+  const uncompared: string[] = [];
   const evals: Eval[] = funs.flatMap((d): Eval[] => {
     try {
       const { params, result } = sig(d);
@@ -589,7 +658,8 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
       qType(result);
       return [{ name: d.name, params: params.map((p, i) => ({ ...p, from: sources[i] })), result }];
     } catch {
-      return []; // its arguments cannot be sampled, or its result has no name: it is compared only where events use it
+      uncompared.push(d.name); // its arguments cannot be sampled, or its result has no name: it is compared only where events use it
+      return [];
     }
   });
   // Harness variables: the state, the state before the last event, whether an event has happened, whether the
@@ -617,14 +687,15 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
     `  import ${name} as M from "./${name}"`,
     ...imports.map((i) => `  import ${i} as D_${i} from "./${i}"`),
     ...(evals.length ? [`  type Out = Nothing | ${evals.map((v) => `Out_${v.name}(${qType(v.result)})`).join(" | ")}`, `  var out: Out`] : []),
-    ...(state ? [`  var state: M::${state}`, `  var prev: M::${state}`, `  var moved: bool`] : []),
+    ...(state ? [`  var state: ${qType(typeOf(initial!.id))}`, `  var prev: ${qType(typeOf(initial!.id))}`, `  var moved: bool`] : []),
     `  var lawsHold: bool`,
     `  action init = ${frame([], { state: "M::initial", prev: "M::initial", moved: "false", lawsHold: "true", out: "Nothing" })}`,
     ...transitions.map(action),
     ...laws.map(lawAction),
     ...evals.map(evalAction),
     `  action step = ${any(events)}`,
-    `  action probe = ${any([...events, ...evals.map((v) => `eval_${v.name}`)])}`,
+    // Half events, half evaluations, so that definitions are evaluated on states well into a trace and not just near its start.
+    `  action probe = ${events.length && evals.length ? `any { step, ${any(evals.map((v) => `eval_${v.name}`))} }` : any([...events, ...evals.map((v) => `eval_${v.name}`)])}`,
     `  val inv = and { lawsHold, ${[...always.map((a) => `M::${a}(state)`), ...steps.map((r) => `(not(moved) or M::${r}(prev, state))`), "true"].join(", ")} }`,
     ...sometimes.map((w) => `  val never_${w} = not(M::${w}(state))`),
     `}`,
@@ -637,7 +708,7 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
     if (t.kind === "list") return v.map((x: any) => decode(t.elem, x));
     if (t.kind === "set") return v["#set"].map((x: any) => decode(t.elem, x));
     if (t.kind === "rec") return Object.fromEntries(fields(t).map((f) => [f.fieldName, decode(f.fieldType, v[f.fieldName])]));
-    if (t.kind === "fun") return Object.fromEntries(v["#map"].map(([k, x]: [any, any]) => [decode(t.arg, k), decode(t.res, x)]));
+    if (t.kind === "fun") return Object.fromEntries(v["#map"].map(([k, x]: [any, any]) => ["$" + decode(t.arg, k), decode(t.res, x)]));
     if (tagged(t)) {
       const carried = payload(fields(t).find((f) => f.fieldName === v.tag)!);
       return { tag: v.tag, ...(carried ? decode(carried, v.value) : {}) };
@@ -658,9 +729,9 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
   };
   const exports = {
     types: localTypedefs.map((d) => d.name as string),
-    values: [...code.map((d) => d.name as string), ...[...arithmetic].map(helper)],
+    values: [...code.map((d) => d.name as string), ...[...arithmetic].map(helper), ...lookups.map((_, i) => helper(`lookup${i}`))],
     variants: [...localVariants],
     typedefs: localTypedefs,
   };
-  return { name, imports, links, render, state, transitions, always, sometimes, steps, laws, evals, exports, ts, harness, decode, canon, stateType: initial && typeOf(initial.id) };
+  return { name, imports, links, render, state, transitions, always, sometimes, steps, laws, evals, uncompared, exports, ts, harness, decode, canon, stateType: initial && typeOf(initial.id) };
 }

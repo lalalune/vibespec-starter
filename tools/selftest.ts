@@ -2,12 +2,11 @@
 // project's spec into a scratch directory, breaks one thing, and asserts which
 // stage of `check` fails. Run with `npm run selftest`.
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, test } from "node:test";
-import { acceptReviews, check, expandListHelpers, gen, parseSpec, readSpecs, replay } from "./spec.ts";
+import { acceptReviews, check, expandListHelpers, gen, init, parseSpec, readSpecs, replay } from "./spec.ts";
 
 const project = path.join(import.meta.dirname, "..");
 
@@ -59,6 +58,18 @@ pure def alwaysCountsOpenings(d: Door): bool = d.opened - (0 - 1) > 0 and (d.mod
 pure def sometimesLocked(d: Door): bool = d.mode == Locked and d.alarm
 \`\`\`
 `;
+
+const F = "`".repeat(3);
+
+/** A scratch project holding the given files. */
+function scratch(files: Record<string, string>): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "spec-selftest-"));
+  for (const [file, text] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+    fs.writeFileSync(path.join(root, file), text);
+  }
+  return root;
+}
 
 /** Run `check` on a scratch project made of the named fixture specs. */
 async function checkFixtures(files: string[]): Promise<string[]> {
@@ -134,30 +145,6 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.deepEqual(failed, ["review"]);
   });
 
-  test("sync hands failures to the agent round by round and stops at the human's sign-off", () => {
-    // A scripted stand-in for the agent: it formalizes the story carelessly, then repairs what the check reports.
-    const agent = `
-      import fs from "node:fs";
-      const report = fs.readFileSync(0, "utf8");
-      let spec = fs.readFileSync("spec/order.md", "utf8");
-      if (report.includes("story has no rules"))
-        spec += "\\n### An order can be gift wrapped for a fee\\n\\n\\\`\\\`\\\`quint\\npure def wrap(o: Order): Order = { ...o, due: o.due + 1 }\\n\\\`\\\`\\\`\\n";
-      else if (report.includes("✗ always")) spec = spec.replace("due: o.due + 1", "due: o.due");
-      fs.writeFileSync("spec/order.md", spec);`;
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "spec-selftest-"));
-    for (const dir of ["spec", "src"]) fs.cpSync(path.join(project, dir), path.join(root, dir), { recursive: true });
-    fs.writeFileSync(path.join(root, "agent.mjs"), agent);
-    fs.appendFileSync(path.join(root, "spec/order.md"), "\n## Story: Gift wrap\n\n> As a shopper, I want my order wrapped.\n");
-    const run = spawnSync(process.execPath, [path.join(project, "tools/spec.ts"), "sync"], { cwd: root, encoding: "utf8", env: { ...process.env, SPEC_AGENT: "node agent.mjs" } });
-    assert.equal(run.status, 0, run.stdout + run.stderr);
-    assert.match(run.stdout, /round 1: review/);
-    assert.match(run.stdout, /round 2: always, review/);
-    assert.match(run.stdout, /synced: read the changes/);
-    assert.match(fs.readFileSync(path.join(root, "spec/order.md"), "utf8"), /due: o\.due \}/);
-    assert.ok(!fs.readFileSync(path.join(root, "spec/order.lock.json"), "utf8").includes("gift wrapped"), "sync must not accept on the person's behalf");
-    fs.rmSync(root, { recursive: true });
-  });
-
   test("lists, nested helpers, an imported library, laws, step rules and the proof ledger work together", async () => {
     const F = "`".repeat(3);
     const lib = `# Lib\n\n## Sums\n\n### The total of a list\n\n${F}quint
@@ -217,22 +204,6 @@ ${F}\n`;
     assert.match(out, /\/\/ xs\.some\(note in prose\)$/);
   });
 
-  test("with no model at all, sync turns a counterexample into a rule that passes simulation and proof", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "spec-selftest-"));
-    fs.cpSync(path.join(project, "spec"), path.join(root, "spec"), { recursive: true });
-    const file = path.join(root, "spec/order.md");
-    fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace("o.status == Pending and amount > 0 and o.paid + amount <= o.due", "o.status == Pending and amount > 0"));
-    const run = spawnSync(process.execPath, [path.join(project, "tools/spec.ts"), "sync"], { cwd: root, encoding: "utf8", env: { ...process.env, SPEC_AGENT: `node ${path.join(project, "tools/agent-lookahead.ts")}` } });
-    assert.equal(run.status, 0, run.stdout + run.stderr);
-    assert.match(run.stdout, /a rule that would forbid it: refuse pay when its result would break alwaysPaidWithinDue/);
-    assert.match(run.stdout, /✓ proof +order\.ts/);
-    assert.match(run.stdout, /synced: read the changes/);
-    const after = fs.readFileSync(file, "utf8");
-    assert.match(after, /### Pay is refused when it would break "paid within due"\n\nDiscovered by simulation/);
-    assert.match(after, /pure def payKeepsPaidWithinDue\(o: Order, amount: int\): bool = alwaysPaidWithinDue\(pay\(o, amount\)\)/);
-    fs.rmSync(root, { recursive: true });
-  });
-
   test("a state whose stages carry different data, with match and sets, is simulated, replayed and fully proved", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "spec-selftest-"));
     fs.mkdirSync(path.join(root, "spec"));
@@ -240,7 +211,7 @@ ${F}\n`;
     const lines: string[] = [];
     await check(root, (l) => lines.push(l));
     assert.deepEqual(lines.filter((l) => l.startsWith("✗")).map((l) => l.split(/\s+/)[1]), ["review"], lines.join("\n"));
-    assert.match(lines.join("\n"), /✓ proof +parcel\.ts: \d+ obligations proved for all states and inputs$/m);
+    assert.match(lines.join("\n"), /✓ proof +parcel\.ts: all \d+ obligations proved/);
     const generated = fs.readFileSync(path.join(root, "gen/parcel.ts"), "utf8");
     assert.match(generated, /\| \{ tag: "Shipped"; weight: number; labels: string\[\]; hops: number \}/);
     fs.rmSync(root, { recursive: true });
@@ -260,14 +231,14 @@ ${F}\n`;
   test("one machine uses another under a name, keeps its rules, and adds rules about the pair", async () => {
     const lines = await checkFixtures(["lamp.md", "room.md"]);
     assert.deepEqual([...new Set(lines.filter((l) => l.startsWith("✗")).map((l) => l.split(/\s+/)[1]))], ["review"], lines.join("\n"));
-    assert.match(lines.join("\n"), /✓ proof +room\.ts: \d+ obligations proved for all states and inputs$/m);
+    assert.match(lines.join("\n"), /✓ proof +room\.ts: all \d+ obligations proved/);
   });
 
   test("a map is looked up safely, and division and remainder agree with Quint for negative numbers", async () => {
     const lines = await checkFixtures(["stock.md"]);
     const text = lines.join("\n");
     assert.deepEqual([...new Set(lines.filter((l) => l.startsWith("✗")).map((l) => l.split(/\s+/)[1]))], ["proof", "review"], text);
-    assert.match(text, /✓ replay .* every law, and \d+ of \d+ definitions/);
+    assert.match(text, /✓ replay .* every law, and \d+ definitions/);
     assert.ok(!/lawBoxesAndLooseMakeTheWhole/.test(text), "the division law is proved, so it is not listed as unproved");
   });
 
@@ -281,6 +252,99 @@ ${F}\n`;
     replay(domain, evaluated(false), model);
     assert.throws(() => replay(domain, evaluated(true), model), /disagree on canSubmit/);
     assert.throws(() => replay({ ...domain, canSubmit: () => true }, evaluated(false), model), /disagree on canSubmit/);
+    fs.rmSync(root, { recursive: true });
+  });
+
+  test("a rule heading cannot become code", async () => {
+    const lines: string[] = [];
+    const root = scratch({ "spec/counter.md": `# Counter\n\n## Story\n\n### A counter */ globalThis.INJECTED = true; /* starts at zero\n\n${F}quint\npure val initial: int = 0\npure def bump(n: int): int = n + 1\n${F}\n` });
+    await check(root, (l) => lines.push(l));
+    assert.equal((globalThis as any).INJECTED, undefined, "the heading ran as code");
+    assert.match(lines.join("\n"), /✓ replay/);
+    fs.rmSync(root, { recursive: true });
+  });
+
+  test("a proof cannot be forged from inside the project", async () => {
+    const notInductive = (s: string) => s.replace(/### Drafts and cancelled orders hold no money[\s\S]*?```\n\n/, "");
+    const project = (files: Record<string, string>) => {
+      const root = scratch(files);
+      fs.cpSync(path.join(import.meta.dirname, "../spec"), path.join(root, "spec"), { recursive: true });
+      fs.writeFileSync(path.join(root, "spec/order.md"), notInductive(fs.readFileSync(path.join(root, "spec/order.md"), "utf8")));
+      return root;
+    };
+    const proofLines = async (root: string) => {
+      const lines: string[] = [];
+      await check(root, (l) => lines.push(l));
+      fs.rmSync(root, { recursive: true });
+      return lines.filter((l) => l.includes(" proof ")).join("\n");
+    };
+    // A file in src/ named after the spec does not take the place of the spec's own proof.
+    assert.match(await proofLines(project({ "src/order.ts": "//@ pure\nexport function one(): number {\n  return 1;\n}\n" })), /✗ proof +order\.ts: \d+ of \d+ obligations not proved/);
+    // A LemmaScript configuration in the project cannot point the proof at files someone could edit.
+    assert.match(await proofLines(project({ "lemmascript.json": `{"proof-dir":"proofs"}` })), /✗ proof +order\.ts: \d+ of \d+ obligations not proved/);
+    // An annotation that asks the prover for trust is refused wherever it sits on the line.
+    const ledger = fs.readFileSync(path.join(import.meta.dirname, "../src/ledger.ts"), "utf8");
+    const sneaky = ledger.replace("return order.due - order.paid;", "/* x */ //@ assume false\n  return order.paid - order.due;");
+    assert.match(await proofLines(scratch({ "spec/order.md": fs.readFileSync(path.join(import.meta.dirname, "../spec/order.md"), "utf8"), "src/ledger.ts": sneaky })), /`\/\/@ assume` is not allowed/);
+    // So is an import of anything but a generated module, however it is indented.
+    const lying = ledger.replace("\n/** Rebuild", '\n  import { owed } from "/tmp/lies.ts";\n/** Rebuild');
+    assert.match(await proofLines(scratch({ "spec/order.md": fs.readFileSync(path.join(import.meta.dirname, "../spec/order.md"), "utf8"), "src/ledger.ts": lying })), /may only import generated modules/);
+  });
+
+  test("list helpers are not rewritten inside strings or comments, and a stray parenthesis is an error, not a hang", () => {
+    const kept = 'pure val note = "xs.some(y)" // xs.every(z)\npure def f(xs: List[int]): bool = xs.some(x => x > 0)';
+    const out = expandListHelpers(kept);
+    assert.ok(out.includes('"xs.some(y)" // xs.every(z)'), out);
+    assert.match(out, /xs\.foldl\(false, \(std_some_\d+, x\)/);
+    assert.throws(() => expandListHelpers("pure def f(xs: List[int]): bool = xs.every(x => x > 0 // oops"), /no closing parenthesis/);
+  });
+
+  test("moving a line break so that a comment swallows half a guard is a change to the model", async () => {
+    const failed = await failedStages("spec/order.md", (s) => s.replace("pure def canAddItem(o: Order, qty: int): bool =\n  o.status == Draft and qty > 0 and o.units + qty <= maxUnits",
+      "pure def canAddItem(o: Order, qty: int): bool =\n  o.status == Draft and qty > 0 // and\n  and o.units + qty <= maxUnits").replace("// and\n  and", "// and"));
+    assert.ok(failed.includes("review"), failed.join());
+  });
+
+  test("names and constructs that would be translated wrongly are refused", async () => {
+    const spec = (body: string) => ({ "spec/t.md": `# T\n\n## Story\n\n### A rule\n\n${F}quint\n${body}\n${F}\n` });
+    const refused: [string, string, RegExp][] = [
+      ["a type named like a generated one", "type Event = { n: int }\npure val initial: Event = { n: 0 }", /cannot be used as a name/],
+      ["a definition named like a JavaScript global", "pure val initial: int = 0\npure def Number(n: int): int = n", /cannot be used as a name/],
+      ["a set of two computed members", "pure val initial: int = 0\npure def pair(a: int, b: int): int = Set(a, b).size()", /could hold the same value twice/],
+      ["a variant field called tag", "type P = A({ tag: int }) | B\npure val initial: int = 0", /cannot be called `tag`/],
+      ["a match binder used as a whole value", "type N = { n: int }\ntype P = A(N) | B\npure val initial: int = 0\npure def g(r: N): int = r.n\npure def f(p: P): int = match p { | A(x) => g(x) | _ => 0 }", /is what a match arm carries/],
+    ];
+    for (const [what, body, message] of refused) {
+      const root = scratch(spec(body));
+      const lines: string[] = [];
+      await check(root, (l) => lines.push(l));
+      fs.rmSync(root, { recursive: true });
+      assert.match(lines.join("\n"), /✗ model/, what);
+      assert.match(lines.join("\n"), message, what);
+    }
+  });
+
+  test("a map key that every object has, a getter on an event, and an extra field are all harmless", async () => {
+    const root = scratch({ "spec/stock.md": fs.readFileSync(path.join(import.meta.dirname, "fixtures/stock.md"), "utf8") });
+    gen(root, parseSpec(root, "spec/stock.md"));
+    const stock = await import(path.join(root, "gen/stock.ts"));
+    const received = stock.step(stock.initial, stock.parseEvent({ type: "receive", sku: "constructor", qty: 1 }));
+    assert.equal(stock.level(received, "constructor"), 1);
+    assert.equal(stock.level(received, "toString"), 0);
+    let reads = 0;
+    const event = stock.parseEvent({ type: "receive", sku: "a", get qty() { return reads++ ? 1000 : 2; }, extra: 1 });
+    assert.deepEqual(event, { type: "receive", sku: "a", qty: 2 });
+    assert.equal(stock.parseEvent({ type: "receive", sku: "a", qty: 1.5 }), undefined);
+    fs.rmSync(root, { recursive: true });
+  });
+
+  test("init adds what a project lacks and replaces nothing", () => {
+    const root = scratch({ "AGENTS.md": "mine\n", "package.json": `{"scripts":{"check":"mine"}}` });
+    const added = init(root);
+    assert.equal(fs.readFileSync(path.join(root, "AGENTS.md"), "utf8"), "mine\n");
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).scripts.check, "mine");
+    assert.ok(fs.existsSync(path.join(root, ".claude/skills/sync/SKILL.md")) && added.includes("tsconfig.json"), added.join());
+    assert.deepEqual(init(root), []);
     fs.rmSync(root, { recursive: true });
   });
 

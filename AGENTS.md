@@ -10,7 +10,7 @@ before editing a spec.
 
 ## Who does what
 
-The tools detect; you translate. `npm run brief` reports which story has no
+The tools detect; you translate. `npm run check` reports which story has no
 rules, which rule has no Quint, which half of a rule moved, which trace breaks
 which rule and which obligation cannot be proved. Turning a story into rules,
 a rule into Quint, a changed model back into prose, and a counterexample into
@@ -26,14 +26,16 @@ The person signs off with `npm run accept`.
 
 ## Hard rules
 
-- Never edit `gen/` or `spec/*.lock.json`. The tools write them.
+- Never edit `gen/`, `.spec-cache/` or `spec/*.lock.json`, and never add a
+  `lemmascript.json`. The tools own them, and a change there could make a
+  check pass that should not.
 - Never run `npm run accept -- unproved` unless the user asks. It lowers the
   assurance of the listed obligations from proved to simulated.
 - Do not run `npm run accept` unless the user asks you to, and then only
   after you have read each rule that `review` lists and its prose and Quint
   say the same thing.
-- Never weaken or delete an `always` or `sometimes` rule to make a check pass
-  without telling the user which rule and why.
+- Never weaken or delete a rule (`always`, `step`, `sometimes` or `law`) to
+  make a check pass without telling the user which rule and why.
 - Verified logic belongs in the spec as `pure def`. Write TypeScript by hand in
   `src/` only for what Quint cannot express or what touches the outside world.
 
