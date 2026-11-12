@@ -458,6 +458,26 @@ pure def alwaysNothingIsSentTwice(s: Tracker): bool =
   s.sent.every(a => s.sent.select(b => a.kind == b.kind and a.task == b.task and a.to == b.to and a.version == b.version).length() == 1)
 ```
 
+### Every note sent is recorded on its task
+
+A note only ever names a task number that has been issued, and while that task
+exists it records the note: an announced edit is no newer than the task's last
+announced version, and a reminder's date is among the dates already reminded
+for, ahead or on the day.
+
+Discovered by the proof: without it, "Nothing is sent twice" can be broken by
+the notifier from a state that satisfies every other rule, one where a note for
+a task was sent but the task does not record it, so the same note goes out again.
+
+```quint
+pure def alwaysWhatWasSentIsRecorded(s: Tracker): bool =
+  s.sent.every(n => n.task <= s.lastId and s.tasks.every(t => t.id == n.task implies and {
+    n.kind == Update implies n.version <= t.notifiedAt,
+    n.kind == Soon implies t.toldSoon.includes(n.version),
+    n.kind == Today implies t.toldDue.includes(n.version),
+  }))
+```
+
 ### Reminders go out at the right distance from the due date
 
 ```quint
@@ -475,4 +495,15 @@ pure def sometimesAReminderGoesOut(s: Tracker): bool = s.sent.some(n => n.kind =
 ```quint
 pure def alwaysTheBookkeepingIsSane(s: Tracker): bool =
   s.tasks.every(t => t.notifiedAt <= t.updatedAt and t.updatedAt <= s.now)
+```
+
+### The clock never reads below zero
+
+Discovered by the proof: without it, "The bookkeeping never runs ahead of the
+clock" can be broken by creating a task in a state whose clock is negative,
+since a new task counts as never announced and so is announced before it was
+written.
+
+```quint
+pure def alwaysTheClockIsNeverNegative(s: Tracker): bool = s.now >= 0
 ```
