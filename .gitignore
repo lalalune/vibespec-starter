@@ -1,0 +1,9 @@
+node_modules/
+gen/
+dist/
+.spec-cache/
+*.tgz
+.lemmascript/
+_apalache-out/
+!/tools/gen/
+.claude/worktrees/
