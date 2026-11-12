@@ -94,7 +94,7 @@ Keep `spec/`, `src/`, `test/` and `tools/` in git, lock files included.
 | `spec/unproved.lock.json` | Obligations accepted as simulated only, written by `npm run accept -- unproved`. Absent when there are none |
 | `.claude/skills/sync/SKILL.md` | How the agent in your session keeps stories, rules and model in step |
 | `tools/spec.ts` | The pipeline: tangle, simulate, compare, prove, review |
-| `tools/gen.ts` | Quint → TypeScript and the simulation harness |
+| `tools/gen.ts`, `tools/gen/` | Quint → TypeScript and the simulation harness: types, expressions, classification, and the two outputs, one file each |
 | `tools/selftest.ts`, `tools/fixtures/` | Tests of the pipeline itself, and the small specs they use |
 | `src/ledger.ts` | Hand-written logic, proved against the generated contract |
 | `src/app.ts` | Unverified shell: storage, input parsing, error reporting |
@@ -105,12 +105,12 @@ Keep `spec/`, `src/`, `test/` and `tools/` in git, lock files included.
 `examples/alpha-energy` models a real 5,500-line project tracker (tasks in a
 hand-editable Google Sheet, driven from Slack) in three specs: a library of
 arithmetic with laws, the sheet itself with guarded app edits and unguarded
-hand edits, and the registry of projects. It has 24 transitions, 16 `always`
+hand edits, and the registry of projects. It has 24 transitions, 15 `always`
 and `step` rules and 11 laws.
 
 Everything holds in simulation, and the TypeScript agrees with Quint on all
-101 definitions the simulator can evaluate. Of 292 proof obligations, 213 are
-proved for all inputs. The other 79 hold in simulation but Dafny cannot prove
+102 definitions the simulator can evaluate. Of 272 proof obligations, 191 are
+proved for all inputs. The other 81 hold in simulation but Dafny cannot prove
 them alone, because they depend on folds over the warning list. The check
 lists them and stays red on `proof` until you decide, in that directory,
 whether to record them with `npm run accept -- unproved`.
@@ -130,7 +130,7 @@ Trusted, not proved:
 
 - **The prose.** Whether the Quint under a rule means what the sentence above
   it says is a judgement. The `review` stage makes sure someone made it.
-- **`tools/gen.ts`.** Simulation checks the Quint model; the proof checks the
+- **The generator** (`tools/gen.ts`, `tools/gen/`). Simulation checks the Quint model; the proof checks the
   TypeScript. `replay` ties the two together on sampled traces only.
 - **The shell** (`src/app.ts`), LemmaScript, Dafny and Quint.
 - **Numbers.** The proofs treat `number` as an unbounded integer. The

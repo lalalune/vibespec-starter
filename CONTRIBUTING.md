@@ -281,9 +281,17 @@ npx quint verify gen/order.run.qnt --main order_run --invariant inv --max-steps 
 
 ## Changing the tools
 
-`tools/spec.ts` is the pipeline and `tools/gen.ts` the translator; both are
-TypeScript that Node runs directly (`npm run build` compiles them for the
-packaged `spec` command). `npm run selftest` copies the examples into scratch
-directories, breaks one thing at a time and asserts which stage catches each;
-`tools/fixtures/` holds small specs that must pass. Add a case for every new
+`tools/spec.ts` is the pipeline. `tools/gen.ts` is the translator: it reads
+what a module imports and defines, and hands the rest to one file each in
+`tools/gen/`: `types.ts` (everything decided by a type), `print.ts`
+(expressions), `classify.ts` (which definition is a transition, a guard or a
+rule), `typescript.ts` and `harness.ts` (the two outputs). All of it is
+TypeScript that Node runs directly (`npm run build` compiles it for the
+packaged `spec` command).
+
+`check(root)` returns `{ ok, results }`, one result per stage and spec with
+`ok`, `stage`, `summary` and `detail`; the command line prints them. `npm run
+selftest` builds scratch projects, from this project's spec or from the small
+specs in `tools/fixtures/`, breaks one thing at a time and asserts on those
+results which stage catches each. Add a case for every new
 kind of mistake a change is meant to catch.

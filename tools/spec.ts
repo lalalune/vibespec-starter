@@ -141,24 +141,34 @@ export const fingerprint = (r: Rule): [string, string] => [
 ];
 
 /** Stories and rules to reconcile since `accept`, with what to do about each. */
-export function pending(root: string, spec: Spec): string[] {
+/** Something a person has to reconcile before the spec can be accepted. */
+export interface Pending { where: string; rule?: Rule; status: keyof typeof ASKS }
+const ASKS = {
+  "story has no rules": "write one ### rule for each thing the story requires",
+  "not formalized": "add a quint block that says what the prose says",
+  "new": "confirm the prose and the model say the same thing",
+  "prose and model both changed": "confirm they still agree",
+  "prose changed": "update the model to match, or confirm it already does",
+  "model changed": "update the prose to match, or confirm it already does",
+  "removed or renamed": "confirm the rule is meant to be gone",
+};
+const showPending = (p: Pending) => `${p.where}\n      ${p.status}: ${ASKS[p.status]}`;
+
+export function pending(root: string, spec: Spec): Pending[] {
   const file = lockFile(root, spec);
   const lock: Record<string, [string, string]> = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : {};
-  const out: string[] = [];
+  const out: Pending[] = [];
   for (const s of spec.stories)
-    if (!spec.rules.some((r) => r.key.startsWith(`${s.title} / `))) out.push(`${spec.file}:${s.line}  ${s.title}\n      story has no rules: write one ### rule for each thing the story requires`);
-  for (const r of spec.rules) {
-    const [prose, code] = fingerprint(r);
-    const was = lock[r.key];
-    const where = `${spec.file}:${r.line}  ${r.key}`;
-    if (!r.code.trim()) out.push(`${where}\n      not formalized: add a quint block that says what the prose says`);
-    else if (!was) out.push(`${where}\n      new: confirm the prose and the model say the same thing`);
-    else if (was[0] !== prose && was[1] !== code) out.push(`${where}\n      prose and model both changed: confirm they still agree`);
-    else if (was[0] !== prose) out.push(`${where}\n      prose changed: update the model to match, or confirm it already does`);
-    else if (was[1] !== code) out.push(`${where}\n      model changed: update the prose to match, or confirm it already does`);
+    if (!spec.rules.some((r) => r.key.startsWith(`${s.title} / `))) out.push({ where: `${spec.file}:${s.line}  ${s.title}`, status: "story has no rules" });
+  for (const rule of spec.rules) {
+    const [prose, code] = fingerprint(rule);
+    const was = lock[rule.key];
+    const status = !rule.code.trim() ? "not formalized" : !was ? "new"
+      : was[0] !== prose && was[1] !== code ? "prose and model both changed" : was[0] !== prose ? "prose changed" : was[1] !== code ? "model changed" : undefined;
+    if (status) out.push({ where: `${spec.file}:${rule.line}  ${rule.key}`, rule, status });
   }
   for (const key of Object.keys(lock))
-    if (!spec.rules.some((r) => r.key === key)) out.push(`${spec.file}  ${key}\n      removed or renamed: confirm the rule is meant to be gone`);
+    if (!spec.rules.some((r) => r.key === key)) out.push({ where: `${spec.file}  ${key}`, status: "removed or renamed" });
   return out;
 }
 
@@ -168,13 +178,9 @@ export function acceptReviews(root: string, spec: Spec) {
   fs.writeFileSync(lockFile(root, spec), `{\n${lines.join(",\n")}\n}\n`);
 }
 
-/** Both halves of every rule the report says has moved, so that whoever reconciles them compares rather than guesses. */
-function movedRules(spec: Spec, todo: string[]): string[] {
-  return spec.rules.flatMap((r) => {
-    const status = todo.find((t) => t.includes(`  ${r.key}\n`))?.match(/\n +(prose changed|model changed|prose and model both changed)/)?.[1];
-    return status ? [`    "${r.key}" (${status})\n      its prose:\n${indent(r.prose.trim() || "(only the heading)", 8)}\n      its Quint:\n${indent(r.code.trim(), 8)}`] : [];
-  });
-}
+/** Both halves of every rule that has moved, so that whoever reconciles them compares rather than guesses. */
+const movedRules = (todo: Pending[]): string[] => todo.flatMap(({ rule, status }) =>
+  rule && status.includes("changed") ? [`    "${rule.key}" (${status})\n      its prose:\n${indent(rule.prose.trim() || "(only the heading)", 8)}\n      its Quint:\n${indent(rule.code.trim(), 8)}`] : []);
 
 const indent = (s: string, by = 6) => s.split("\n").map((l) => " ".repeat(by) + l).join("\n");
 const fail = (message: string): never => { throw new Error(message); };
@@ -210,7 +216,9 @@ function toolchainId(): string {
     return dep;
   };
   const dafny = spawnSync("dafny", ["--version"], { encoding: "utf8" });
-  const tools = ["spec", "gen"].map((f) => fs.readFileSync(path.join(import.meta.dirname, f + path.extname(import.meta.filename)), "utf8"));
+  // Every file of the tools themselves, as source or as built; the self-test and its fixtures are not part of them.
+  const own = (f: string) => f.endsWith(path.extname(import.meta.filename)) && !f.startsWith("selftest") && !f.startsWith("fixtures");
+  const tools = (fs.readdirSync(import.meta.dirname, { recursive: true }) as string[]).filter(own).sort().map((f) => fs.readFileSync(path.join(import.meta.dirname, f), "utf8"));
   return (toolchain ??= [version("@informalsystems/quint"), version("lemmascript"), `dafny@${(dafny.stdout ?? "").trim()}`, sha(...tools).slice(0, 12)].join(" "));
 }
 
@@ -284,7 +292,7 @@ function readTrace(file: string, model: Model): Step[] {
       event: t && { type: t.name, ...picked(t.params) },
       evaluated: v && { name: v.name, picks: picked(v.params.filter((p) => p.from === "pick")), result: read(v.result, st.out.value) },
       law: l && { name: l.name, args: picked(l.params) },
-      state: model.state ? read(model.stateType, st.state) : undefined,
+      state: model.stateType ? read(model.stateType, st.state) : undefined,
       lawsHold: st.lawsHold,
     };
   });
@@ -444,25 +452,32 @@ const readLedger = (root: string): Record<string, string[]> => (fs.existsSync(le
 
 // --- check -------------------------------------------------------------------------
 
+/** What one stage found: about one spec, one proof unit, or the project as a whole. */
+export interface Result { ok: boolean; stage: "model" | "always" | "sometimes" | "replay" | "types" | "proof" | "tests" | "review"; summary: string; detail: string }
+export const show = ({ ok, stage, summary, detail }: Result) => `${ok ? "✓" : "✗"} ${stage.padEnd(9)} ${summary}${detail ? "\n" + detail.trimEnd() : ""}`;
+
 /**
- * Run every check, cheapest first. Stages after a broken model are skipped,
- * because their failures would only restate the first one. `accept` is
- * "reviews" to record reconciled rules, or "unproved" to record the
- * obligations that are simulated but not proved; either way nothing remembered
- * from an earlier run is used.
+ * Run every check, cheapest first, and return what each found; `log` hears of
+ * each result as it arrives. Stages after a broken model are skipped, because
+ * their failures would only restate the first one. `accept` is "reviews" to
+ * record reconciled rules, or "unproved" to record the obligations that are
+ * simulated but not proved; either way nothing remembered from an earlier run
+ * is used.
  */
-export async function check(root: string, log: (line: string) => void = console.log, accept: false | "reviews" | "unproved" = false): Promise<boolean> {
+export async function check(root: string, accept: false | "reviews" | "unproved" = false, log: (result: Result) => void = () => {}): Promise<{ ok: boolean; results: Result[] }> {
+  const results: Result[] = [];
   let allOk = true;
-  const report = (ok: boolean, stage: string, summary: string, detail = "") => {
+  const report = (ok: boolean, stage: Result["stage"], summary: string, detail = "") => {
     allOk &&= ok;
-    log(`${ok ? "✓" : "✗"} ${stage.padEnd(9)} ${summary}${!ok && detail ? "\n" + detail.trimEnd() : ""}`);
-    return ok;
+    results.push({ ok, stage, summary, detail: ok ? "" : detail });
+    log(results.at(-1)!);
   };
   let specs: Spec[];
   try {
     specs = readSpecs(root);
   } catch (e) {
-    return report(false, "model", (e as Error).message);
+    report(false, "model", (e as Error).message);
+    return { ok: false, results };
   }
   fs.rmSync(path.join(root, "gen"), { recursive: true, force: true }); // nothing stale survives a rename
   const valid: Spec[] = [];
@@ -491,14 +506,13 @@ export async function check(root: string, log: (line: string) => void = console.
     valid.push(spec);
     const parts = [[model.transitions.length, "transitions"], [model.always.length, "always"], [model.steps.length, "step"], [model.sometimes.length, "sometimes"], [model.laws.length, "laws"]];
     report(true, "model", `${spec.file}: ${parts.filter(([n]) => n).map((p) => p.join(" ")).join(", ") || "definitions only"}`);
-    if (!model.state && !model.laws.length && !model.evals.length) continue;
+    if (!model.stateType && !model.laws.length && !model.evals.length) continue;
 
     // A spec whose model and harness are unchanged, and that passed, is not simulated again.
     const closure = (names: string[]): string => names.map((n) => { const dep = specs.find((x) => x.name === n)!; return closure(dep.imports) + dep.qnt; }).join("");
-    type Line = [ok: boolean, stage: string, summary: string, detail: string];
-    const lines = remembered<Line[]>(root, !!accept, ["simulate", closure(spec.imports), spec.qnt, model.harness, String([SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, STEPS])], () => {
-      const said: Line[] = [];
-      const say = (ok: boolean, stage: string, summary: string, detail = "") => said.push([ok, stage, summary, detail]);
+    const found = remembered<Result[]>(root, !!accept, ["simulate", closure(spec.imports), spec.qnt, model.harness, String([SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, STEPS])], () => {
+      const said: Result[] = [];
+      const say = (ok: boolean, stage: Result["stage"], summary: string, detail = "") => said.push({ ok, stage, summary, detail });
       try {
         const sim = simulate(root, model, "inv", REPLAYED);
         // Of the traces that break a rule, show the shortest, and only up to the break.
@@ -530,11 +544,11 @@ export async function check(root: string, log: (line: string) => void = console.
           + (missed.length ? `; not compared on their own, because the simulator had no arguments for them: ${missed.join(", ")}` : ""));
       } catch (e) {
         const mismatch = (e as Error).message.startsWith("TypeScript and Quint disagree");
-        say(false, mismatch ? "replay" : "always", mismatch ? "this is a bug in tools/gen.ts, not in the spec" : "the simulator could not run", indent((e as Error).message));
+        say(false, mismatch ? "replay" : "always", mismatch ? "this is a bug in the generator (tools/gen.ts, tools/gen/), not in the spec" : "the simulator could not run", indent((e as Error).message));
       }
       return said;
-    }, (said) => said.every(([ok]) => ok));
-    for (const [ok, stage, summary, detail] of lines) report(ok, stage, summary, detail);
+    }, (said) => said.every((r) => r.ok));
+    for (const r of found) report(r.ok, r.stage, r.summary, r.detail);
   }
 
   if (allOk) {
@@ -585,18 +599,18 @@ export async function check(root: string, log: (line: string) => void = console.
   // A spec that is not a valid model has nothing to reconcile yet.
   for (const spec of valid) {
     const todo = pending(root, spec);
-    const formal = spec.rules.every((r) => r.code.trim()) && !todo.some((t) => t.includes("story has no rules"));
+    const formal = !todo.some((t) => t.status === "story has no rules" || t.status === "not formalized");
     if (accept === "reviews" && allOk && todo.length && formal) {
       acceptReviews(root, spec);
-      report(true, "review", `${spec.file}: recorded ${todo.length} item(s) as reconciled\n${todo.map((t) => "    " + t.split("\n")[0]).join("\n")}`);
+      report(true, "review", `${spec.file}: recorded as reconciled: ${todo.map((t) => t.where.split("  ")[1]).join("; ")}`);
     } else {
       const next = accept !== "reviews" ? "then run `npm run accept`" : allOk ? "every story needs rules and every rule a quint block before anything can be accepted" : "nothing was accepted: fix the stages above first";
-      const moved = movedRules(spec, todo);
+      const moved = movedRules(todo);
       report(!todo.length, "review", todo.length ? `${todo.length} item(s) to reconcile, ${next}` : `${spec.file}: prose and model reconciled for all ${spec.rules.length} rules`,
-        todo.map((t) => "    " + t).join("\n") + (moved.length ? `\n\n    The rules that moved, both halves:\n${moved.join("\n")}` : ""));
+        todo.map((t) => "    " + showPending(t)).join("\n") + (moved.length ? `\n\n    The rules that moved, both halves:\n${moved.join("\n")}` : ""));
     }
   }
-  return allOk;
+  return { ok: allOk, results };
 }
 
 /** Every spec, with each one after the specs it imports. */
@@ -662,8 +676,10 @@ if (import.meta.main) {
     if (command === "gen") {
       const models = new Map<string, Model>();
       for (const s of readSpecs(root)) gen(root, s, models);
-    } else if (command === "check") process.exitCode = (await check(root)) ? 0 : 1;
-    else if (command === "accept") process.exitCode = (await check(root, console.log, what === "unproved" ? "unproved" : "reviews")) ? 0 : 1;
+    } else if (command === "check" || command === "accept") {
+      const accept = command === "check" ? false : what === "unproved" ? "unproved" : "reviews";
+      process.exitCode = (await check(root, accept, (r) => console.log(show(r)))).ok ? 0 : 1;
+    }
     else if (command === "init") {
       const done = init(root);
       console.log(done.length ? `added: ${done.join(", ")}` : "nothing to add: everything is already there");

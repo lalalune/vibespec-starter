@@ -210,9 +210,11 @@ pure def neverMoreThanPaid(o: Order, amount: int): bool = amount <= o.paid
 
 ### A draft that holds items can be emptied in one go
 
+Emptying removes every unit the order holds.
+
 ```quint
 pure def canEmpty(o: Order): bool = o.status == Draft and o.units > 0
-pure def empty(o: Order): Order = { ...o, units: 0, due: 0 }
+pure def empty(o: Order): Order = removeItem(o, o.units)
 ```
 
 ## Story: Put an order on hold

@@ -54,7 +54,7 @@ Four task numbers, the three people and one typo.
 
 ```quint
 pure val idValues = Set(1, 2, 3, 4)
-pure val otherValues = Set(1, 2, 3, 4)
+pure val otherValues = idValues
 pure val actorValues = Set("liza", "cody", "wes")
 pure val ownerValues = Set("liza", "cody", "wes", "lisa")
 pure val nameValues = Set("liza", "cody", "wes", "lisa")
@@ -147,7 +147,10 @@ pure def alwaysTheWarningListIsTheTruth(s: Tracker): bool =
 > refused when a change would break a link, so that the app never makes the
 > data worse.
 
-### An app edit never adds a problem, even to data that is already broken
+### Only a hand edit can make the data worse
+
+An app edit never adds a problem, even to data that is already broken. Nor do
+time passing, notifying and fixing.
 
 ```quint
 pure def sameProblem(a: Problem, b: Problem): bool =
@@ -157,15 +160,6 @@ pure def addsNoProblem(before: Tracker, after: Tracker): bool =
   val old = problems(before)
   problems(after).every(p => old.some(q => sameProblem(p, q)))
 
-pure def stepAnAppEditNeverAddsAProblem(before: Tracker, after: Tracker): bool =
-  after.last == App implies addsNoProblem(before, after)
-```
-
-### Only a hand edit can make the data worse
-
-Time passing, notifying and fixing change no link for the worse.
-
-```quint
 pure def stepOnlyAHandEditCorrupts(before: Tracker, after: Tracker): bool =
   after.last != Sheet implies addsNoProblem(before, after)
 ```
@@ -268,8 +262,7 @@ pure def relate(s: Tracker, id: int, other: int, actor: str): Tracker =
     else if (t.id == other) { ...t, related: add(t.related, id) }
     else t) }
 
-pure def canUnrelate(s: Tracker, id: int, other: int, actor: str): bool =
-  hasTask(s, id) and hasTask(s, other) and id != other
+pure def canUnrelate(s: Tracker, id: int, other: int, actor: str): bool = canRelate(s, id, other, actor)
 
 pure def unrelate(s: Tracker, id: int, other: int, actor: str): Tracker =
   { ...s, last: App, tasks: s.tasks.listMap(t =>
