@@ -1081,7 +1081,7 @@ export function init(root: string): string[] {
     fs.writeFileSync(path.join(root, file), content());
     done.push(file);
   };
-  for (const doc of [".claude/skills/sync/SKILL.md", "CONTRIBUTING.md"]) add(doc, () => fs.readFileSync(path.join(pkg, doc), "utf8"));
+  for (const doc of [".claude/skills/sync/SKILL.md", ".claude/skills/design/SKILL.md", "CONTRIBUTING.md"]) add(doc, () => fs.readFileSync(path.join(pkg, doc), "utf8"));
   // AGENTS.md is read by Claude Code, Codex and others, so a project often has one already. Its section on specs is
   // added to it, or brought up to date, between markers; everything else in the file is the project's own.
   const section = fs.readFileSync(path.join(pkg, "AGENTS.md"), "utf8").match(new RegExp(`${AGENTS_START}[\\s\\S]*?${AGENTS_END}`))?.[0]
