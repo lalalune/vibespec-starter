@@ -77,20 +77,29 @@ export function typeWalks(typedefs: Json[], module: string, prefix = "") {
   };
 
   // --- untrusted values --------------------------------------------------------
-  /** A runtime test that an untrusted value inhabits a type. */
-  const wellFormed = (v: string, t0: Json, depth = 0): string => {
+  /**
+   * A runtime test that an untrusted value inhabits a type. `exact` is for a whole state: a record or variant may have
+   * no field beyond those its type names, and a map is allowed, as a record whose keys all carry the "$" that every
+   * key in generated code carries.
+   */
+  const wellFormed = (v: string, t0: Json, depth = 0, exact = false): string => {
     const t = resolve(t0);
     if (t.kind === "int") return `Number.isSafeInteger(${v})`;
     if (t.kind === "bool") return `typeof ${v} === "boolean"`;
     if (t.kind === "str") return `typeof ${v} === "string"`;
     const x = `x${depth}`;
-    const record = (r: Json) => fields(r).map((f) => wellFormed(`${v}.${f.fieldName}`, f.fieldType, depth + 1));
-    if (tagged(t)) return `typeof ${v} === "object" && ${v} !== null && (${fields(t).map((f) => [`${v}.tag === ${JSON.stringify(f.fieldName)}`, ...(payload(f) ? record(payload(f)!) : [])].join(" && ")).join(" || ")})`;
+    const object = `typeof ${v} === "object" && ${v} !== null && !Array.isArray(${v})`;
+    const sized = (n: number) => (exact ? [`Object.keys(${v}).length === ${n}`] : []);
+    const record = (r: Json) => fields(r).map((f) => wellFormed(`${v}.${f.fieldName}`, f.fieldType, depth + 1, exact));
+    if (tagged(t)) return `${object} && (${fields(t).map((f) => [`${v}.tag === ${JSON.stringify(f.fieldName)}`, ...(payload(f) ? record(payload(f)!) : []), ...sized(1 + (payload(f) ? fields(payload(f)!).length : 0))].join(" && ")).join(" || ")})`;
     if (t.kind === "sum") return `(${fields(t).map((f) => `${v} === ${JSON.stringify(f.fieldName)}`).join(" || ")})`;
     if (t.kind === "list" || t.kind === "set")
-      return `Array.isArray(${v}) && ${v}.every((${x}: any) => ${wellFormed(x, t.elem, depth + 1)})${t.kind === "set" ? ` && new Set(${v}).size === ${v}.length` : ""}`;
-    if (t.kind === "rec") return `typeof ${v} === "object" && ${v} !== null && ${record(t).join(" && ")}`;
-    if (t.kind === "fun") return fail("an event cannot carry a map; send a list of records instead");
+      return `Array.isArray(${v}) && ${v}.every((${x}: any) => ${wellFormed(x, t.elem, depth + 1, exact)})${t.kind === "set" ? ` && new Set(${v}).size === ${v}.length` : ""}`;
+    if (t.kind === "rec") return [object, ...record(t), ...sized(fields(t).length)].join(" && ");
+    if (t.kind === "fun") {
+      if (!exact) return fail("an event cannot carry a map; send a list of records instead");
+      return `${object} && Object.entries(${v}).every(([k${depth}, ${x}]: [string, any]) => k${depth}.startsWith("$") && ${wellFormed(x, t.res, depth + 1, exact)})`;
+    }
     return fail(`a parameter of type ${t.kind} is not supported`);
   };
   /** A copy of a checked value that has the fields its type names and no others. */
@@ -102,6 +111,7 @@ export function typeWalks(typedefs: Json[], module: string, prefix = "") {
     if (tagged(t)) return `(${fields(t).slice(0, -1).map((f) => `${v}.tag === ${JSON.stringify(f.fieldName)} ? ${variant(f)} : `).join("")}${variant(fields(t).at(-1)!)})`;
     if (t.kind === "list" || t.kind === "set") return `${v}.map((${x}: any) => ${copy(x, t.elem, depth + 1)})`;
     if (t.kind === "rec") return `({ ${record(t).join(", ")} })`;
+    if (t.kind === "fun") return `Object.fromEntries(Object.entries(${v}).map(([k${depth}, ${x}]: [string, any]) => [k${depth}, ${copy(x, t.res, depth + 1)}]))`;
     return v;
   };
 

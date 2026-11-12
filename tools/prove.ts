@@ -7,7 +7,9 @@
 // Counting is per obligation. Dafny runs with every assertion isolated and no
 // error limit, and because a postcondition that fails is still assumed while
 // the ones after it are checked, every postcondition of a lemma that has a
-// failure is checked again on its own.
+// failure is checked again on its own. A lemma that calls a lemma with a
+// failing postcondition assumes it, so every obligation of such a lemma is
+// counted as not proved too.
 
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -25,18 +27,28 @@ export const LIB_MODULE = "ProofLib";
  * assertion needs is 14.2 million (the example tracker's step, through its
  * generated body); every other one needs under 1.3 million. 30 million leaves
  * twice the largest. The time limit only stops a run that would never end.
+ * Source lines are not echoed: a proof file's text must never be read back as
+ * one of Dafny's own messages.
  */
 export const RESOURCE_LIMIT = 30_000_000;
-const DAFNY_FLAGS = ["--isolate-assertions", "--error-limit", "0", "--resource-limit", String(RESOURCE_LIMIT)];
+const DAFNY_FLAGS = ["--isolate-assertions", "--error-limit", "0", "--resource-limit", String(RESOURCE_LIMIT), "--show-snippets:false"];
 const TIME_LIMIT = 600;
 
 // --- running tools -------------------------------------------------------------
 
+const WINDOWS = process.platform === "win32";
+/** The most output a tool may write before it is stopped. */
+const OUTPUT_LIMIT = 1 << 28;
+/** How long a tool may run before it is stopped: long enough that only a tool that hangs is stopped. */
+const TOOL_TIMEOUT = 60 * 60 * 1000;
+
 /** An executable from the toolchain's dependencies, wherever npm put it: beside the tools, or in the project. */
 export function bin(cmd: string, root: string): string {
+  // On Windows npm installs a `.cmd` shim beside the extensionless shell script, and only the shim runs there.
+  const name = WINDOWS ? `${cmd}.cmd` : cmd;
   for (let dir of [path.join(import.meta.dirname, ".."), root]) {
     for (;;) {
-      const candidate = path.join(dir, "node_modules/.bin", cmd);
+      const candidate = path.join(dir, "node_modules/.bin", name);
       if (fs.existsSync(candidate)) return candidate;
       if (dir === path.dirname(dir)) break;
       dir = path.dirname(dir);
@@ -45,10 +57,24 @@ export function bin(cmd: string, root: string): string {
   throw new Error(`${cmd} is not installed; run npm install`);
 }
 
+/**
+ * Run a tool to the end and return what it wrote. A tool that cannot be started is an error; one that writes too
+ * much or runs too long is stopped, and its output says so.
+ */
 export function run(cmd: string, args: string[], cwd: string): { ok: boolean; out: string } {
   const exe = cmd === "dafny" ? cmd : bin(cmd, cwd);
-  const r = spawnSync(exe, args, { cwd, encoding: "utf8", maxBuffer: 1 << 28 });
-  return { ok: r.status === 0, out: `${r.stdout ?? ""}${r.stderr ?? ""}${r.error ?? ""}` };
+  // A .cmd shim needs a shell, and then every argument is quoted for cmd.exe.
+  const shell = WINDOWS && exe.endsWith(".cmd");
+  const quote = (a: string) => (a === "" || /[\s"&|<>^%()!,;=]/.test(a) ? `"${a.replace(/"/g, '""')}"` : a);
+  const r = shell
+    ? spawnSync(quote(exe), args.map(quote), { cwd, encoding: "utf8", maxBuffer: OUTPUT_LIMIT, timeout: TOOL_TIMEOUT, shell: true })
+    : spawnSync(exe, args, { cwd, encoding: "utf8", maxBuffer: OUTPUT_LIMIT, timeout: TOOL_TIMEOUT });
+  const code = (r.error as NodeJS.ErrnoException | undefined)?.code;
+  const stopped = code === "ENOBUFS" ? `${cmd} wrote more than ${OUTPUT_LIMIT / 2 ** 20} MB of output and was stopped`
+    : code === "ETIMEDOUT" ? `${cmd} ran for more than ${TOOL_TIMEOUT / 60_000} minutes and was stopped`
+    : undefined;
+  if (r.error && !stopped) throw new Error(`${cmd} could not be run (${exe}): ${r.error.message}${cmd === "dafny" ? "; the proof stage needs Dafny 4.11 on the PATH" : "; run npm install"}`);
+  return { ok: r.status === 0 && !stopped, out: `${r.stdout ?? ""}${r.stderr ?? ""}${stopped ? `\n${stopped}\n` : ""}` };
 }
 
 /** Overlapping runs, at most one per core across everything in this process (several checks at once included). */
@@ -147,12 +173,24 @@ function tokenize(text: string, refuse?: (line: number, why: string) => never): 
 export interface Lemma { name: string; line: number; header: string; headerText: string; body: string; text: string }
 
 /**
+ * Words after which a brace starts an operand, such as the set display in `decreases {0}` or `x in {1}`, never a
+ * body. A brace starts a lemma's body only after a token that can end a header: `)`, `]`, `}`, a number, a string
+ * or any other word.
+ */
+const OPERAND_AFTER = new Set("in requires ensures decreases then else returns by set iset multiset seq map imap calc assert var if match case forall exists old fresh reveal lemma".split(" "));
+// A `|` right before the body can only close a cardinality, as in `decreases |xs|`.
+const endsHeader = (t: Token | undefined) => !!t && (t.kind === "close" || t.t === ")" || t.t === "]" || t.t === "|" || /^[0-9"]/.test(t.t) || (t.kind === "word" && !OPERAND_AFTER.has(t.t)));
+
+/**
  * A proof file holds only `lemma` declarations, each with a body, and `//`
- * comments. Anything else is refused with the file and line.
+ * comments. Anything else is refused with the file and line. A lemma runs to
+ * the next `lemma`; its body is the brace group it ends with, which must follow
+ * a complete header.
  */
 export function parseProofFile(source: string, file: string): Lemma[] {
   const text = source.replace(/\r\n/g, "\n");
   const refuse = (line: number, why: string): never => { throw new Error(`${file}:${line}: ${why}`); };
+  if (text.includes("\0")) refuse(text.slice(0, text.indexOf("\0")).split("\n").length, "NUL characters are not allowed");
   const toks = tokenize(text, refuse);
   const lemmas: Lemma[] = [];
   for (let p = 0; p < toks.length; ) {
@@ -166,23 +204,20 @@ export function parseProofFile(source: string, file: string): Lemma[] {
       else if (toks[q].kind === "close") depth--;
     }
     const name = toks[q]?.kind === "word" ? toks[q].t : refuse(start.line, "a lemma needs a name");
-    // The body is the first brace that is not an attribute's.
+    // Where the last brace group at the top level of the lemma opens; any other token at the top level resets it.
     let open = -1;
-    for (let r = q + 1, depth = 0; r < toks.length && open < 0; r++) {
-      const k = toks[r];
-      if (k.kind === "attr") depth++;
-      else if (k.kind === "close") { if (--depth < 0) refuse(k.line, `lemma ${name}: unbalanced braces`); }
-      else if (k.kind === "open" && depth === 0) open = r;
-      else if (k.t === "lemma" && depth === 0) break;
+    let end = q + 1;
+    let depth = 0;
+    for (; end < toks.length && toks[end].t !== "lemma"; end++) {
+      const k = toks[end];
+      if (k.kind === "open" || k.kind === "attr") { if (depth++ === 0) open = k.kind === "open" ? end : -1; }
+      else if (k.kind === "close") { if (--depth < 0) refuse(k.line, "unbalanced braces: this } closes nothing"); }
+      else if (depth === 0) open = -1;
     }
-    if (open < 0) refuse(start.line, `lemma ${name} has no body; every lemma must be proved`);
-    let close = -1;
-    for (let r = open, depth = 0; r < toks.length; r++) {
-      if (toks[r].kind === "open" || toks[r].kind === "attr") depth++;
-      else if (toks[r].kind === "close" && --depth === 0) { close = r; break; }
-    }
-    if (close < 0) refuse(toks[open].line, `lemma ${name}: unbalanced braces, its body is never closed`);
+    if (depth > 0) refuse(start.line, `lemma ${name}: unbalanced braces, its body is never closed`);
+    if (open < 0 || !endsHeader(toks[open - 1])) refuse(start.line, `lemma ${name} has no body; every lemma must be proved, and end with its body`);
     if (lemmas.some((l) => l.name === name)) refuse(start.line, `lemma ${name} is declared twice`);
+    const close = end - 1;
     lemmas.push({
       name, line: start.line,
       header: toks.slice(p, open).map((t) => t.t).join(" "),
@@ -190,9 +225,43 @@ export function parseProofFile(source: string, file: string): Lemma[] {
       body: text.slice(toks[open].end, toks[close].at),
       text: text.slice(start.at, toks[close].end),
     });
-    p = close + 1;
+    p = end;
   }
   return lemmas;
+}
+
+/** Each dotted name a Dafny text uses, such as `Std.Collections.Seq.All`, from its first word; comments and strings are not names. */
+function dottedNames(toks: Token[]): { name: string; first: Token; inner: boolean }[] {
+  const out: { name: string; first: Token; inner: boolean }[] = [];
+  for (let i = 0; i < toks.length; i++) {
+    const inner = toks[i - 1]?.t === ".";
+    if (toks[i].kind !== "word" || (inner && toks[i - 2]?.kind === "word")) continue;
+    const parts = [toks[i].t];
+    for (let j = i; toks[j + 1]?.t === "." && toks[j + 2]?.kind === "word"; j += 2) parts.push(toks[j + 2].t);
+    out.push({ name: parts.join("."), first: toks[i], inner });
+  }
+  return out;
+}
+
+/**
+ * A proof file may reach Dafny's standard library only by a name the generated
+ * code itself uses, since the library holds axioms, and the library of the
+ * tools only by the lemmas and functions it declares.
+ */
+function checkNames(proof: { file: string; text: string }, gen: string, lib: string | undefined) {
+  const used = new Set(dottedNames(tokenize(gen)).map((d) => d.name));
+  const own = new Set([...(lib ?? "").matchAll(/^\s*(?:ghost\s+)?(?:lemma|function|predicate)\s+(\w+)/gm)].map((m) => m[1]));
+  for (const d of dottedNames(tokenize(proof.text.replace(/\r\n/g, "\n")))) {
+    const parts = d.name.split(".");
+    const at = `${proof.file}:${d.first.line}`;
+    const misplaced = parts.find((p, i) => (i > 0 || d.inner) && (p === "Std" || p === LIB_MODULE));
+    if (misplaced) throw new Error(`${at}: \`${misplaced}\` may only begin a name`);
+    const std = [...used].filter((n) => n.startsWith("Std."));
+    if (parts[0] === "Std" && !used.has(d.name))
+      throw new Error(`${at}: \`${d.name}\` is not allowed: Dafny's standard library holds axioms, so a proof file may use only the names of it that the generated code uses${std.length ? ` (${std.join(", ")})` : ", and it uses none"}`);
+    if (parts[0] === LIB_MODULE && !(parts.length === 2 && own.has(parts[1])))
+      throw new Error(`${at}: \`${d.name}\` is not a lemma or function of tools/proof/lib.dfy; call those as ${LIB_MODULE}.<Name>`);
+  }
 }
 
 const DECLARATION = /^\s*(?:ghost\s+)?(?:function|predicate|lemma|method|datatype|codatatype|type|newtype|const|class|trait|module)\s+(?:\{:[^}]*\}\s*)*([A-Za-z_][\w']*)/;
@@ -230,16 +299,30 @@ export interface Additions {
 }
 
 /**
+ * A definition of the final Dafny, as the tools placed it: one generated by
+ * LemmaScript (with any body the proof file supplied), or one added after the
+ * generated text (a law of a dependency, a helper, the library).
+ */
+export interface Region { def: string; generated: boolean }
+/** The final Dafny, and for each of its lines (line n at index n - 1) the definition it belongs to. */
+export interface Spliced { dfy: string; regions: Region[] }
+
+/** A line of generated Dafny that starts a definition, and its name. */
+const DEFINITION = /^\s*(?:ghost\s+)?(?:lemma|method|function|predicate)\s+(?:\{:[^}]*\}\s*)*(\w+)/;
+
+/**
  * The final Dafny for a unit: what LemmaScript generated, with the bodies the
  * proof file supplies inside the empty generated lemmas, and after it the
  * tools' lemmas, the proof file's helpers and the library. Only lines are
- * added; nothing generated changes.
+ * added; nothing generated changes. Each line is recorded with the definition
+ * it belongs to, so that a failure is charged to where it really is.
  */
-export function splice(gen: string, { proof, stepBody, axioms, lib }: Additions, where = "gen/proof/<unit>/<unit>.dfy"): string {
+export function splice(gen: string, { proof, stepBody, axioms, lib }: Additions, where = "gen/proof/<unit>/<unit>.dfy"): Spliced {
   const lemmas = proof ? parseProofFile(proof.text, proof.file) : [];
+  if (proof) checkNames(proof, gen, lib);
   const empty = emptyLemmas(gen);
   const bodies = new Map<string, string>();
-  const helpers: string[] = [];
+  const helpers: Lemma[] = [];
   const taken = declaredNames([gen, ...axioms].join("\n"));
   taken.add(LIB_MODULE);
   for (const l of lemmas) {
@@ -250,20 +333,34 @@ export function splice(gen: string, { proof, stepBody, axioms, lib }: Additions,
       bodies.set(l.name, l.body.replace(/^[ \t]*\n/, "").trimEnd());
     } else if (taken.has(l.name)) {
       throw new Error(`${proof!.file}:${l.line}: lemma ${l.name}: the name is already declared in ${where}; a helper needs a name of its own`);
-    } else helpers.push(l.text);
+    } else helpers.push(l);
   }
   if (stepBody && empty.has("step_ensures") && !bodies.has("step_ensures")) bodies.set("step_ensures", stepBody);
-  let out = gen;
-  for (const [name, { bodyAt }] of [...empty].sort((a, b) => b[1].bodyAt - a[1].bodyAt)) {
-    const body = bodies.get(name);
-    if (body) out = `${out.slice(0, bodyAt)}{\n${body}\n${out.slice(bodyAt + 2)}`;
-  }
-  const tail = [
-    ...(axioms.length ? ["// ---- laws of the units this one imports, each proved in its own unit (added by the tools) ----", ...axioms] : []),
-    ...(helpers.length ? [`// ---- helpers from ${proof!.file} ----`, ...helpers] : []),
-    ...(lib ? ["// ---- tools/proof/lib.dfy ----", lib.trimEnd()] : []),
+  const lines: string[] = [];
+  const regions: Region[] = [];
+  const add = (text: string, region: Region) => { for (const l of text.split("\n")) { lines.push(l); regions.push(region); } };
+  // The line of each empty generated lemma's `{`, after which its body goes.
+  const opens = new Map([...empty].map(([name, { bodyAt }]) => [gen.slice(0, bodyAt).split("\n").length - 1, name]));
+  let region: Region = { def: "?", generated: false };
+  gen.split("\n").forEach((line, i) => {
+    const m = line.match(DEFINITION);
+    if (m) region = { def: m[1], generated: true };
+    add(line, region);
+    const body = bodies.get(opens.get(i) ?? "");
+    if (body) add(body, region);
+  });
+  const tail: [string, Region][] = [
+    ...axioms.map((a, i): [string, Region] => [`${i ? "" : "// ---- laws of the units this one imports, each proved in its own unit (added by the tools) ----\n\n"}${a}`, { def: a.match(/^lemma \{:axiom\} (\w+)/)![1], generated: false }]),
+    ...helpers.map((h, i): [string, Region] => [`${i ? "" : `// ---- helpers from ${proof!.file} ----\n\n`}${h.text}`, { def: h.name, generated: false }]),
+    ...(lib ? [[`// ---- tools/proof/lib.dfy ----\n\n${lib.trimEnd()}`, { def: LIB_MODULE, generated: false }] as [string, Region]] : []),
   ];
-  return tail.length ? `${out.trimEnd()}\n\n${tail.join("\n\n")}\n` : out;
+  if (tail.length) {
+    while (lines.length && !lines.at(-1)!.trim()) { lines.pop(); regions.pop(); }
+    lines[lines.length - 1] = lines.at(-1)!.trimEnd();
+    for (const [text, r] of tail) add(`\n${text}`, r);
+    add("", region);
+  }
+  return { dfy: lines.join("\n"), regions };
 }
 
 /** The lemma that makes a dependency's law usable here: `<fn>` is how this unit spells the law. */
@@ -278,73 +375,80 @@ export function lawAxiom(gen: string, fn: string): string | undefined {
 
 interface Verdict { unproved: Map<string, string>; exhausted: Set<string>; errors: Set<string>; failing: Map<string, Set<number>> }
 
+/** Dafny's closing line: how many it verified, and how many failures of each kind it reported. */
+const SUMMARY = /^Dafny program verifier finished with \d+ verified, (\d+) errors?((?:, \d+ [a-z ]+)*)$/gm;
+const finished = (out: string) => new RegExp(SUMMARY.source, "m").test(out);
+
 /**
  * Sort Dafny's messages about `file` into obligations not proved (keyed by
  * definition and clause), obligations it ran out of resources on, and errors.
- * A failure in a definition the generated code does not declare (a helper, the
- * library, a lemma the tools add) is an error: the proof itself is broken.
+ * A message counts only at the start of a line and with the bare file name
+ * (Dafny runs in the unit's directory, without echoing source lines); a
+ * postcondition is taken only from the error's own block and definition. A
+ * failure anywhere but in a generated definition (a helper, the library, a
+ * lemma the tools add) is an error: the proof itself is broken. So is a count
+ * of failures that differs from the one Dafny reports.
  */
-function readVerdict(out: string, dfy: string, file: string, generated: Set<string>, rename = (n: string) => n): Verdict {
+function readVerdict(out: string, dfy: string, file: string, regions: Region[], rename = (n: string) => n): Verdict {
   const lines = out.split("\n");
   const source = dfy.split("\n");
-  const owner = (line: number) => {
-    for (let i = line - 1; i >= 0; i--) {
-      const m = source[i]?.match(/^\s*(?:ghost\s+)?(?:lemma|method|function|predicate)\s+(?:\{:[^}]*\}\s*)*(\w+)/);
-      if (m) return rename(m[1]);
-    }
-    return "?";
-  };
-  const at = (l: string) => {
-    const m = l.match(new RegExp(`^(?:.*/)?${file.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\((\\d+),\\d+\\): (Error|Warning|Related location): (.*)$`));
-    return m && { line: Number(m[1]), kind: m[2], what: m[3] };
+  const pattern = new RegExp(`^${file.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\((\\d+),\\d+\\): (Error|Warning|Related location): (.*)$`);
+  const at = (l: string | undefined) => {
+    const m = l?.match(pattern);
+    return m ? { line: Number(m[1]), kind: m[2], what: m[3] } : undefined;
   };
   const clause = (line: number) => (source[line - 1] ?? "").trim().replace(/^ensures\s+/, "");
-  const key = (line: number, text: string) => `${owner(line).replace(/_ensures$/, "")}: ${text}`;
   const v: Verdict = { unproved: new Map(), exhausted: new Set(), errors: new Set(), failing: new Map() };
   const fail = (line: number, text: string, exhausted: boolean) => {
-    const def = owner(line);
-    if (!generated.has(def)) { v.errors.add(`${def} (${file}:${line}) does not verify: ${text}; a lemma that is not generated must prove`); return; }
-    const k = key(line, text);
+    const r = regions[line - 1];
+    if (!r?.generated) { v.errors.add(`${r?.def ?? "?"} (${file}:${line}) does not verify: ${text}; a lemma that is not generated must prove`); return; }
+    const def = rename(r.def);
+    const k = `${def.replace(/_ensures$/, "")}: ${text}`;
     v.unproved.set(k, def);
     if (exhausted) v.exhausted.add(k);
     if (!v.failing.has(def)) v.failing.set(def, new Set());
     v.failing.get(def)!.add(line);
   };
+  let read = 0;
   lines.forEach((l, i) => {
     const m = at(l);
     if (!m) {
-      if (/^Error:|: Error:/.test(l) && !l.includes(file)) v.errors.add(l.trim());
+      if (/^Error:|: Error:/.test(l) && !l.startsWith(`${file}(`)) v.errors.add(l.trim());
       return;
     }
+    if (m.kind === "Error") read++;
     if (m.kind === "Error" && m.what.startsWith("a postcondition could not be proved")) {
-      const related = lines.slice(i + 1, i + 12).map(at).find((r) => r?.kind === "Related location" && r.what.includes("postcondition"));
+      const block: { line: number; what: string }[] = [];
+      for (let j = i + 1, r = at(lines[j]); r?.kind === "Related location"; r = at(lines[++j])) block.push(r);
+      const related = block.find((r) => r.what.includes("postcondition") && regions[r.line - 1] && regions[r.line - 1] === regions[m.line - 1]);
       if (related) fail(related.line, clause(related.line), false);
-      else v.errors.add(`${m.what}: ${clause(m.line)}`);
+      else v.errors.add(`${regions[m.line - 1]?.def ?? "?"}: ${m.what}, and Dafny named no postcondition of it: ${clause(m.line)}`);
     } else if (m.kind === "Error" && /out of resource|timed out/.test(m.what)) {
       const text = source[m.line - 1]?.trim() ?? "";
       fail(m.line, text.startsWith("ensures") ? clause(m.line) : "the prover ran out of resources", true);
-    } else if (m.kind === "Error") v.errors.add(`${owner(m.line)}: ${m.what}: ${clause(m.line)}`);
-    else if (m.kind === "Warning") v.errors.add(`${owner(m.line)}: ${m.what}`);
+    } else if (m.kind === "Error") v.errors.add(`${regions[m.line - 1]?.def ?? "?"}: ${m.what}: ${clause(m.line)}`);
+    else if (m.kind === "Warning") v.errors.add(`${regions[m.line - 1]?.def ?? "?"}: ${m.what}`);
   });
+  const reported = [...out.matchAll(SUMMARY)].reduce((n, s) => n + Number(s[1]) + [...s[2].matchAll(/\d+/g)].reduce((a, x) => a + Number(x[0]), 0), 0);
+  if (reported !== read) v.errors.add(`Dafny reported ${reported} failures, but ${read} were read from its output`);
   return v;
 }
 
 const verifyArgs = (dfy: string) => ["verify", ...(dfy.includes("Std.") ? ["--standard-libraries"] : []), "--unicode-char:true", ...DAFNY_FLAGS, "--verification-time-limit", String(TIME_LIMIT)];
-const finished = (out: string) => /\d+ verified, \d+ errors?/.test(out);
 
 /**
  * A postcondition that fails is assumed while the later ones of the same
  * definition are checked, so those may pass only because of it. Check each of
  * them again in a copy of the definition that has it as its only postcondition.
  */
-async function recheck(dir: string, dfy: string, file: string, generated: Set<string>, failing: Map<string, Set<number>>): Promise<{ verdict: Verdict; log: string } | undefined> {
+async function recheck(dir: string, { dfy, regions }: Spliced, file: string, failing: Map<string, Set<number>>): Promise<{ verdict: Verdict; log: string } | undefined> {
   const lines = dfy.split("\n");
   let prefix = "isolated";
   while (dfy.includes(prefix)) prefix = `x${prefix}`;
-  const copies: string[] = [];
+  const copies: [string, Region][] = [];
   const copyOf = new Map<string, string>();
   for (const [def, failed] of failing) {
-    const start = lines.findIndex((l) => new RegExp(`^(lemma|method) ${def}\\b`).test(l));
+    const start = lines.findIndex((l, i) => regions[i].generated && new RegExp(`^(lemma|method) ${def}\\b`).test(l));
     const open = lines.findIndex((l, i) => i > start && l === "{");
     if (start < 0 || open < 0) continue;
     const ensures = lines.slice(start + 1, open).map((l, i) => [l, start + 2 + i] as const).filter(([l]) => /^\s*ensures\b/.test(l));
@@ -359,17 +463,51 @@ async function recheck(dir: string, dfy: string, file: string, generated: Set<st
       const name = `${prefix}${copies.length}_${def}`;
       copyOf.set(name, def);
       const header = lines.slice(start, open).filter((l, i) => !/^\s*ensures\b/.test(l) || start + 1 + i === line);
-      copies.push([header[0].replace(new RegExp(`\\b${def}\\b`), name), ...header.slice(1), bodyText].join("\n"));
+      copies.push([[header[0].replace(new RegExp(`\\b${def}\\b`), name), ...header.slice(1), bodyText].join("\n"), { def: name, generated: true }]);
     }
   }
   if (!copies.length) return undefined;
-  const derived = `${dfy.trimEnd()}\n\n${copies.join("\n\n")}\n`;
+  const derived: string[] = dfy.trimEnd().split("\n");
+  const derivedRegions = regions.slice(0, derived.length);
+  for (const [text, r] of copies) for (const l of `\n${text}`.split("\n")) { derived.push(l); derivedRegions.push(r); }
   const name = file.replace(/\.dfy$/, ".isolated.dfy");
-  fs.writeFileSync(path.join(dir, name), derived);
-  const { out } = await runAsync("dafny", [...verifyArgs(derived), "--filter-symbol", prefix, name], dir);
-  const verdict = readVerdict(out, derived, name, new Set([...generated, ...copyOf.keys()]), (n) => copyOf.get(n) ?? n);
+  const text = `${derived.join("\n")}\n`;
+  fs.writeFileSync(path.join(dir, name), text);
+  const { out } = await runAsync("dafny", [...verifyArgs(text), "--filter-symbol", prefix, name], dir);
+  const verdict = readVerdict(out, text, name, derivedRegions, (n) => copyOf.get(n) ?? n);
   if (!finished(out)) verdict.errors.add(`the postconditions checked one by one gave no verdict: ${out.trim().split("\n").slice(-3).join(" / ")}`);
   return { verdict, log: out };
+}
+
+/**
+ * The definitions that rest on an obligation not proved: a lemma assumes every
+ * postcondition of each lemma it calls, so one that calls a lemma with a failing
+ * postcondition, or a lemma that does, proves nothing more than that one does.
+ * Calls are read conservatively, as any mention of the name. Returns, for each
+ * such definition, one obligation it rests on.
+ */
+function restingOn({ dfy, regions }: Spliced, unproved: Map<string, string>): Map<string, string> {
+  const texts = new Map<Region, string[]>();
+  dfy.split("\n").forEach((l, i) => { const t = texts.get(regions[i]); if (t) t.push(l); else texts.set(regions[i], [l]); });
+  // What each definition mentions besides its own declaration; a second mention of its own name is a call to itself.
+  const mentions = new Map<string, string[]>();
+  for (const [r, t] of texts) {
+    const words = tokenize(t.join("\n")).filter((k) => k.kind === "word").map((k) => k.t);
+    if (words.includes(r.def)) words.splice(words.indexOf(r.def), 1);
+    mentions.set(r.def, [...(mentions.get(r.def) ?? []), ...words]);
+  }
+  const failing = new Map<string, string>();
+  for (const [k, def] of unproved) if (!failing.has(def)) failing.set(def, k);
+  const rests = new Map<string, string>();
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const [def, words] of mentions) {
+      if (rests.has(def)) continue;
+      const callee = words.find((w) => failing.has(w) || rests.has(w));
+      if (callee) { rests.set(def, failing.get(callee) ?? rests.get(callee)!); changed = true; }
+    }
+  }
+  return rests;
 }
 
 /**
@@ -391,11 +529,14 @@ async function audit(dir: string, dfy: string, file: string, allowed: Set<string
 // --- one unit --------------------------------------------------------------------
 
 export interface Proof {
+  /** The unit's obligations: the `ensures` of its generated Dafny. */
   total: number;
   /** Obligations not proved, as `<definition>: <clause>`. */
   unproved: string[];
   /** Of those, the ones the prover ran out of resources on. */
   exhausted: string[];
+  /** Of those, the ones whose proof calls, directly or not, a lemma with an obligation not proved: each with one such obligation. */
+  resting: Record<string, string>;
   errors: string[];
   log: string;
   /** The final Dafny, as it was verified. */
@@ -405,6 +546,8 @@ export interface Proof {
 export interface Unit {
   unit: string;
   text: string;
+  /** Hand-written code under src/, whose obligations must be proved: nothing simulates them. */
+  src: boolean;
   /** spec/<name>.proof.dfy or src/<path>.proof.dfy, relative to the project. */
   proofFile: string;
   /** Laws of the units this one imports, as this unit spells them, and the unit that proves each. */
@@ -445,35 +588,42 @@ export async function prove(root: string, u: Unit, offered: { proof?: { file: st
   fs.rmSync(dir, { recursive: true, force: true });
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, u.unit), u.text);
-  // A configuration of our own, so that one further up cannot redirect the proof or relax it.
+  // A configuration of our own, so that one further up cannot redirect the proof or relax it, and a TypeScript
+  // project of our own, so that the project's tsconfig.json cannot add files, globals or options to it.
   fs.writeFileSync(path.join(dir, "lemmascript.json"), JSON.stringify({ "unread-annotations": "error", "run-log": false }));
-  const total = (u.text.match(/^\s*\/\/@ (ensures|invariant) /gm) ?? []).length;
-  const result = (errors: string[], log: string, dfy = ""): Proof => ({ total, unproved: [], exhausted: [], errors, log, dfy });
+  fs.writeFileSync(path.join(dir, "tsconfig.json"), JSON.stringify({
+    compilerOptions: { target: "es2023", lib: ["es2023"], module: "nodenext", strict: true, noEmit: true, allowImportingTsExtensions: true, types: [] },
+    files: [u.unit],
+  }));
+  let total = 0;
+  const result = (errors: string[], log: string, dfy = ""): Proof => ({ total, unproved: [], exhausted: [], resting: {}, errors, log, dfy });
   const generated = await runAsync("lsc", ["gen", "--backend=dafny", u.unit], dir);
   const genFile = path.join(dir, `${file}.gen`);
   if (!generated.ok || !fs.existsSync(genFile)) return result([generated.out.trim().split("\n").slice(-3).join(" / ") || "lsc generated nothing"], generated.out);
   const gen = fs.readFileSync(genFile, "utf8");
+  // Every obligation is an `ensures` of what LemmaScript generated; the imported modules come without theirs.
+  total = (gen.match(/^\s*ensures\b/gm) ?? []).length;
   // Laws proved elsewhere, and the library, are only of use to a proof file.
   const axioms = offered.proof ? offered.laws.flatMap((fn) => lawAxiom(gen, fn) ?? []) : [];
   const axiomNames = new Set(axioms.map((a) => a.match(/^lemma \{:axiom\} (\w+)/)![1]));
-  let dfy: string;
+  let spliced: Spliced;
   try {
-    dfy = splice(gen, { proof: offered.proof, lib: offered.proof && offered.lib, axioms, stepBody: u.transitions && stepBody(gen, u.transitions) }, `gen/proof/${base}/${file}`);
+    spliced = splice(gen, { proof: offered.proof, lib: offered.proof && offered.lib, axioms, stepBody: u.transitions && stepBody(gen, u.transitions) }, `gen/proof/${base}/${file}`);
   } catch (e) {
     return result([(e as Error).message], generated.out);
   }
+  const { dfy } = spliced;
   fs.writeFileSync(path.join(dir, file), dfy);
   // Every unit, with or without a proof file: should LemmaScript ever emit something trusted, it fails here.
   const audited = audit(dir, dfy, file, axiomNames);
   // LemmaScript keeps this .dfy, refuses it unless it is its own fresh output plus added lines, and runs Dafny.
   const checked = await runAsync("lsc", ["check", "--backend=dafny", `--time-limit=${TIME_LIMIT}`, `--extra-flags=${DAFNY_FLAGS.join(" ")}`, u.unit], dir);
   let log = `${generated.out}${checked.out}`;
-  const declared = declaredNames(gen);
-  const v = readVerdict(checked.out, dfy, file, declared);
+  const v = readVerdict(checked.out, dfy, file, spliced.regions);
   // The verdict is Dafny's own summary; without it, or with anything left unexplained, the unit was not checked.
   if (!v.errors.size && (!finished(checked.out) || (!checked.ok && !v.unproved.size))) v.errors.add(checked.out.trim().split("\n").slice(-3).join(" / ") || "lsc produced no verdict");
   if (!v.errors.size && v.failing.size) {
-    const again = await recheck(dir, dfy, file, declared, v.failing);
+    const again = await recheck(dir, spliced, file, v.failing);
     if (again) {
       log += `\n---- each postcondition of a definition with a failure, checked on its own ----\n${again.log}`;
       for (const [k, def] of again.verdict.unproved) v.unproved.set(k, def);
@@ -481,8 +631,20 @@ export async function prove(root: string, u: Unit, offered: { proof?: { file: st
       for (const e of again.verdict.errors) v.errors.add(e);
     }
   }
+  // Every obligation of a generated definition that rests on one not proved is not proved either.
+  const resting: Record<string, string> = {};
+  const lines = dfy.split("\n");
+  for (const [def, on] of restingOn(spliced, v.unproved)) {
+    const start = lines.findIndex((l, i) => spliced.regions[i].def === def && spliced.regions[i].generated);
+    if (start < 0) continue;
+    for (let i = start + 1; i < lines.length && lines[i] !== "{" && spliced.regions[i].def === def; i++) {
+      const m = lines[i].match(/^\s*ensures\s+(.*)$/);
+      const k = m && `${def.replace(/_ensures$/, "")}: ${m[1].trim()}`;
+      if (k && !v.unproved.has(k)) { v.unproved.set(k, def); resting[k] = on; }
+    }
+  }
   const { findings, log: auditLog } = await audited;
   log += `\n---- dafny audit ----\n${auditLog}`;
   for (const f of findings) v.errors.add(f);
-  return { total, unproved: [...v.unproved.keys()], exhausted: [...v.exhausted], errors: [...v.errors], log, dfy };
+  return { total, unproved: [...v.unproved.keys()], exhausted: [...v.exhausted], resting, errors: [...v.errors], log, dfy };
 }

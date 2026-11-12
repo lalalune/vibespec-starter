@@ -9,10 +9,11 @@
     "check": "node tools/spec.ts check",
     "gen": "node tools/spec.ts gen",
     "accept": "node tools/spec.ts accept",
+    "new": "node tools/spec.ts new",
     "demo": "npm run -s gen && node src/demo.ts",
     "selftest": "node --test tools/selftest.ts",
-    "build": "rm -rf dist && tsc -p tsconfig.build.json && mkdir -p dist/proof && cp tools/proof/lib.dfy dist/proof/",
-    "prepare": "npm run build && node tools/spec.ts gen",
+    "build": "node -e \"fs.rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json && node -e \"fs.mkdirSync('dist/proof', { recursive: true }); fs.copyFileSync('tools/proof/lib.dfy', 'dist/proof/lib.dfy')\"",
+    "prepare": "npm run build && node tools/spec.ts gen --if-valid",
     "check:dashboard": "cd examples/dashboard && node ../../tools/spec.ts check",
     "check:fullstack": "cd examples/fullstack && node ../../tools/spec.ts check"
   },

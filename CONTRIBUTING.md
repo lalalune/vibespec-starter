@@ -50,7 +50,7 @@ is generated. The role of a definition comes from its name and signature:
 | `type Order = { … }`, `type Status = A \| B` | the vocabulary | `interface Order`, `type Status = "A" \| "B"` |
 | `pure val initial: Order = …` | the initial state; its type is *the state type*. A spec without one is a library | `initial`, and a proof that it satisfies every `always` rule |
 | `pure def pay(o: Order, amount: int): Order` | a transition: any `pure def` whose first parameter is the state and that returns the state | `pay(o, amount)`, an `Event` variant `{ type: "pay", amount }`, a case in `step`, `enabled` and `parseEvent`, and proofs that it preserves every rule |
-| `pure def canPay(o: Order, amount: int): bool` | the guard of `pay` (same parameters); optional | `canPay`, used by `enabled` and `step`. What is proved about `pay` is proved for the cases the guard allows. A guard may call its own transition to look at the result |
+| `pure def canPay(o: Order, amount: int): bool` | the guard of `pay` (same parameters); optional | `canPay`, used by `enabled` and `step`. What is proved about `pay` is proved for the cases the guard allows. A guard may call its own transition to look at the result. `check` fails if it never allows `pay` in a reachable state, and lists it if it is never seen to refuse |
 | `pure def alwaysPaidWithinDue(o: Order): bool` | a rule that holds in every reachable state | a conjunct of `inv`; simulated and proved |
 | `pure def stepNeverGoesBack(before: Order, after: Order): bool` | a rule about every single step | a postcondition on every transition; simulated and proved |
 | `pure def sometimesPaid(o: Order): bool` | a state that must be reachable | a reachability check with a witness trace |
@@ -143,6 +143,12 @@ Things to know:
 
 - `always` rules alone are satisfied by a system that does nothing. Add a
   `sometimes` rule for each kind of state a story is meant to make possible.
+- A guard that never allows its event makes it impossible, and every rule
+  then holds of it trivially, so nothing else would notice. `check` fails
+  when no simulated state allows one. It also lists guards it never saw
+  refuse their event: such a guard often only restates an `always` rule,
+  which is fine when it protects `enabled` from outside input, or refuses
+  only beyond the simulator's 20 events.
 - `always` rules must hold *inductively*: from any state that satisfies all of
   them, every transition must lead to a state that satisfies all of them. If
   simulation passes but `proof` fails on a transition, a fact about which

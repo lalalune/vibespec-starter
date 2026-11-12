@@ -12,6 +12,10 @@
 // - Dafny has no function extensionality. A lambda copied verbatim from
 //   gen/proof/<unit>/<unit>.dfy is the same term as the generated one; a lambda
 //   that says the same thing in other words, or captures other variables, is not.
+//
+// Dafny makes the module's import visible as ProofLib.Seq; proof files may not
+// use it (tools/prove.ts refuses any ProofLib.<name> this file does not declare),
+// since the standard library holds axioms.
 module ProofLib {
   import Std.Collections.Seq
 

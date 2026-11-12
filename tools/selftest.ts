@@ -3,12 +3,13 @@
 // tools/fixtures/, breaks one thing, and asserts which stage of `check` fails.
 // Run with `npm run selftest`.
 import assert from "node:assert/strict";
+import { execFile, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, describe, test } from "node:test";
 import { parseProofFile, splice } from "./prove.ts";
-import { acceptReviews, check, expandListHelpers, gen, init, parseSpec, readSpecs, replay, show, type Result } from "./spec.ts";
+import { acceptContracts, acceptReviews, check, expandListHelpers, gen, init, parseSpec, pending, pendingContracts, readSpecs, replay, show, type Result } from "./spec.ts";
 
 const project = path.join(import.meta.dirname, "..");
 const read = (file: string) => fs.readFileSync(path.join(project, file), "utf8");
@@ -51,6 +52,7 @@ function copyOfProject(file?: string, edit: (text: string) => string = (s) => s)
   // So that the `types` and `tests` stages run as they do here: with the same compiler and Node types.
   fs.symlinkSync(nodeModules, path.join(root, "node_modules"), "dir");
   for (const spec of readSpecs(root)) acceptReviews(root, spec);
+  acceptContracts(root);
   if (!file) return root;
   const target = path.join(root, file);
   const before = fs.existsSync(target) ? fs.readFileSync(target, "utf8") : "";
@@ -62,10 +64,11 @@ function copyOfProject(file?: string, edit: (text: string) => string = (s) => s)
 
 /** Check a project: the stages that failed, and what a stage said that matches a pattern. */
 async function run(root: string, accept: false | "reviews" | "unproved" = false) {
-  const { results } = await check(root, accept);
+  const { results, next } = await check(root, accept);
   const text = results.map(show).join("\n");
   return {
     text,
+    next,
     failed: [...new Set(results.filter((r) => !r.ok).map((r) => r.stage))],
     said: (stage: Result["stage"], pattern: RegExp) => results.find((r) => r.stage === stage && pattern.test(`${r.summary}\n${r.detail}`)),
   };
@@ -79,9 +82,15 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.deepEqual(failed, ["review"], text);
   });
 
-  test("a missing guard is found by simulation, as a trace", async () => {
-    const failed = await failedStages("spec/order.md", (s) => s.replace("o.status == Draft and o.units > 0", "o.status == Draft"));
-    assert.ok(failed.includes("always"), failed.join());
+  test("a missing guard is found by simulation, as a trace that the same seed gives again, and the later stages say they were skipped", async () => {
+    const root = copyOfProject("spec/order.md", (s) => s.replace("o.status == Draft and o.units > 0", "o.status == Draft"));
+    const [first, again] = [await run(root), await run(root)];
+    const trace = first.said("always", /./);
+    assert.equal(trace?.ok, false, first.text);
+    assert.match(trace!.detail, /seed \d+; to simulate again: npx quint run gen\/order\.run\.qnt .* --seed \d+/);
+    assert.equal(again.said("always", /./)?.detail, trace!.detail, "the same harness gives the same trace");
+    assert.ok(first.said("skipped", /^types, proof and tests: /), first.text);
+    assert.match(first.next, /^always \(spec\/order\.md\) is the first ✗/);
   });
 
   test("a rule set that holds in simulation but is not inductive is caught by the proof", async () => {
@@ -92,6 +101,28 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
   test("rules too strict to ever reach a goal are caught by a `sometimes` rule", async () => {
     const failed = await failedStages("spec/order.md", (s) => s.replace("o.paid + amount <= o.due", "o.paid + amount < o.due"));
     assert.ok(failed.includes("sometimes"), failed.join());
+  });
+
+  test("a guard that never allows its event is caught, although every rule holds of the event trivially", async () => {
+    // Cancelling refunds every payment, so a reopen that needs money paid can never happen.
+    const { failed, text, said } = await run(copyOfProject("spec/order.md", (s) => s.replace("canReopen(o: Order): bool = o.status == Cancelled", "canReopen(o: Order): bool = o.status == Cancelled and o.paid > 0")));
+    assert.ok(failed.includes("sometimes"), text);
+    assert.ok(said("sometimes", /reopen in .* never happened: its guard canReopen refused it/), text);
+  });
+
+  test("a guard that needs values the simulator does not try says which to define", async () => {
+    const { text, said } = await run(copyOfProject("spec/order.md", (s) => s.replace("o.status == Pending and amount > 0 and neverMoreThanPaid", "o.status == Pending and amount > 6 and neverMoreThanPaid")));
+    assert.ok(said("sometimes", /takeBack in .* never happened: .*define amountValues/), text);
+    assert.ok(!/\bpay in .* never happened/.test(text), text);
+  });
+
+  test("a guard that never refuses its event is reported without failing", async () => {
+    // Every reachable lamp has counted its flips, so this guard restates a rule and restricts nothing.
+    const { failed, text, said } = await run(fixtures(["lamp"], (f) => {
+      f["spec/lamp.md"] = f["spec/lamp.md"].replace("pure def toggle(", "pure def canToggle(l: Lamp): bool = l.flips >= 0\npure def toggle(");
+    }));
+    assert.deepEqual(failed, ["review"], text);
+    assert.ok(said("sometimes", /never seen to refuse it .*: canToggle\b/), text);
   });
 
   test("prose edited without the model is flagged for review, and nothing else", async () => {
@@ -192,6 +223,11 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.ok(said("review", /  Story: Wrap\n\s+story has no rules/), text);
   });
 
+  test("a helper lemma whose header ends in a cardinality is read as having a body", () => {
+    const lemmas = parseProofFile("lemma L(xs: seq<int>)\n  ensures |xs| >= 0\n  decreases |xs|\n{\n}\n", "p.dfy");
+    assert.deepEqual(lemmas.map((l) => l.name), ["L"]);
+  });
+
   test("a machine whose state holds a library's type can be imported under a name", async () => {
     const spec = (title: string, quint: string) => `# ${title}\n\n## Story\n\n### ${title}\n\n${F}quint\n${quint}\n${F}\n`;
     const root = scratch({
@@ -223,7 +259,9 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     // Once the unproved obligations are recorded, only the review is left.
     // Hand-written code proved against the shop says that it rests on what is simulated only there.
     const recorded = shop((f) => { f["src/count.ts"] = 'import { type Cart } from "../gen/shop.ts";\n//@ pure\nexport function count(c: Cart): number {\n  //@ ensures \\result === c.count\n  return c.count;\n}\n'; });
-    await check(recorded, "unproved");
+    const recording = await check(recorded, "unproved");
+    const ledger = recording.results.find((r) => r.stage === "proof" && /^spec\/unproved\.lock\.json: [1-9]\d* added, 0 removed$/.test(r.summary));
+    assert.match(ledger?.detail ?? "", /^    \+ shop\.ts: /m, recording.results.map(show).join("\n"));
     const accepted = await run(recorded);
     assert.deepEqual(accepted.failed, ["review"], accepted.text);
     assert.ok(accepted.said("proof", /^src-count\.ts: all 1 obligations proved for all states and inputs, assuming the obligations that are simulated only \([^)]*\d+ of shop\.ts\)/), accepted.text);
@@ -396,7 +434,7 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.equal(parseProofFile("// a comment\nlemma A(xs: seq<int>)\n  ensures forall i {:trigger xs[i]} :: 0 <= i < |xs| ==> xs[i] == xs[i]\n{\n  reveal F();\n  calc { 1; 1; }\n  forall i | 0 <= i < |xs| ensures xs[i] == xs[i] {}\n  assert true by { var x := 1; if x > 0 { } match xs { case _ => } }\n}\n", "p.dfy").length, 1);
 
     const gen = "function f(x: int): int\n{\n  x\n}\n\nlemma f_ensures(x: int)\n  ensures (f(x) >= x)\n{\n}\n";
-    const spliced = (text: string) => splice(gen, { proof: { file: "p.dfy", text }, axioms: [] });
+    const spliced = (text: string) => splice(gen, { proof: { file: "p.dfy", text }, axioms: [] }).dfy;
     // A body goes inside the generated lemma; a helper is appended; nothing generated changes.
     const out = spliced("lemma f_ensures(x: int)\n  ensures (f(x) >= x)   // spacing and comments do not matter\n{\n  Helper(x);\n}\nlemma Helper(x: int) ensures f(x) == x { }\n");
     assert.ok(out.startsWith(gen.replace("{\n}\n", "{\n  Helper(x);\n}\n")), out);
@@ -417,14 +455,14 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
 
   test("verified code cannot assume, or import a look-alike of the generated module", async () => {
     const assumed = await failedStages("src/ledger.ts", (s) => s.replace("return order.due - order.paid;", "//@ assume false\n  return order.paid - order.due;"));
-    assert.deepEqual(assumed, ["proof", "tests"]); // the code is also wrong, and the application's tests say so
+    assert.deepEqual(assumed, ["proof", "tests", "review"]); // the code is also wrong, and the new //@ line is a changed contract
     const lookalike = await run(copyOfProject("src/ledger.ts", (s) => s.replace('"../gen/order.ts"', '"./order.ts"')));
     assert.ok(lookalike.said("proof", /may only import generated modules/), lookalike.text);
   });
 
   test("verified code in a subdirectory of src is proved too", async () => {
     const failed = await failedStages("src/deep/owed.ts", () => 'import { type Order } from "../../gen/order.ts";\n//@ pure\nexport function owed(o: Order): number {\n  //@ ensures \\result > 0\n  return o.due - o.paid;\n}\n');
-    assert.deepEqual(failed, ["proof"]);
+    assert.deepEqual(failed, ["proof", "review"]); // and its contract is new
   });
 
   test("hand-written logic that breaks its contract is caught by the proof", async () => {
@@ -478,5 +516,121 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     fs.writeFileSync(path.join(root, "gen/renamed.ts"), "export const stale = true;\n");
     await check(root);
     assert.deepEqual(fs.readdirSync(path.join(root, "gen")).filter((f) => f.endsWith(".ts")), ["order.ts"]);
+  });
+
+  test("a story's text, a definition a rule relies on, here or in an imported spec, and a src contract are each reviewed", () => {
+    const root = copyOfProject();
+    const items = () => readSpecs(root).flatMap((spec) => pending(root, spec).map((p) => `${p.where.split("  ")[1]}: ${p.status}${p.note ?? ""}`));
+    const edit = (file: string, change: (s: string) => string) => fs.writeFileSync(path.join(root, file), change(fs.readFileSync(path.join(root, file), "utf8")));
+    assert.deepEqual(items(), []);
+    const original = read("spec/order.md");
+    edit("spec/order.md", (s) => s.replace("so that I can buy\n> several things in one go.", "so that I can buy\n> many things at once."));
+    assert.deepEqual(items(), ["Story: Fill a draft: story changed"]);
+    edit("spec/order.md", () => original.replace("pure val unitPrice = 5", "pure val unitPrice = 7"));
+    const moved = items();
+    assert.ok(moved.includes("Domain / Unit price and order size: model changed"), moved.join("\n"));
+    assert.ok(moved.includes("Story: Fill a draft / Items can only be added to a draft: model changed through unitPrice, maxUnits (Domain / Unit price and order size)")
+      || moved.includes("Story: Fill a draft / Items can only be added to a draft: model changed through maxUnits, unitPrice (Domain / Unit price and order size)"), moved.join("\n"));
+    assert.ok(moved.includes("Story: Fill a draft / The amount due is always the price of the units: model changed through unitPrice (Domain / Unit price and order size)"), moved.join("\n"));
+    assert.ok(!moved.some((m) => m.startsWith("Story: Check out / A payment never exceeds the balance")), "a rule that does not use the price is not flagged");
+
+    // Across specs: a change to a library definition flags the rules that use it.
+    const shop = fixtures(["lib", "shop"]);
+    for (const spec of readSpecs(shop)) acceptReviews(shop, spec);
+    fs.writeFileSync(path.join(shop, "spec/lib.md"), read("tools/fixtures/lib.md").replace("acc + x)", "x + acc)"));
+    const flagged = readSpecs(shop).flatMap((spec) => pending(shop, spec).map((p) => `${p.where.split("  ")[1]}: ${p.status}${p.note ?? ""}`));
+    assert.ok(flagged.includes("Story: Fill a cart / A cart holds lines: model changed through total (spec/lib.md: Sums / The total of a list)"), flagged.join("\n"));
+
+    // The //@ lines of hand-written code: changed, new, and gone, whether the file loses them or is deleted.
+    const contract = () => pendingContracts(root).map((p) => `${p.where}: ${p.status}`);
+    assert.deepEqual(contract(), []);
+    edit("src/ledger.ts", (s) => s.replace("  //@ ensures \\result >= 0\n", ""));
+    fs.writeFileSync(path.join(root, "src/extra.ts"), "//@ pure\nexport function one(): number {\n  //@ ensures \\result === 1\n  return 1;\n}\n");
+    assert.deepEqual(contract(), ["src/extra.ts: new contract", "src/ledger.ts: contract changed"]);
+    acceptContracts(root);
+    edit("src/ledger.ts", (s) => s.replace(/^.*\/\/@.*\n/gm, ""));
+    fs.rmSync(path.join(root, "src/extra.ts"));
+    assert.deepEqual(contract(), ["src/extra.ts: contract removed", "src/ledger.ts: contract removed"]);
+  });
+
+  test("accept records a changed story and a changed contract, after which nothing is left to reconcile", async () => {
+    const root = copyOfProject("src/ledger.ts", (s) => s.replace("  //@ ensures order.status === \"Paid\" ==> \\result === 0\n", ""));
+    fs.writeFileSync(path.join(root, "spec/order.md"), read("spec/order.md").replace("> get my money back.", "> get all my money back."));
+    const before = await run(root);
+    assert.deepEqual(before.failed, ["review"], before.text);
+    assert.ok(before.said("review", /story changed/) && before.said("review", /src\/ledger\.ts\n\s+contract changed/), before.text);
+    assert.match(before.next, /npm run accept/);
+    await check(root, "reviews");
+    const after = await run(root);
+    assert.deepEqual(after.failed, [], after.text);
+    assert.equal(after.next, "all green");
+  });
+
+  test("a second check in the same project is refused, a lock left by a process that ended is taken over, and unused cache entries go", async () => {
+    const root = fixtures(["door"]);
+    const lock = path.join(root, ".spec-cache/lock");
+    fs.mkdirSync(path.dirname(lock), { recursive: true });
+    fs.writeFileSync(lock, `${process.pid}\n`);
+    await assert.rejects(check(root), /another check or accept is running in this project \(process \d+\)/);
+    fs.writeFileSync(lock, `${spawnSync(process.execPath, ["-e", ""]).pid}\n`);
+    const unused = path.join(root, ".spec-cache/000000000000000000000000.json");
+    fs.writeFileSync(unused, "{}");
+    const { failed, text } = await run(root);
+    assert.deepEqual(failed, ["review"], text);
+    assert.ok(!fs.existsSync(lock), "the lock is released");
+    assert.ok(!fs.existsSync(unused), "a cache entry the run did not use is deleted");
+    assert.ok(fs.readdirSync(path.dirname(lock)).length > 0, "the entries it used are kept");
+  });
+
+  test("the command line: spec new, the arguments it accepts, gen --if-valid and check --json", async () => {
+    const cli = (root: string, ...args: string[]) => new Promise<{ status: number; stdout: string; stderr: string }>((done) =>
+      execFile(process.execPath, [path.join(project, "tools/spec.ts"), ...args], { cwd: root, maxBuffer: 1 << 26 }, (e, stdout, stderr) => done({ status: e ? Number(e.code) : 0, stdout, stderr })));
+    const root = scratch({});
+    assert.equal((await cli(root, "new", "Tally")).status, 1);
+    assert.equal((await cli(root, "new", "src")).status, 1);
+    assert.equal((await cli(root, "new", "tally")).status, 0);
+    assert.match((await cli(root, "new", "tally")).stderr, /spec\/tally\.md already exists/);
+    assert.equal((await cli(root, "accept", "unprovd")).status, 2);
+    assert.equal((await cli(root, "check", "--everything")).status, 2);
+    // The starter spec passes every stage but review, and proves without a proof file.
+    const checked = JSON.parse((await cli(root, "check", "--json")).stdout);
+    assert.deepEqual([...new Set(checked.results.filter((r: Result) => !r.ok).map((r: Result) => r.stage))], ["review"], JSON.stringify(checked, null, 2));
+    for (const stage of ["model", "always", "sometimes", "replay", "proof"]) assert.ok(checked.results.some((r: Result) => r.stage === stage && r.ok), stage);
+    assert.match(checked.next, /npm run accept/);
+    fs.appendFileSync(path.join(root, "spec/tally.md"), `\n### Broken\n\n${F}quint\npure def\n${F}\n`);
+    const lenient = await cli(root, "gen", "--if-valid");
+    assert.equal(lenient.status, 0, lenient.stderr);
+    assert.match(lenient.stdout, /^note: gen\/ was not generated/);
+    assert.equal((await cli(root, "gen")).status, 1);
+  });
+
+  test("parseState admits exactly a value with the state's shape that keeps every rule, as a fresh copy", async () => {
+    const root = fixtures(["stock", "parcel"]);
+    const models = new Map();
+    for (const spec of readSpecs(root)) gen(root, spec, models);
+    const stock = await import(path.join(root, "gen/stock.ts"));
+    const parcel = await import(path.join(root, "gen/parcel.ts"));
+    const kept = { levels: { $a: 2 }, known: ["a"] };
+    const parsed = stock.parseState(kept);
+    assert.deepEqual(parsed, kept);
+    assert.ok(parsed !== kept && parsed.levels !== kept.levels, "a fresh copy");
+    assert.equal(stock.level(parsed, "a"), 2);
+    const refused = [
+      undefined, null, "state", [], { levels: { a: 2 }, known: ["a"] }, { levels: { $a: 1.5 }, known: ["a"] }, { levels: [], known: [] },
+      { ...kept, extra: 1 }, { levels: { $a: -1 }, known: ["a"] }, // the last has the right shape but breaks alwaysNoLevelIsNegative
+    ];
+    for (const x of refused) assert.equal(stock.parseState(x), undefined, JSON.stringify(x));
+    assert.deepEqual(parcel.parseState({ tag: "Packed", weight: 1, labels: ["fragile"] }), { tag: "Packed", weight: 1, labels: ["fragile"] });
+    for (const x of [{ tag: "Packed", weight: 1, labels: ["a", "a"] }, { tag: "Lost", weight: 1 }, { tag: "Shipped", weight: 1, labels: [], hops: -1 }, { tag: "Gone" }])
+      assert.equal(parcel.parseState(x), undefined, JSON.stringify(x));
+  });
+
+  test("a fence of any length or kind holds prose, and closes only with its own kind and length", () => {
+    const four = "`".repeat(4);
+    const root = scratch({ "spec/f.md": `# F\n\n## Story\n\n### Real\n\n${F}quint\npure val a = 1\n${F}\n\n${four}markdown\n### Not a rule\n${F}quint\npure val b = 2\n${F}\n${four}\n\n~~~\n### Nor this\n${F}\n~~~\n\n### Also real\n\n${F}quint\npure val c = 3\n${F}\n` });
+    const spec = parseSpec(root, "spec/f.md");
+    assert.deepEqual(spec.rules.map((r) => r.key), ["Story / Real", "Story / Also real"]);
+    assert.deepEqual(spec.rules.flatMap((r) => r.defs), ["a", "c"]);
+    assert.match(spec.rules[0].prose, /### Not a rule[\s\S]*### Nor this/);
   });
 });

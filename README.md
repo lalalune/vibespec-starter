@@ -76,7 +76,7 @@ their failures would only restate the first one.
 |---|---|---|
 | `model` | Is the spec well-typed and inside the supported subset? | exact; anything unsupported is refused by name |
 | `always` | Does a reachable state break an `always` rule, a step break a `step` rule, or a sampled argument break a law? | 12,000 random traces, plus every witness search below, which stops at a broken rule too; a failure comes with the shortest trace |
-| `sometimes` | Can each `sometimes` goal be reached at all? | a witness trace is a proof |
+| `sometimes` | Can each `sometimes` goal be reached at all? Does each guard allow its event in some reachable state? | a witness trace is a proof; a failure means 200,000 traces of 20 events found none. Guards never seen to refuse their event are listed, not failed |
 | `replay` | Does the generated TypeScript mean what the Quint means? | 400 sampled traces: every state, every law tried, and the result of every definition the simulator can evaluate. Definitions it cannot evaluate are listed |
 | `types` | Does the application fit the generated contract? | exact |
 | `proof` | Does every transition preserve every `always` and `step` rule, does every law hold, and does hand-written logic meet its `//@` contract? | all states, all inputs, counted per obligation under a fixed resource limit. What Dafny cannot prove alone is proved in a proof file (`spec/<name>.proof.dfy`: lemmas only, checked to add nothing but proof), or listed; a listed obligation passes only once the user records it in `spec/unproved.lock.json`, for that text of the unit |

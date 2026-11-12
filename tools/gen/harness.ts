@@ -7,7 +7,7 @@ import { fail, type Json, type Types } from "./types.ts";
 export interface Eval { name: string; params: (Param & { from: "state" | "prev" | "pick" })[]; result: Json }
 
 /** Values the simulator tries for a parameter of each scalar type (the proof covers all values). */
-const SAMPLES: Record<string, string> = { int: "(-1).to(6)", bool: "Set(true, false)", str: 'Set("", "a", "b")' };
+const TRIED: Record<string, string> = { int: "(-1).to(6)", bool: "Set(true, false)", str: 'Set("", "a", "b")' };
 
 export function harness(
   module: string, source: string, imports: string[], funs: Json[], sig: (d: Json) => { params: Param[]; result: Json },
@@ -25,7 +25,7 @@ export function harness(
         const of = byType(t.elem);
         return `Set(List()).union(${of}.map(x => List(x))).union(tuples(${of}, ${of}).map(p => List(p._1, p._2)))`;
       }
-      return SAMPLES[t.kind] ?? fail(`parameter ${p.name}: the simulator has no values to try for type ${t.kind}; define \`pure val ${p.name}Values = Set(...)\` in the spec`);
+      return TRIED[t.kind] ?? fail(`parameter ${p.name}: the simulator has no values to try for type ${t.kind}; define \`pure val ${p.name}Values = Set(...)\` in the spec`);
     };
     return byType(p.type);
   };
@@ -92,6 +92,13 @@ export function harness(
     `  val inv = and { lawsHold, ${[...always.map((a) => `M::${a}(state)`), ...steps.map((r) => `(not(moved) or M::${r}(prev, state))`), "true"].join(", ")} }`,
     // A witness search also stops at a broken rule, so that no run can step over one unreported.
     ...sometimes.map((w) => `  val never_${w} = inv and not(M::${w}(state))`),
+    // A guard's witnesses, for the `probe` step: breaking `never_allows_X` shows a reachable state and values for
+    // which X allows its event, breaking `never_refuses_X` one for which it refuses it. Each reads the result the
+    // last evaluation recorded, so a state costs the same however many values a parameter could take.
+    ...transitions.flatMap((t) => (t.guard && evals.some((v) => v.name === t.guard) ? [
+      `  val never_allows_${t.guard} = match out { | Out_${t.guard}(r) => not(r) | _ => true }`,
+      `  val never_refuses_${t.guard} = match out { | Out_${t.guard}(r) => r | _ => true }`,
+    ] : [])),
     `}`,
     ``,
   ].join("\n");
