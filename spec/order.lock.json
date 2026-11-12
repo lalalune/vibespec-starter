@@ -1,6 +1,6 @@
 {
   "Domain / Order": ["9d6706e1f76c","d02e01a6abc7"],
-  "Domain / Unit price and order size": ["0868c02b553c","448dad55475c"],
+  "Domain / Unit price and order size": ["b379b561a46f","2cad7b773520"],
   "Story: Fill a draft / A new order is an empty draft": ["e3b0c44298fc","fcaa192ed2cd"],
   "Story: Fill a draft / Items can only be added to a draft": ["afe2cb7e3509","60ffdb8791d1"],
   "Story: Fill a draft / The amount due is always the price of the units": ["e3b0c44298fc","7626b0a4ba06"],
@@ -17,5 +17,6 @@
   "Story: Change my mind / No more can be removed than the order holds": ["30ac180c4a4b","a5d2b385360a"],
   "Story: Reopen a cancelled order / A cancelled order can be reopened as a draft": ["86a9cd7b8a2e","9f66d029e613"],
   "Story: Take back a payment / Part of what was paid on a pending order can be taken back": ["df9450cb4332","dba6745d448a"],
-  "Story: Take back a payment / No more can be taken back than was paid": ["e855cfe01313","aaa433f0c9c6"]
+  "Story: Take back a payment / No more can be taken back than was paid": ["e855cfe01313","aaa433f0c9c6"],
+  "Story: Start over / A draft that holds items can be emptied in one go": ["e3b0c44298fc","cdd0e9bc2d56"]
 }

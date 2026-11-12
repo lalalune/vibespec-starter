@@ -34,8 +34,8 @@ and proves two hand-written functions against that contract.
 
 Needs Node 24+ and [Dafny](https://github.com/dafny-lang/dafny) 4+ on the path
 (`brew install dafny`, or see Dafny's install page). `npm run sync` also needs
-an agent: by default Claude Code (`claude`, signed in), or a local Ollama
-model with no account at all (see CONTRIBUTING.md).
+an agent: Claude Code (`claude`, signed in) if available, otherwise a local
+Ollama model with no account at all (see CONTRIBUTING.md).
 
 ```sh
 npm install        # also generates gen/, so editors resolve imports

@@ -17,11 +17,11 @@ type Order = { status: Status, units: int, due: int, paid: int }
 
 ### Unit price and order size
 
-Every unit costs the same, and one order holds at most 50 units.
+Every unit costs the same, and one order holds at most 40 units.
 
 ```quint
 pure val unitPrice = 5
-pure val maxUnits = 50
+pure val maxUnits = 40
 ```
 
 ## Story: Fill a draft
@@ -201,4 +201,16 @@ back more than they had paid, which left a negative amount paid.
 
 ```quint
 pure def neverMoreThanPaid(o: Order, amount: int): bool = amount <= o.paid
+```
+
+## Story: Start over
+
+> As a shopper, I want to empty my draft in one go, so that I can start again
+> without removing items one at a time.
+
+### A draft that holds items can be emptied in one go
+
+```quint
+pure def canEmpty(o: Order): bool = o.status == Draft and o.units > 0
+pure def empty(o: Order): Order = { ...o, units: 0, due: 0 }
 ```

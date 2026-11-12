@@ -134,16 +134,18 @@ Tests for the shell go in `test/*.test.ts` and run with Node's test runner.
 
 ## Choosing the agent for `npm run sync`
 
-`sync` runs the command in `SPEC_AGENT`, in the repository root, with the
-brief and the check report on stdin. The command must be able to read and
-edit files. The default is Claude Code in headless mode:
+With no configuration, `sync` uses Claude Code in headless mode (`claude -p`)
+and, if that is not installed or not signed in, falls back to a local Ollama
+model and says so. To choose the agent yourself, set `SPEC_AGENT` to any
+command that reads the brief and check report on stdin, runs in the
+repository root, and can read and edit files:
 
 ```sh
 SPEC_AGENT="claude -p --permission-mode acceptEdits --allowedTools Read,Edit,Write,Grep,Glob" npm run sync
 ```
 
-With no account, a local [Ollama](https://ollama.com) model can do the
-simpler translations. Start `ollama serve`, then:
+The local [Ollama](https://ollama.com) fallback needs no account and can do
+the simpler translations. Start `ollama serve`; to use it on purpose:
 
 ```sh
 SPEC_AGENT="node tools/agent-ollama.ts" npm run sync     # OLLAMA_MODEL picks the model, default qwen2.5:7b

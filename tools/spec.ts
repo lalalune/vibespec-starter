@@ -347,7 +347,11 @@ const readSpecs = (root: string) =>
 
 // --- sync: the generative half ---------------------------------------------------------
 
-const DEFAULT_AGENT = "claude -p --permission-mode acceptEdits --allowedTools Read,Edit,Write,Grep,Glob";
+// Tried in order until one runs: Claude Code if it is installed and signed in, else a local Ollama model.
+const DEFAULT_AGENTS = [
+  ["claude", "-p", "--permission-mode", "acceptEdits", "--allowedTools", "Read,Edit,Write,Grep,Glob"],
+  [process.execPath, path.join(import.meta.dirname, "agent-ollama.ts")],
+];
 const ROUNDS = 5;
 const BRIEF = `You maintain this repository's spec. Read AGENTS.md and CONTRIBUTING.md first and follow them.
 Below is the report from \`npm run check\`. Resolve every line marked ✗ by editing files, mainly spec/*.md:
@@ -367,7 +371,7 @@ End with three short lists: rules added, rules discovered by the checks, rules c
  * is left. The agent translates; \`npm run accept\` remains the person's decision.
  */
 async function sync(root: string): Promise<boolean> {
-  const AGENT = process.env.SPEC_AGENT ?? DEFAULT_AGENT;
+  let agents = process.env.SPEC_AGENT ? [process.env.SPEC_AGENT.split(" ")] : DEFAULT_AGENTS;
   for (let round = 1; round <= ROUNDS; round++) {
     const lines: string[] = [];
     if (await check(root, (l) => lines.push(l))) {
@@ -391,9 +395,14 @@ async function sync(root: string): Promise<boolean> {
       return status ? [`RULE "${r.key}" (${status})\nits prose now:\n${r.prose.trim() || "(only the heading)"}\nits Quint now:\n${r.code.trim()}\nEND RULE`] : [];
     });
     const input = BRIEF + report + (moved.length ? `\n\nThe rules that changed, both halves:\n\n${moved.join("\n\n")}` : "");
-    const [cmd, ...args] = AGENT.split(" ");
-    const agent = spawnSync(cmd, args, { cwd: root, encoding: "utf8", input, stdio: ["pipe", "inherit", "inherit"] });
-    if (agent.status !== 0) throw new Error(`the agent command failed (${AGENT}); set SPEC_AGENT to a command that reads a prompt on stdin and may edit files`);
+    for (;;) {
+      const [cmd, ...args] = agents[0];
+      const agent = spawnSync(cmd, args, { cwd: root, encoding: "utf8", input, stdio: ["pipe", "inherit", "inherit"] });
+      if (agent.status === 0) break;
+      if (agents.length === 1) throw new Error(`no agent could run (last tried: ${path.basename(cmd)}); sign in to Claude Code, start \`ollama serve\`, or set SPEC_AGENT to a command that reads a prompt on stdin and may edit files`);
+      agents = agents.slice(1);
+      console.log(`--- ${path.basename(cmd)} could not run; using ${path.basename(agents[0].at(-1)!)} instead ---`);
+    }
   }
   console.log(`not synced after ${ROUNDS} rounds; run \`npm run check\` to see what is left`);
   return false;
