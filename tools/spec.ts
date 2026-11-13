@@ -5,11 +5,11 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Model } from "./gen.ts";
 import { LIB_FILE, prove, run, type Proof } from "./prove.ts";
-import { readSpecs, badSpecName, type Spec } from "./parse.ts";
+import { readSpecs, badSpecName, isStd, located, type Spec } from "./parse.ts";
 import { contracts, pending, pendingContracts, acceptReviews, acceptContracts, moved, showPending, ledgerFile, readLedger, writeLedger, type Pending, type Accepted } from "./review.ts";
 import { entry, remembered, collectGarbage, dafnyVersion, type Memory } from "./cache.ts";
 import { gen, generated, typecheckAll, proofUnits, strayProofFiles } from "./units.ts";
-import { SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, STEPS, DEPTHS, SEARCHED, simulate, search, firstBreak, showTrace, replay, type Step } from "./simulate.ts";
+import { SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, LASSO_TRACES, STEPS, DEPTHS, SEARCHED, simulate, search, firstBreak, lasso, showTrace, replay, type Step } from "./simulate.ts";
 import { sha, indent, tests, readSrc, type SrcFile } from "./util.ts";
 
 export { readSpecs, badSpecName, parseSpec, scanSpec, expandListHelpers, type Spec, type Rule, type Story } from "./parse.ts";
@@ -140,13 +140,13 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
       continue;
     }
     valid.push(spec);
-    const parts = [[model.transitions.length, "transitions"], [model.always.length, "always"], [model.steps.length, "step"], [model.sometimes.length, "sometimes"], [model.laws.length, "laws"]];
+    const parts = [[model.transitions.length, "transitions"], [model.always.length, "always"], [model.steps.length, "step"], [model.leadsTo.length, "leadsTo"], [model.sometimes.length, "sometimes"], [model.laws.length, "laws"]];
     report(true, "model", `${spec.file}: ${parts.filter(([n]) => n).map((p) => p.join(" ")).join(", ") || "definitions only"}`, "", spec.file);
     if (!model.stateType && !model.laws.length && !model.evals.length) continue;
 
     // A spec whose model and harness are unchanged, and that passed, is not simulated again.
     const closure = (names: string[]): string => names.map((n) => { const dep = specs.find((x) => x.name === n)!; return closure(dep.imports) + dep.meaning; }).join("");
-    const found = await remembered<Result[]>(memory, entry(root, "simulate", [closure(spec.imports), spec.meaning, model.harness, String([SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, STEPS, ...DEPTHS]), process.env.SPEC_SEED ?? ""]), async () => {
+    const found = await remembered<Result[]>(memory, entry(root, "simulate", [closure(spec.imports), spec.meaning, model.harness, String([SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, LASSO_TRACES, STEPS, ...DEPTHS]), process.env.SPEC_SEED ?? ""]), async () => {
       const said: Result[] = [];
       const say = (ok: boolean, stage: Result["stage"], summary: string, detail = "") => said.push({ ok, stage, summary, detail });
       try {
@@ -172,7 +172,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
         // The rest are independent and overlap. The probe, in which the simulator also evaluates every definition it
         // can, supplies more traces to replay. Each witness search stops at its goal or at a broken rule, whichever
         // comes first (see the harness). All of them finish before anything is reported, failures included.
-        const sim = await simulate(root, model, "inv", REPLAYED, SAMPLES, "step", true);
+        const sim = await simulate(root, model, "inv", model.leadsTo.length ? LASSO_TRACES : REPLAYED, SAMPLES, "step", true);
         const settled = await Promise.allSettled([
           simulate(root, model, "inv", REPLAYED, COMPARED_SAMPLES, "probe", true),
           ...model.sometimes.map((w) => search(root, model, `never_${w}`)),
@@ -216,7 +216,24 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
             else neverAllowed.push({ t, again: found?.again });
           }
         }
-        say(true, "always", `no rule broken in ${SAMPLES + COMPARED_SAMPLES} simulated traces`);
+        // A `leadsTo` rule is broken by a fair run that never gets where it should: one of these traces, then nothing
+        // or a loop for ever (simulate.ts, `lasso`).
+        const runsOf = sim.traces.map((t) => ({ t, ...lasso(domain, model, t) }));
+        const live = runsOf.filter((r) => r.broken).sort((x, y) => x.broken!.end - y.broken!.end)[0];
+        if (live) {
+          const { rule, from, loop, end } = live.broken!;
+          const marks: Record<number, string> = { [from]: `<- ${rule} is owed from here` };
+          marks[loop] = (marks[loop] ? `${marks[loop]}; ` : "<- ") + (loop === end ? "the run may stop here" : "the run goes round from here");
+          const shown = showTrace(live.t.slice(0, end + 1)).split("\n").map((l, i) => (marks[i] ? `${l}   ${marks[i]}` : l)).join("\n");
+          say(false, "always", `a fair run breaks ${cite(rule)}: no state after the one marked is one the rule relates it to, and the run ${loop === end
+            ? "may stop at the last state, since no fair event is possible there. Declare fair the event that should come next (`fair_<event>`), or fix the model"
+            : "may repeat its loop for ever, taking every fair event it must. Fix the model, or declare fair the event that should break the loop (\"strong\" if it is possible only at times)"}`,
+          `${shown}\n      ${sim.again}`);
+          return said;
+        }
+        const loops = runsOf.reduce((n, r) => n + r.loops, 0);
+        say(true, "always", `no rule broken in ${SAMPLES + COMPARED_SAMPLES} simulated traces`
+          + (model.leadsTo.length ? `, and no fair run that stops or loops in ${sim.traces.length} of them breaks a \`leadsTo\` rule (${loops} loops found)` : ""));
         for (const { w, run } of witnesses) {
           const reached = run.broken && run.traces.some((t) => domain[w](t.at(-1)?.state));
           say(reached, "sometimes", reached ? `${w} is reachable`
@@ -272,7 +289,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
       const running = new Map<string, Promise<Proof>>();
       const proofTexts = new Map<string, string | undefined>();
       for (const u of units) {
-        const proofPath = path.join(root, u.proofFile);
+        const proofPath = located(root, u.proofFile);
         const proofText = fs.existsSync(proofPath) ? fs.readFileSync(proofPath, "utf8") : undefined;
         proofTexts.set(u.unit, proofText);
         running.set(u.unit, (async () => {
@@ -356,7 +373,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
   fs.rmSync(loaded, { recursive: true, force: true });
 
   // A spec that is not a valid model has nothing to reconcile yet. Everything is recorded at once, or nothing is.
-  const todos = valid.map((spec) => ({ spec, todo: pending(root, spec, specs) }));
+  const todos = valid.filter((spec) => !isStd(spec.file)).map((spec) => ({ spec, todo: pending(root, spec, specs) }));
   const contractsToDo = pendingContracts(root, srcFiles);
   if (accept) {
     try {

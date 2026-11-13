@@ -41,6 +41,7 @@
   "files": [
     "dist",
     ".claude/skills",
+    "std",
     "README.md",
     "AGENTS.md",
     "CONTRIBUTING.md",

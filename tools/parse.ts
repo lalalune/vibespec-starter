@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { LIST_HELPERS } from "./gen.ts";
+import { BUILTINS } from "./gen/print.ts";
 import { plainText } from "./util.ts";
 
 /** `defs` are the rule's top-level definitions and types; `locals` the names it binds inside a definition (`val x = …` in a body). */
@@ -18,6 +19,12 @@ export interface Import { module: string; alias?: string; star: boolean; names: 
  */
 export interface Spec { name: string; file: string; rules: Rule[]; stories: Story[]; imports: string[]; uses: Import[]; qnt: string; tangled: string; meaning: string }
 
+/** The specs that ship with the tools (std/net.md); a spec imports one as it would one of its own. */
+const PACKAGE = path.join(import.meta.dirname, "..");
+export const isStd = (file: string) => file.startsWith("std/");
+/** Where a spec's file, or its proof file, is: in the project, or in the package for a spec from std/. */
+export const located = (root: string, file: string) => path.join(isStd(file) ? PACKAGE : root, file);
+
 /** Why a name cannot name a spec, or undefined if it can. */
 export function badSpecName(name: string): string | undefined {
   if (!/^[a-z][A-Za-z0-9]*$/.test(name)) return `a spec's file name becomes a module name, so it must look like \`order.md\` or \`orderBook.md\``;
@@ -32,7 +39,7 @@ export function badSpecName(name: string): string | undefined {
  * Markdown file. A fence of any other kind (``` or ~~~, of any length) is
  * prose, and closes only with a fence of the same character at least as long.
  */
-export function parseSpec(root: string, file: string, text = fs.readFileSync(path.join(root, file), "utf8")): Spec {
+export function parseSpec(root: string, file: string, text = fs.readFileSync(located(root, file), "utf8")): Spec {
   const name = path.basename(file, ".md");
   const bad = badSpecName(name);
   if (bad) throw new Error(`${file}: ${bad}`);
@@ -122,7 +129,7 @@ export function parseSpec(root: string, file: string, text = fs.readFileSync(pat
   }
   const tangled = qnt.join("\n");
   try {
-    return { name, file, rules, stories, imports, uses, qnt: expandListHelpers(tangled) + "\n}\n", tangled, meaning: codeOnly(meaning.join("\n")) };
+    return { name, file, rules, stories, imports, uses, qnt: expandBuiltins(expandListHelpers(tangled), name) + "\n}\n", tangled, meaning: codeOnly(meaning.join("\n")) };
   } catch (e) {
     throw new Error(`${file}:${(e as Error).message}`);
   }
@@ -246,18 +253,31 @@ export function scanSpec(text: string): { text: string; kind: LineKind }[] {
   });
 }
 
-/** Every spec, with each one after the specs it imports. */
+/** Expand total collection operations without moving the source lines. */
+function expandBuiltins(text: string, module: string): string {
+  const { code } = scan(text);
+  const used = new Set<string>();
+  const renamed = text.replace(/\.(\w+)\s*\(/g, (call, name: string, at: number) => (code[at] && Object.hasOwn(BUILTINS, name) ? (used.add(name), `.std_${name}_${module}(`) : call));
+  return renamed + [...used].map((n) => `\npure def std_${n}_${module}${BUILTINS[n]}`).join("");
+}
+
+/** Every spec, with each one after the specs it imports; an import that names no spec of the project names one in std/. */
 export function readSpecs(root: string): Spec[] {
   const dir = path.join(root, "spec");
   const files = fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => f.endsWith(".md")).sort() : [];
   if (!files.length) throw new Error(`there are no specs: ${dir} holds no .md file`);
   const all = files.map((f) => parseSpec(root, path.join("spec", f)));
   const ordered: Spec[] = [];
+  const fromStd = (name: string) => {
+    if (!fs.existsSync(located(root, `std/${name}.md`))) return undefined;
+    all.push(parseSpec(root, `std/${name}.md`));
+    return all.at(-1);
+  };
   const visit = (spec: Spec, trail: string[]) => {
     if (ordered.includes(spec)) return;
     if (trail.includes(spec.name)) throw new Error(`specs import each other in a circle: ${[...trail, spec.name].join(" -> ")}`);
     for (const i of spec.imports) {
-      const dep = all.find((s) => s.name === i);
+      const dep = all.find((s) => s.name === i) ?? fromStd(i);
       if (!dep) throw new Error(`${spec.file} imports ${i}, but there is no spec/${i}.md`);
       visit(dep, [...trail, spec.name]);
     }

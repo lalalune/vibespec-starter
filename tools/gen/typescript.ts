@@ -20,8 +20,11 @@ export interface Source {
 
 export function typescript({ header, typedefs, vals, funs, sig, typeOf, doc, local: L }: Source, roles: Roles, types: Types, print: Printer, helper: (which: string) => string): string {
   const { tsType, declaration, wellFormed, copy } = types;
-  const { transitions, always, steps, laws, sender } = roles;
+  const { transitions, always, steps, laws, sender, output } = roles;
   const state = roles.stateType && tsType(roles.stateType);
+  // Where some transition has output, `step` returns it beside the state, and a transition without output outputs nothing.
+  const nothing = output && `([] as ${tsType(output.out)})`;
+  const outputs = (s: string) => (output ? `{ state: ${s}, out: ${nothing} }` : s);
   // Who sent an event is never part of it: the program passes it to `enabled` and `step` from what it trusts.
   const carried = (t: Transition) => t.params.filter((p) => p.name !== SENDER);
   const by = sender ? `, ${SENDER}: ${tsType(sender)}` : "";
@@ -47,9 +50,10 @@ export function typescript({ header, typedefs, vals, funs, sig, typeOf, doc, loc
     // One `ensures` per rule, so a failed proof names the rule that the transition breaks. The transition has no
     // precondition: its guarantees are conditional instead, so that a guard may itself look at the transition's result.
     const given = t && `(${L("inv")}(${params[0].name})${t.guard ? ` && ${L(t.guard)}(${[params[0].name, ...t.guardParams].join(", ")})` : ""}) ==> `;
+    const after = t?.emits ? "\\result.state" : "\\result";
     const contract = t ? [
-      ...always.map((a) => `  //@ ensures ${given}${L(a)}(\\result)`),
-      ...steps.map((r) => `  //@ ensures ${given}${L(r.name)}(${[params[0].name, ...(r.via ? [JSON.stringify(t.name)] : []), "\\result"].join(", ")})`),
+      ...always.map((a) => `  //@ ensures ${given}${L(a)}(${after})`),
+      ...steps.map((r) => `  //@ ensures ${given}${L(r.name)}(${[params[0].name, ...(r.via ? [JSON.stringify(t.name)] : []), after, ...(r.out ? [t.emits ? "\\result.out" : "[]"] : [])].join(", ")})`),
     ] : laws.some((l) => l.name === d.name) ? [`  //@ ensures \\result === true`] : [];
     out.push(
       ``,
@@ -76,13 +80,13 @@ export function typescript({ header, typedefs, vals, funs, sig, typeOf, doc, loc
     `  return false;`,
     `}`,
     ``,
-    `/** Apply an event${sender ? ` from \`${SENDER}\`, whom the program knows from what it trusts, never from the event` : ""}. An event the rules do not allow leaves the state unchanged. */`,
+    `/** Apply an event${sender ? ` from \`${SENDER}\`, whom the program knows from what it trusts, never from the event` : ""}. An event the rules do not allow leaves the state unchanged${output ? "; the result holds the state and what the event output" : ""}. */`,
     `//@ pure`,
-    `export function ${L("step")}(current: ${state}, event: ${L("Event")}${by}): ${state} {`,
+    `export function ${L("step")}(current: ${state}, event: ${L("Event")}${by}): ${output ? tsType(output.type) : state} {`,
     `  //@ requires ${L("inv")}(current)`,
-    `  //@ ensures ${L("inv")}(\\result)`,
-    ...transitions.map((t) => `  if (${when(t)}${t.guard ? ` && ${admits(t)}` : ""}) return ${applies(t)};`),
-    `  return current;`,
+    `  //@ ensures ${L("inv")}(\\result${output ? ".state" : ""})`,
+    ...transitions.map((t) => `  if (${when(t)}${t.guard ? ` && ${admits(t)}` : ""}) return ${t.emits ? applies(t) : outputs(applies(t))};`),
+    `  return ${outputs("current")};`,
     `}`,
     ``,
     `/**`,
@@ -119,16 +123,35 @@ export function typescript({ header, typedefs, vals, funs, sig, typeOf, doc, loc
     `}`,
   );
   // The helpers come last: which are needed is known only once every definition has been printed.
-  print.lookups.forEach((of, i) => out.push(
+  print.lookups.forEach(({ map, key, of, stored }, i) => out.push(
     ``,
     `/** What a map holds for a key, or \`otherwise\` if it holds nothing for it. */`,
     `//@ pure`,
-    `export function ${helper(`lookup${i}`)}(m: Record<string, ${of}>, k: string, otherwise: ${of}): ${of} {`,
-    `  const key = "$" + k;`,
+    `export function ${helper(`lookup${i}`)}(m: ${map}, k: ${key}, otherwise: ${of}): ${of} {`,
+    `  const key = ${stored};`,
     `  return key in m ? m[key] : otherwise;`,
     `}`,
   ));
-  if (print.arithmetic.has("quotient")) out.push(
+  // Only in the code Node runs, which checks what the proof takes as given (Scope.proof in print.ts).
+  if (print.helpers.has("exact")) out.push(
+    ``,
+    `/** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */`,
+    `export function ${helper("exact")}(n: number): number {`,
+    `  if (!Number.isSafeInteger(n)) throw new RangeError(\`an integer result is \${n}, beyond 2^53, where TypeScript cannot hold it exactly\`);`,
+    `  return n;`,
+    `}`,
+  );
+  if (print.helpers.has("equal")) out.push(
+    ``,
+    `/** Equality by structure, as Quint and the proof compare records, lists, maps and variants (none holds a set). */`,
+    `export function ${helper("equal")}(a: unknown, b: unknown): boolean {`,
+    `  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return a === b;`,
+    `  const keys = Object.keys(a);`,
+    `  return Array.isArray(a) === Array.isArray(b) && keys.length === Object.keys(b).length`,
+    `    && keys.every((k) => Object.hasOwn(b, k) && ${helper("equal")}((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]));`,
+    `}`,
+  );
+  if (print.helpers.has("quotient")) out.push(
     ``,
     `/** Whole-number division as Quint does it: towards zero. */`,
     `//@ pure`,
@@ -137,7 +160,7 @@ export function typescript({ header, typedefs, vals, funs, sig, typeOf, doc, loc
     `  return (a < 0 === b < 0 ? 1 : -1) * Math.floor(Math.abs(a) / Math.abs(b)) + 0;`,
     `}`,
   );
-  if (print.arithmetic.has("remainder")) out.push(
+  if (print.helpers.has("remainder")) out.push(
     ``,
     `/** The remainder of that division; it has the sign of the dividend. */`,
     `//@ pure`,

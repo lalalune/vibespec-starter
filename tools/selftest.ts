@@ -90,6 +90,40 @@ const unguarded = (s: string) => s.replace("o.status == Draft and o.units > 0", 
 const notInductive = (s: string) => s.replace(/### Drafts and cancelled orders hold no money[\s\S]*?```\n\n/, "");
 
 describe("each check catches its own kind of mistake", { concurrency: true }, () => {
+  test("collection operations preserve structural equality, total lookups and exact integer results", async () => {
+    const forged = oneRule("forged", "Forged builtin", "pure def std_getOr_forged(m: int -> int, key: int, fallback: int): int = 42\npure def readMap(m: int -> int): int = std_getOr_forged(m, 1, 0)");
+    await assert.rejects(gen(forged, parseSpec(forged, "spec/forged.md")), /reserved for generated collection operations/);
+    const root = oneRule("collections", "Collections", `type Item = { n: int }
+pure def same(a: Item, b: Item): bool = a == b
+pure def itemAt(xs: List[int], i: int): int = xs.nthOr(i, 7)
+pure def remove(xs: List[int], i: int): List[int] = xs.removeAt(i)
+pure def lookup(m: int -> int, key: int): int = m.getOr(key, 9)
+pure def add(a: int, b: int): int = a + b`);
+    const model = await gen(root, parseSpec(root, "spec/collections.md"));
+    const domain = await import(path.join(root, "gen/collections.ts"));
+    assert.equal(domain.same({ n: 1 }, { n: 1 }), true);
+    assert.equal(domain.same({ n: 1 }, { n: 2 }), false);
+    assert.equal(domain.itemAt([3], -1), 7);
+    assert.equal(domain.itemAt([3], 0), 3);
+    assert.deepEqual(domain.remove([1, 2, 3], 1), [1, 3]);
+    assert.deepEqual(domain.remove([1, 2, 3], 4), [1, 2, 3]);
+    assert.equal(domain.lookup({ 1: 3 }, 1), 3);
+    assert.equal(domain.lookup({ 1: 3 }, 2), 9);
+    assert.throws(() => domain.add(Number.MAX_SAFE_INTEGER, 1), RangeError);
+    assert.doesNotMatch(model.render(""), /Number\.isSafeInteger|function exact_/);
+  });
+
+  test("transitions return effects and step rules inspect their order", async () => {
+    const root = fixtures(["mailer"]);
+    const result = await run(root);
+    assert.deepEqual(result.failed, ["review"], result.text);
+    const domain = await import(path.join(root, "gen/mailer.ts"));
+    assert.deepEqual(domain.step(domain.initial, { type: "send", n: 4 }), {
+      state: { sent: 1 }, out: [{ tag: "Saved", n: 4 }, { tag: "Sent", n: 4 }],
+    });
+    assert.deepEqual(domain.step(domain.initial, { type: "send", n: 0 }), { state: domain.initial, out: [] });
+  });
+
   test("a fresh spec with enum and bool parameters and an unguarded transition passes everything but review", async () => {
     const root = fixtures(["door"]);
     const { failed, text } = await run(root);
@@ -277,6 +311,40 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     ];
     const results = await Promise.all(cases.map(([, quint]) => run(oneRule("sample", "Samples", quint))));
     cases.forEach(([what, , message], i) => assert.equal(results[i].said("model", message)?.ok, false, `${what}\n${results[i].text}`));
+  });
+
+  test("event weights and fairness name real events and stay outside generated code; a weight repeats its event in the simulator's choice", async () => {
+    const base = "type S = { n: int }\npure val initial: S = { n: 0 }\npure def add(s: S, k: int): S = { n: s.n + k }\npure def leadsToSome(s: S, later: S): bool = later.n >= s.n\n";
+    const model = (quint: string) => { const root = oneRule("w", "Weights", base + quint); return gen(root, parseSpec(root, "spec/w.md")); };
+    const cases: [string, RegExp][] = [
+      ["pure val weight_nope = 2", /weight_nope .*no transition named nope/],
+      ["pure val weight_add = 0", /weight_add .*a whole number from 1 to 100/],
+      ['pure val fair_add = "always"', /fair_add .*"weak"/],
+      ["pure def leadsToOne(s: S): bool = true", /leadsToOne: a `leadsTo` rule takes a state and a later state/],
+    ];
+    for (const [quint, message] of cases) await assert.rejects(model(quint), message, quint);
+    const weighted = await model('pure val weight_add = 3\npure val fair_add = "weak"');
+    assert.match(weighted.harness, /action step = any \{ add, add, add \}/);
+    assert.doesNotMatch(weighted.ts, /weight_|fair_/);
+    const lone = oneRule("f", "Fair", 'type S = { n: int }\npure val initial: S = { n: 0 }\npure def add(s: S): S = { n: s.n + 1 }\npure val fair_add = "weak"');
+    await assert.rejects(gen(lone, parseSpec(lone, "spec/f.md")), /fairness matters only to `leadsTo` rules/);
+  });
+
+  test("a `leadsTo` rule is broken by a fair run that stops or loops, until the events it waits on are fair; std/net is imported, simulated and proved beside the spec", async () => {
+    const ping = (edit: (s: string) => string = (s) => s) => fixtures(["ping"], (f) => { f["spec/ping.md"] = edit(f["spec/ping.md"]); f["spec/ping.proof.dfy"] = read("tools/fixtures/ping.proof.dfy"); });
+    const [ok, weak, unfair] = await Promise.all([
+      run(ping()),
+      // A copy lost and sent again for ever is a fair loop unless delivery is strongly fair.
+      run(ping((s) => s.replace('fair_deliver = "strong"', 'fair_deliver = "weak"'))),
+      // With nothing fair, a run may stop as soon as the question is asked.
+      run(ping((s) => s.replace(/pure val fair_\w+ = "\w+"\n/g, ""))),
+    ]);
+    assert.deepEqual(ok.failed, ["review"], ok.text);
+    assert.ok(ok.said("always", /no fair run that stops or loops in \d+ of them breaks a `leadsTo` rule \([1-9]\d* loops found\)/), ok.text);
+    assert.ok(ok.said("proof", /^net\.ts: all \d+ obligations proved/), ok.text);
+    assert.ok(!ok.said("review", /std\/net\.md/), ok.text);
+    assert.ok(weak.said("always", /a fair run breaks "Story: Ask until answered \/ A question asked is answered".*may repeat its loop for ever[\s\S]*the run goes round from here/), weak.text);
+    assert.ok(unfair.said("always", /a fair run breaks .*may stop at the last state, since no fair event is possible there/), unfair.text);
   });
 
   test("unsupported or ambiguous shapes are refused before TypeScript chooses a different meaning", async () => {

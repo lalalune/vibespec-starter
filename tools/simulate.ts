@@ -13,6 +13,8 @@ export const SAMPLES = 10000;
 export const WITNESS_SAMPLES = 20 * SAMPLES;
 export const COMPARED_SAMPLES = 2000;
 export const REPLAYED = 200;
+/** Traces of the first simulation kept, for a spec with `leadsTo` rules, to look for runs that break one (`lasso`). */
+export const LASSO_TRACES = 2000;
 export const STEPS = 20; // events per trace
 /** Trace lengths a search for something reachable tries in turn, the longer ones only if the shorter found nothing. */
 export const DEPTHS = [STEPS, 2 * STEPS, 5 * STEPS];
@@ -23,7 +25,11 @@ export interface Step {
   /** A definition the simulator evaluated: what was picked for its sampled parameters, and what Quint got. */
   evaluated?: { name: string; picks: Record<string, unknown>; result: unknown };
   state?: unknown;
+  /** What the event output, in a spec whose transitions may output (AGENTS.md, "Transitions with output"). */
+  out?: unknown[];
   lawsHold?: boolean;
+  /** The fair events this state allows, if the spec declares any. */
+  fair?: string[];
 }
 
 function readTrace(file: string, model: Model): Step[] {
@@ -37,10 +43,12 @@ function readTrace(file: string, model: Model): Step[] {
     const l = model.laws.find((l) => l.name === taken);
     return {
       event: t && { type: t.name, ...picked(t.params) },
-      evaluated: v && { name: v.name, picks: picked(v.params.filter((p) => p.from === "pick")), result: read(v.result, st.out.value) },
+      evaluated: v && { name: v.name, picks: picked(v.params.filter((p) => p.from === "pick")), result: read(v.result, st.outcome.value) },
       law: l && { name: l.name, args: picked(l.params) },
       state: model.stateType ? read(model.stateType, st.state) : undefined,
+      out: model.output && read(model.output.out, st.emitted),
       lawsHold: st.lawsHold,
+      fair: st.fairEnabled?.["#set"],
     };
   });
 }
@@ -137,15 +145,19 @@ export function replay(domain: any, trace: Step[], model?: Model) {
   const canon = (type: any, value: unknown) => (model ? model.canon(type, value) : value);
   let s = domain.initial;
   let before = s;
-  for (const { event, evaluated, law, state, lawsHold } of trace) {
+  let emitted: unknown[] = [];
+  for (const { event, evaluated, law, state, out, lawsHold } of trace) {
     if (event) {
       // Who sent the event travels beside it, as the program passes it (gen/typescript.ts).
       const { [SENDER]: by, ...carried } = event as Record<string, unknown>;
       if (!domain.enabled(s, carried, by)) throw differ(`on whether ${JSON.stringify(event)} is allowed in ${JSON.stringify(s)}`);
-      [before, s] = [s, domain.step(s, carried, by)];
+      const next = domain.step(s, carried, by);
+      // Where transitions output, `step` returns the state and the output (AGENTS.md, "Transitions with output").
+      [before, s, emitted] = model?.output ? [s, next.state, next.out] : [s, next, []];
+      if (model?.output && !isDeepStrictEqual(canon(model.output.out, emitted), out)) throw differ(`on what ${JSON.stringify(event)} outputs in ${JSON.stringify(before)}: TypeScript gives ${JSON.stringify(emitted)}, Quint gives ${JSON.stringify(out)}`);
     } else if (evaluated && model) {
       const v = model.evals.find((v) => v.name === evaluated.name)!;
-      const args = v.params.map((p) => (p.from === "state" ? s : p.from === "prev" ? before : evaluated.picks[p.name]));
+      const args = v.params.map((p) => (p.from === "state" ? s : p.from === "prev" ? before : p.from === "emitted" ? emitted : evaluated.picks[p.name]));
       const got = canon(v.result, domain[v.name](...args));
       if (!isDeepStrictEqual(got, evaluated.result)) throw differ(`on ${v.name}(${args.map((a) => JSON.stringify(a)).join(", ")}): TypeScript gives ${JSON.stringify(got)}, Quint gives ${JSON.stringify(evaluated.result)}`);
     } else if (law && domain[law.name](...Object.values(law.args)) !== lawsHold)
@@ -157,17 +169,53 @@ export function replay(domain: any, trace: Step[], model?: Model) {
 /** The first rule a trace breaks, in the spec's words, and how many steps it took; undefined if it breaks none. */
 export function firstBreak(domain: any, model: Model, trace: Step[], cite: (def: string) => string): { why: string; steps: number } | undefined {
   let before: unknown;
-  for (const [i, { event, law, evaluated, state, lawsHold }] of trace.entries()) {
+  for (const [i, { event, law, evaluated, state, out, lawsHold }] of trace.entries()) {
     const found = (why: string) => ({ why, steps: i + 1 });
     if (law && lawsHold === false) return found(`the law ${cite(law.name)} is false for ${JSON.stringify(law.args)}`);
     if (evaluated?.result === false && lawsHold === false && model.laws.some((l) => l.name === evaluated.name))
       return found(`the law ${cite(evaluated.name)} is false in state ${JSON.stringify(state)} with sampled parameters ${JSON.stringify(evaluated.picks)}`);
     const always = model.always.filter((a) => !domain[a](state)).map(cite);
     if (always.length) return found(`a reachable state breaks ${always.join(", ")}`);
-    const steps = event ? model.steps.filter((r) => !domain[r.name](before, ...(r.via ? [event.type] : []), state)).map((r) => cite(r.name)) : [];
+    const steps = event ? model.steps.filter((r) => !domain[r.name](before, ...(r.via ? [event.type] : []), state, ...(r.out ? [out] : []))).map((r) => cite(r.name)) : [];
     if (steps.length) return found(`a step breaks ${steps.join(", ")}`);
     before = state;
   }
+}
+
+/**
+ * The shortest fair run in a trace that breaks a `leadsTo` rule, and how many loops the trace holds. A run is a lasso: the
+ * trace up to state `end`, then for ever either nothing (`loop === end`), which is fair if that state allows no fair event,
+ * or the states from `loop` to `end`, equal at both ends, again and again, which is fair if it takes every weakly fair
+ * event that each of its states allows and every strongly fair one that any allows. It breaks the rule if some state
+ * `from` on it is followed by none, itself included, that the rule relates it to.
+ */
+export function lasso(domain: any, model: Model, trace: Step[]): { broken?: { rule: string; from: number; loop: number; end: number }; loops: number } {
+  const keys = trace.map((s) => JSON.stringify(s.state));
+  const memo = new Map<string, boolean>();
+  const relates = (rule: string, i: number, j: number) => {
+    const at = `${rule} ${i} ${j}`;
+    if (!memo.has(at)) memo.set(at, domain[rule](trace[i].state, trace[j].state));
+    return memo.get(at)!;
+  };
+  const fair = (loop: number, end: number) => {
+    const allowed = trace.slice(loop, Math.max(end, loop + 1)).map((s) => s.fair ?? []);
+    const taken = trace.slice(loop + 1, end + 1).map((s) => s.event?.type);
+    return [...model.fair].every(([e, how]) => taken.includes(e) || !(how === "weak" ? allowed.every((a) => a.includes(e)) : allowed.some((a) => a.includes(e))));
+  };
+  let loops = 0;
+  for (let end = 0; end < trace.length; end++)
+    for (let loop = 0; loop <= end; loop++) {
+      if (loop < end && keys[loop] !== keys[end]) continue;
+      if (loop < end) loops++;
+      if (!fair(loop, end)) continue;
+      for (const rule of model.leadsTo)
+        for (let from = 0; from <= end; from++) {
+          let answered = false;
+          for (let j = Math.min(from, loop); j <= end && !answered; j++) answered = relates(rule, from, j);
+          if (!answered) return { broken: { rule, from, loop, end }, loops };
+        }
+    }
+  return { loops };
 }
 
 /**
@@ -181,11 +229,11 @@ const changes = (a: any, b: any, at = ""): string[] =>
     ? [...new Set([...Object.keys(a), ...Object.keys(b)])].flatMap((k) => changes(a[k], b[k], at ? `${at}.${k}` : k))
     : [`${at || "state"} = ${JSON.stringify(b)}`];
 
-/** A trace as the initial state, then each event with only what it changed. */
+/** A trace as the initial state, then each event with only what it changed, and what it output if anything. */
 export const showTrace = (trace: Step[]) =>
-  trace.filter((s, i) => i === 0 || s.event || s.lawsHold === false).map(({ event, law, evaluated, state, lawsHold }, i, shown) => {
+  trace.filter((s, i) => i === 0 || s.event || s.lawsHold === false).map(({ event, law, evaluated, state, out, lawsHold }, i, shown) => {
     const { type, ...args } = event ?? { type: "" };
     const what = event ? type + (Object.keys(args).length ? JSON.stringify(args) : "") : law ? `${law.name}${JSON.stringify(law.args)}` : evaluated ? `${evaluated.name}${JSON.stringify(evaluated.picks)}` : "initial";
-    const result = (law || evaluated) && !event ? String(lawsHold) : i ? changes(shown[i - 1].state, state).join(", ") || "no change" : JSON.stringify(state);
+    const result = (law || evaluated) && !event ? String(lawsHold) : i ? [...changes(shown[i - 1].state, state), ...(event && out?.length ? [`out ${JSON.stringify(out)}`] : [])].join(", ") || "no change" : JSON.stringify(state);
     return `      ${what.padEnd(30)} -> ${result}`;
   }).join("\n");

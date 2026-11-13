@@ -190,8 +190,12 @@ is generated. The role of a definition comes from its name and signature:
 | `pure def stepNeverGoesBack(before: Order, after: Order): bool` | a rule about every single step | a postcondition on every transition; simulated and proved |
 | `pure def stepAuthorized(before: Order, via: str, after: Order): bool` | a step rule that also sees the transition name | a postcondition on every transition |
 | `pure def sometimesPaid(o: Order): bool` | a state that must be reachable | a reachability check with a witness trace |
+| `pure def leadsToPaid(o: Order, later: Order): bool` | a liveness rule: from every reachable state `o`, every fair run reaches a state `later` that it relates to `o` (`o` itself counts) | a search of simulated traces for a fair run that breaks it ("Liveness", below) |
 | `pure def lawTotalIsNotNegative(xs: List[int]): bool` | a law: true for every value of its parameters | a function proved to return `true`, and sampled by the simulator |
 | `pure val idValues = Set(1, 2, 3)` | what the simulator tries for a parameter named `id`. It must be a set whose elements match the parameter type; any supported Quint is allowed in it | nothing: it never reaches TypeScript |
+
+| `pure val weight_pay = 5` | how often the simulator tries `pay`: a whole number from 1 to 100, times as often as an event of weight 1 (the default). For deep interleavings, such as a message lost, repeated and reordered | nothing |
+| `pure val fair_pay = "weak"` or `"strong"` | an assumption for `leadsTo` rules: a fair run does not put `pay` off for ever while its guard keeps allowing it (`"weak"`), or while it allows it again and again (`"strong"`) | nothing |
 | any other `pure val` or `pure def` | a constant or helper | the same constant or function |
 
 A transition parameter named `by` identifies its sender. All such parameters
@@ -202,6 +206,13 @@ must validate the authenticated sender before supplying it.
 A helper that takes the state first and returns the state would be taken for
 a transition. Give it the state as its second parameter, or return something
 smaller.
+
+A transition may return a named record `{ state: State, out: List[Effect] }`.
+All transitions that return effects use the same record type. In that module,
+`step` returns that record; state-only transitions and rejected events return
+an empty `out`. A step rule may take a final parameter named `out` to inspect
+the effects, after the resulting state. The simulator compares those effects
+with the generated TypeScript, and the proof checks each such step rule.
 
 Refused, each with a message saying why: the generated and harness names
 (`init`, `step`, `inv`, `enabled`, `parseEvent`, `parseState`, `Event`,
@@ -224,6 +235,14 @@ and near-misses of the conventions above such as `alwayspaid` or `CanPay`.
   neither lamp could state (`tools/fixtures/room.md` in the vibespec-starter
   repository).
 
+- **`import net as N from "./net"`** takes a spec that ships with the tools,
+  from their `std/` directory, when `spec/` has none of that name. It is
+  simulated and proved with the specs that import it, never reviewed.
+  [`std/net.md`](std/net.md) is a network that loses, repeats and reorders:
+  the numbers of the messages in flight, with `N::send`, `N::take` (to
+  deliver or lose one), `N::repeat`, and laws for an `always` rule that only
+  messages sent are in flight. `tools/fixtures/ping.md` uses it.
+
 A spec is imported once, one way or the other, and imports cannot form a
 circle. In the generated TypeScript a name from another module is spelled
 `<module>_<name>`, for example `lamp_toggle`.
@@ -238,15 +257,21 @@ circle. In the generated TypeScript a name from another module is spelled
 | `type Parcel = Packed({ weight: int }) \| Lost` | `{ tag: "Packed"; weight: number } \| { tag: "Lost" }` | Read with `match p { \| Packed(x) => … \| _ => … }` |
 | `List[T]` | `T[]` | `List(…)`, `append`, `concat`, `length`, `nth`, `head`, `tail`, `select`, `foldl`, and `every`, `some`, `includes`, `listMap` |
 | `Set[T]` of simple values | `T[]` that never holds a value twice | `Set(…)`, `union`, `intersect`, `exclude`, `filter`, `map`, `forall`, `exists`, `contains`, `in`, `subseteq`, `size` |
-| `str -> T` | `Record<string, T>` | `Map()`, `put`, `get`, `m.keys().contains(k)` |
+| `K -> T` | `Record<K, T>` | Keys are integers, strings or plain variants; `Map()`, `put`, `get`, `getOr`, `m.keys().contains(k)` |
 
 Also: `+ - * / %`, comparisons, `and or not implies iff`, `if … else`, record
 construction, spread update and field access, calls to your own definitions,
 and `val` bindings at the top of a definition. Anything else stops the `model`
 stage with the name of the construct.
 
-- **`==` compares numbers, strings, booleans and plain variants only.** Compare
-  records field by field, and lists with `every`.
+- **`==` and `includes` compare records, lists, maps and variants by structure.**
+  A value holding a set cannot use structural equality; compare sets with
+  `subseteq` in both directions.
+- **Generated arithmetic refuses an integer result outside the safe range.**
+  It throws `RangeError` rather than returning a rounded JavaScript number.
+- **`xs.nthOr(i, fallback)` and `m.getOr(k, fallback)` are total lookups.**
+  `xs.removeAt(i)` removes one position, or leaves the list unchanged when
+  the position is outside it.
 - **Guard every partial operation in the definition that uses it.** An index
   outside a list, a missing map key and a zero divisor stop the simulator and
   cannot be proved safe. Test first and give a default, as `problemAt` does
@@ -298,6 +323,29 @@ stage with the name of the construct.
   ends up in the generated code. Bound the simulator with `<param>Values`.
 - Compute something once with a `val` when a rule uses it several times;
   repeated folds are what make simulation slow.
+
+### Liveness
+
+A `leadsTo` rule says something happens, not only that nothing bad does:
+`leadsToPaid(o, later) = o.status == Pending implies later.status == Paid`.
+Its runs are the simulated traces of the `always` stage, each continued for
+ever in one of two ways: it stops at a state, or it returns to a state it
+had reached before and repeats the loop. Either is *fair* unless it puts off
+a fair event: one declared `fair_<event>`, `"weak"` if the event's guard
+allows it in every state of the loop (or in the state it stops at),
+`"strong"` if in any. A fair run breaks the rule when some state on it is
+followed by none the rule relates it to, and `always` fails with that run,
+the state marked.
+
+- Without a `fair_` declaration nothing has to happen, so a run may stop
+  anywhere: declare fair the events the property waits on, the system's own
+  steps and the deliveries the environment promises, and no others.
+- An event lost and sent again forever loops; only `"strong"` fairness of
+  the delivery rules that out (`tools/fixtures/ping.md`).
+- "Allows" is for the values the simulator tries (`<param>Values`).
+- A loop needs a state reached twice. A counter that only grows rules loops
+  out, and then only runs that stop are checked: the stage says how many
+  loops it found. Nothing proves a `leadsTo` rule.
 
 ### Review
 
