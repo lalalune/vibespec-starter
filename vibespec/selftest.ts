@@ -10,6 +10,8 @@ import path from "node:path";
 import { after, describe, test } from "node:test";
 import { LIB_FILE, isolatedCopies, parseProofFile, readVerdict, splice } from "./prove.ts";
 import { nodesOf } from "./studio/doc.ts";
+import { canonical, departure } from "./conformance.ts";
+import { conformance as checkTraces, conformanceFound, writeConformance } from "./conform.ts";
 import { startStudio } from "./studio/server.ts";
 import { acceptContracts, acceptReviews, check, checkVerifiedSource, expandListHelpers, gen, init, parseSpec, pending, pendingContracts, readSpecs, replay, show, type Result } from "./spec.ts";
 
@@ -133,7 +135,7 @@ pure def push(s: State, n: int): Did = { state: s.append(n), out: List(n) }
 pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = out.length() == 1`);
     const model = await gen(lists, parseSpec(lists, "spec/lists.md"));
     assert.equal(model.evals.find((e) => e.name === "stepHasOneEffect")?.params.at(-1)?.from, "emitted");
-    const root = fixtures(["mailer"]);
+    const root = fixtures(["mailer"], (files) => { files["spec/mailer.proof.dfy"] = read("vibespec/fixtures/mailer.proof.dfy"); });
     const result = await run(root);
     assert.deepEqual(result.failed, ["review"], result.text);
     const domain = await import(path.join(root, "gen/mailer.ts"));
@@ -141,6 +143,51 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       state: { sent: 1 }, out: [{ tag: "Saved", n: 4 }, { tag: "Sent", n: 4 }],
     });
     assert.deepEqual(domain.step(domain.initial, { type: "send", n: 0 }), { state: domain.initial, out: [] });
+    const helper = await import(path.join(root, "gen/mailer.conformance.ts"));
+    const emitted = domain.step(domain.initial, { type: "send", n: 4 });
+    assert.equal(departure(domain, helper.found, [{ state: domain.initial }, { event: { type: "send", n: 4 }, state: emitted.state, out: emitted.out }]), undefined);
+    assert.match(departure(domain, helper.found, [{ event: { type: "send", n: 4 }, state: emitted.state, out: emitted.out.toReversed() }])?.why ?? "", /effects differ/);
+  });
+
+  test("conformance observes scalar states, real program traces, and only demands behavior present in the oracle", async () => {
+    const root = oneRule("counter", "Count", "pure val initial: int = 0\npure def canInc(n: int): bool = n < 2\npure def inc(n: int): int = n + 1\npure def alwaysValid(n: int): bool = 0 <= n and n <= 2");
+    const spec = parseSpec(root, "spec/counter.md");
+    const model = await gen(root, spec);
+    const domain = await import(path.join(root, "gen/counter.ts"));
+    const found = conformanceFound(domain, model, spec, [[{ state: 0 }, { event: { type: "inc" }, state: 1 }, { event: { type: "inc" }, state: 2 }]], []);
+    writeConformance(root, model, found);
+    const helper = await import(path.join(root, "gen/counter.conformance.ts"));
+    const states = new Map<string, number>();
+    await helper.conformance({
+      reset: () => states.clear(),
+      dispatch: (key: string) => { const n = states.get(key) ?? 0; if (n === 2) return "refused"; states.set(key, n + 1); return "accepted"; },
+      observe: (key: string) => states.get(key) ?? 0,
+    }, { walks: 3, steps: 6 });
+    assert.equal(departure(domain, found, [{ state: 0 }, { event: { type: "inc" }, state: 1 }]), undefined);
+    assert.match(departure(domain, found, [{ event: { type: "inc" } }])?.why ?? "", /no observed state/);
+    fs.mkdirSync(path.join(root, "test/traces"), { recursive: true });
+    fs.writeFileSync(path.join(root, "test/traces/counter.jsonl"), '{"state":0}\n{"event":{"type":"inc"},"state":1}\n');
+    fs.writeFileSync(path.join(root, "offset.json"), "0");
+    fs.writeFileSync(path.join(root, "driver.mjs"), 'import fs from "node:fs"; import readline from "node:readline"; let n=0; for await (const line of readline.createInterface({input:process.stdin})) { const request=JSON.parse(line); if (!request.event) n=0; else if (n<2) n++; console.log(JSON.stringify({state:n+Number(fs.readFileSync("offset.json","utf8"))})); }');
+    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({type:"module",scripts:{"driver:counter":`${JSON.stringify(process.execPath)} driver.mjs`}}));
+    const machines = new Map([["counter", { domain, model, found }]]);
+    assert.ok((await checkTraces(root, machines)).every(([ok]) => ok));
+    fs.writeFileSync(path.join(root, "offset.json"), "1");
+    assert.ok((await checkTraces(root, machines)).some(([ok, , summary]) => !ok && summary.startsWith("script driver:counter")));
+
+    const quiet = oneRule("quiet", "Wait", "pure val initial: int = 0\npure def stay(n: int): int = n\npure def alwaysZero(n: int): bool = n == 0");
+    const quietSpec = parseSpec(quiet, "spec/quiet.md"), quietModel = await gen(quiet, quietSpec);
+    const quietDomain = await import(path.join(quiet, "gen/quiet.ts"));
+    writeConformance(quiet, quietModel, conformanceFound(quietDomain, quietModel, quietSpec, [[{ state: 0 }, { event: { type: "stay" }, state: 0 }]], []));
+    const quietHelper = await import(path.join(quiet, "gen/quiet.conformance.ts"));
+    await quietHelper.conformance({ reset() {}, dispatch: () => "accepted", observe: () => 0 }, { walks: 1, steps: 2 });
+  });
+
+  test("set canonicalization follows tagged variants and preserves list order", async () => {
+    const root = oneRule("mixed", "Values", "type Values = A({ values: Set[int] }) | B({ values: List[int] })\npure val initial: Values = A({ values: Set(1, 2) })\npure def list(v: Values): Values = B({ values: List(1, 2) })");
+    const model = await gen(root, parseSpec(root, "spec/mixed.md"));
+    assert.equal(canonical({ tag: "A", values: [1, 2] }, model.shape!), canonical({ tag: "A", values: [2, 1] }, model.shape!));
+    assert.notEqual(canonical({ tag: "B", values: [1, 2] }, model.shape!), canonical({ tag: "B", values: [2, 1] }, model.shape!));
   });
 
   test("a fresh spec with enum and bool parameters and an unguarded transition passes everything but review", async () => {
@@ -257,6 +304,10 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const gen = await import(path.join(root, "gen/vault.ts"));
     assert.deepEqual(gen.parseEvent({ type: "open", by: "Owner" }), { type: "open" });
     assert.equal(gen.enabled(gen.initial, { type: "open" }, "Guest"), false);
+    assert.equal(gen.parseSender("Owner"), "Owner");
+    assert.equal(gen.parseSender("Mallory"), undefined);
+    const helper = await import(path.join(root, "gen/vault.conformance.ts"));
+    assert.match(departure(gen, helper.found, [{ event: { type: "open" }, by: "Mallory", state: gen.initial }])?.why ?? "", /valid sender/);
     assert.equal(gen.step(gen.initial, { type: "relabel", label: "a" }, "Owner").label, "a");
     // A counterexample shows each event with only what it changed.
     const broken = await run(vault((s) => s.replace("{ ...v, open: false }", "{ ...v, open: true }")));
@@ -389,6 +440,9 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const root = oneRule("choice", "Choose", "type Choice = Left | Right\npure def use(c: Choice): int = if (c == Left) 1 else 2\npure def chosen(b: bool): int =\n  val c = if (b) Left else Right\n  use(c)\npure def lawChosen(b: bool): bool = chosen(b) == (if (b) 1 else 2)");
     const { failed, text } = await run(root);
     assert.deepEqual(failed, ["review"], text);
+    const record = oneRule("recordLocal", "A local record keeps its value", "pure def value(n: int): int =\n  val box = { value: n }\n  box.value");
+    await gen(record, parseSpec(record, "spec/recordLocal.md"));
+    assert.equal((await import(path.join(record, "gen/recordLocal.ts"))).value(7), 7);
   });
 
   test("a transition and its guard bind a second state-shaped parameter identically during replay", async () => {

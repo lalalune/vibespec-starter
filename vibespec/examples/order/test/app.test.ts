@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { conformance } from "../gen/index.conformance.ts";
 import { OrderBook, Rejected } from "../src/app.ts";
 
 /** A book whose order A1 has been sent `events`, in order. */
@@ -62,4 +63,17 @@ test("an event is copied on the way in, so nothing the caller keeps can change i
   let reads = 0;
   const sly = { type: "pay", get amount() { return reads++ === 0 ? 1 : 1_000_000; }, extra: "ignored" };
   assert.deepEqual(submitted(2).dispatch("A1", sly), { status: "Pending", units: 2, due: 10, paid: 1 });
+});
+
+// Every story of spec/index.md through the real order book: a journey per `sometimes` rule, then random walks over
+// two orders at once (AGENTS.md, "Conformance").
+test("the order book does what spec/index.md says", async () => {
+  let book = new OrderBook();
+  await conformance({
+    reset: () => { book = new OrderBook(); },
+    dispatch: (id, event) => {
+      try { book.dispatch(id, event); return "accepted"; } catch (e) { if (e instanceof Rejected) return "refused"; throw e; }
+    },
+    observe: (id) => book.get(id),
+  });
 });

@@ -672,8 +672,11 @@ function renderBuild() {
   const snap = S.snap;
   if (!snap) return;
   const dirty = dirtySpecs();
-  const job = snap.job;
-  const running = job?.status === "running";
+  const jobs = snap.jobs ?? {};
+  /** The kind of job running, if one is: one at a time. */
+  const running = Object.keys(jobs).find((k) => jobs[k].status === "running");
+  /** The agent's or the sign-off's log, whichever ran last; the check reports in its own block. */
+  const job = [jobs.agent, jobs.accept].filter(Boolean).sort((a, b) => b.started - a.started)[0];
   const check = snap.check;
   const manifest = snap.manifest;
   const results = check?.results ?? [];
@@ -687,9 +690,9 @@ function renderBuild() {
   const pipeline = h("div", { class: "pipeline", "aria-label": "Where the project stands" },
     stage("Edit", dirty.length ? "active" : "idle", dirty.length || "", dirty.length ? `${dirty.length} specs changed` : "nothing unpublished"),
     stage("Publish", dirty.length ? "todo" : manifest ? "ok" : "idle", "", dirty.length ? "waiting to publish" : manifest ? "published" : "nothing to publish"),
-    stage("Sync", running && job.kind === "agent" ? "running" : manifest ? "todo" : "ok", manifest ? manifest.changes.length : "", manifest ? `${manifest.changes.length} changes for the agent` : "in step"),
-    stage("Check", running && job.kind === "check" ? "running" : !check ? "idle" : blocking.length ? "bad" : "ok", blocking.length || "", !check ? "not run yet" : blocking.length ? `${blocking.length} failing` : "passing"),
-    stage("Sign off", running && job.kind === "accept" ? "running" : reviewCount ? "todo" : check?.ok ? "ok" : "idle", reviewCount || "", reviewCount ? `${reviewCount} to review` : "nothing to review"));
+    stage("Sync", running === "agent" ? "running" : manifest ? "todo" : "ok", manifest ? manifest.changes.length : "", manifest ? `${manifest.changes.length} changes for the agent` : "in step"),
+    stage("Check", running === "check" ? "running" : !check ? "idle" : blocking.length ? "bad" : "ok", blocking.length || "", !check ? "not run yet" : blocking.length ? `${blocking.length} failing` : "passing"),
+    stage("Sign off", running === "accept" ? "running" : reviewCount ? "todo" : check?.ok ? "ok" : "idle", reviewCount || "", reviewCount ? `${reviewCount} to review` : "nothing to review"));
 
   const publishBlock = h("div", { class: "block" },
     h("div", { class: "buttons" },
@@ -712,10 +715,10 @@ function renderBuild() {
 
   const jobBlock = job && h("div", { class: "job" },
     h("div", { class: "top" },
-      h("span", { class: `dot ${running ? "dirty" : job.status === "passed" ? "ok" : "bad"}`, role: "img", "aria-label": job.status }),
+      h("span", { class: `dot ${job.status === "running" ? "dirty" : job.status === "passed" ? "ok" : "bad"}`, role: "img", "aria-label": job.status }),
       h("span", { class: "label" }, job.label),
-      h("span", { class: "meta", id: "elapsed" }, elapsed(job)),
-      running ? iconButton("stop", "Stop", () => api("stop", {})) : ""),
+      h("span", { class: "meta", "data-elapsed": job.label }, elapsed(job)),
+      job.status === "running" ? iconButton("stop", "Stop", () => api("stop", {})) : ""),
     h("pre", { id: "log" }, job.log.join("\n") || "…"));
 
   const checkBlock = h("div", { class: "block" },
@@ -726,6 +729,8 @@ function renderBuild() {
       const state = of.some((r) => !r.ok) ? (st === "review" ? "review" : "bad") : of.length ? "ok" : skipped ? "" : "";
       return h("span", { class: state, title: of.map((r) => r.summary).join("\n") || (skipped ? "skipped" : "") }, st);
     })) : "",
+    running === "check" ? h("div", { class: "agent" }, h("span", { class: "label" }, "Checking…"), h("span", { class: "meta", "data-elapsed": "check" }, elapsed(jobs.check)), iconButton("stop", "Stop", () => api("stop", {})))
+      : jobs.check?.status === "failed" && !check ? h("div", { class: "results" }, h("details", { open: true }, h("summary", {}, "The check did not finish"), h("pre", {}, jobs.check.log.join("\n")))) : "",
     check ? h("div", { class: "next" }, check.next) : "",
     blocking.length ? h("div", { class: "results" }, blocking.map((r) => h("details", {}, h("summary", {}, `${r.stage}: ${r.summary}`), r.detail ? h("pre", {}, r.detail) : ""))) : "",
     h("div", { class: "buttons" },
@@ -737,7 +742,12 @@ function renderBuild() {
   if (log) log.scrollTop = log.scrollHeight;
 }
 const elapsed = (job) => { const s = Math.round(((job.finished ?? Date.now()) - job.started) / 1000); return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`; };
-setInterval(() => { const el = document.getElementById("elapsed"); if (el && S.snap?.job?.status === "running") el.textContent = elapsed(S.snap.job); }, 1000);
+setInterval(() => {
+  for (const el of document.querySelectorAll("[data-elapsed]")) {
+    const job = Object.values(S.snap?.jobs ?? {}).find((j) => j.label === el.dataset.elapsed);
+    if (job?.status === "running") el.textContent = elapsed(job);
+  }
+}, 1000);
 
 async function start(kind, body = {}) {
   try { await api(kind, body); } catch (e) { toast(e.message); }
@@ -804,7 +814,7 @@ function problems(spec) {
 
 function openPublish() {
   const dirty = dirtySpecs();
-  if (S.publishing || !dirty.length || S.snap?.job?.status === "running") return;
+  if (S.publishing || !dirty.length || Object.values(S.snap?.jobs ?? {}).some((j) => j.status === "running")) return;
   const bad = dirty.flatMap(problems);
   const dialog = document.getElementById("dialog");
   dialog.replaceChildren(h("form", { method: "dialog" },
@@ -878,9 +888,10 @@ await refresh();
 const events = new EventSource(`/api/events?project=${encodeURIComponent(S.project)}`);
 events.addEventListener("files", () => refresh());
 events.addEventListener("job", (e) => {
-  const { job, check } = JSON.parse(e.data);
-  const ended = S.snap.job?.status === "running" && job?.status !== "running";
-  S.snap.job = job;
+  const { jobs, check } = JSON.parse(e.data);
+  const busy = (js) => Object.values(js ?? {}).some((j) => j.status === "running");
+  const ended = busy(S.snap.jobs) && !busy(jobs);
+  S.snap.jobs = jobs;
   S.snap.check = check;
   if (ended) refresh();
   else renderBuild();

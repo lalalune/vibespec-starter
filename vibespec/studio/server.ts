@@ -44,7 +44,7 @@ interface Job { kind: "check" | "agent" | "accept"; label: string; status: "runn
 interface State { baseline: Record<string, string>; ids: Ids }
 interface Live {
   project: Project;
-  job?: Job;
+  jobs: Partial<Record<Job["kind"], Job>>;
   check?: { ok: boolean; results: Result[]; next: string; finished: number };
   clients: Set<http.ServerResponse>;
   watcher?: fs.FSWatcher;
@@ -122,11 +122,14 @@ function snapshot(live: Live, agents: Record<string, Agent>) {
     manifest,
     prompt,
     check: live.check,
-    job: jobView(live.job),
+    jobs: jobsView(live),
     agents: Object.entries(agents).map(([id, a]) => ({ id, label: a.label, available: onPath(a.command({ root, check: context.check })[0]), link: a.link?.({ root, prompt: short }) })),
   };
 }
-const jobView = (job?: Job) => job && { kind: job.kind, label: job.label, status: job.status, started: job.started, finished: job.finished, log: job.log.slice(-400) };
+const jobsView = (live: Live) => Object.fromEntries(Object.values(live.jobs).map((j) => [j.kind, { label: j.label, status: j.status, started: j.started, finished: j.finished, log: j.log.slice(-400) }]));
+const running = (live: Live) => Object.values(live.jobs).find((j) => j.child);
+/** One job at a time: every job takes the spec lock or writes specs, and so does publishing. */
+const idle = (live: Live) => { const busy = running(live); if (busy) throw new Error(`${busy.label} is still running`); };
 
 /** A line of an agent's JSON output, as a person would want to read it; undefined for bookkeeping. */
 function readable(line: string): string | undefined {
@@ -148,7 +151,7 @@ function readable(line: string): string | undefined {
 
 /** The studio's HTTP server. `open` is the project shown first. */
 export async function startStudio({ projects, open = projects[0].id, port = 4321, agents = AGENTS }: { projects: Project[]; open?: string; port?: number; agents?: Record<string, Agent> }) {
-  const lives = new Map<string, Live>(projects.map((p) => [p.id, { project: p, clients: new Set() }]));
+  const lives = new Map<string, Live>(projects.map((p) => [p.id, { project: p, jobs: {}, clients: new Set() }]));
 
   const broadcast = (live: Live, event: string, data: unknown) => {
     for (const res of live.clients) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
@@ -164,14 +167,14 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
   };
   const jobChanged = (live: Live) => {
     clearTimeout(live.jobTimer);
-    live.jobTimer = setTimeout(() => broadcast(live, "job", { job: jobView(live.job), check: live.check }), 100);
+    live.jobTimer = setTimeout(() => broadcast(live, "job", { jobs: jobsView(live), check: live.check }), 100);
   };
 
   /** Start a program in the project as its one job; `done` hears how it ended. */
   const startJob = (live: Live, kind: Job["kind"], label: string, [program, args]: [string, string[]], input: string | undefined, read: (line: string) => string | undefined, done: (job: Job, out: string) => void) => {
-    if (live.job?.child) throw new Error(`${live.job.label} is still running`);
+    idle(live);
     const job: Job = { kind, label, status: "running", started: Date.now(), log: [] };
-    live.job = job;
+    live.jobs[kind] = job;
     let out = "";
     const child = spawn(program, args, { cwd: live.project.root, env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1" }, stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"] });
     job.child = child;
@@ -219,7 +222,6 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
     fs.rmSync(manifestFile(root), { force: true });
   };
 
-  const idle = (live: Live) => { if (live.job?.child) throw new Error(`${live.job.label} is still running`); };
 
   const publish = (live: Live, body: { files: { file: string; base: string | null; text: string | null }[]; origins: [string, string | null][]; force?: boolean }) => {
     idle(live);
@@ -347,7 +349,8 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
           startJob(live, "accept", "sign-off", [process.execPath, [SPEC, "accept"]], undefined, (l) => l, () => setImmediate(() => { try { runCheck(live); } catch { /* another job started */ } }));
           return send(res, 200, {});
         case "/api/stop":
-          if (live.job?.child) { live.job.status = "stopped"; live.job.child.kill("SIGTERM"); }
+          const job = running(live);
+          if (job) { job.status = "stopped"; job.child!.kill("SIGTERM"); }
           return send(res, 200, {});
         case "/api/synced":
           markSynced(root);
@@ -374,7 +377,7 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
       for (const live of lives.values()) {
         live.watcher?.close();
         clearTimeout(live.jobTimer);
-        live.job?.child?.kill("SIGTERM");
+        for (const job of Object.values(live.jobs)) job.child?.kill("SIGTERM");
         for (const c of live.clients) c.end();
       }
       server.close(() => resolve());
