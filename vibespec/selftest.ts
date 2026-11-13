@@ -47,10 +47,23 @@ const fixtures = (names: string[], edit: (files: Record<string, string>) => void
   edit(files);
   return scratch(files);
 };
+/** `root` with its own copy of the toolchain, and of node_modules only the packages and the executables `tools`. */
+function toolchain(root: string, ...tools: string[]): string {
+  fs.cpSync(path.join(project, "vibespec"), path.join(root, "vibespec"), { recursive: true, filter: (from) => from !== path.join(project, "vibespec/examples") });
+  const modules = path.join(root, "node_modules");
+  fs.mkdirSync(path.join(modules, ".bin"), { recursive: true });
+  for (const entry of fs.readdirSync(nodeModules).filter((f) => f !== ".bin"))
+    fs.symlinkSync(path.join(nodeModules, entry), path.join(modules, entry), fs.statSync(path.join(nodeModules, entry)).isDirectory() ? "dir" : "file");
+  for (const tool of tools.map((t) => process.platform === "win32" ? `${t}.cmd` : t))
+    fs.symlinkSync(path.join(nodeModules, ".bin", tool), path.join(modules, ".bin", tool), "file");
+  return root;
+}
 /** A spec made of a single rule. */
 const ruleSpec = (quint: string, heading = "A rule", title = "T", story = "Story") => `# ${title}\n\n## ${story}\n\n### ${heading}\n\n${F}quint\n${quint}\n${F}\n`;
 /** A scratch project with one spec made of a single rule. */
 const oneRule = (name: string, heading: string, quint: string) => scratch({ [`spec/${name}.md`]: ruleSpec(quint, heading) });
+/** A scratch project with a spec `use` that imports a spec `lib`. */
+const libAndUse = (lib: string, use: string) => scratch({ "spec/lib.md": lib, "spec/use.md": use });
 /** Hand-written code with a one-line contract. */
 const ONE = "//@ pure\nexport function one(): number {\n  //@ ensures \\result === 1\n  return 1;\n}\n";
 /** Generated Dafny: one function and its obligation. */
@@ -101,9 +114,9 @@ async function run(root: string, accept: false | "reviews" | "unproved" = false)
 }
 const failedStages = async (file: string, edit: (text: string) => string) => (await run(copyOfProject(file, edit))).failed;
 const pendingItems = (root: string) => readSpecs(root).flatMap((spec) => pending(root, spec).map((p) => `${p.where.split("  ")[1]}: ${p.status}${p.note ?? ""}`));
-/** Run a fresh CLI process so toolchain fingerprints cannot carry over from another invocation. */
 /** gen/ for one spec, as `check` and `spec gen` generate it. */
 const gen = async (root: string, spec: Spec) => generated(root, spec, await typecheckAll({ root, fresh: true, used: new Set() }, [spec]).get(spec.name)!, new Map());
+/** Run a fresh CLI process so toolchain fingerprints cannot carry over from another invocation. */
 const runCli = (script: string, root: string, ...args: string[]) => exec(process.execPath, [script, ...args], root);
 const unguarded = (s: string) => s.replace("o.status == Draft and o.units > 0", "o.status == Draft");
 const notInductive = (s: string) => s.replace(/### Drafts and cancelled orders hold no money[\s\S]*?```\n\n/, "");
@@ -159,7 +172,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const spec = parseSpec(root, "spec/counter.md");
     const model = await gen(root, spec);
     const domain = await import(path.join(root, "gen/counter.ts"));
-    const found = conformanceFound(domain, model, spec, [[{ state: 0 }, { event: { type: "inc" }, state: 1 }, { event: { type: "inc" }, state: 2 }]], []);
+    const found = conformanceFound(model, spec, [[{ state: 0 }, { event: { type: "inc" }, state: 1 }, { event: { type: "inc" }, state: 2 }]], []);
     writeConformance(root, model, found);
     const helper = await import(path.join(root, "gen/counter.conformance.ts"));
     const states = new Map<string, number>();
@@ -197,7 +210,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const quiet = oneRule("quiet", "Wait", "pure val initial: int = 0\npure def stay(n: int): int = n\npure def alwaysZero(n: int): bool = n == 0");
     const quietSpec = parseSpec(quiet, "spec/quiet.md"), quietModel = await gen(quiet, quietSpec);
     const quietDomain = await import(path.join(quiet, "gen/quiet.ts"));
-    writeConformance(quiet, quietModel, conformanceFound(quietDomain, quietModel, quietSpec, [[{ state: 0 }, { event: { type: "stay" }, state: 0 }]], []));
+    writeConformance(quiet, quietModel, conformanceFound(quietModel, quietSpec, [[{ state: 0 }, { event: { type: "stay" }, state: 0 }]], []));
     const quietHelper = await import(path.join(quiet, "gen/quiet.conformance.ts"));
     await quietHelper.conformance({ reset() {}, dispatch: () => "accepted", observe: () => 0 }, { walks: 1, steps: 2 });
   });
@@ -326,7 +339,11 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
   test("who sent an event travels beside it, a guard takes only what it uses, a step rule sees the event, and deep goals are found", async () => {
     const vault = (edit: (s: string) => string = (s) => s) => fixtures(["vault"], (f) => { f["spec/vault.md"] = edit(f["spec/vault.md"]); });
     const root = vault();
-    const ok = await run(root);
+    const [ok, broken, stray] = await Promise.all([
+      run(root),
+      run(vault((s) => s.replace("{ ...v, open: false }", "{ ...v, open: true }"))),
+      run(vault((s) => s.replace("canRelabel(v: Vault, by: Actor): bool = by", "canRelabel(v: Vault, who: Actor): bool = who"))),
+    ]);
     assert.deepEqual(ok.failed, ["review"], ok.text);
     assert.ok(ok.said("sometimes", /sometimesLate is reachable/), ok.text); // thirty ticks: beyond a trace of 20 events
     const gen = await import(path.join(root, "gen/vault.ts"));
@@ -338,9 +355,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.match(departure(gen, helper.found, [{ event: { type: "open" }, by: "Mallory", state: gen.initial }])?.why ?? "", /valid sender/);
     assert.equal(gen.step(gen.initial, { type: "relabel", label: "a" }, "Owner").label, "a");
     // A counterexample shows each event with only what it changed.
-    const broken = await run(vault((s) => s.replace("{ ...v, open: false }", "{ ...v, open: true }")));
     assert.ok(broken.said("always", /a step breaks[\s\S]*\n\s+close\s+-> open = true\n/), broken.text);
-    const stray = await run(vault((s) => s.replace("canRelabel(v: Vault, by: Actor): bool = by", "canRelabel(v: Vault, who: Actor): bool = who")));
     assert.ok(stray.said("model", /canRelabel: `who` must be a parameter of relabel/), stray.text);
   });
 
@@ -495,14 +510,20 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
 
   test("lists, nested helpers, an imported library, laws, step rules and the proof ledger work together", async () => {
     const shop = (edit?: (files: Record<string, string>) => void) => fixtures(["lib", "shop"], edit);
+    const recorded = shop((f) => { f["src/count.ts"] = 'import { type Cart } from "../gen/shop.ts";\n//@ pure\nexport function count(c: Cart): number {\n  //@ ensures \\result === c.count\n  return c.count;\n}\n'; });
+    const [plain, recording, wrongStep, wrongLaw, importsMachine, circle] = await Promise.all([
+      run(shop()),
+      run(recorded, "unproved"),
+      run(shop((f) => { f["spec/shop.md"] = f["spec/shop.md"].replace("count: c.count }", "count: c.count - 1 }"); })),
+      run(shop((f) => { f["spec/lib.md"] = f["spec/lib.md"].replace("total(List(n)) == n", "total(List(n)) == n + 1"); })),
+      run(shop((f) => { f["spec/other.md"] = ruleSpec('import shop.* from "./shop"\npure val two = 2', "Uses a machine", "Other", "Group"); })),
+      run(shop((f) => { f["spec/lib.md"] = f["spec/lib.md"].replace("pure def total", 'import shop.* from "./shop"\npure def total'); })),
+    ]);
     // The nested helpers (some inside some inside every) agree between Quint and TypeScript, and simulation passes.
-    const plain = await run(shop());
     assert.deepEqual(plain.failed, ["proof", "review"], plain.text);
     assert.ok(plain.said("proof", /not proved/), plain.text);
     // Once the unproved obligations are recorded, only the review is left.
     // Hand-written code proved against the shop says that it rests on what is simulated only there.
-    const recorded = shop((f) => { f["src/count.ts"] = 'import { type Cart } from "../gen/shop.ts";\n//@ pure\nexport function count(c: Cart): number {\n  //@ ensures \\result === c.count\n  return c.count;\n}\n'; });
-    const recording = await run(recorded, "unproved");
     assert.match(recording.said("proof", /^spec\/lock\.json: [1-9]\d* added, 0 removed\n/)?.detail ?? "", /^    \+ shop\.ts: /m, recording.text);
     const accepted = await run(recorded);
     assert.deepEqual(accepted.failed, ["review"], accepted.text);
@@ -514,13 +535,9 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     fs.appendFileSync(path.join(recorded, "spec/lib.md"), `\n### Two\n\n${F}quint\npure val two = 2\n${F}\n`);
     const moved = await run(recorded);
     assert.equal(moved.said("proof", /^shop\.ts: \d+ of \d+ obligations not proved; the \d+ accepted earlier were accepted for another text/)?.ok, false, moved.text);
-    const wrongStep = await run(shop((f) => { f["spec/shop.md"] = f["spec/shop.md"].replace("count: c.count }", "count: c.count - 1 }"); }));
     assert.equal(wrongStep.said("always", /^a step breaks/)?.ok, false, wrongStep.text);
-    const wrongLaw = await run(shop((f) => { f["spec/lib.md"] = f["spec/lib.md"].replace("total(List(n)) == n", "total(List(n)) == n + 1"); }));
     assert.equal(wrongLaw.said("always", /^the law .* is false for \{"n":/)?.ok, false, wrongLaw.text);
-    const importsMachine = await run(shop((f) => { f["spec/other.md"] = ruleSpec('import shop.* from "./shop"\npure val two = 2', "Uses a machine", "Other", "Group"); }));
     assert.ok(importsMachine.said("model", /is imported under a name/), importsMachine.text);
-    const circle = await run(shop((f) => { f["spec/lib.md"] = f["spec/lib.md"].replace("pure def total", 'import shop.* from "./shop"\npure def total'); }));
     assert.ok(circle.said("model", /import each other in a circle/), circle.text);
   });
 
@@ -640,47 +657,51 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       return root;
     };
     const unproved = /^index\.ts: \d+ of \d+ obligations not proved/;
+    const tsconfigured = withFile("tsconfig.json", `{"compilerOptions":{"noLib":true,"types":["missing"]},"files":["missing.ts"]}`);
+    const lookalike = copyOfProject("src/ledger.ts", (s) => s.replace('"../gen/index.ts"', '"./index.ts"'));
+    fs.writeFileSync(path.join(lookalike, "src/index.ts"), 'export * from "../gen/index.ts";\n');
+    const [namesake, configured, ownConfig, sneaky, lying, disguised] = await Promise.all([
+      run(withFile("src/index.ts", ONE)),
+      run(withFile("lemmascript.json", `{"proof-dir":"proofs"}`)),
+      run(tsconfigured),
+      run(copyOfProject("src/ledger.ts", (s) => s.replace("return order.due - order.paid;", "/* x */ //@ assume false\n  return order.paid - order.due;"))),
+      run(copyOfProject("src/ledger.ts", (s) => s.replace("\nexport function replay", '\n  import { owed } from "/tmp/lies.ts";\nexport function replay'))),
+      run(lookalike),
+    ]);
     // A file in src/ named after the spec does not take the place of the spec's own proof.
-    const namesake = await run(withFile("src/index.ts", ONE));
     assert.ok(namesake.said("proof", unproved), namesake.text);
     // A LemmaScript configuration in the project cannot point the proof at files someone could edit.
-    const configured = await run(withFile("lemmascript.json", `{"proof-dir":"proofs"}`));
     assert.ok(configured.said("proof", unproved), configured.text);
     // Nor can the project's tsconfig.json add files, globals or options to the proof: each unit has its own.
-    const tsconfigured = withFile("tsconfig.json", `{"compilerOptions":{"noLib":true,"types":["missing"]},"files":["missing.ts"]}`);
-    const ownConfig = await run(tsconfigured);
     assert.ok(ownConfig.said("proof", unproved), ownConfig.text);
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(tsconfigured, "gen/proof/index/tsconfig.json"), "utf8")).files, ["index.ts"]);
     // An annotation that asks the prover for trust is refused wherever it sits on the line.
-    const sneaky = await run(copyOfProject("src/ledger.ts", (s) => s.replace("return order.due - order.paid;", "/* x */ //@ assume false\n  return order.paid - order.due;")));
     assert.ok(sneaky.said("proof", /`\/\/@ assume` is not allowed/), sneaky.text);
     // So is an import of anything but a generated module, however it is indented, or of a look-alike of one.
-    const lying = await run(copyOfProject("src/ledger.ts", (s) => s.replace("\nexport function replay", '\n  import { owed } from "/tmp/lies.ts";\nexport function replay')));
     assert.ok(lying.said("proof", /may only import generated modules/), lying.text);
-    const lookalike = copyOfProject("src/ledger.ts", (s) => s.replace('"../gen/index.ts"', '"./index.ts"'));
-    fs.writeFileSync(path.join(lookalike, "src/index.ts"), 'export * from "../gen/index.ts";\n');
-    const disguised = await run(lookalike);
     assert.deepEqual(disguised.failed, ["proof"], disguised.text);
     assert.ok(disguised.said("proof", /may only import generated modules/), disguised.text);
   });
 
   test("a law that needs induction is proved by a proof file, and only then offered to the spec that imports it", async () => {
     const project = (edit: (f: Record<string, string>) => void = () => {}) => fixtures(["highest", "ticket"], edit);
+    const root = project();
+    const [bare, proved, unoffered, trusting] = await Promise.all([
+      run(project((f) => { delete f["spec/highest.proof.dfy"]; delete f["spec/ticket.proof.dfy"]; f["spec/typo.proof.dfy"] = ""; })),
+      run(root),
+      run(project((f) => { delete f["spec/highest.proof.dfy"]; })),
+      run(project((f) => { f["spec/highest.proof.dfy"] = f["spec/highest.proof.dfy"].replace("ProofLib.FoldLeftMax", "assume false;\n  ProofLib.FoldLeftMax"); })),
+    ]);
     // Without a proof file the law is not proved, and a proof file that belongs to nothing is pointed out.
-    const bare = await run(project((f) => { delete f["spec/highest.proof.dfy"]; delete f["spec/ticket.proof.dfy"]; f["spec/typo.proof.dfy"] = ""; }));
     assert.equal(bare.said("proof", /^highest\.ts: 1 of 1 obligations not proved/)?.ok, false, bare.text);
     assert.equal(bare.said("proof", /^spec\/typo\.proof\.dfy belongs to no proof unit/)?.ok, false, bare.text);
     // With both proof files, everything proves, and the final Dafny is there to read.
-    const root = project();
-    const proved = await run(root);
     assert.deepEqual(proved.failed, ["review"], proved.text);
     assert.ok(proved.said("proof", /^ticket\.ts: all 3 obligations proved/), proved.text);
     assert.match(fs.readFileSync(path.join(root, "gen/proof/ticket/ticket.dfy"), "utf8"), /lemma \{:axiom\} highest_lawTheHighestIsAtLeastTheStart_ensures/);
     // A law its own unit does not prove is not offered.
-    const unoffered = await run(project((f) => { delete f["spec/highest.proof.dfy"]; }));
     assert.equal(unoffered.said("proof", /^ticket\.ts: Dafny could not check it[\s\S]*unresolved identifier: highest_lawTheHighestIsAtLeastTheStart_ensures/)?.ok, false, unoffered.text);
     // A proof file that asks for trust is refused, with its file and line.
-    const trusting = await run(project((f) => { f["spec/highest.proof.dfy"] = f["spec/highest.proof.dfy"].replace("ProofLib.FoldLeftMax", "assume false;\n  ProofLib.FoldLeftMax"); }));
     assert.equal(trusting.said("proof", /spec\/highest\.proof\.dfy:4: `assume` is not allowed/)?.ok, false, trusting.text);
   });
 
@@ -927,10 +948,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
 
   test("changing an imported definition invalidates model and simulation results", async () => {
     const wrap = (quint: string) => ruleSpec(quint, "Price", "Library", "Values");
-    const root = scratch({
-      "spec/lib.md": wrap("pure val price = 1"),
-      "spec/use.md": wrap('import lib.* from "./lib"\npure def lawPrice(k: int): bool = price == 1'),
-    });
+    const root = libAndUse(wrap("pure val price = 1"), wrap('import lib.* from "./lib"\npure def lawPrice(k: int): bool = price == 1'));
     const first = await run(root);
     assert.deepEqual(first.failed, ["review"], first.text);
     fs.writeFileSync(path.join(root, "spec/lib.md"), wrap("pure val price = 2"));
@@ -939,18 +957,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
   });
 
   test("proof caching follows library changes and compiler failure waits for proof completion", async () => {
-    const root = fixtures(["highest"], (f) => { f["package.json"] = '{"type":"module"}'; });
-    fs.cpSync(path.join(project, "vibespec"), path.join(root, "vibespec"), {
-      recursive: true, filter: (from) => from !== path.join(project, "vibespec/examples"),
-    });
-    const modules = path.join(root, "node_modules");
-    fs.mkdirSync(path.join(modules, ".bin"), { recursive: true });
-    for (const entry of fs.readdirSync(nodeModules).filter((f) => f !== ".bin"))
-      fs.symlinkSync(path.join(nodeModules, entry), path.join(modules, entry), fs.statSync(path.join(nodeModules, entry)).isDirectory() ? "dir" : "file");
-    for (const tool of ["quint", "lsc"]) {
-      const executable = process.platform === "win32" ? `${tool}.cmd` : tool;
-      fs.symlinkSync(path.join(nodeModules, ".bin", executable), path.join(modules, ".bin", executable), "file");
-    }
+    const root = toolchain(fixtures(["highest"], (f) => { f["package.json"] = '{"type":"module"}'; }), "quint", "lsc");
     const script = path.join(root, "vibespec/spec.ts");
     const first = await runCli(script, root, "check", "--json");
     const checked = JSON.parse(first.stdout);
@@ -963,7 +970,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.ok(fs.readFileSync(path.join(root, "gen/proof/highest/highest.dfy"), "utf8").includes(marker));
     fs.writeFileSync(path.join(root, "tsconfig.json"), '{"compilerOptions":{"noEmit":true},"include":["gen/*.ts"]}');
     if (process.platform !== "win32") {
-      const compiler = path.join(modules, ".bin/tsc");
+      const compiler = path.join(root, "node_modules/.bin/tsc");
       fs.writeFileSync(compiler, "#!/bin/sh\nexit 1\n");
       fs.chmodSync(compiler, 0o644);
     }
@@ -990,12 +997,23 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.ok(moved.includes("Story: Fill a draft / The amount due is always the price of the units: model changed through unitPrice (Domain / Unit price and order size)"), moved.join("\n"));
     assert.ok(!moved.some((m) => m.startsWith("Story: Check out / A payment never exceeds the balance")), "a rule that does not use the price is not flagged");
 
-    // Across specs: a change to a library definition flags the rules that use it.
-    const shop = fixtures(["lib", "shop"]);
-    for (const spec of readSpecs(shop)) acceptReviews(shop, spec);
-    fs.writeFileSync(path.join(shop, "spec/lib.md"), read("vibespec/fixtures/lib.md").replace("acc + x)", "x + acc)"));
-    const flagged = pendingItems(shop);
+    // Across specs: a change to a library definition flags the rules that use it,
+    // through a namespace beside a local namesake, and past a comment that hides a namesake.
+    const libChanged = (root: string, lib: string) => {
+      for (const spec of readSpecs(root)) acceptReviews(root, spec);
+      fs.writeFileSync(path.join(root, "spec/lib.md"), lib);
+      return pendingItems(root);
+    };
+    const flagged = libChanged(fixtures(["lib", "shop"]), read("vibespec/fixtures/lib.md").replace("acc + x)", "x + acc)"));
     assert.ok(flagged.includes("Story: Fill a cart / A cart holds lines: model changed through total (spec/lib.md: Sums / The total of a list)"), flagged.join("\n"));
+    const names = (quint: string) => ruleSpec(quint, "Identity", "Names", "Rules");
+    const namespaced = libChanged(libAndUse(names("pure def identity(n: int): int = n"), names('import lib as L from "./lib"\npure def identity(n: int): int = 0\npure def lawIdentity(n: int): bool = L::identity(n) == n')),
+      names("pure def identity(n: int): int = n + 0"));
+    assert.ok(namespaced.some((item) => item.includes("model changed through") && item.includes("identity")), namespaced.join("\n"));
+    const lib = ruleSpec("pure def value(n: int): int = n + 1", "Imported", "Names", "Rules");
+    const hidden = libChanged(libAndUse(lib, `# Use\n\n## Rules\n\n### Local\n\n${F}quint\nimport lib.* from "./lib"\n/*\npure def value(n: int): int = 0\n*/\npure def other(n: int): int = n\n${F}\n\n### Uses imported value\n\n${F}quint\npure def lawValue(n: int): bool = value(n) > n\n${F}\n`),
+      lib.replace("n + 1", "n + 2"));
+    assert.ok(hidden.some((item) => item.startsWith("Rules / Uses imported value: model changed through") && item.includes("value")), hidden.join("\n"));
 
     // The //@ lines of hand-written code: changed, new, and gone, whether the file loses them or is deleted.
     const contract = () => pendingContracts(root).map((p) => `${p.where}: ${p.status}`);
@@ -1007,26 +1025,6 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     edit("src/ledger.ts", (s) => s.replace(/^.*\/\/@.*\n/gm, ""));
     fs.rmSync(path.join(root, "src/extra.ts"));
     assert.deepEqual(contract(), ["src/extra.ts: contract removed", "src/ledger.ts: contract removed"]);
-  });
-
-  test("a namespaced dependency remains reviewed when a local definition has the same name", () => {
-    const wrap = (quint: string) => ruleSpec(quint, "Identity", "Names", "Rules");
-    const root = scratch({
-      "spec/lib.md": wrap("pure def identity(n: int): int = n"),
-      "spec/use.md": wrap('import lib as L from "./lib"\npure def identity(n: int): int = 0\npure def lawIdentity(n: int): bool = L::identity(n) == n'),
-    });
-    for (const spec of readSpecs(root)) acceptReviews(root, spec);
-    fs.writeFileSync(path.join(root, "spec/lib.md"), wrap("pure def identity(n: int): int = n + 0"));
-    assert.ok(pendingItems(root).some((item) => item.includes("model changed through") && item.includes("identity")), pendingItems(root).join("\n"));
-  });
-
-  test("a comment cannot hide an imported rule's dependency from review", () => {
-    const lib = ruleSpec("pure def value(n: int): int = n + 1", "Imported", "Names", "Rules");
-    const use = `# Use\n\n## Rules\n\n### Local\n\n${F}quint\nimport lib.* from "./lib"\n/*\npure def value(n: int): int = 0\n*/\npure def other(n: int): int = n\n${F}\n\n### Uses imported value\n\n${F}quint\npure def lawValue(n: int): bool = value(n) > n\n${F}\n`;
-    const root = scratch({ "spec/lib.md": lib, "spec/use.md": use });
-    for (const spec of readSpecs(root)) acceptReviews(root, spec);
-    fs.writeFileSync(path.join(root, "spec/lib.md"), lib.replace("n + 1", "n + 2"));
-    assert.ok(pendingItems(root).some((item) => item.startsWith("Rules / Uses imported value: model changed through") && item.includes("value")), pendingItems(root).join("\n"));
   });
 
   test("source edited by a test cannot be accepted with a proof of its earlier contents", async () => {
@@ -1085,11 +1083,12 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
 
   test("a rebuilt packaged command can generate a project from the repository root", async () => {
     const root = oneRule("packaged", "A packaged value", "pure val answer = 42");
-    const built = await exec(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "build"], project);
+    const copy = toolchain(scratch({ "package.json": read("package.json"), "tsconfig.build.json": read("tsconfig.build.json") }), "quint", "lsc", "tsc");
+    const built = await exec(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "build"], copy);
     assert.equal(built.status, 0, built.stdout + built.stderr);
-    const script = path.join(project, "dist/spec.js");
+    const script = path.join(copy, "dist/spec.js");
     const generated = await exec(process.platform === "win32" ? process.execPath : script,
-      [...(process.platform === "win32" ? [script] : []), "gen", root], project);
+      [...(process.platform === "win32" ? [script] : []), "gen", root], copy);
     assert.equal(generated.status, 0, generated.stdout + generated.stderr);
     assert.equal((await import(path.join(root, "gen/packaged.ts"))).answer, 42);
   });

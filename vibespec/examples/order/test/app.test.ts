@@ -40,6 +40,9 @@ test("malformed input never reaches the verified core", () => {
   assert.throws(() => b.dispatch("A1", { type: "addItem", qty: 1.5 }), Rejected);
   assert.throws(() => b.dispatch("A1", { type: "refund" }), Rejected);
   assert.deepEqual(b.get("A1"), { status: "Draft", units: 0, due: 0, paid: 0 });
+  let reads = 0;
+  const sly = { type: "pay", get amount() { return reads++ === 0 ? 1 : 1_000_000; }, extra: "ignored" };
+  assert.deepEqual(submitted(2).dispatch("A1", sly), { status: "Pending", units: 2, due: 10, paid: 1 });
 });
 
 // spec/index.md, "No more can be removed than the order holds"
@@ -57,12 +60,6 @@ test("a cancelled order can be reopened, and a payment partly taken back", () =>
   assert.throws(() => b.dispatch("A1", { type: "takeBack", amount: 5 }), Rejected);
   b.dispatch("A1", { type: "cancel" });
   assert.deepEqual(b.dispatch("A1", { type: "reopen" }), { status: "Draft", units: 2, due: 10, paid: 0 });
-});
-
-test("an event is copied on the way in, so nothing the caller keeps can change it", () => {
-  let reads = 0;
-  const sly = { type: "pay", get amount() { return reads++ === 0 ? 1 : 1_000_000; }, extra: "ignored" };
-  assert.deepEqual(submitted(2).dispatch("A1", sly), { status: "Pending", units: 2, due: 10, paid: 1 });
 });
 
 // Every story of spec/index.md through the real order book: a journey per `sometimes` rule, then random walks over

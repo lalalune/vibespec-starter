@@ -1,6 +1,5 @@
 //@ backend dafny
-// Hand-written business logic, proved against the generated contract.
-// `npm run check` proves every `//@ ensures` below for all inputs.
+// spec/index.md, "The amount paid is never negative and never more than is due"; spec/index.md, "A paid order is paid in full"
 import { type Event, type Order, initial, step } from "../gen/index.ts";
 
 /** Rebuild an order from its event log. Events the rules reject are skipped. */
@@ -17,7 +16,7 @@ export function replay(events: Event[]): Order {
   return order;
 }
 
-/** What the shopper still owes. Never negative, and zero once the order is paid. */
+/** What the shopper still owes. */
 //@ pure
 export function balance(order: Order): number {
   //@ requires inv(order)

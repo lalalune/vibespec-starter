@@ -14,7 +14,7 @@ const LINE: Record<Note["kind"], (n: Note) => string> = {
 /** One message per person with a chat handle, in the order people first appear. */
 export function messages(notes: Note[], handles: Record<string, string>): Message[] {
   const byPerson = new Map<string, string[]>();
-  for (const n of notes) if (handles[n.to]) byPerson.set(n.to, [...(byPerson.get(n.to) ?? []), LINE[n.kind](n)]);
+  for (const n of notes) if (Object.hasOwn(handles, n.to)) byPerson.set(n.to, [...(byPerson.get(n.to) ?? []), LINE[n.kind](n)]);
   return [...byPerson].map(([to, lines]) => ({ to, handle: handles[to]!, text: lines.join("\n") }));
 }
 

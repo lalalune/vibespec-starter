@@ -18,12 +18,19 @@ pure val initial: Registry = { entries: List(), last: Admin }
 
 ### What the simulator tries
 
-Three project keys, three spreadsheets, two channels, and the empty channel.
+Three project keys, three spreadsheets, two channels, the empty channel, and
+four registries.
 
 ```quint
 pure val keyValues = Set("a", "b", "c")
 pure val sheetValues = Set("S1", "S2", "S3")
 pure val channelValues = Set("", "C1", "C2")
+pure val rValues = Set(
+  { entries: List(), last: Admin },
+  { entries: List({ key: "a", sheet: "S1", channel: "C1" }), last: Admin },
+  { entries: List({ key: "a", sheet: "S1", channel: "C1" }, { key: "b", sheet: "S2", channel: "C1" }), last: Sheet },
+  { entries: List({ key: "a", sheet: "S1", channel: "C1" }, { key: "b", sheet: "S2", channel: "C2" }), last: Admin },
+)
 ```
 
 ## Story: Connect a sheet as a project
@@ -33,8 +40,8 @@ pure val channelValues = Set("", "C1", "C2")
 
 ### A sheet is connected as at most one project
 
-If two projects shared one spreadsheet, both would hand out the same task
-numbers.
+A key and a sheet each belong to at most one project, and neither may be
+empty. Two projects sharing a spreadsheet would hand out the same task numbers.
 
 ```quint
 pure def hasKey(r: Registry, key: str): bool = r.entries.some(e => e.key == key)
@@ -117,10 +124,4 @@ pure def projectFor(r: Registry, channel: str): str =
 pure def lawAnAnswerIsTheOnlyClaimant(r: Registry, channel: str): bool =
   projectFor(r, channel) == "" or claimants(r, channel).every(e => e.key == projectFor(r, channel))
 
-pure val rValues = Set(
-  { entries: List(), last: Admin },
-  { entries: List({ key: "a", sheet: "S1", channel: "C1" }), last: Admin },
-  { entries: List({ key: "a", sheet: "S1", channel: "C1" }, { key: "b", sheet: "S2", channel: "C1" }), last: Sheet },
-  { entries: List({ key: "a", sheet: "S1", channel: "C1" }, { key: "b", sheet: "S2", channel: "C2" }), last: Admin },
-)
 ```

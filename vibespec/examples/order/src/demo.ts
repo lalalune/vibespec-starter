@@ -1,4 +1,4 @@
-import type { Event } from "../gen/index.ts";
+import type { Event, Order } from "../gen/index.ts";
 import { OrderBook, Rejected } from "./app.ts";
 
 const book = new OrderBook();
@@ -11,13 +11,17 @@ const events: Event[] = [
   { type: "pay", amount: 6 },
   { type: "cancel" }, // already paid
 ];
+const paidBar = (o: Order) => {
+  const filled = o.due ? Math.round((10 * o.paid) / o.due) : 0;
+  return `${"█".repeat(filled)}${"░".repeat(10 - filled)} ${o.paid}/${o.due}`;
+};
 for (const event of events) {
-  const shown = JSON.stringify(event).padEnd(30);
+  const shown = Object.values(event).join(" ").padEnd(10);
   try {
-    console.log("✓", shown, JSON.stringify(book.dispatch("A1", event)));
+    const order = book.dispatch("A1", event);
+    console.log("✓", shown, order.status.padEnd(9), paidBar(order));
   } catch (e) {
     if (!(e instanceof Rejected)) throw e;
     console.log("✗", shown, e.message);
   }
 }
-console.log("balance", book.balance("A1"));
