@@ -1,9 +1,51 @@
 {
   "version": 1,
   "specs": {
+    "spec/components.md": {
+      "@document": [
+        "e6971dbf12ee"
+      ],
+      "## Story: Inspect a component and its stories": [
+        "f13cd64cf2c3"
+      ],
+      "Story: Inspect a component and its stories / A catalog records how many stories each component has": [
+        "2291b44781a4",
+        "fe82d844a9d5"
+      ],
+      "Story: Inspect a component and its stories / Before a catalog is loaded nothing is selected": [
+        "e3b0c44298fc",
+        "291fdbd0a25f",
+        "a4907880c200"
+      ],
+      "Story: Inspect a component and its stories / Loading a catalog selects its first component and that component's first story": [
+        "0086558d7ec8",
+        "b0e242aef8a0",
+        "a4907880c200"
+      ],
+      "Story: Inspect a component and its stories / Choosing a component selects its first story and clears prop overrides": [
+        "58cdc940a5a5",
+        "c8167959e7d0",
+        "a4907880c200"
+      ],
+      "Story: Inspect a component and its stories / Choosing a story stays within its component and clears prop overrides": [
+        "9800d5fec590",
+        "bd9ea8fb9000",
+        "a4907880c200"
+      ],
+      "Story: Inspect a component and its stories / Every selected component and story exists in the loaded catalog": [
+        "e3b0c44298fc",
+        "4eca41859a33",
+        "a4907880c200"
+      ],
+      "Story: Inspect a component and its stories / A component without stories and a later story can both be inspected": [
+        "e3b0c44298fc",
+        "18eeb0da2346",
+        "a4907880c200"
+      ]
+    },
     "spec/index.md": {
       "@document": [
-        "81198bbc1e24"
+        "9153c98da278"
       ],
       "## Domain": [
         "e3b0c44298fc"
