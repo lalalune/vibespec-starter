@@ -898,6 +898,8 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
 
   test("the studio publishes a spec with its origins, checks it, and refuses remote or concurrent writes", async () => {
     const root = fixtures(["door"]);
+    fs.writeFileSync(path.join(root, "tsconfig.json"), read("tsconfig.json"));
+    fs.symlinkSync(nodeModules, path.join(root, "node_modules"), "dir");
     for (const dir of ["src/components.ts", "test/journey.test.ts", "spec/facts.proof.dfy"])
       fs.mkdirSync(path.join(root, dir), { recursive: true });
     const studio = await startStudio({ projects: [{ id: ".", name: "Door", root }], port: 0, agents: {
