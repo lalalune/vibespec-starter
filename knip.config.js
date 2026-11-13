@@ -12,7 +12,6 @@ export default {
     "**/dist/**",
     "**/generated/**",
     "**/test/fixtures/**",
-    "vibestack/stories/test/project/**",
     "**/*.d.vibe.ts",
     "**/.vibe/**"
   ],
