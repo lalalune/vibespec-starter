@@ -1,0 +1,24 @@
+import type { ComponentProps } from "react";
+import * as ProgressPrimitive from "@radix-ui/react-progress";
+import { cn } from "../lib/cn.ts";
+
+export type ProgressProps = ComponentProps<typeof ProgressPrimitive.Root> & {
+  /** How much is done, from 0 to `max`; leave out while the amount is unknown. */
+  value?: number | null;
+  /** The value that means done. */
+  max?: number;
+};
+
+/** A bar for work whose length is known. Name it with `aria-label`. */
+export function Progress({ value, max = 100, className, ...props }: ProgressProps) {
+  const done = value == null ? null : Math.min(Math.max(value / max, 0), 1);
+  return (
+    <ProgressPrimitive.Root value={value} max={max} className={cn("h-2 w-full overflow-hidden rounded-lg bg-secondary", className)} {...props}>
+      <ProgressPrimitive.Indicator
+        className={cn("size-full origin-left bg-primary transition-transform", done === null && "animate-pulse")}
+        // eslint-disable-next-line -- the fill is a runtime number, which no utility class can carry
+        style={done === null ? undefined : { transform: `scaleX(${done})` }}
+      />
+    </ProgressPrimitive.Root>
+  );
+}
