@@ -422,7 +422,7 @@ it.live("the studio opens only the current project or the requested project path
     [repo, undefined, repo], [repo, ".", repo], [repo, "vibestack/examples/order", example], [repo, example, example],
     [repo, external, external], [repo, path.relative(repo, external), external], [path.join(TOOLS, ".."), "vibestack/studio", path.join(TOOLS, "studio")],
   ]
-  for (const [cwd, target, expected] of cases) try scoped(effect {
+  effect function opensProject([cwd, target, expected]: [string, string | undefined, string]) { try scoped(effect {
     // `spec studio`, as a person starts it: the tools' command, which starts Studio's own program.
     const child = try spawner.spawn(ChildProcess.make(NODE, [`${TOOLS}/spec.ts`, "studio", ...(target === undefined ? [] : [target]), "--port", "0"], { cwd }))
     const line = try Stream.runHead(Stream.filter(Stream.splitLines(Stream.decodeText(child.stdout)), (l) => l.startsWith("studio: ")))
@@ -440,7 +440,10 @@ it.live("the studio opens only the current project or the requested project path
       { projects, current: current.project, specs: current.specs.map((s) => [s.file, s.text]).sort(), other },
       { projects: { projects: [{ id: ".", name }], open: "." }, current: { id: ".", name, root }, specs: specs.sort(), other: 404 },
     ))
-  })
+  }) }
+  // startStudio builds the shared page on a cold checkout before the remaining CLI processes can reuse it.
+  try opensProject(cases[0])
+  try Effect.forEach(cases.slice(1), opensProject, { concurrency: 3, discard: true })
   const failures: unknown[] = []
   for (const args of [["missing"], ["spec/index.md"]]) failures.push(try Effect.flip(serve(repo, [...args, "--port", "0"])))
   const invalid = try scratch({ "plain.txt": "not a project", "file-spec/spec": "not a directory" })
