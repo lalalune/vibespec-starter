@@ -15,7 +15,7 @@ keep each area small. Everything else is generated, simulated and proved with
 [Dafny](https://dafny.org). The coding agent in your session keeps prose and
 model in step; you sign off.
 
-[![Use this template](https://img.shields.io/badge/Use_this_template-2ea44f?style=for-the-badge&logo=github)](https://github.com/lalalune/vibespec-starter/generate)
+[![Use this template](https://img.shields.io/badge/Use_this_template-2ea44f?style=for-the-badge&logo=github)](https://github.com/lalalune/vibestack/generate)
 
 [Quickstart](#quickstart) ·
 [Getting started](#getting-started) ·
@@ -34,7 +34,7 @@ model in step; you sign off.
 **Starting a new project? Paste this into your agent:**
 
 ```text
-Help me build a new project from https://github.com/lalalune/vibespec-starter.
+Help me build a new project from https://github.com/lalalune/vibestack.
 
 Start by asking what I want to build, who it is for, and its main workflows.
 Then:
@@ -51,15 +51,15 @@ Then:
    my request before running npm run accept.
 ```
 
-[![Start in ChatGPT](https://img.shields.io/badge/Start_in_ChatGPT-212121?style=for-the-badge)](https://chatgpt.com/?q=Help%20me%20build%20a%20new%20project%20from%20https%3A%2F%2Fgithub.com%2Flalalune%2Fvibespec-starter.%0A%0AStart%20by%20asking%20what%20I%20want%20to%20build%2C%20who%20it%20is%20for%2C%20and%20its%20main%20workflows.%0AThen%3A%0A1.%20Use%20the%20template%20in%20a%20new%20project%20directory%2C%20or%20use%20my%20existing%20copy.%0A%20%20%20Read%20AGENTS.md%20and%20README.md%20in%20full%20and%20follow%20their%20design%20and%20sync%20skills.%0A2.%20Check%20for%20Node.js%2024%2B%20and%20Dafny%204.11%20on%20PATH%2C%20run%20npm%20install%2C%20and%20follow%0A%20%20%20the%20README's%20%22Set%20up%20a%20new%20project%22%20section.%0A3.%20Write%20my%20stories%20and%20rules%20in%20spec%2Findex.md%2C%20with%20Quint%20under%20each%20rule.%0A4.%20Build%20the%20app%20in%20src%2F%20using%20the%20generated%20code%20in%20gen%2F.%20Add%20tests%20for%0A%20%20%20user%20journeys%20through%20the%20UI%2C%20API%2C%20storage%2C%20or%20other%20external%20services.%0A5.%20Run%20npm%20run%20check%20and%20fix%20failures%20until%20only%20my%20review%20remains.%0A%20%20%20Never%20edit%20generated%20files%20or%20weaken%20rules%20to%20pass%20checks.%0A6.%20Show%20me%20how%20to%20run%20the%20app%2C%20summarize%20what%20needs%20review%2C%20and%20wait%20for%0A%20%20%20my%20request%20before%20running%20npm%20run%20accept.)
-[![Start in Claude](https://img.shields.io/badge/Start_in_Claude-B54A32?style=for-the-badge)](https://claude.ai/new?q=Help%20me%20build%20a%20new%20project%20from%20https%3A%2F%2Fgithub.com%2Flalalune%2Fvibespec-starter.%0A%0AStart%20by%20asking%20what%20I%20want%20to%20build%2C%20who%20it%20is%20for%2C%20and%20its%20main%20workflows.%0AThen%3A%0A1.%20Use%20the%20template%20in%20a%20new%20project%20directory%2C%20or%20use%20my%20existing%20copy.%0A%20%20%20Read%20AGENTS.md%20and%20README.md%20in%20full%20and%20follow%20their%20design%20and%20sync%20skills.%0A2.%20Check%20for%20Node.js%2024%2B%20and%20Dafny%204.11%20on%20PATH%2C%20run%20npm%20install%2C%20and%20follow%0A%20%20%20the%20README's%20%22Set%20up%20a%20new%20project%22%20section.%0A3.%20Write%20my%20stories%20and%20rules%20in%20spec%2Findex.md%2C%20with%20Quint%20under%20each%20rule.%0A4.%20Build%20the%20app%20in%20src%2F%20using%20the%20generated%20code%20in%20gen%2F.%20Add%20tests%20for%0A%20%20%20user%20journeys%20through%20the%20UI%2C%20API%2C%20storage%2C%20or%20other%20external%20services.%0A5.%20Run%20npm%20run%20check%20and%20fix%20failures%20until%20only%20my%20review%20remains.%0A%20%20%20Never%20edit%20generated%20files%20or%20weaken%20rules%20to%20pass%20checks.%0A6.%20Show%20me%20how%20to%20run%20the%20app%2C%20summarize%20what%20needs%20review%2C%20and%20wait%20for%0A%20%20%20my%20request%20before%20running%20npm%20run%20accept.)
-[![Start in Cursor](https://img.shields.io/badge/Start_in_Cursor-212121?style=for-the-badge)](https://cursor.com/link/prompt?text=Help%20me%20build%20a%20new%20project%20from%20https%3A%2F%2Fgithub.com%2Flalalune%2Fvibespec-starter.%0A%0AStart%20by%20asking%20what%20I%20want%20to%20build%2C%20who%20it%20is%20for%2C%20and%20its%20main%20workflows.%0AThen%3A%0A1.%20Use%20the%20template%20in%20a%20new%20project%20directory%2C%20or%20use%20my%20existing%20copy.%0A%20%20%20Read%20AGENTS.md%20and%20README.md%20in%20full%20and%20follow%20their%20design%20and%20sync%20skills.%0A2.%20Check%20for%20Node.js%2024%2B%20and%20Dafny%204.11%20on%20PATH%2C%20run%20npm%20install%2C%20and%20follow%0A%20%20%20the%20README's%20%22Set%20up%20a%20new%20project%22%20section.%0A3.%20Write%20my%20stories%20and%20rules%20in%20spec%2Findex.md%2C%20with%20Quint%20under%20each%20rule.%0A4.%20Build%20the%20app%20in%20src%2F%20using%20the%20generated%20code%20in%20gen%2F.%20Add%20tests%20for%0A%20%20%20user%20journeys%20through%20the%20UI%2C%20API%2C%20storage%2C%20or%20other%20external%20services.%0A5.%20Run%20npm%20run%20check%20and%20fix%20failures%20until%20only%20my%20review%20remains.%0A%20%20%20Never%20edit%20generated%20files%20or%20weaken%20rules%20to%20pass%20checks.%0A6.%20Show%20me%20how%20to%20run%20the%20app%2C%20summarize%20what%20needs%20review%2C%20and%20wait%20for%0A%20%20%20my%20request%20before%20running%20npm%20run%20accept.)
-[![Start in Grok Bot](https://img.shields.io/badge/Start_in_Grok_Bot-212121?style=for-the-badge)](https://cursor.com/grok-bot/link/v1/prompt?text=Help%20me%20build%20a%20new%20project%20from%20https%3A%2F%2Fgithub.com%2Flalalune%2Fvibespec-starter.%20%20Start%20by%20asking%20what%20I%20want%20to%20build%2C%20who%20it%20is%20for%2C%20and%20its%20main%20workflows.%20Then%3A%201.%20Use%20the%20template%20in%20a%20new%20project%20directory%2C%20or%20use%20my%20existing%20copy.%20%20%20%20Read%20AGENTS.md%20and%20README.md%20in%20full%20and%20follow%20their%20design%20and%20sync%20skills.%202.%20Check%20for%20Node.js%2024%2B%20and%20Dafny%204.11%20on%20PATH%2C%20run%20npm%20install%2C%20and%20follow%20%20%20%20the%20README's%20%22Set%20up%20a%20new%20project%22%20section.%203.%20Write%20my%20stories%20and%20rules%20in%20spec%2Findex.md%2C%20with%20Quint%20under%20each%20rule.%204.%20Build%20the%20app%20in%20src%2F%20using%20the%20generated%20code%20in%20gen%2F.%20Add%20tests%20for%20%20%20%20user%20journeys%20through%20the%20UI%2C%20API%2C%20storage%2C%20or%20other%20external%20services.%205.%20Run%20npm%20run%20check%20and%20fix%20failures%20until%20only%20my%20review%20remains.%20%20%20%20Never%20edit%20generated%20files%20or%20weaken%20rules%20to%20pass%20checks.%206.%20Show%20me%20how%20to%20run%20the%20app%2C%20summarize%20what%20needs%20review%2C%20and%20wait%20for%20%20%20%20my%20request%20before%20running%20npm%20run%20accept.)
-[![Start in Muse](https://img.shields.io/badge/Start_in_Muse-0866FF?style=for-the-badge)](https://muse.ai/thread/new?prompt=Help%20me%20build%20a%20new%20project%20from%20https%3A%2F%2Fgithub.com%2Flalalune%2Fvibespec-starter.%0A%0AStart%20by%20asking%20what%20I%20want%20to%20build%2C%20who%20it%20is%20for%2C%20and%20its%20main%20workflows.%0AThen%3A%0A1.%20Use%20the%20template%20in%20a%20new%20project%20directory%2C%20or%20use%20my%20existing%20copy.%0A%20%20%20Read%20AGENTS.md%20and%20README.md%20in%20full%20and%20follow%20their%20design%20and%20sync%20skills.%0A2.%20Check%20for%20Node.js%2024%2B%20and%20Dafny%204.11%20on%20PATH%2C%20run%20npm%20install%2C%20and%20follow%0A%20%20%20the%20README's%20%22Set%20up%20a%20new%20project%22%20section.%0A3.%20Write%20my%20stories%20and%20rules%20in%20spec%2Findex.md%2C%20with%20Quint%20under%20each%20rule.%0A4.%20Build%20the%20app%20in%20src%2F%20using%20the%20generated%20code%20in%20gen%2F.%20Add%20tests%20for%0A%20%20%20user%20journeys%20through%20the%20UI%2C%20API%2C%20storage%2C%20or%20other%20external%20services.%0A5.%20Run%20npm%20run%20check%20and%20fix%20failures%20until%20only%20my%20review%20remains.%0A%20%20%20Never%20edit%20generated%20files%20or%20weaken%20rules%20to%20pass%20checks.%0A6.%20Show%20me%20how%20to%20run%20the%20app%2C%20summarize%20what%20needs%20review%2C%20and%20wait%20for%0A%20%20%20my%20request%20before%20running%20npm%20run%20accept.)
+[![Start in ChatGPT](https://img.shields.io/badge/Start_in_ChatGPT-212121?style=for-the-badge)](https://chatgpt.com/?q=Help%20me%20build%20a%20new%20project%20from%20https%3A%2F%2Fgithub.com%2Flalalune%2Fvibestack.%0A%0AStart%20by%20asking%20what%20I%20want%20to%20build%2C%20who%20it%20is%20for%2C%20and%20its%20main%20workflows.%0AThen%3A%0A1.%20Use%20the%20template%20in%20a%20new%20project%20directory%2C%20or%20use%20my%20existing%20copy.%0A%20%20%20Read%20AGENTS.md%20and%20README.md%20in%20full%20and%20follow%20their%20design%20and%20sync%20skills.%0A2.%20Check%20for%20Node.js%2024%2B%20and%20Dafny%204.11%20on%20PATH%2C%20run%20npm%20install%2C%20and%20follow%0A%20%20%20the%20README's%20%22Set%20up%20a%20new%20project%22%20section.%0A3.%20Write%20my%20stories%20and%20rules%20in%20spec%2Findex.md%2C%20with%20Quint%20under%20each%20rule.%0A4.%20Build%20the%20app%20in%20src%2F%20using%20the%20generated%20code%20in%20gen%2F.%20Add%20tests%20for%0A%20%20%20user%20journeys%20through%20the%20UI%2C%20API%2C%20storage%2C%20or%20other%20external%20services.%0A5.%20Run%20npm%20run%20check%20and%20fix%20failures%20until%20only%20my%20review%20remains.%0A%20%20%20Never%20edit%20generated%20files%20or%20weaken%20rules%20to%20pass%20checks.%0A6.%20Show%20me%20how%20to%20run%20the%20app%2C%20summarize%20what%20needs%20review%2C%20and%20wait%20for%0A%20%20%20my%20request%20before%20running%20npm%20run%20accept.)
+[![Start in Claude](https://img.shields.io/badge/Start_in_Claude-B54A32?style=for-the-badge)](https://claude.ai/new?q=Help%20me%20build%20a%20new%20project%20from%20https%3A%2F%2Fgithub.com%2Flalalune%2Fvibestack.%0A%0AStart%20by%20asking%20what%20I%20want%20to%20build%2C%20who%20it%20is%20for%2C%20and%20its%20main%20workflows.%0AThen%3A%0A1.%20Use%20the%20template%20in%20a%20new%20project%20directory%2C%20or%20use%20my%20existing%20copy.%0A%20%20%20Read%20AGENTS.md%20and%20README.md%20in%20full%20and%20follow%20their%20design%20and%20sync%20skills.%0A2.%20Check%20for%20Node.js%2024%2B%20and%20Dafny%204.11%20on%20PATH%2C%20run%20npm%20install%2C%20and%20follow%0A%20%20%20the%20README's%20%22Set%20up%20a%20new%20project%22%20section.%0A3.%20Write%20my%20stories%20and%20rules%20in%20spec%2Findex.md%2C%20with%20Quint%20under%20each%20rule.%0A4.%20Build%20the%20app%20in%20src%2F%20using%20the%20generated%20code%20in%20gen%2F.%20Add%20tests%20for%0A%20%20%20user%20journeys%20through%20the%20UI%2C%20API%2C%20storage%2C%20or%20other%20external%20services.%0A5.%20Run%20npm%20run%20check%20and%20fix%20failures%20until%20only%20my%20review%20remains.%0A%20%20%20Never%20edit%20generated%20files%20or%20weaken%20rules%20to%20pass%20checks.%0A6.%20Show%20me%20how%20to%20run%20the%20app%2C%20summarize%20what%20needs%20review%2C%20and%20wait%20for%0A%20%20%20my%20request%20before%20running%20npm%20run%20accept.)
+[![Start in Cursor](https://img.shields.io/badge/Start_in_Cursor-212121?style=for-the-badge)](https://cursor.com/link/prompt?text=Help%20me%20build%20a%20new%20project%20from%20https%3A%2F%2Fgithub.com%2Flalalune%2Fvvibestack.%0A%0AStart%20by%20asking%20what%20I%20want%20to%20build%2C%20who%20it%20is%20for%2C%20and%20its%20main%20workflows.%0AThen%3A%0A1.%20Use%20the%20template%20in%20a%20new%20project%20directory%2C%20or%20use%20my%20existing%20copy.%0A%20%20%20Read%20AGENTS.md%20and%20README.md%20in%20full%20and%20follow%20their%20design%20and%20sync%20skills.%0A2.%20Check%20for%20Node.js%2024%2B%20and%20Dafny%204.11%20on%20PATH%2C%20run%20npm%20install%2C%20and%20follow%0A%20%20%20the%20README's%20%22Set%20up%20a%20new%20project%22%20section.%0A3.%20Write%20my%20stories%20and%20rules%20in%20spec%2Findex.md%2C%20with%20Quint%20under%20each%20rule.%0A4.%20Build%20the%20app%20in%20src%2F%20using%20the%20generated%20code%20in%20gen%2F.%20Add%20tests%20for%0A%20%20%20user%20journeys%20through%20the%20UI%2C%20API%2C%20storage%2C%20or%20other%20external%20services.%0A5.%20Run%20npm%20run%20check%20and%20fix%20failures%20until%20only%20my%20review%20remains.%0A%20%20%20Never%20edit%20generated%20files%20or%20weaken%20rules%20to%20pass%20checks.%0A6.%20Show%20me%20how%20to%20run%20the%20app%2C%20summarize%20what%20needs%20review%2C%20and%20wait%20for%0A%20%20%20my%20request%20before%20running%20npm%20run%20accept.)
+[![Start in Grok Bot](https://img.shields.io/badge/Start_in_Grok_Bot-212121?style=for-the-badge)](https://cursor.com/grok-bot/link/v1/prompt?text=Help%20me%20build%20a%20new%20project%20from%20https%3A%2F%2Fgithub.com%2Flalalune%2Fvibestack.%20%20Start%20by%20asking%20what%20I%20want%20to%20build%2C%20who%20it%20is%20for%2C%20and%20its%20main%20workflows.%20Then%3A%201.%20Use%20the%20template%20in%20a%20new%20project%20directory%2C%20or%20use%20my%20existing%20copy.%20%20%20%20Read%20AGENTS.md%20and%20README.md%20in%20full%20and%20follow%20their%20design%20and%20sync%20skills.%202.%20Check%20for%20Node.js%2024%2B%20and%20Dafny%204.11%20on%20PATH%2C%20run%20npm%20install%2C%20and%20follow%20%20%20%20the%20README's%20%22Set%20up%20a%20new%20project%22%20section.%203.%20Write%20my%20stories%20and%20rules%20in%20spec%2Findex.md%2C%20with%20Quint%20under%20each%20rule.%204.%20Build%20the%20app%20in%20src%2F%20using%20the%20generated%20code%20in%20gen%2F.%20Add%20tests%20for%20%20%20%20user%20journeys%20through%20the%20UI%2C%20API%2C%20storage%2C%20or%20other%20external%20services.%205.%20Run%20npm%20run%20check%20and%20fix%20failures%20until%20only%20my%20review%20remains.%20%20%20%20Never%20edit%20generated%20files%20or%20weaken%20rules%20to%20pass%20checks.%206.%20Show%20me%20how%20to%20run%20the%20app%2C%20summarize%20what%20needs%20review%2C%20and%20wait%20for%20%20%20%20my%20request%20before%20running%20npm%20run%20accept.)
+[![Start in Muse](https://img.shields.io/badge/Start_in_Muse-0866FF?style=for-the-badge)](https://muse.ai/thread/new?prompt=Help%20me%20build%20a%20new%20project%20from%20https%3A%2F%2Fgithub.com%2Flalalune%2Fvibestack.%0A%0AStart%20by%20asking%20what%20I%20want%20to%20build%2C%20who%20it%20is%20for%2C%20and%20its%20main%20workflows.%0AThen%3A%0A1.%20Use%20the%20template%20in%20a%20new%20project%20directory%2C%20or%20use%20my%20existing%20copy.%0A%20%20%20Read%20AGENTS.md%20and%20README.md%20in%20full%20and%20follow%20their%20design%20and%20sync%20skills.%0A2.%20Check%20for%20Node.js%2024%2B%20and%20Dafny%204.11%20on%20PATH%2C%20run%20npm%20install%2C%20and%20follow%0A%20%20%20the%20README's%20%22Set%20up%20a%20new%20project%22%20section.%0A3.%20Write%20my%20stories%20and%20rules%20in%20spec%2Findex.md%2C%20with%20Quint%20under%20each%20rule.%0A4.%20Build%20the%20app%20in%20src%2F%20using%20the%20generated%20code%20in%20gen%2F.%20Add%20tests%20for%0A%20%20%20user%20journeys%20through%20the%20UI%2C%20API%2C%20storage%2C%20or%20other%20external%20services.%0A5.%20Run%20npm%20run%20check%20and%20fix%20failures%20until%20only%20my%20review%20remains.%0A%20%20%20Never%20edit%20generated%20files%20or%20weaken%20rules%20to%20pass%20checks.%0A6.%20Show%20me%20how%20to%20run%20the%20app%2C%20summarize%20what%20needs%20review%2C%20and%20wait%20for%0A%20%20%20my%20request%20before%20running%20npm%20run%20accept.)
 
 ## Why
 
-Agents write code fast; reading all of it is the slow part. Vibespec moves
+Agents write code fast; reading all of it is the slow part. Vibestack moves
 what you must read to the top: a short list of sentences a product owner
 would call true or false, each with its formal meaning underneath. From
 there:
@@ -98,7 +98,7 @@ The template's `spec/index.md` is blank, ready for your application.
 4.11 on the `PATH`. Packages with `src/` or `test/` also need a
 `tsconfig.json` so the generated contract is checked against the application.
 
-1. Click **[Use this template](https://github.com/lalalune/vibespec-starter/generate)**
+1. Click **[Use this template](https://github.com/lalalune/vibestack/generate)**
    to create your own repository, then clone it and enter its directory.
 2. Install the toolchain and open your project in Studio:
 
@@ -145,22 +145,22 @@ from the directory where you run the command. With the packaged CLI, use
 its specs, source, tests and review ledger throughout. See [Examples](#examples)
 for the bundled project paths.
 
-Studio is built the way it asks you to build: it is a Vibespec application of
-its own, in `vibespec/studio/`. [Its session](vibespec/studio/spec/index.md)
+Studio is built the way it asks you to build: it is a Vibestack application of
+its own, in `vibestack/studio/`. [Its session](vibestack/studio/spec/index.md)
 (what may be published, synced, checked or signed off, and when) and
-[the outline of a spec](vibespec/studio/spec/outline.md) (adding, editing,
+[the outline of a spec](vibestack/studio/spec/outline.md) (adding, editing,
 removing, reordering and regrouping stories and rules) are specs, checked like
-any other package with `npm run check --workspace vibespec-studio` (and with
+any other package with `npm run check --workspace vibestack-studio` (and with
 the examples by `npm run check --workspaces`). The server and the page are the shell around
 the generated code: they act only through its `enabled` and `step`, so a
 button is offered exactly when the spec allows its event. To change what
 Studio does, open it on itself:
 
 ```bash
-npm run dev -- vibespec/studio
+npm run dev -- vibestack/studio
 ```
 
-For a terminal workflow, `node vibespec/spec.ts watch` reruns checks when a
+For a terminal workflow, `node vibestack/spec.ts watch` reruns checks when a
 spec, source file or test changes.
 
 ## Build your project
@@ -202,8 +202,8 @@ the related source and tests. To check a project in another directory, use
 the CLI directly:
 
 ```bash
-node vibespec/spec.ts check .
-node vibespec/spec.ts check ../my-project
+node vibestack/spec.ts check .
+node vibestack/spec.ts check ../my-project
 ```
 
 CI runs this root check only. Examples and tool selftests run locally;
@@ -279,14 +279,14 @@ npm run accept
 
 Before committing your application's starting point:
 
-1. **Remove the example projects.** Delete `vibespec/examples/` and remove
+1. **Remove the example projects.** Delete `vibestack/examples/` and remove
    its workspace entries and npm scripts such as `demo` and
    `check:dashboard`. Update the package name, description and repository
    links for your project.
 2. **Keep the toolchain guide with the toolchain.** Move this README to
-   `vibespec/README.md`, update its relative links and the guide references
+   `vibestack/README.md`, update its relative links and the guide references
    in `AGENTS.md` and the skills, and keep the template license in
-   `vibespec/LICENSE` alongside the retained Vibespec code.
+   `vibestack/LICENSE` alongside the retained Vibestack code.
 3. **Write your project's documentation.** Create a root `README.md` with
    the project's purpose and install, run and check commands. Set the root
    `LICENSE` to the project's chosen terms and copyright holder.
@@ -302,24 +302,24 @@ Before committing your application's starting point:
 | `npx spec studio <project-path>` | Opens another project with the packaged CLI |
 | `npm run check` | Checks the root project’s spec, source and tests; ends with a `next:` line |
 | `npm run check --workspaces --if-present` | Checks all bundled example workspaces |
-| `node vibespec/spec.ts check <directory>` | Checks only the selected project |
-| `node vibespec/spec.ts check <directory> --json` | The selected project's check as one JSON object ([shape](AGENTS.md#changing-the-tools)) |
+| `node vibestack/spec.ts check <directory>` | Checks only the selected project |
+| `node vibestack/spec.ts check <directory> --json` | The selected project's check as one JSON object ([shape](AGENTS.md#changing-the-tools)) |
 | `npm run gen` | Generates `gen/` only |
-| `node vibespec/spec.ts gen <directory>` | Generates the selected project's `gen/` only |
-| `node vibespec/spec.ts watch <directory>` | Rechecks the selected project when its spec, source or tests change |
+| `node vibestack/spec.ts gen <directory>` | Generates the selected project's `gen/` only |
+| `node vibestack/spec.ts watch <directory>` | Rechecks the selected project when its spec, source or tests change |
 | `npm run accept` | The user's sign-off: checks afresh and records what `review` lists, [all or nothing](AGENTS.md#review) |
-| `node vibespec/spec.ts accept <directory>` | Signs off on the selected project's reviewed changes |
+| `node vibestack/spec.ts accept <directory>` | Signs off on the selected project's reviewed changes |
 | `npm run accept -- unproved` | Records the listed obligations as simulated only. The user's decision |
 | `npm run new` / `npm run new -- <path>` | Fills an empty root index or creates a child [starter spec](AGENTS.md#writing-a-spec) |
-| `node vibespec/spec.ts migrate <directory>` | Consolidates that project's old review ledgers into `spec/lock.json`, preserving their recorded approvals |
+| `node vibestack/spec.ts migrate <directory>` | Consolidates that project's old review ledgers into `spec/lock.json`, preserving their recorded approvals |
 | `npm run demo` | Runs the order example's scripted checkout session |
-| `npm run check:dashboard` | `check` on `vibespec/examples/dashboard` |
+| `npm run check:dashboard` | `check` on `vibestack/examples/dashboard` |
 | `npm run selftest` | Breaks the pipeline one way at a time and checks each break is caught |
 | `npm run build` | Compiles the tools into `dist/`, the packaged `spec` command |
-| `node vibespec/spec.ts init <directory>` | Sets up an existing project folder; see [Using it from another package](AGENTS.md#using-it-from-another-package) |
+| `node vibestack/spec.ts init <directory>` | Sets up an existing project folder; see [Using it from another package](AGENTS.md#using-it-from-another-package) |
 
-Run the `node vibespec/spec.ts` commands from this repository's root. When
-Vibespec is installed as a package in another project, use `npx spec` with
+Run the `node vibestack/spec.ts` commands from this repository's root. When
+Vibestack is installed as a package in another project, use `npx spec` with
 the same command and arguments instead.
 
 Omit `<directory>` to use the current project.
@@ -340,10 +340,10 @@ example's directory to open its specs in Studio:
 
 | Project | What it covers | Open in Studio |
 |---|---|---|
-| [Order checkout](vibespec/examples/order/README.md) | Guards, payments, cancellation and a proved event ledger | `npm run dev -- vibespec/examples/order` |
-| [Team dashboard](vibespec/examples/dashboard/README.md) | Shared spreadsheets, chat notifications and a project registry | `npm run dev -- vibespec/examples/dashboard` |
-| [Shared to-do list](vibespec/examples/fullstack/README.md) | HTTP server, browser client and two tabs over an unreliable network | `npm run dev -- vibespec/examples/fullstack` |
-| [Assistant](vibespec/examples/assistant/README.md) | Trusted senders, bounded turns, late replies and confirmation before payment | `npm run dev -- vibespec/examples/assistant` |
+| [Order checkout](vibestack/examples/order/README.md) | Guards, payments, cancellation and a proved event ledger | `npm run dev -- vibestack/examples/order` |
+| [Team dashboard](vibestack/examples/dashboard/README.md) | Shared spreadsheets, chat notifications and a project registry | `npm run dev -- vibestack/examples/dashboard` |
+| [Shared to-do list](vibestack/examples/fullstack/README.md) | HTTP server, browser client and two tabs over an unreliable network | `npm run dev -- vibestack/examples/fullstack` |
+| [Assistant](vibestack/examples/assistant/README.md) | Trusted senders, bounded turns, late replies and confirmation before payment | `npm run dev -- vibestack/examples/assistant` |
 
 The same argument accepts any project directory containing `spec/`, including
 projects outside this repository. Studio edits and checks the selected
@@ -351,8 +351,8 @@ project; the examples with executable applications have run commands in
 their linked project guides. Check or generate one example by passing its path:
 
 ```bash
-node vibespec/spec.ts check vibespec/examples/order
-node vibespec/spec.ts gen vibespec/examples/order
+node vibestack/spec.ts check vibestack/examples/order
+node vibestack/spec.ts gen vibestack/examples/order
 ```
 
 Replace the path to work on any other project. Output and caches stay in the
@@ -366,7 +366,7 @@ npm run check --workspaces --if-present
 
 How the repository works, the spec format, proof files and how to change the
 tools are in [AGENTS.md](AGENTS.md); every agent reads it and this README in
-full before doing any work. A change to `vibespec/` needs
+full before doing any work. A change to `vibestack/` needs
 `npm run selftest` to pass, with a new case for each new kind of mistake it
 catches.
 
