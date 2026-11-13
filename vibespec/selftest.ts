@@ -20,7 +20,7 @@ const EXAMPLE = path.join(project, "vibespec/examples/order");
 const read = (file: string): string => {
   const example = file === "spec/order.md" ? "spec/index.md" : /^(src|test)\//.test(file) || file === "tsconfig.json" ? file : undefined;
   return fs.readFileSync(example ? path.join(EXAMPLE, example) : path.join(project, file), "utf8")
-    .replaceAll("gen/index.ts", "gen/order.ts").replaceAll("spec/index.md", "spec/order.md");
+    .replaceAll("gen/index.", "gen/order.").replaceAll("spec/index.md", "spec/order.md");
 };
 const F = "`".repeat(3);
 const roots: string[] = [];
@@ -163,6 +163,12 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       dispatch: (key: string) => { const n = states.get(key) ?? 0; if (n === 2) return "refused"; states.set(key, n + 1); return "accepted"; },
       observe: (key: string) => states.get(key) ?? 0,
     }, { walks: 3, steps: 6 });
+    let shared = 0;
+    await assert.rejects(helper.conformance({
+      reset: () => { shared = 0; },
+      dispatch: () => { shared++; return "accepted"; },
+      observe: () => shared,
+    }, { walks: 1, steps: 1 }), /should be 0, but the application has 1/);
     assert.equal(departure(domain, found, [{ state: 0 }, { event: { type: "inc" }, state: 1 }]), undefined);
     assert.match(departure(domain, found, [{ event: { type: "inc" } }])?.why ?? "", /no observed state/);
     fs.mkdirSync(path.join(root, "test/traces"), { recursive: true });

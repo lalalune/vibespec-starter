@@ -251,6 +251,17 @@ module ProofLib {
 
   // --- FoldLeft -------------------------------------------------------------
 
+  /** Appending one element takes one more fold step. */
+  lemma FoldLeftAppend<A, T>(f: (A, T) -> A, init: A, xs: seq<T>, last: T)
+    ensures Seq.FoldLeft(f, init, xs + [last]) == f(Seq.FoldLeft(f, init, xs), last)
+    decreases |xs|
+  {
+    if |xs| > 0 {
+      assert (xs + [last])[1..] == xs[1..] + [last];
+      FoldLeftAppend(f, f(init, xs[0]), xs[1..], last);
+    }
+  }
+
   /** A fold whose step never lowers the accumulator ends at or above where it started. */
   lemma FoldLeftInflationary<T>(f: (int, T) -> int, init: int, xs: seq<T>)
     requires forall a, x :: f(a, x) >= a
