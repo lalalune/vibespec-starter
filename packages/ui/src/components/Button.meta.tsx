@@ -27,7 +27,7 @@ export const meta: ComponentMeta<ButtonProps> = {
   },
   // The generated play of a disabled or loading story checks that it refuses clicks and keys; these check what a person is told.
   play: {
-    AsChild: async ({ args, canvasElement }) => {
+    AsChild: async ({ args, canvasElement }: { args: ButtonProps; canvasElement: HTMLElement }) => {
       await userEvent.click(within(canvasElement).getByRole("link"));
       await expect(args.onClick).toHaveBeenCalled();
     },
