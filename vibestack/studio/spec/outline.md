@@ -178,10 +178,11 @@ pure def moveRule(o: Outline, s: int, r: int, dest: int, at: int): Outline =
   { ...o, stories: storiesReplaced(without, dest, { ...target, rules: rulesWith(target.rules, at, rule) }) }
 ```
 
-### Numbers are never given out twice
+### A new story or rule takes a number no story or rule has
 
 Every story and rule has a number below the counter, and the counter never
-goes back, so a new story or rule never takes a number another one has had.
+goes back, so the counter, which a new story or rule takes, is above every
+number in use.
 
 ```quint
 pure def numberedBelow(x: Story, c: int): bool =
@@ -191,7 +192,7 @@ pure def alwaysNumberedBelowTheCounter(o: Outline): bool =
 pure def stepCounterNeverGoesBack(before: Outline, after: Outline): bool = after.counter >= before.counter
 ```
 
-### A move neither loses nor copies a story or a rule
+### A move keeps the number of stories and of rules
 
 ```quint
 pure def ruleCount(o: Outline): int = o.stories.foldl(0, (n, x) => n + x.rules.length())
@@ -209,11 +210,19 @@ pure def stepMovesKeepEverything(before: Outline, via: str, after: Outline): boo
 ### Every story and rule needs a heading, unique where it is
 
 A story's heading is its key in the spec, and a rule's is its key within its
-story, so two that share one would be read as one.
+story, so two that share one would be read as one. While a person types, the
+outline lets a heading be empty or repeat another; the page publishes a spec
+only when this holds of it.
 
 ```quint
 pure def headingsAreSound(o: Outline): bool =
   o.stories.every(x =>
     x.title != "" and o.stories.select(y => y.title == x.title).length() == 1
     and x.rules.every(r => r.title != "" and x.rules.select(q => q.title == r.title).length() == 1))
+```
+
+### An outline can have headings that would not publish
+
+```quint
+pure def sometimesHeadingsClash(o: Outline): bool = o.stories.length() >= 2 and not(headingsAreSound(o))
 ```
