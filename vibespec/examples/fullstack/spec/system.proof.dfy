@@ -1034,7 +1034,7 @@ lemma DeliverWireRules(sys: System, i: int)
           ensures !server_answered(after.server, who, p.seq_)
         {
           WithoutBridge(prior.pending, m.seq_);
-          ProofLib.FilterMember((q: client_Pending) => (q.seq_ != m.seq_), prior.pending, p);
+          ProofLib.FilterMember((p: client_Pending) => (p.seq_ != m.seq_), prior.pending, p);
           assert p.seq_ != m.seq_;
           assert p.seq_ != oldest(prior).seq_;
         }
