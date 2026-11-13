@@ -7,7 +7,7 @@
   },
   "scripts": {
     "dev": "node vibespec/spec.ts studio",
-    "check": "node vibespec/spec.ts check",
+    "check": "node vibespec/spec.ts check && npm run check --workspaces --if-present",
     "gen": "node vibespec/spec.ts gen",
     "accept": "node vibespec/spec.ts accept",
     "new": "node vibespec/spec.ts new",
@@ -49,7 +49,7 @@
   "dependencies": {
     "@informalsystems/quint": "^0.33.1",
     "lemmascript": "^0.6.8",
-    "typescript": "^5.9.0"
+    "typescript": "^6.0.3"
   },
   "devDependencies": {
     "@types/node": "^24.0.0"

@@ -376,9 +376,10 @@ export function readSpecs(root: string, texts?: Record<string, string>): Spec[] 
     spec.uses = imports.map((imported) => {
       if (!imported.target) throw new Error(`${spec.file}:${imported.line}: import ${imported.module} needs a relative from path`);
       const dep = resolve(spec, imported.target, imported.line, true);
+      const implicitAlias = !imported.alias && !imported.star && !imported.names.length && dep.name !== imported.module ? imported.module : undefined;
       replacements.push({ line: imported.pathLine!, column: imported.pathColumn!, length: imported.pathLength!, value: JSON.stringify(`./${dep.name}`) },
-        { line: imported.line, column: imported.column, length: imported.module.length, value: dep.name });
-      return { module: dep.name, alias: imported.alias, star: imported.star, names: imported.names };
+        { line: imported.line, column: imported.column, length: imported.module.length, value: implicitAlias ? `${dep.name} as ${implicitAlias}` : dep.name });
+      return { module: dep.name, alias: imported.alias ?? implicitAlias, star: imported.star, names: imported.names };
     });
     spec.imports = spec.uses.map((i) => i.module);
     for (const { line, column, length, value } of replacements.sort((a, b) => b.line - a.line || b.column - a.column))
