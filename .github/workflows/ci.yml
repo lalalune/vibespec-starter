@@ -1,0 +1,75 @@
+name: ci
+
+# A pull request into develop checks what it affects; anything headed for main,
+# and every push to develop or main, gets the complete validation.
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop, main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TURBO_TELEMETRY_DISABLED: "1"
+  FULL: ${{ github.event_name == 'push' || github.base_ref == 'main' }}
+
+jobs:
+  static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+      - if: env.FULL != 'true'
+        run: pnpm quick
+      - if: env.FULL == 'true'
+        run: pnpm exec turbo run build typecheck test //#typecheck:tool //#test:tool //#build:tool //#lint:js //#lint:css //#analyze
+        env:
+          FUZZ_RUNS: "1000"
+      - if: env.FULL == 'true'
+        name: Generated tests are reproducible
+        run: |
+          node vibestack/testing/generate.ts . && cp -r .cache/generated/tests "$RUNNER_TEMP/generated-first"
+          node vibestack/testing/generate.ts . && diff -r "$RUNNER_TEMP/generated-first" .cache/generated/tests
+
+  models:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+        with:
+          dafny: "true"
+      - if: env.FULL != 'true'
+        run: pnpm exec turbo run check //#check --affected
+      - if: env.FULL == 'true'
+        run: pnpm test:models
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: proof
+          path: |
+            gen/proof/
+            vibestack/**/gen/proof/
+          if-no-files-found: ignore
+
+  browser:
+    if: github.event_name == 'push' || github.base_ref == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+        with:
+          browsers: "true"
+      - run: pnpm test:browser
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-failures
+          path: "**/__screenshots__/"
+          if-no-files-found: ignore
