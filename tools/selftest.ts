@@ -212,6 +212,22 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.ok(stray.said("model", /canRelabel: `who` must be a parameter of relabel/), stray.text);
   });
 
+  test("a secret reaches no place whose type is not secret, but through a declassify function that review names", async () => {
+    const card = (edit: (s: string) => string = (s) => s) => fixtures(["card"], (f) => { f["spec/card.md"] = edit(f["spec/card.md"]); });
+    const shown = 'Shown({ text: if (declassifyNone(w.card)) "none" else "saved" })';
+    const leaks: [string, (s: string) => string, RegExp][] = [
+      ["shown", (s) => s.replace(shown, "Shown({ text: w.card })"), /\bhint \(spec\/card\.md:\d+\): a secret reaches the field text, of type str, which is not secret/],
+      ["choosing what is shown", (s) => s.replace("declassifyNone(w.card)", 'w.card == ""'), /\bhint .*: a secret reaches the field text/],
+      ["through a helper", (s) => s.replace(shown, "show(w.card)").replace("pure def hint(", "pure def show(t: str): Effect = Shown({ text: t })\npure def hint("), /\bshow \(.*: a secret reaches the field text/],
+      ["kept in a field that is not secret", (s) => s.replace("{ card: SecretCard, out", "{ card: SecretCard, note: str, out").replace('{ card: "", out', '{ card: "", note: "", out').replace("{ ...w, card: card }", "{ ...w, card: card, note: card }"), /\bsave .*: a secret reaches the field note/],
+      ["deciding whether an event may happen", (s) => s.replace("pure def pay(", 'pure def canPay(w: Wallet): bool = w.card == "4111"\npure def pay('), /\bcanPay .*: what it returns depends on a secret, but its type bool is not secret/],
+    ];
+    const [ok, ...broken] = await Promise.all([run(card()), ...leaks.map(([, edit]) => run(card(edit)))]);
+    assert.deepEqual(ok.failed, ["review"], ok.text);
+    assert.ok(ok.said("review", /new, and declassifies a secret through declassifyNone/), ok.text);
+    leaks.forEach(([what, , message], i) => assert.equal(broken[i].said("model", message)?.ok, false, `${what}\n${broken[i].text}`));
+  });
+
   test("a rule broken only on the way to a `sometimes` goal is still reported", async () => {
     // Only the witness search goes deep enough: the goal is three steps away and the break is on the way.
     const quint = "pure val initial: int = 0\npure def up(n: int): int = n + 1\npure def canUp(n: int): bool = n < 5\npure def alwaysBelowThree(n: int): bool = n < 3\npure def sometimesFour(n: int): bool = n == 4";

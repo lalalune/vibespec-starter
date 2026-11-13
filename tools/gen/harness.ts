@@ -1,6 +1,6 @@
 // The Quint module that drives a spec for simulation: one action per transition, per law, and per definition
 // whose arguments the simulator can supply.
-import { VIA, type Law, type Param, type Roles, type Transition } from "./classify.ts";
+import { VIA, type Law, type Opaque, type Param, type Roles, type Transition } from "./classify.ts";
 import { fail, type Json, type Types } from "./types.ts";
 
 /** A definition the simulator evaluates so that its result can be compared with TypeScript's. */
@@ -11,7 +11,7 @@ const TRIED: Record<string, string> = { int: "(-1).to(6)", bool: "Set(true, fals
 
 export function harness(
   module: string, source: string, imports: string[], funs: Json[], sig: (d: Json) => { params: Param[]; result: Json },
-  samples: Map<string, { elem: Json; line: number | undefined }>, { stateType, transitions, always, sometimes, steps, laws }: Roles,
+  samples: Map<string, { elem: Json; line: number | undefined }>, { stateType, transitions, always, sometimes, steps, laws, opaques }: Roles,
   { fields, typedef, resolve, shape, tagged, named, qType }: Types,
 ): { text: string; evals: Eval[]; uncompared: string[] } {
   const stateShape = stateType && shape(stateType);
@@ -79,9 +79,18 @@ export function harness(
     }
   });
 
+  // An opaque function is simulated by a table, chosen for each trace from the values the simulator tries (its
+  // `<name>Values` for what it returns), and one of its results for anything else. The table lives in the module the
+  // harness imports (simulated(), below). The trace starts once a `settle` step finds the laws assumed of it hold on
+  // the table, for every value tried; until then no rule is checked, and a trace whose table breaks them ends there.
+  const tried = (p: Param, of: string) => given(p, of) ?? byType(p, p.type);
+  const keys = (o: Opaque) => (o.params.length === 1 ? tried(o.params[0], o.name) : `tuples(${o.params.map((p) => tried(p, o.name)).join(", ")})`);
+  const results = (o: Opaque) => tried({ name: o.name, type: o.result }, o.name);
+  const tables = opaques.flatMap((o) => [`M::opaque_${o.name}`, `M::opaque_${o.name}_else`]);
+  const assumed = opaques.flatMap((o) => o.laws.map((l) => l.params.reduceRight((body, p) => `${tried(p, l.name)}.forall(${p.name} => ${body})`, `M::${l.name}(${l.params.map((p) => p.name).join(", ")})`)));
   // Harness variables: the state, the state before the last event, whether an event has happened and which, whether
-  // the last law tried held, and the result of the last definition evaluated.
-  const vars = [...(stateType ? ["state", "prev", "moved", "last"] : []), "lawsHold", ...(evals.length ? ["out"] : [])];
+  // the last law tried held, the result of the last definition evaluated, and the tables of opaque functions.
+  const vars = [...(stateType ? ["state", "prev", "moved", "last"] : []), "lawsHold", ...(evals.length ? ["out"] : []), ...tables, ...(opaques.length ? ["settled"] : [])];
   /** An action body: the given conditions and assignments, with every other variable left as it is. */
   const frame = (conditions: string[], set: Record<string, string>) =>
     `all { ${[...conditions, ...vars.map((v) => `${v}' = ${set[v] ?? v}`)].join(", ")} }`;
@@ -107,24 +116,29 @@ export function harness(
   };
   const events = [...transitions.map((t) => t.name), ...sampled.map((l) => l.name)];
   const any = (actions: string[]) => `any { ${(actions.length ? actions : [frame([], {})]).join(", ")} }`;
+  const settled = (action: string) => (opaques.length ? `if (settled) ${action} else settle` : action);
+  const chosen = Object.fromEntries(opaques.flatMap((o) => [[`M::opaque_${o.name}`, `table_${o.name}`], [`M::opaque_${o.name}_else`, `else_${o.name}`]]));
+  const choose = (inner: string) => opaques.reduceRight((rest, o) => `{ nondet table_${o.name} = setOfMaps(${keys(o)}, ${results(o)}).oneOf() nondet else_${o.name} = table_${o.name}.keys().map(k => table_${o.name}.get(k)).oneOf() ${rest} }`, inner);
   const text = [
     `// GENERATED from ${source}. Drives the spec's transitions, laws and definitions for simulation.`,
     `module ${module}_run {`,
-    `  import ${module} as M from "./${module}"`,
+    `  import ${module} as M from "./${module}${opaques.length ? ".sim" : ""}"`,
     ...imports.map((i) => `  import ${i} as D_${i} from "./${i}"`),
     ...(evals.length ? [`  type Out = Nothing | ${evals.map((v) => `Out_${v.name}(${qType(v.result)})`).join(" | ")}`, `  var out: Out`] : []),
     ...(stateType ? [`  var state: ${qType(stateType)}`, `  var prev: ${qType(stateType)}`, `  var moved: bool`, `  var last: str`] : []),
     `  var lawsHold: bool`,
-    `  action init = ${frame([], { state: "M::initial", prev: "M::initial", moved: "false", last: '""', lawsHold: "true", out: "Nothing" })}`,
+    ...(opaques.length ? [`  var settled: bool`] : []),
+    `  action init = ${choose(frame([], { state: "M::initial", prev: "M::initial", moved: "false", last: '""', lawsHold: "true", out: "Nothing", settled: "false", ...chosen }))}`,
+    ...(opaques.length ? [`  action settle = ${frame(assumed, { settled: "true" })}`] : []),
     ...transitions.map(action),
     ...sampled.map(lawAction),
     ...evals.map(evalAction),
-    `  action step = ${any(events)}`,
+    `  action step = ${settled(any(events))}`,
     // Half events, half evaluations, so that definitions are evaluated on states well into a trace and not just near its start.
-    `  action probe = ${events.length && evals.length ? `any { step, ${any(evals.map((v) => `eval_${v.name}`))} }` : any([...events, ...evals.map((v) => `eval_${v.name}`)])}`,
-    `  val inv = and { lawsHold, ${[...always.map((a) => `M::${a}(state)`), ...steps.map((r) => `(not(moved) or M::${r.name}(prev, ${r.via ? "last, " : ""}state))`), "true"].join(", ")} }`,
+    `  action probe = ${settled(events.length && evals.length ? `any { ${any(events)}, ${any(evals.map((v) => `eval_${v.name}`))} }` : any([...events, ...evals.map((v) => `eval_${v.name}`)]))}`,
+    `  val inv = ${opaques.length ? "not(settled) or " : ""}and { lawsHold, ${[...always.map((a) => `M::${a}(state)`), ...steps.map((r) => `(not(moved) or M::${r.name}(prev, ${r.via ? "last, " : ""}state))`), "true"].join(", ")} }`,
     // A witness search also stops at a broken rule, so that no run can step over one unreported.
-    ...sometimes.map((w) => `  val never_${w} = inv and not(M::${w}(state))`),
+    ...sometimes.map((w) => `  val never_${w} = inv and not(${opaques.length ? "settled and " : ""}M::${w}(state))`),
     // A guard's witnesses, for the `probe` step: breaking `never_allows_X` shows a reachable state and values for
     // which X allows its event, breaking `never_refuses_X` one for which it refuses it. Each reads the result the
     // last evaluation recorded, so a state costs the same however many values a parameter could take.
@@ -136,8 +150,21 @@ export function harness(
     ``,
   ].join("\n");
   // A sample set no parameter is named for is never used: most likely a typo for the parameter it was meant for.
-  const forParams = new Set(funs.flatMap((d) => sig(d).params.map((p) => `${p.name}Values`)));
+  const forParams = new Set([...funs.flatMap((d) => sig(d).params.map((p) => `${p.name}Values`)), ...opaques.map((o) => `${o.name}Values`)]);
   for (const [set, { line }] of samples)
     if (!forParams.has(set)) fail(`${set} (${source}${line ? `:${line}` : ""}): no parameter is named ${set.slice(0, -"Values".length)}, so the simulator never uses it; name it after the parameter it is for`);
   return { text, evals, uncompared };
 }
+
+/**
+ * The spec's module as the harness of a spec with opaque functions imports it: each `const f: (A, B) => R` becomes a
+ * table the harness chooses, and every definition may read it, so none is `pure`. Every line stays where it was.
+ */
+export const simulated = (qnt: string, opaques: Opaque[]): string => qnt.replace(/^(\s*)pure (def|val)\b/gm, "$1$2").replace(/^(\s*)const (\w+)\s*:\s*\((.*)\)\s*=>\s*(.*)$/gm, (line, indent, name, args, result) => {
+  const o = opaques.find((o) => o.name === name);
+  if (!o) return line;
+  const ps = o.params.map((p) => p.name);
+  const key = ps.length === 1 ? ps[0] : `(${ps.join(", ")})`;
+  return `${indent}var opaque_${name}: ${ps.length === 1 ? args : `(${args})`} -> ${result} var opaque_${name}_else: ${result} `
+    + `def ${name}(${ps.join(", ")}) = if (opaque_${name}.keys().contains(${key})) opaque_${name}.get(${key}) else opaque_${name}_else`;
+});

@@ -24,10 +24,14 @@ export interface Step {
   evaluated?: { name: string; picks: Record<string, unknown>; result: unknown };
   state?: unknown;
   lawsHold?: boolean;
+  /** On a trace's first step: the table it chose for each opaque function, as rows of arguments and result, and the result for anything else. */
+  tables?: Record<string, { rows: [unknown[], unknown][]; otherwise: unknown }>;
 }
 
+/** A simulated trace; with opaque functions, from the step that settled their tables (gen/harness.ts), and empty if none did. */
 function readTrace(file: string, model: Model): Step[] {
-  return JSON.parse(fs.readFileSync(file, "utf8")).states.map((st: any): Step => {
+  const states = JSON.parse(fs.readFileSync(file, "utf8")).states.filter((st: any) => !model.opaques.length || st.settled);
+  return states.map((st: any, i: number): Step => {
     // Values are decoded by their type, and sets put in a fixed order, so that they compare equal to TypeScript's.
     const read = (type: any, itf: any) => model.canon(type, model.decode(type, itf));
     const picked = (ps: { name: string; type: any }[]) => Object.fromEntries(ps.map((p) => [p.name, read(p.type, st["mbt::nondetPicks"][p.name].value)]));
@@ -41,8 +45,18 @@ function readTrace(file: string, model: Model): Step[] {
       law: l && { name: l.name, args: picked(l.params) },
       state: model.stateType ? read(model.stateType, st.state) : undefined,
       lawsHold: st.lawsHold,
+      tables: i || !model.opaques.length ? undefined : Object.fromEntries(model.opaques.map((o) => [o.name, {
+        rows: st[`opaque_${o.name}`]["#map"].map(([k, v]: [any, any]) => [o.params.length === 1 ? [read(o.params[0].type, k)] : k["#tup"].map((x: any, j: number) => read(o.params[j].type, x)), read(o.result, v)]),
+        otherwise: read(o.result, st[`opaque_${o.name}_else`]),
+      }])),
     };
   });
+}
+
+/** Make the generated code's opaque functions answer as the trace's tables do (gen/typescript.ts, `standIn`). */
+export function standIn(domain: any, trace: Step[]) {
+  for (const [name, { rows, otherwise }] of Object.entries(trace[0]?.tables ?? {}))
+    domain.opaque[name] = (...args: unknown[]) => { const row = rows.find(([k]) => isDeepStrictEqual(k, args)); return row ? row[1] : otherwise; };
 }
 
 /**
@@ -107,7 +121,7 @@ export async function simulate(root: string, model: Model, invariant: string, tr
     const again = `seed ${seed}; to simulate again: npx quint ${args.join(" ")}`;
     // Anything other than "held" or "violated", each with a trace, is Quint failing to run.
     if ((!r.ok && !broken) || !files.length) throw new Error(`quint run did not complete (${again}):\n${r.out.trim()}`);
-    return { broken, traces: files.map((f) => readTrace(path.join(out, f), model)), again };
+    return { broken, traces: files.map((f) => readTrace(path.join(out, f), model)).filter((t) => t.length), again };
   });
   // Every run finishes before anything is said, so that none is left writing into gen/.
   const settled = await Promise.allSettled(runs);
@@ -135,6 +149,7 @@ export const SEARCHED = () => `${WITNESS_SAMPLES} traces of ${STEPS} events and 
 export function replay(domain: any, trace: Step[], model?: Model) {
   const differ = (what: string) => new Error(`TypeScript and Quint disagree ${what}`);
   const canon = (type: any, value: unknown) => (model ? model.canon(type, value) : value);
+  standIn(domain, trace);
   let s = domain.initial;
   let before = s;
   for (const { event, evaluated, law, state, lawsHold } of trace) {
@@ -156,6 +171,7 @@ export function replay(domain: any, trace: Step[], model?: Model) {
 
 /** The first rule a trace breaks, in the spec's words, and how many steps it took; undefined if it breaks none. */
 export function firstBreak(domain: any, model: Model, trace: Step[], cite: (def: string) => string): { why: string; steps: number } | undefined {
+  standIn(domain, trace);
   let before: unknown;
   for (const [i, { event, law, state, lawsHold }] of trace.entries()) {
     const found = (why: string) => ({ why, steps: i + 1 });

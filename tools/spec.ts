@@ -9,7 +9,7 @@ import { readSpecs, badSpecName, type Spec } from "./parse.ts";
 import { contracts, pending, pendingContracts, acceptReviews, acceptContracts, moved, showPending, ledgerFile, readLedger, writeLedger, type Pending, type Accepted } from "./review.ts";
 import { entry, remembered, collectGarbage, dafnyVersion, type Memory } from "./cache.ts";
 import { gen, generated, typecheckAll, proofUnits, strayProofFiles } from "./units.ts";
-import { SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, STEPS, DEPTHS, SEARCHED, simulate, search, firstBreak, showTrace, replay, type Step } from "./simulate.ts";
+import { SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, STEPS, DEPTHS, SEARCHED, simulate, search, firstBreak, showTrace, replay, standIn, type Step } from "./simulate.ts";
 import { sha, indent, tests } from "./util.ts";
 
 export { readSpecs, badSpecName, parseSpec, scanSpec, expandListHelpers, type Spec, type Rule, type Story } from "./parse.ts";
@@ -126,7 +126,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
       if (missing) throw new Error(`it imports ${missing}, which is not a valid model`);
       model = generated(root, spec, await typed.get(spec.name)!, models);
       fs.mkdirSync(loaded, { recursive: true });
-      fs.copyFileSync(path.join(root, `gen/${spec.name}.ts`), path.join(loaded, `${spec.name}.ts`));
+      fs.writeFileSync(path.join(loaded, `${spec.name}.ts`), model.replayed);
       domain = await import(pathToFileURL(path.join(loaded, `${spec.name}.ts`)).href);
     } catch (e) {
       report(false, "model", `${spec.file} is not a valid model`, indent((e as Error).message.trim()), spec.file);
@@ -134,7 +134,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
       continue;
     }
     valid.push(spec);
-    const parts = [[model.transitions.length, "transitions"], [model.always.length, "always"], [model.steps.length, "step"], [model.sometimes.length, "sometimes"], [model.laws.length, "laws"]];
+    const parts = [[model.transitions.length, "transitions"], [model.always.length, "always"], [model.steps.length, "step"], [model.sometimes.length, "sometimes"], [model.laws.length, "laws"], [model.opaques.length, "opaque"]];
     report(true, "model", `${spec.file}: ${parts.filter(([n]) => n).map((p) => p.join(" ")).join(", ") || "definitions only"}`, "", spec.file);
     if (!model.stateType && !model.laws.length && !model.evals.length) continue;
 
@@ -156,6 +156,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
           const lastEvent = bad.t.findLast((s) => s.event)?.event?.type;
           const guard = model.transitions.find((t) => t.name === lastEvent)?.guard;
           // One repair is always available: refuse the event when its result would break the rule. A reason is better.
+          standIn(domain, bad.t);
           const brokenRule = lastEvent ? model.always.find((a) => !domain[a](bad.t[bad.t.length - 1].state)) : undefined;
           const hint = lastEvent && !bad.why.startsWith("the law") ? `\n      the last event is ${cite(lastEvent)}${guard ? `; its guard ${guard} let it through` : "; it has no guard"}`
             + (brokenRule ? `\n      if no better reason can be found: refuse ${lastEvent} when its result would break ${brokenRule}` : "") : "";
@@ -178,6 +179,10 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
         const runs = [sim, probe, ...searches.filter((run) => run.broken)];
         if (broke(runs)) return said;
         if (sim.broken || probe.broken) throw new Error(`the simulator reports a broken rule that no trace shows (${sim.again})`);
+        if (!sim.traces.length && !probe.traces.length) {
+          say(false, "always", `no table the simulator chose for ${model.opaques.map((o) => o.name).join(", ")} satisfies the laws stated with them, for every value tried: the laws may contradict each other, or define <name>Values to try results that satisfy them`, `      ${sim.again}`);
+          return said;
+        }
         const traces = runs.flatMap((run) => run.traces);
         // Each guard should allow its event in some reachable state and refuse it in another. One that never allows it
         // makes the event impossible, and every rule then holds of it trivially, so nothing else would notice: that
@@ -212,7 +217,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
         }
         say(true, "always", `no rule broken in ${SAMPLES + COMPARED_SAMPLES} simulated traces`);
         for (const { w, run } of witnesses) {
-          const reached = run.broken && run.traces.some((t) => domain[w](t.at(-1)?.state));
+          const reached = run.broken && run.traces.some((t) => (standIn(domain, t), domain[w](t.at(-1)?.state)));
           say(reached, "sometimes", reached ? `${w} is reachable`
             : `${cite(w)} was not reached in ${SEARCHED()}: a guard is too strict, a transition is missing, or the goal needs values the simulator does not try`, reached ? "" : `      ${run.again}`);
         }
