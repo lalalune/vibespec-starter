@@ -481,15 +481,19 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       "src/wrong.ts": 'export const wrong: number = "x";\n',
       "test/never.test.vibe": citing("spec/door.md", "Story: Use the door") + 'import { assert, it } from "@effect/vitest"\nimport { wrong } from "../src/wrong.ts"\nit("never holds", () => { assert.strictEqual(wrong, 2) })\n',
     })));
+    const failingRoot = copyOfProject("test/app.test.vibe", (s) => s + "\n" + citing("spec/index.md", "Story: Check out") + 'it("never holds", () => { assert.strictEqual(1, 2) })\n');
+    const manifest = JSON.parse(read("package.json", failingRoot));
+    manifest.scripts.test = `node --input-type=module -e "delete process.env.NO_COLOR; process.env.FORCE_COLOR='1'; process.argv=[process.argv[0],'vitest','run']; await import(new URL('vitest.mjs',import.meta.resolve('vitest/package.json')));"`;
+    fs.writeFileSync(path.join(failingRoot, "package.json"), JSON.stringify(manifest));
     const [mistyped, failing, plain] = await Promise.all([
       run(copyOfProject("src/app.vibe", (s) => s + "\nconst wrong: number = \"x\"\n")),
-      run(copyOfProject("test/app.test.vibe", (s) => s + "\n" + citing("spec/index.md", "Story: Check out") + 'it("never holds", () => { assert.strictEqual(1, 2) })\n')),
+      run(failingRoot),
       run(plainRoot),
     ]);
     const unfit = "application does not fit the generated contract";
     assert.equal(mistyped.said("types", /src\/app\.vibe\(\d+,\d+\): error TS2322/)?.summary, unfit, mistyped.text);
     assert.deepEqual(failing.failed, ["tests"], failing.text);
-    // What is shown starts at the runner's list of failures.
+    // Colored runner output still starts at the failure list and names the failed assertion.
     assert.ok(failing.said("tests", /^fail\n +⎯+ Failed Tests 1 ⎯+\n[\s\S]*test\/app\.test\.vibe > never holds[\s\S]*expected 1 to equal 2/), failing.text);
     assert.deepEqual(plain.failed, ["types", "tests", "review"], plain.text);
     assert.equal(plain.said("types", /src\/wrong\.ts\(1,14\): error TS2322/)?.summary, unfit, plain.text);

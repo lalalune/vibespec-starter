@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { stripVTControlCharacters } from "node:util";
 import { exec } from "./run.ts";
 import { heading, isStd, type Spec } from "./parse.ts";
 import type { Result } from "./spec.ts";
@@ -131,9 +132,10 @@ export async function tests(checking: string, dir: string, specs: Spec[], rememb
       const t = await exec(manager.name, ["run", "test", ...(mode === "nightly" ? ["--mode", "nightly"] : [])], root, { ...env, SPEC_TESTS: fs.realpathSync(checking) });
       const ok = t.status === 0 && !t.stopped;
       // From the runner's list of failures, Vitest's or Node's, at most 200 lines of it; else the end of what it said.
-      const lines = `${t.stdout}${t.stderr}`.split("\n");
+      const stdout = stripVTControlCharacters(t.stdout), stderr = stripVTControlCharacters(t.stderr);
+      const lines = `${stdout}${stderr}`.split("\n");
       const first = lines.findIndex((l) => /✖ failing tests:|⎯.*Failed (?:Suites|Tests) \d+/.test(l));
-      const shown = first < 0 ? t.stdout.split("\n").slice(-80).join("\n") + t.stderr
+      const shown = first < 0 ? stdout.split("\n").slice(-80).join("\n") + stderr
         : [...lines.slice(first, first + 200), ...lines.length > first + 200 ? [`… ${lines.length - first - 200} more lines`] : []].join("\n");
       return [ok, "tests", ok ? "pass" : "fail", indent((shown + (t.stopped ? `\n${t.stopped}` : "")).trim()), `${manager.name} run test`];
     }, ([ok]) => ok));
