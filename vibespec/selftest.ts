@@ -830,12 +830,13 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.equal(after.said("always", /the law .* is false/)?.ok, false, after.text);
   });
 
-  test("proof caching follows library changes and compiler failure waits for proof completion", async () => {
+  test("stage caches ignore examples and the studio, follow tool and library changes, and finish proofs after compiler failure", async () => {
     const root = fixtures(["highest"], (f) => {
       f["package.json"] = '{"type":"module"}';
       f["spec/highest.proof.dfy"] = "lemma lawTheHighestIsAtLeastTheStart_ensures(xs: seq<int>, start: int)\n  ensures (lawTheHighestIsAtLeastTheStart(xs, start) == true)\n{\n  ProofLib.FoldLeftMax((top: int, x: int) => (if (x > top) then x else top), start, xs);\n}\n";
     });
-    fs.cpSync(path.join(project, "tools"), path.join(root, "tools"), { recursive: true });
+    const source = path.join(project, "vibespec");
+    fs.cpSync(source, path.join(root, "vibespec"), { recursive: true, filter: (file) => file !== path.join(source, "examples") });
     const modules = path.join(root, "node_modules");
     fs.mkdirSync(path.join(modules, ".bin"), { recursive: true });
     for (const entry of fs.readdirSync(nodeModules).filter((f) => f !== ".bin"))
@@ -848,11 +849,21 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const first = await runCli(script, root, "check", "--json");
     const checked = JSON.parse(first.stdout);
     assert.ok(checked.results.some((r: Result) => r.stage === "proof" && r.ok), first.stdout + first.stderr);
+    const cached = (stage: string) => fs.readdirSync(path.join(root, ".spec-cache")).filter((file) => file.startsWith(`${stage}-`) && file.endsWith(".json")).sort();
+    const before = Object.fromEntries(["model", "simulate", "prove"].map((stage) => [stage, cached(stage)]));
+    for (const stage of Object.keys(before)) assert.ok(before[stage].length > 0, stage);
+    for (const dir of ["examples/cached/gen", "studio"]) {
+      const file = path.join(root, "vibespec", dir, "cache-input.ts");
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, "export const changed = true;\n");
+    }
     const marker = "// A distinct proof-library version for this scratch project.";
     fs.appendFileSync(path.join(root, "vibespec/proof/lib.dfy"), `\n${marker}\n`);
     const second = await runCli(script, root, "check", "--json");
     const again = JSON.parse(second.stdout);
     assert.ok(again.results.some((r: Result) => r.stage === "proof" && r.ok), second.stdout + second.stderr);
+    for (const stage of ["model", "simulate"]) assert.deepEqual(cached(stage), before[stage], stage);
+    assert.notDeepEqual(cached("prove"), before.prove);
     assert.ok(fs.readFileSync(path.join(root, "gen/proof/highest/highest.dfy"), "utf8").includes(marker));
     fs.writeFileSync(path.join(root, "tsconfig.json"), '{"compilerOptions":{"noEmit":true},"include":["gen/*.ts"]}');
     if (process.platform !== "win32") {
@@ -860,12 +871,14 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       fs.writeFileSync(compiler, "#!/bin/sh\nexit 1\n");
       fs.chmodSync(compiler, 0o644);
     }
+    fs.appendFileSync(path.join(root, "vibespec/gen.ts"), "\n// A distinct generator version for this scratch project.\n");
     fs.appendFileSync(path.join(root, "spec/highest.proof.dfy"), "// Recheck the proof beside the failed compiler.\n");
     const failed = await runCli(script, root, "check", "--json");
     const result = JSON.parse(failed.stdout);
     assert.equal(failed.status, 1, failed.stdout + failed.stderr);
     assert.ok(result.results.some((r: Result) => r.stage === "types" && !r.ok), failed.stdout);
     assert.ok(result.results.some((r: Result) => r.stage === "proof" && r.ok), failed.stdout);
+    for (const stage of ["model", "simulate"]) assert.ok(cached(stage).some((file) => !before[stage].includes(file)), stage);
     assert.ok(!fs.existsSync(path.join(root, ".spec-cache/lock")));
   });
 
