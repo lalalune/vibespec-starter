@@ -1,0 +1,31 @@
+name: fuzz
+
+# Larger property-test budgets and a fresh seed each night; a failure prints
+# the seed, and `FUZZ_SEED=<seed> pnpm all test` repeats it.
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: Seed to repeat
+        required: false
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    env:
+      FUZZ_RUNS: "20000"
+      FUZZ_SEED: ${{ inputs.seed || github.run_id }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: develop
+      - uses: ./.github/actions/setup
+      - run: pnpm exec turbo run test check --force
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: counterexamples
+          path: "**/test/counterexamples/"
+          if-no-files-found: ignore

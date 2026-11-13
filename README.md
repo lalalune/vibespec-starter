@@ -1,14 +1,12 @@
 <div align="center">
 
-# Vibestack (Starter Template)
+# Vibestack
 
 Write user stories and rules in Markdown with [Quint](https://quint-lang.org)
 under each rule; get TypeScript that is simulated and proved with
 [Dafny](https://dafny.org) to keep them.
 
 [![Use this template](https://img.shields.io/badge/Use_this_template-2ea44f?style=for-the-badge&logo=github)](https://github.com/lalalune/vibestack/generate)
-
-[![check](https://github.com/lalalune/vibestack/actions/workflows/check.yml/badge.svg)](https://github.com/lalalune/vibestack/actions/workflows/check.yml)
 
 [Quickstart](#quickstart) ·
 [Getting started](#getting-started) ·
@@ -44,8 +42,8 @@ Then:
    my request before running pnpm accept.
 ```
 
-[![Start in ChatGPT](https://img.shields.io/badge/Start_in_ChatGPT-212121?style=for-the-badge)](https://chatgpt.com/?q=Help%20me%20build%20a%20new%20project%20from%20https%3A%2F%2Fgithub.com%2Flalalune%2Fvibestack.%0A%0AStart%20by%20asking%20what%20I%20want%20to%20build%2C%20who%20it%20is%20for%2C%20and%20its%20main%20workflows.%0AThen%3A%0A1.%20Use%20the%20template%20in%20a%20new%20project%20directory%2C%20or%20use%20my%20existing%20copy.%0A%20%20%20Read%20AGENTS.md%20and%20README.md%20in%20full%20and%20follow%20their%20design%20and%20sync%20skills.%0A2.%20Check%20for%20Node.js%2026%2B%20and%20Dafny%204.11%20on%20PATH%2C%20run%20pnpm%20install%2C%20and%20follow%0A%20%20%20the%20README's%20%22Set%20up%20a%20new%20project%22%20section.%0A3.%20Write%20my%20stories%20and%20rules%20in%20spec%2Findex.md%2C%20with%20Quint%20under%20each%20rule.%0A4.%20Build%20the%20app%20in%20src%2F%20using%20the%20generated%20code%20in%20gen%2F.%20Add%20tests%20for%0A%20%20%20user%20journeys%20through%20the%20UI%2C%20API%2C%20storage%2C%20or%20other%20external%20services.%0A5.%20Run%20pnpm%20check%20and%20fix%20failures%20until%20only%20my%20review%20remains.%0A%20%20%20Never%20edit%20generated%20files%20or%20weaken%20rules%20to%20pass%20checks.%0A6.%20Show%20me%20how%20to%20run%20the%20app%2C%20summarize%20what%20needs%20review%2C%20and%20wait%20for%0A%20%20%20my%20request%20before%20running%20pnpm%20accept.)
-[![Start in Claude](https://img.shields.io/badge/Start_in_Claude-B54A32?style=for-the-badge)](https://claude.ai/new?q=Help%20me%20build%20a%20new%20project%20from%20https%3A%2F%2Fgithub.com%2Flalalune%2Fvibestack.%0A%0AStart%20by%20asking%20what%20I%20want%20to%20build%2C%20who%20it%20is%20for%2C%20and%20its%20main%20workflows.%0AThen%3A%0A1.%20Use%20the%20template%20in%20a%20new%20project%20directory%2C%20or%20use%20my%20existing%20copy.%0A%20%20%20Read%20AGENTS.md%20and%20README.md%20in%20full%20and%20follow%20their%20design%20and%20sync%20skills.%0A2.%20Check%20for%20Node.js%2026%2B%20and%20Dafny%204.11%20on%20PATH%2C%20run%20pnpm%20install%2C%20and%20follow%0A%20%20%20the%20README's%20%22Set%20up%20a%20new%20project%22%20section.%0A3.%20Write%20my%20stories%20and%20rules%20in%20spec%2Findex.md%2C%20with%20Quint%20under%20each%20rule.%0A4.%20Build%20the%20app%20in%20src%2F%20using%20the%20generated%20code%20in%20gen%2F.%20Add%20tests%20for%0A%20%20%20user%20journeys%20through%20the%20UI%2C%20API%2C%20storage%2C%20or%20other%20external%20services.%0A5.%20Run%20pnpm%20check%20and%20fix%20failures%20until%20only%20my%20review%20remains.%0A%20%20%20Never%20edit%20generated%20files%20or%20weaken%20rules%20to%20pass%20checks.%0A6.%20Show%20me%20how%20to%20run%20the%20app%2C%20summarize%20what%20needs%20review%2C%20and%20wait%20for%0A%20%20%20my%20request%20before%20running%20pnpm%20accept.)
+[![Start in ChatGPT](https://img.shields.io/badge/Start_in_ChatGPT-212121?style=for-the-badge)](https://chatgpt.com/?q=Help%20me%20build%20a%20new%20project%20from%20https%3A%2F%2Fgithub.com%2Flalalune%2Fvibestack-starter.%0A%0AStart%20by%20asking%20what%20I%20want%20to%20build%2C%20who%20it%20is%20for%2C%20and%20its%20main%20workflows.%0AThen%3A%0A1.%20Use%20the%20template%20in%20a%20new%20project%20directory%2C%20or%20use%20my%20existing%20copy.%0A%20%20%20Read%20AGENTS.md%20and%20README.md%20in%20full%20and%20follow%20their%20design%20and%20sync%20skills.%0A2.%20Check%20for%20Node.js%2026%2B%20and%20Dafny%204.11%20on%20PATH%2C%20run%20pnpm%20install%2C%20and%20follow%0A%20%20%20the%20README's%20%22Set%20up%20a%20new%20project%22%20section.%0A3.%20Write%20my%20stories%20and%20rules%20in%20spec%2Findex.md%2C%20with%20Quint%20under%20each%20rule.%0A4.%20Build%20the%20app%20in%20src%2F%20using%20the%20generated%20code%20in%20gen%2F.%20Add%20tests%20for%0A%20%20%20user%20journeys%20through%20the%20UI%2C%20API%2C%20storage%2C%20or%20other%20external%20services.%0A5.%20Run%20pnpm%20check%20and%20fix%20failures%20until%20only%20my%20review%20remains.%0A%20%20%20Never%20edit%20generated%20files%20or%20weaken%20rules%20to%20pass%20checks.%0A6.%20Show%20me%20how%20to%20run%20the%20app%2C%20summarize%20what%20needs%20review%2C%20and%20wait%20for%0A%20%20%20my%20request%20before%20running%20pnpm%20accept.)
+[![Start in Claude](https://img.shields.io/badge/Start_in_Claude-B54A32?style=for-the-badge)](https://claude.ai/new?q=Help%20me%20build%20a%20new%20project%20from%20https%3A%2F%2Fgithub.com%2Flalalune%2Fvibestack-starter.%0A%0AStart%20by%20asking%20what%20I%20want%20to%20build%2C%20who%20it%20is%20for%2C%20and%20its%20main%20workflows.%0AThen%3A%0A1.%20Use%20the%20template%20in%20a%20new%20project%20directory%2C%20or%20use%20my%20existing%20copy.%0A%20%20%20Read%20AGENTS.md%20and%20README.md%20in%20full%20and%20follow%20their%20design%20and%20sync%20skills.%0A2.%20Check%20for%20Node.js%2026%2B%20and%20Dafny%204.11%20on%20PATH%2C%20run%20pnpm%20install%2C%20and%20follow%0A%20%20%20the%20README's%20%22Set%20up%20a%20new%20project%22%20section.%0A3.%20Write%20my%20stories%20and%20rules%20in%20spec%2Findex.md%2C%20with%20Quint%20under%20each%20rule.%0A4.%20Build%20the%20app%20in%20src%2F%20using%20the%20generated%20code%20in%20gen%2F.%20Add%20tests%20for%0A%20%20%20user%20journeys%20through%20the%20UI%2C%20API%2C%20storage%2C%20or%20other%20external%20services.%0A5.%20Run%20pnpm%20check%20and%20fix%20failures%20until%20only%20my%20review%20remains.%0A%20%20%20Never%20edit%20generated%20files%20or%20weaken%20rules%20to%20pass%20checks.%0A6.%20Show%20me%20how%20to%20run%20the%20app%2C%20summarize%20what%20needs%20review%2C%20and%20wait%20for%0A%20%20%20my%20request%20before%20running%20pnpm%20accept.)
 
 ## Why
 
@@ -89,8 +87,8 @@ flowchart LR
 **Built with** [VibeLang](https://github.com/smithersai/vibelang) on Effect
 for everything that touches the outside world, and React with Vite, Tailwind
 CSS v4 and shadcn/ui for everything a person sees
-([the stack](AGENTS.md#the-stack)). pnpm workspaces hold the examples and
-Studio beside your project.
+([the stack](AGENTS.md#the-stack)). A pnpm workspace with Turborepo holds your
+applications and packages beside Studio; the examples stand alone.
 
 1. Click **[Use this template](https://github.com/lalalune/vibestack/generate)**
    to create your own repository, then clone it and enter its directory.
@@ -113,18 +111,33 @@ Studio beside your project.
 ## Studio
 
 ```bash
-pnpm dev
+pnpm dev                              # this project
+pnpm dev vibestack/examples/order     # an example, or any directory with spec/
 ```
 
-| Button | Does |
+Studio opens in the browser and is where you build the application: you
+shape the stories, an agent turns them into rules, Quint and code, and the
+checks say where the project stands.
+
+| You | Studio |
 |---|---|
-| **Story** | Adds a user need to the spec |
-| **Publish** | Saves your edits to disk and runs the checks |
+| Add, edit, delete or drag a story or rule; group rules under a heading without `Story:`; move one to another spec | Applies it to its outline, with undo (⌘Z). Reorder with Alt+↑/↓, or **Move to…** |
+| Add a spec by its path, such as `billing/payments` | Creates `spec/billing/payments/index.md` and links it from its parent |
+| **Publish** (⌘S) | Shows the diff, writes the Markdown, and records in `.studio/manifest.json` what was added, changed, moved or deleted and what to regenerate. Then runs the checks |
+| **Run** beside Claude Code or Codex | Starts the agent on the sync prompt in the project and streams its progress; **Open** starts a new chat in the app with the same prompt |
+| **Run check** | Shows each failing stage, and marks the story or rule it names |
 | **Sign off** | Records the same approval as `pnpm accept` |
 
-`pnpm dev <project-path>` opens another project. Studio is itself a
-Vibestack app (`vibestack/studio/`); `pnpm dev vibestack/studio` opens it
-on itself.
+Studio is itself a Vibestack app in `vibestack/studio/`, built like any
+other: its rules in `spec/`, its server in VibeLang (`src/server.vibe`) and
+its page in React (`src/page/`). `pnpm dev` rebuilds the page when its
+source changed. To work on Studio:
+
+```bash
+pnpm dev vibestack/studio                     # open Studio on its own spec
+pnpm --filter vibestack-studio check          # its specs, proofs and journeys
+pnpm --filter vibestack-studio test           # its journeys only, Playwright included
+```
 
 ## Build your project
 
@@ -149,9 +162,7 @@ flowchart LR
 ```
 
 Each report ends with a `next:` line; the agent follows it until only your
-review remains. CI runs the root check on every push and pull request; when a
-change touches `vibestack/`, `packages/` or the package files, it also runs
-`pnpm selftest` and `pnpm -r --if-present check` (Studio and the examples).
+review remains. CI runs the root check only.
 
 ### 3. Build on the generated code
 
@@ -199,13 +210,10 @@ pnpm accept
 
 Before committing your application's starting point:
 
-1. **Remove the example projects.** Delete every directory in
-   `vibestack/examples/` except `order/`: `pnpm selftest` builds its scratch
-   projects from it, so it stays, with its workspace entry and the `demo`
-   script. Replace the `vibestack/examples/*` entry in `pnpm-workspace.yaml`
-   with `vibestack/examples/order`. AGENTS.md's references to the other
-   examples then name files in the Vibestack repository. Update the package
-   name, description and repository links for your project.
+1. **Remove what you do not need.** Delete `vibestack/examples/`, the `demo`
+   and `examples` scripts and the `examples` job in
+   `.github/workflows/ci.yml`; start your application from `apps/web`. Update the package name, description and
+   repository links for your project.
 2. **Keep the toolchain guide with the toolchain.** Move this README to
    `vibestack/README.md`, update its relative links, and keep the template
    license in `vibestack/LICENSE` alongside the Vibestack code.
@@ -225,7 +233,8 @@ current one. Installed as a package, use `pnpm exec spec <command> [<dir>]`.
 |---|---|
 | `pnpm dev [<dir>]` | Opens Studio |
 | `pnpm check [<dir>] [--json]` | Checks spec, source and tests; ends with a `next:` line ([JSON shape](AGENTS.md#changing-the-tools)) |
-| `pnpm -r --if-present check` | Checks every workspace: the examples and Studio |
+| `pnpm quick` | Types, lint and tests of what changed |
+| `pnpm verify` | Everything CI runs for `main`, in every package and example |
 | `pnpm gen [<dir>]` | Generates `gen/` only |
 | `node vibestack/spec.ts watch [<dir>]` | Rechecks when a spec, source file or test changes |
 | `pnpm accept [<dir>]` | The user's sign-off: checks afresh and records what `review` lists, [all or nothing](AGENTS.md#review) |

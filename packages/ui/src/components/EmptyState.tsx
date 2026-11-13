@@ -14,7 +14,7 @@ export type EmptyStateProps = Omit<ComponentProps<"div">, "title"> & {
 export function EmptyState({ title, icon, className, children, ...props }: EmptyStateProps) {
   return (
     <div className={cn("flex flex-col items-center gap-4 p-8 text-center", className)} {...props}>
-      {icon && <div aria-hidden className="text-muted-foreground">{icon}</div>}
+      {icon ? <div aria-hidden className="text-muted-foreground">{icon}</div> : null}
       <p className="text-sm font-medium text-muted-foreground">{title}</p>
       {children}
     </div>

@@ -1,31 +1,19 @@
-// The backend as the tests meet it: the real server on a free port with the
-// frontend `bundle.ts` built, and an HttpClient that reaches it.
-import { application } from "../src/server.vibe"
-
-export service Connections {
-  disconnect(): void!!
-}
+// The real server on a free port with the page test/page.ts built, and an HttpClient that reaches it.
+import { listening, server } from "../src/server.vibe"
 
 module node {
-  import { createServer } from "node:http"
-  import { NodeHttpServer } from "@effect/platform-node"
+  import { type Server, createServer } from "node:http"
+  let served: Server | undefined
   /** @throws {never} */
-  export function listening() {
-    const server = createServer()
-    return {
-      layer: NodeHttpServer.layer(() => server, { port: 0, gracefulShutdownTimeout: 0 }),
-      /** @throws {never} */
-      disconnect() { server.closeAllConnections() }
-    }
+  export function create() {
+    return (served = createServer())
+  }
+  /** Cut every connection to the server, as a network failure does. */
+  export function dropConnections() {
+    served?.closeAllConnections()
   }
 }
-import { listening } from node
+import { create, dropConnections } from node
 
-export const Served = Layer.unwrap(effect {
-  const listener = listening()
-  const app = Layer.provideMerge(application("dist/web"), listener.layer)
-  return Layer.provideMerge(
-    Layer.provide(HttpServer.layerTestClient, FetchHttpClient.layer),
-    Layer.merge(app, Layer.succeed(Connections, { disconnect: () => sync(listener.disconnect) }))
-  )
-})
+export { dropConnections }
+export const Served = Layer.provideMerge(Layer.provide(HttpServer.layerTestClient, FetchHttpClient.layer), server("dist/web", listening(0, create)))

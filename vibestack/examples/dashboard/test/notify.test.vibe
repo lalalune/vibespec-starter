@@ -22,6 +22,7 @@ it.effect("a name typed twice is told once", () => effect {
   }
 })
 
+// spec/tracker.md, "One pass of the notifier sends everything that is due and records that it was sent"
 it.effect("one message per person with a chat handle", () => effect {
   const notes: Note[] = [
     { kind: "Update", task: 1, to: "ana", version: 0, at: 3, by: "ben" },

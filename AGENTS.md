@@ -29,7 +29,7 @@ Every project built here uses this, and nothing beside it:
 | For | Use | Never |
 |---|---|---|
 | Runtime | Node 26 | an older Node |
-| Packages | pnpm workspaces, pinned by `packageManager`; `pnpm -r` and `--filter` run tasks across packages | npm, yarn, bun; a task runner such as Turborepo, unless pnpm has been measured and cannot do the job |
+| Packages | pnpm workspaces, pinned by `packageManager`; Turborepo runs and caches tasks across them ([The monorepo](#the-monorepo)) | npm, yarn, bun; a second task runner |
 | Rules and state | the spec, and the code `gen/` derives from it | a second model of the same state |
 | Shell: effects, services, I/O, async | [VibeLang](#the-vibelang-shell) (`.vibe`) on Effect 4 | plain TypeScript for effectful code; Redux, Zustand or another state library |
 | User interface | React, in `.tsx`, built with Vite | Vue, Svelte, Angular, hand-built DOM |
@@ -42,6 +42,54 @@ Every project built here uses this, and nothing beside it:
   and extend it; add one only when none fits.
 - **TypeScript stays** for `gen/`, for verified `//@` logic
   ("Hand-written verified logic"), for React components and for the tools.
+
+## The monorepo
+
+| Path | Holds |
+|---|---|
+| `apps/` | deployable applications |
+| `packages/` | what applications share: `@repo/ui` (components), `@repo/design-system` (tokens) |
+| `vibestack/` | the tools: the `spec` command, Studio, and what any project uses but does not own (`vibestack/testing`, `vibestack/design`, `vibestack/stories`) |
+| `vibestack/examples/` | standalone projects, each with its own install; never part of the workspace |
+
+[docs/architecture.md](docs/architecture.md) maps what is generated from what,
+which test is for what, and what each green result means.
+
+A package states what it offers in `exports`; import a package by name, never
+by a path into its `src/`. Domain code does not import React, and a UI package
+holds no business rules. A shared type lives with the contract that owns it.
+
+| Command | Does |
+|---|---|
+| `pnpm dev` | Studio |
+| `pnpm quick` | the fast local check: types, tests, ESLint and Stylelint, in every package |
+| `pnpm verify` | what CI runs: build, types, tests, browser tests, every `check`, lint, Knip, Madge, the examples |
+| `pnpm all <task>…` | one or more kinds of task in every package: `pnpm all build typecheck test` |
+| `pnpm test:browser` | the browser tests |
+| `pnpm test:models` | `check` in every package with a `spec/`, and in the examples |
+| `pnpm lint` | ESLint and Stylelint (`pnpm lint:js`, `pnpm lint:css` for one) |
+| `pnpm analyze` | Knip (unused files, exports, dependencies) and Madge (import cycles) |
+| `pnpm check`, `pnpm gen`, `pnpm build`, `pnpm typecheck`, `pnpm test` | this package's own, here as in every package: at the root, the root project and the tools |
+
+Turborepo (`turbo.json`) orders these and skips a task whose inputs it has
+seen: the package's files, the tools under `vibestack/`, the lock file,
+`.nvmrc`, and `FUZZ_RUNS` and `FUZZ_SEED`. So every command above runs only
+what a change reaches. `check` is never skipped whole: `spec` keeps its own
+finer cache in `.spec-cache/`, keyed on the prover's versions too, and runs
+the application again each time.
+
+A package joins by having a script named `gen`, `build`, `typecheck`, `test`,
+`test:browser` or `check`. Its other tasks wait for its `gen`, and its `check`
+for all of them, since `check` rewrites `gen/`. `pnpm lint:js` on its own
+needs what `gen` and `typecheck` write (`gen/`, `.vibe/declarations`); `pnpm
+lint` runs them first.
+
+Pull requests go to `develop`, and `develop` to `main`. Every CI run
+(`.github/workflows/ci.yml`) asks for the same tasks and restores the caches
+of the last run; a pull request into `main` and every push to `develop` or
+`main` add 1000 runs per property, the examples and `pnpm selftest`.
+`fuzz.yml` runs properties and model-based tests nightly with 20000 runs and
+a new seed.
 
 ## Hard rules
 
@@ -142,7 +190,7 @@ How `pnpm check` runs them:
   brings its tests up for review.
 - **Monorepos.** Each package with a `spec/` runs its own `check` and its own
   tests; run them all from the root with the workspace tool
-  (`pnpm -r --if-present check`; one package with `pnpm --filter <name> check`).
+  (`pnpm test:models`; one package with `pnpm --filter <name> check`).
   A journey that crosses packages is tested in the package that owns it,
   usually the app.
 
@@ -318,11 +366,6 @@ Generated code uses the imported spec's full module path.
   the numbers of the messages in flight, with `N::send`, `N::take` (to
   deliver or lose one), `N::repeat`, and laws for an `always` rule that only
   messages sent are in flight. `vibestack/fixtures/ping.md` uses it.
-
-Import paths resolve relative to the spec that contains them. For example,
-`import currency.* from "../shared/currency"` uses a sibling area's library,
-and `import payments as P from "./payments"` uses `payments/index.md`.
-Generated code uses the imported spec's full module path.
 
 A spec is imported once, one way or the other, and imports cannot form a
 circle. Navigation links may point back to a parent. In the generated
@@ -735,6 +778,12 @@ Three ways to run the real application against a state machine's spec:
 A `Driver` has `reset`, `dispatch` (returns `"accepted"` or `"refused"`),
 `observe` and, for a spec that emits effects, `observeOutput`.
 
+A disagreement throws `ConformanceError`: its `trace` is the shrunk list of
+`[key, event]` pairs that shows it, `seed` the seed of its walks and `origin`
+the journey or walk that found it. Save the trace as a counterexample;
+`replay(driver, trace)`, from the same module, runs exactly it again, and
+`conformance(driver, { seed })` repeats the walks.
+
 ## The VibeLang shell
 
 The shell around the generated code is
@@ -830,6 +879,57 @@ what the spec does not own, such as an open menu or a draft in a text box.
 Style with Tailwind utilities on the project's tokens, compose shadcn/ui
 components before writing one, and follow the
 [design skill](.claude/skills/design/SKILL.md).
+
+### Components, stories and tokens
+
+A component is ordinary source the project owns: one `.tsx` file in
+`src/components/`, a named export, an exported `<Name>Props` type, and a
+JSDoc sentence on the component and on each prop that needs one. In this
+repository they are `@repo/ui`; a standalone project keeps its own.
+
+| | Source, kept in Git | Generated, never committed | Command, in the project |
+|---|---|---|---|
+| Tokens | `tokens.json`, and `design.md` describing them | `generated/tokens.css`, `generated/theme.css` (the Tailwind v4 entry) | `spec tokens build`, `check` |
+| Stories | the component, and `<Name>.meta.tsx` where its types are not enough | `generated/stories/`: Storybook stories, `catalog.json`, and a mount test and a browser test (accessibility, marked snapshots) of every story | `spec stories gen [--watch] [--check]` |
+
+`spec` is the tool's command: `pnpm exec spec` in a project that installed
+it, `node ../../spec.ts` in an example. In `@repo/ui`: `pnpm gen` (the stories),
+`pnpm storybook`, `pnpm test`, `pnpm test:browser`; in
+`@repo/design-system`: `pnpm build`, `pnpm check`.
+
+- **Never write a story for what the generator can derive.** It reads each
+  prop's type, default and JSDoc and writes a Default story, one per option
+  of a union or boolean prop, and Disabled, Loading, Error and Empty where
+  such a prop exists, twelve at most. A hand-written `<Name>.stories.tsx`
+  beside the component is kept, and wins over a generated story of the same
+  name.
+- **`<Name>.meta.tsx`** exports `meta: ComponentMeta<Props>` (from
+  `vibestack/stories`): `args` every story starts from, named `examples` and
+  `states`, `bounds` of a numeric prop, a `schema` to sample, a `decorator`,
+  `play` interactions and the stories worth a `snapshot`. Stories, tests and
+  Studio read the same object. A required prop the generator cannot give a
+  value is reported, with the field to add; it never invents data.
+- **A component that shows a model** says so: `@model spec/index.md` in its
+  JSDoc links it to that spec's state and events, and `@design design.md#…`
+  to its design document. Studio's Components view follows both ways.
+- **A file named after one of its exports** (`Dialog.tsx`) gives stories to
+  that component; its other exports are its parts.
+- **Colors, radii, shadows and fonts are tokens.** Use the utilities named
+  after them (`bg-primary`, `text-muted-foreground`, `rounded-md`); the lint
+  rules of `vibestack/design/eslint.ts` refuse a palette class, an arbitrary
+  color and a literal color in a style. Merge classes with `cn()`; use CVA
+  only where a component has real variants.
+- **A design change is a token change.** Describe it in `design.md`, write
+  it as `[{ "path": "color.light.primary", "value": "oklch(…)", "reason": "…" }]`,
+  and run `spec tokens apply changes.json`: it refuses an
+  unknown path, an invalid value and a contrast below WCAG AA, and prints
+  the diff; `--write` applies it and rebuilds the CSS. Prose is never read
+  as tokens.
+
+To change a component: find it in `generated/stories/catalog.json` or in
+Studio's Components view, read its props and model there, edit the source,
+run `pnpm gen` (or leave `pnpm storybook` running), look at it, then
+`pnpm test` and `pnpm lint`.
 
 ### Building, running and testing
 
@@ -931,8 +1031,7 @@ toolchain.
 - **Only what changed is checked again.** Each simulation result, a failing
   one too (its seed is fixed), and each passing proof result is kept in
   `.spec-cache/` under a fingerprint of the spec's Quint without its comments,
-  everything it imports and the versions of the tools; `tsc` keeps its
-  incremental state there. The specs are simulated at once.
+  everything it imports and the versions of the tools. The specs are simulated at once.
 - **The spec covers the rules, not the plumbing.** Chat, HTTP and storage stay
   hand-written around the generated core, as `vibestack/examples/dashboard/src/notify.vibe`
   does for sending messages.
@@ -961,14 +1060,13 @@ In the vibestack repository:
 | `vibestack/cache.ts`, `vibestack/run.ts` | stage caches and bounded tool execution |
 | `vibestack/units.ts`, `vibestack/simulate.ts` | generation, proof units, simulation and replay |
 | `vibestack/util.ts` | source discovery, test execution and citations |
-| `vibestack/conform.ts` | the `traces` stage, and the writer of `gen/<name>.conformance.ts` |
-| `vibestack/conformance.ts` | the runtime copied into `gen/` as `_conformance.ts` |
 | `vibestack/gen/vibe.ts` | `gen/<name>.effect.vibe`, read off the generated TypeScript |
 | `vibestack/scan.ts` | how a spec's lines are read; imports nothing, so Studio's page uses it too |
 | `vibestack/studio/` | Studio, a workspace package with its own spec, checked by `pnpm --filter vibestack-studio check`: change `spec/`, then its shell in `src/` |
 | `vibestack/prove.ts` | proves one unit: checks and splices the proof file, runs LemmaScript and `dafny audit`, verifies again with every assertion isolated each definition that fails, and alone every postcondition a failing one could hide |
 | `vibestack/proof/lib.dfy` | the library proof files call |
 | `vibestack/std/` | specs that ship with the tools, which any spec may import, each with its proof file |
+| `vibestack/conform.ts`, `vibestack/conformance.ts` | the `traces` stage and the conformance runtime generated tests import |
 | `vibestack/gen.ts` | the translator: reads what a module imports and defines |
 | `vibestack/gen/types.ts` | everything decided by a type |
 | `vibestack/gen/print.ts` | expressions |

@@ -1,0 +1,68 @@
+name: ci
+
+# Every run asks for the same tasks; Turborepo and spec skip what the change
+# does not reach, from the cache of the last run. What is headed for main, and
+# every push to develop or main, also gets larger property budgets, the
+# standalone examples and the tools' own self-test.
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop, main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TURBO_TELEMETRY_DISABLED: "1"
+  FULL: ${{ github.event_name == 'push' || github.base_ref == 'main' }}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - run: pnpm exec turbo run build typecheck test test:browser check //#lint:js //#lint:css //#analyze --continue
+        env:
+          FUZZ_RUNS: ${{ env.FULL == 'true' && '1000' || '100' }}
+      - name: Generated tests are reproducible
+        run: |
+          node vibestack/spec.ts tests apps/web && cp -r apps/web/.cache/generated/tests "$RUNNER_TEMP/generated-first"
+          rm -rf apps/web/.cache/generated/tests
+          node vibestack/spec.ts tests apps/web && diff -r "$RUNNER_TEMP/generated-first" apps/web/.cache/generated/tests
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: proof
+          path: |
+            gen/proof/
+            apps/*/gen/proof/
+            vibestack/studio/gen/proof/
+          if-no-files-found: ignore
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-failures
+          path: |
+            **/__screenshots__/
+            **/test/__traces__/
+            !**/node_modules/**
+          if-no-files-found: ignore
+
+  examples:
+    if: github.event_name == 'push' || github.base_ref == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - run: pnpm examples
+
+  selftest:
+    if: github.event_name == 'push' || github.base_ref == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - run: pnpm selftest

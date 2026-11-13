@@ -1,27 +1,31 @@
 {
+  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "target": "es2023",
-    "module": "nodenext",
     "lib": [
       "es2023",
       "dom",
       "dom.iterable"
     ],
-    "strict": true,
-    "noEmit": true,
-    "allowImportingTsExtensions": true,
     "rewriteRelativeImportExtensions": true,
-    "erasableSyntaxOnly": true,
-    "skipLibCheck": true,
     "types": [
       "node",
       "vite/client"
+    ],
+    "rootDirs": [
+      ".",
+      ".vibe/declarations"
     ],
     "jsx": "react-jsx"
   },
   "include": [
     "src",
     "test",
-    "gen/*.ts"
-  ]
+    "gen/*.ts",
+    "gen/*.vibe",
+    "vite.config.ts",
+    "vitest.config.ts"
+  ],
+  "vibe": {
+    "sidecarDir": ".vibe/declarations"
+  }
 }

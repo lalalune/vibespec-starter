@@ -1,11 +1,10 @@
 // spec/system.md, "Only a tab's oldest queued edit can be on its way unanswered"; spec/client.md, "Story: Hear back from the server"
-// The frontend's network code, with no page in it: the React page (app.ts)
-// and the end-to-end test use the same Tab. Everything the server says is
-// turned into an event of the generated client machine
-// (gen/client.effect.vibe) and applied by it; nothing here changes a tab's
-// state directly.
-import { type Client, type Event, type Pending, NotAnEvent, apply, decodeEvent, initial, step } from "../../gen/client.effect.vibe"
+// Shared by useTab.ts and test/e2e.test.vibe.
+import { type Client, type Event, type Pending, NotAnEvent, apply, decodeEvent, initial } from "../../gen/client.effect.vibe"
 import { toRequest } from "../protocol.vibe"
+
+/** How long a tab waits before it tries the network again. */
+const RETRY = "2 seconds"
 
 /** The server did not answer, or said something that is no answer. */
 export error Unanswered { cause: unknown }
@@ -21,14 +20,14 @@ export service Tab {
   dispatch(event: Event): void!!
   /** A user edit: queued at once, and sent after the edits queued before it, for as long as the tab is online. */
   edit(event: Edit): void!!
-  /** Send one queued edit and take in the answer. */
+  /** Send one queued edit and take in the answer, as a retry does. */
   send(p: Pending): void!Unanswered
   /** Take in the list as the server has it now. */
   refresh(): void!Unanswered
-  /** Back online: send the queue, oldest first, and catch up. */
-  goOnline(): void!Unanswered
-  /** Take in the server's pushes for as long as it sends them. */
-  listen(): void!Unanswered
+  /** Back online: catch up, then send the queue. */
+  goOnline(): void!!
+  /** Take in every push, reconnecting whenever the stream ends; it never returns. */
+  listen(): void!!
 }
 
 /** A fresh id for a to-do this tab creates: unique, because the tab's name is. */
@@ -71,38 +70,27 @@ export effect function open(base: string, name: string) {
     try dispatch(try heard("receiveSnapshot", try (try client.get("/api/snapshot")).json))
   }
 
-  // Send the queue oldest first, one request at a time, for as long as the
-  // tab is online; an edit the server did not answer is sent again two seconds
-  // later. Sending the whole queue at once would let the network reorder the
-  // user's own edits.
+  // Oldest first, one request at a time, for as long as the tab is online:
+  // sending the whole queue at once would let the network reorder the user's own edits.
   const flush = Semaphore.withPermit(sending, effect {
     while (true) {
       const { online, pending: [oldest] } = try get()
       if (!online || oldest === undefined) return
-      send(oldest) catch effect () => { try sleep("2 seconds") }
+      send(oldest) catch effect () => { try sleep(RETRY) }
     }
   })
 
-  effect function readPushes() {
+  effect function pushes() {
     const response = try client.get("/api/stream")
     let buffered = ""
     for try (const read of Stream.decodeText(response.stream)) {
       const frames = (buffered + read).split("\n\n")
       buffered = frames.pop() ?? ""
-      const pushes: Event[] = []
       for (const frame of frames) {
         if (!frame.startsWith("data: ")) continue
         const push = heard("receiveSnapshot", try Effect.try(() => JSON.parse(frame.slice("data: ".length)))) catch () => undefined
-        if (push) pushes.push(push)
+        if (push) try dispatch(push)
       }
-      if (pushes.length) try SubscriptionRef.update(held, (c) => pushes.reduce(step, c))
-    }
-  }
-
-  effect function listen() {
-    while (true) {
-      readPushes() catch () => undefined
-      try sleep("2 seconds")
     }
   }
 
@@ -118,10 +106,16 @@ export effect function open(base: string, name: string) {
     refresh: () => asked(refresh()),
     effect goOnline() {
       try dispatch({ type: "goOnline" })
+      refresh() catch () => undefined
       try flush
-      try asked(refresh())
     },
-    listen: () => asked(listen())
+    effect listen() {
+      while (true) {
+        // The stream ended or the server went away: server.vibe sends the current list first on the next connection.
+        pushes() catch () => undefined
+        try sleep(RETRY)
+      }
+    }
   }
 }
 

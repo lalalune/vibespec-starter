@@ -15,7 +15,7 @@
     "demo": "pnpm -s gen && node --import vibelang/register src/demo.vibe"
   },
   "devDependencies": {
-    "@types/node": "catalog:",
+    "@types/node": "^26.0.0",
     "@effect/vitest": "4.1.1",
     "vibelang": "0.0.12",
     "vibelang-vite": "0.0.12",
@@ -26,5 +26,10 @@
     "@effect/platform-node": "4.1.1",
     "effect": "4.1.1",
     "vibelang-runtime": "0.0.12"
+  },
+  "pnpm": {
+    "overrides": {
+      "@effect/platform-node-shared": "4.1.1"
+    }
   }
 }

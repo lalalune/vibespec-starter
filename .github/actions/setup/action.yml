@@ -1,0 +1,29 @@
+name: setup
+description: Node 26, pnpm from packageManager, Dafny, Chromium, and the caches of pnpm, Turborepo and spec.
+runs:
+  using: composite
+  steps:
+    - uses: pnpm/action-setup@v6
+    # Before setup-node: this action puts an old Node on PATH, which setup-node then replaces.
+    - uses: dafny-lang/setup-dafny-action@v1
+      with:
+        dafny-version: "4.11.0"
+    - uses: actions/setup-node@v7
+      with:
+        node-version-file: .nvmrc
+        cache: pnpm
+    # Turborepo skips a task whose inputs it has seen; spec skips a simulation or proof it has seen.
+    - uses: actions/cache@v6
+      with:
+        path: |
+          .turbo
+          **/.spec-cache
+          !**/node_modules/**
+        key: tasks-${{ runner.os }}-${{ github.job }}-${{ github.sha }}
+        restore-keys: |
+          tasks-${{ runner.os }}-${{ github.job }}-
+    - run: pnpm install --frozen-lockfile
+      shell: bash
+    # Studio's journeys and every test:browser drive a real Chromium.
+    - run: pnpm exec playwright install --with-deps chromium
+      shell: bash

@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // The spec pipeline and command line. Parsing, review, generation, simulation and proof each have one implementation.
+import { spawn } from "node:child_process";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Model } from "./gen.ts";
@@ -11,8 +13,8 @@ import { readSpecs, badSpecName, specFiles, specName, importedMeanings, isStd, l
 import { contracts, pending, pendingKey, pendingContracts, acceptAllReviews, pendingSpecs, migrateLocks, moved, showPending, ledgerFile, readLedger, writeLedger, type Pending, type Accepted, type Lock } from "./review.ts";
 import { entry, remembered, collectGarbage, type Memory } from "./cache.ts";
 import { generated, typecheckAll, proofUnits, proofFiles, strayProofFiles } from "./units.ts";
-import { SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, LASSO_TRACES, STEPS, DEPTHS, SEARCHED, simulate, search, firstBreak, lasso, showTrace, replay, standIn, type Step } from "./simulate.ts";
-import { sha, indent, packageScripts, tests, readSrc, projectRoot, allDone, usesVibelang, nodeRunsVibelang, type SrcFile } from "./util.ts";
+import { SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, LASSO_TRACES, STEPS, DEPTHS, SEARCHED, simulate, search, firstBreak, lasso, showTrace, replay, standIn } from "./simulate.ts";
+import { sha, indent, packageScripts, tests, readSrc, projectRoot, allDone, nodeRunsVibelang, type SrcFile } from "./util.ts";
 
 export { readSpecs, parseSpec, expandListHelpers, type Spec, type Rule, type Story } from "./parse.ts";
 export { pending, pendingKey, pendingContracts, acceptReviews, acceptContracts, dependencies, type Lock, type Pending } from "./review.ts";
@@ -393,18 +395,15 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
       }
       return out;
     }
-    // The typecheck runs while the proofs do; it is reported first. tsc keeps what it learned in the cache directory,
-    // and rereads only the files whose text changed.
-    const buildInfo = path.join(".spec-cache", "tsbuildinfo");
-    memory.used.add(path.basename(buildInfo));
-    if (memory.fresh) fs.rmSync(path.join(root, buildInfo), { force: true });
-    const typecheck = fs.existsSync(path.join(root, "tsconfig.json")) ? run(usesVibelang(root) ? "vibelang" : "tsc", ["--noEmit", "-p", ".", ...(usesVibelang(root) ? [] : ["--incremental", "--tsBuildInfoFile", buildInfo])], root) : undefined;
+    // The typecheck runs while the proofs do; it is reported first.
+    // VibeLang's compiler checks `.vibe`, `.ts` and `.tsx` as one program.
+    const typecheck = fs.existsSync(path.join(root, "tsconfig.json")) ? run("vibelang", ["--noEmit", "-p", "."], root) : undefined;
     const proofsDone = provingAll();
     // A missing or unexecutable compiler must not release the project lock while proofs still write into gen/.
     const [typesResult] = await Promise.allSettled([typecheck]);
-    if (usesVibelang(root) && !nodeRunsVibelang()) report(false, "types", `VibeLang cannot load its sources on ${process.version}; use Node 26`);
     if (typecheck) {
-      if (typesResult.status === "rejected") report(false, "types", "the TypeScript checker could not run", indent(String(typesResult.reason)));
+      if (!nodeRunsVibelang()) report(false, "types", `VibeLang runs its sources on Node ^22.22.3 or >=24.11.1, and this is ${process.version}; update Node (.nvmrc names the version)`);
+      if (typesResult.status === "rejected") report(false, "types", "the VibeLang compiler could not run", indent(String(typesResult.reason)));
       else {
         const tsc = typesResult.value!;
         report(tsc.ok, "types", tsc.ok ? "application typechecks against the generated contract" : "application does not fit the generated contract", indent(tsc.out.trim()), "src/ and test/");
@@ -472,7 +471,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
 
 // --- init ----------------------------------------------------------------------------
 
-/** What a VibeLang shell runs on, and what builds and tests it; init takes the toolchain's pinned versions. */
+/** What a VibeLang shell runs on, and what builds and tests it; `init` adds them at the versions in this package's manifest. */
 const VIBELANG = {
   dependencies: ["effect", "@effect/platform-node", "vibelang-runtime"],
   devDependencies: ["vibelang", "vibelang-vite", "vite", "vitest", "@effect/vitest", "@types/node"],
@@ -521,50 +520,47 @@ export function init(root: string, warn: (message: string) => void = (message) =
     fs.writeFileSync(claude, `${own.trimEnd()}${own.trim() ? eol + eol : ""}@AGENTS.md${eol}`);
     done.push("CLAUDE.md (imports AGENTS.md)");
   }
-  // A package with no application yet starts in VibeLang; one that has code keeps the language it has (usesVibelang).
-  const manifest = path.join(root, "package.json");
-  const fresh = fs.existsSync(manifest) && !["src", "test", "tsconfig.json"].some((f) => fs.existsSync(path.join(root, f)));
-  const vibe = fresh || usesVibelang(root);
-  const options = { target: "es2023", module: "nodenext", strict: true, skipLibCheck: true, types: ["node"] };
-  add("tsconfig.json", () => JSON.stringify(vibe
-    ? { compilerOptions: { ...options, rootDir: ".", rootDirs: [".", ".vibe/declarations"], outDir: "dist", noEmitOnError: true, rewriteRelativeImportExtensions: true }, include: ["src", "test", "gen/*.ts", "gen/*.vibe"], vibe: { sidecarDir: ".vibe/declarations" } }
-    : { compilerOptions: { ...options, noEmit: true, allowImportingTsExtensions: true, erasableSyntaxOnly: true }, include: ["src", "test", "gen/*.ts"] }, null, 2) + "\n");
-  if (vibe) add("vitest.config.ts", () => `import vibelang from "vibelang-vite";\nimport { defineConfig } from "vitest/config";\n\nexport default defineConfig({ plugins: [vibelang()], test: { include: ["test/**/*.test.vibe"], passWithNoTests: true } });\n`);
+  add("tsconfig.json", () => JSON.stringify({
+    compilerOptions: { target: "es2023", module: "nodenext", strict: true, skipLibCheck: true, types: ["node"], rootDir: ".", rootDirs: [".", ".vibe/declarations"], outDir: "dist", noEmitOnError: true, rewriteRelativeImportExtensions: true },
+    include: ["src", "test", "gen/*.ts", "gen/*.vibe"], vibe: { sidecarDir: ".vibe/declarations" },
+  }, null, 2) + "\n");
+  // A journey that starts a real server takes longer than Vitest's five seconds on a busy machine.
+  add("vitest.config.ts", () => `import vibelang from "vibelang-vite";\nimport { defineConfig } from "vitest/config";\n\nexport default defineConfig({ plugins: [vibelang()], test: { include: ["test/**/*.test.vibe"], passWithNoTests: true, testTimeout: 60_000 } });\n`);
   add("spec/index.md", () => "");
   const ignore = path.join(root, ".gitignore");
   const ignored = fs.existsSync(ignore) ? fs.readFileSync(ignore, "utf8") : "";
-  const missing = ["gen/", ".spec-cache/", ".studio/", ...(vibe ? ["dist/", ".vibe/"] : [])].filter((l) => !ignored.split("\n").includes(l));
+  const missing = ["gen/", ".spec-cache/", ".studio/", "dist/", ".vibe/"].filter((l) => !ignored.split("\n").includes(l));
   if (missing.length) { fs.writeFileSync(ignore, ignored + (ignored && !ignored.endsWith("\n") ? "\n" : "") + missing.join("\n") + "\n"); done.push(".gitignore"); }
+  const manifest = path.join(root, "package.json");
   if (fs.existsSync(manifest)) {
     const json = JSON.parse(fs.readFileSync(manifest, "utf8"));
-    const scripts = { dev: "spec studio", check: "spec check", gen: "spec gen", accept: "spec accept", ...(vibe ? { build: "vibelang", test: "vitest run" } : {}) };
+    const scripts = { dev: "spec studio", check: "spec check", gen: "spec gen", accept: "spec accept", build: "vibelang", test: "vitest run" };
     const added = Object.entries(scripts).filter(([name]) => !json.scripts?.[name] || (name === "test" && /no test specified/.test(json.scripts.test)));
     if (added.length) json.scripts = { ...json.scripts, ...Object.fromEntries(added) };
     // The VibeLang toolchain at the versions these tools are tested with: its packages move together, and with one Effect.
-    const pins: Record<string, string> = JSON.parse(fs.readFileSync(path.join(pkg, "package.json"), "utf8")).devDependencies;
+    const own = JSON.parse(fs.readFileSync(path.join(pkg, "package.json"), "utf8"));
+    const pins: Record<string, string> = { ...own.dependencies, ...own.devDependencies };
     const has = { ...json.dependencies, ...json.devDependencies };
-    const lacking = (names: string[]) => Object.fromEntries(names.filter((n) => vibe && !(n in has)).map((n) => [n, pins[n]]));
+    const lacking = (names: string[]) => Object.fromEntries(names.filter((n) => !(n in has)).map((n) => [n, pins[n]]));
     const [runtime, tooling] = [lacking(VIBELANG.dependencies), lacking(VIBELANG.devDependencies)];
     const needs = Object.keys({ ...runtime, ...tooling });
     if (needs.length) {
+      json.engines = { node: "^22.22.3 || >=24.11.1", ...json.engines };
       json.dependencies = { ...json.dependencies, ...runtime };
       json.devDependencies = { ...json.devDependencies, ...tooling };
       // Effect's packages share one version; a transitive copy at another is refused when the runtime loads.
-      json.pnpm = { ...json.pnpm, overrides: { "@effect/platform-node-shared": pins["@effect/platform-node"], ...json.pnpm?.overrides } };
+      // npm reads `overrides`, pnpm `pnpm.overrides`.
+      const one = { "@effect/platform-node-shared": pins["@effect/platform-node"] };
+      json.overrides = { ...one, ...json.overrides };
+      json.pnpm = { ...json.pnpm, overrides: { ...one, ...json.pnpm?.overrides } };
     }
-    const managed = json.packageManager === undefined;
-    if (managed) json.packageManager = "pnpm@10.24.0";
-    const runtimeDefault = json.engines?.node === undefined;
-    if (runtimeDefault) json.engines = { ...json.engines, node: ">=26" };
     const typed = json.type === undefined;
     if (typed) json.type = "module";
     else if (json.type !== "module") warn(`package.json: "type" is ${JSON.stringify(json.type)}, so Node runs src/ and test/ as CommonJS, where an import statement fails; set "type": "module" if those files use ES imports (gen/ has its own package.json)`);
-    if (added.length || typed || needs.length || managed || runtimeDefault) {
+    if (added.length || typed || needs.length) {
       fs.writeFileSync(manifest, JSON.stringify(json, null, 2) + "\n");
       if (added.length) done.push(`package.json scripts: ${added.map(([n]) => n).join(", ")}`);
       if (needs.length) done.push(`package.json VibeLang toolchain: ${needs.join(", ")} (run your package manager's install)`);
-      if (managed) done.push('package.json packageManager: pnpm@10.24.0');
-      if (runtimeDefault) done.push('package.json engines.node: >=26');
       if (typed) done.push('package.json "type": "module"');
     }
   }
@@ -647,7 +643,7 @@ const isMain = (): boolean => {
   }
 };
 
-const USAGE = "usage: spec check [<directory>] [--json] | watch [<directory>] | gen [<directory>] [--if-valid] | accept [<directory>] [unproved] | new [<path>] | init [<directory>] | migrate [<directory>] | studio [<directory>] [--port <n>]";
+const USAGE = "usage: spec check [<directory>] [--json] | watch [<directory>] | gen [<directory>] [--if-valid] | accept [<directory>] [unproved] | new [<path>] | init [<directory>] | migrate [<directory>] | studio [<directory>] [--port <n>] | tests [<directory>] | stories gen [--watch] [--check] | tokens build|check|apply";
 
 /**
  * Check, then check again whenever spec/, src/, test/ or tsconfig.json changes. One process stays warm between runs
@@ -676,7 +672,7 @@ async function watch(root: string) {
   };
   const changed = (file?: string | null) => {
     // Editors write temporary files beside the real one; only sources matter.
-    if (file && !/\.(md|ts|dfy|json)$/.test(file)) return;
+    if (file && !/\.(md|tsx?|vibex?|dfy|json)$/.test(file)) return;
     clearTimeout(timer);
     timer = setTimeout(once, 200);
   };
@@ -742,11 +738,18 @@ if (isMain()) {
     } else if (command === "watch" && takes([])) {
       await watch(root);
     } else if (command === "studio" && takes([], ["*"], ["--port", "*"], ["*", "--port", "*"])) {
-      // The studio imports this module; defer loading it until the command module has finished evaluating.
-      import("./studio/src/server.ts").then(({ serve }) => serve(root, args)).catch((e: Error) => {
-        console.error(e.message);
-        process.exitCode = 1;
-      });
+      // Studio is VibeLang: built, its entry is JavaScript; from source, Node loads it through VibeLang's loader.
+      const built = import.meta.filename.endsWith(".js");
+      const entry = path.join(import.meta.dirname, "studio/src", built ? "main.js" : "main.vibe");
+      const loader = built ? [] : ["--import", pathToFileURL(createRequire(path.join(import.meta.dirname, "studio/package.json")).resolve("vibelang/register")).href];
+      const child = spawn(process.execPath, [...loader, entry, ...args], { cwd: root, stdio: "inherit" });
+      child.on("exit", (code, signal) => { process.exitCode = code ?? (signal ? 1 : 0); });
+    } else if (command === "stories" || command === "tokens") {
+      // Each is a command line of its own, reading its arguments after its name (stories/cli.ts, design/cli.ts).
+      process.argv.splice(2, 1);
+      await (command === "stories" ? import("./stories/cli.ts") : import("./design/cli.ts"));
+    } else if (command === "tests" && takes([], ["*"])) {
+      await (await import("./testing/generate.ts")).main(args[0]);
     } else if (command === "migrate" && takes([])) {
       const release = lockProject(root);
       try {

@@ -14,7 +14,7 @@ const TOOL_TIMEOUT = 60 * 60 * 1000;
 
 /** An executable from the toolchain's dependencies, wherever npm put it: beside the tools, or in the project. */
 export function bin(cmd: string, root: string): string {
-  // On Windows npm installs a `.cmd` shim beside the extensionless shell script, and only the shim runs there.
+  // On Windows pnpm installs a `.cmd` shim beside the extensionless shell script, and only the shim runs there.
   const name = WINDOWS ? `${cmd}.cmd` : cmd;
   for (let dir of [path.join(import.meta.dirname, ".."), root]) {
     for (;;) {

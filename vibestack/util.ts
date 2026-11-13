@@ -33,33 +33,8 @@ export function projectRoot(directory: string, base = process.cwd()): string {
   return fs.realpathSync(root);
 }
 
-/**
- * `text` with `\r\n` read as `\n`, or a refusal naming the file and line if it holds NUL or a line break other than
- * `\n`. Quint, TypeScript, Dafny and these tools do not all agree on where a line ends at `\r`, `\v`, `\f`, U+0085,
- * U+2028 or U+2029, so a reviewer could see lines that differ from what a compiler reads, and prose could end a
- * comment early. No source needs NUL.
- */
-export function plainText(file: string, text: string): string {
-  const plain = text.replace(/\r\n/g, "\n");
-  const lineOf = (at: number) => plain.slice(0, at).split("\n").length;
-  const nul = plain.indexOf("\0");
-  if (nul >= 0) throw new Error(`${file}:${lineOf(nul)}: NUL characters are not allowed`);
-  const odd = plain.search(/[\r\v\f\u0085\u2028\u2029]/);
-  if (odd >= 0) throw new Error(`${file}:${lineOf(odd)}: a line break other than \\n; save the file with plain line endings`);
-  return plain;
-}
-
 /** The declarations the VibeLang compiler writes for a `.vibe` module: its output, not the package's code. */
 const SIDECAR = /\.d\.vibex?\.ts$/;
-
-/**
- * A package that depends on the VibeLang compiler is checked by it; a plain TypeScript package uses tsc.
- */
-export function usesVibelang(root: string): boolean {
-  const manifest = path.join(root, "package.json");
-  const pkg = fs.existsSync(manifest) ? JSON.parse(fs.readFileSync(manifest, "utf8")) : {};
-  return "vibelang" in { ...pkg.dependencies, ...pkg.devDependencies };
-}
 
 /** Does this Node run `.vibe` sources (`node --import vibelang/register`)? The loader needs 22.22.3 on the 22 line, or 24.11.1 and later. */
 export function nodeRunsVibelang(version = process.versions.node): boolean {
@@ -86,7 +61,7 @@ function manifest(dir: string) {
   try {
     return JSON.parse(fs.readFileSync(file, "utf8"));
   } catch (e) {
-    throw new Error(`${file}: ${(e as Error).message}`);
+    throw new Error(`${file}: ${(e as Error).message}`, { cause: e });
   }
 }
 /** A package's scripts. */
@@ -108,7 +83,7 @@ export async function tests(root: string, specs: Spec[], scripts: Record<string,
     const unrun = script ? [] : filesUnder(root, "test").filter((f) => /\.test\.vibex?$/.test(f));
     if (unrun.length) said.push([false, "tests", `${unrun.join(", ")}: a VibeLang test, and the package has no \`test\` script to run it; add one, such as \`vitest run\``, undefined, "test/"]);
     // Without a script, Node's runner: tests in TypeScript may import the `.vibe` shell, which the loader compiles.
-    const [command, args] = script ? [packageManager(root), ["run", "test"]] : [process.execPath, [...(usesVibelang(root) ? ["--import", "vibelang/register"] : []), "--test", ...files]];
+    const [command, args] = script ? [packageManager(root), ["run", "test"]] : [process.execPath, ["--import", "vibelang/register", "--test", ...files]];
     if (script || files.length) {
       const { NODE_TEST_CONTEXT: _, ...env } = process.env;
       const t = await exec(command, args, root, { ...env, SPEC_TESTS: fs.realpathSync(root) });
@@ -138,7 +113,7 @@ export function danglingCitations(root: string, specs: Spec[]): string[] {
 function packageCode(root: string, dir = ""): string[] {
   return fs.readdirSync(path.join(root, dir), { withFileTypes: true }).flatMap((e) => {
     const rel = path.join(dir, e.name);
-    if (e.isFile()) return (/\.[cm]?[jt]sx?$/.test(e.name) || /\.vibex?$/.test(e.name)) && !SIDECAR.test(e.name) ? [rel] : [];
+    if (e.isFile()) return /\.(?:[cm]?[jt]sx?|vibex?)$/.test(e.name) && !SIDECAR.test(e.name) ? [rel] : [];
     const skip = /^(node_modules|dist|build|out|coverage|\..*)$/.test(e.name) || rel === "gen" || fs.existsSync(path.join(root, rel, "package.json"));
     return e.isDirectory() && !skip ? packageCode(root, rel) : [];
   }).sort();
@@ -163,7 +138,7 @@ function conformanceImports(root: string): string[] {
         if (bindings && ts.isNamedImports(bindings)) for (const element of bindings.elements)
           if (!element.isTypeOnly && (element.propertyName?.text ?? element.name.text) === "conformance") calls.add(element.name.text);
       } else if (/\bgen\/[^/]+\.(?:ts|effect\.vibe)$/.test(module) && !module.endsWith("/_conformance.ts")) {
-        // The Effect face of a generated module is the same oracle.
+        // The Effect face of a generated module is the same oracle; its typed failures are not.
         if (statement.importClause.name) oracle.add(statement.importClause.name.text);
         if (bindings && ts.isNamespaceImport(bindings)) oracle.add(bindings.name.text);
         if (bindings && ts.isNamedImports(bindings)) for (const element of bindings.elements)

@@ -2,7 +2,7 @@ import type { ComponentProps } from "react";
 import * as ProgressPrimitive from "@radix-ui/react-progress";
 import { cn } from "../lib/cn.ts";
 
-export type ProgressProps = ComponentProps<typeof ProgressPrimitive.Root> & {
+export type ProgressProps = Omit<ComponentProps<typeof ProgressPrimitive.Root>, "children"> & {
   /** How much is done, from 0 to `max`; leave out while the amount is unknown. */
   value?: number | null;
   /** The value that means done. */
@@ -11,13 +11,13 @@ export type ProgressProps = ComponentProps<typeof ProgressPrimitive.Root> & {
 
 /** A bar for work whose length is known. Name it with `aria-label`. */
 export function Progress({ value, max = 100, className, ...props }: ProgressProps) {
-  const done = value == null ? null : Math.min(Math.max(value / max, 0), 1);
+  // Radix reads a value outside 0 to `max` as unknown, so it is given the one the bar shows.
+  const done = value == null ? null : Math.min(Math.max(value, 0), max);
   return (
-    <ProgressPrimitive.Root value={value} max={max} className={cn("h-2 w-full overflow-hidden rounded-lg bg-secondary", className)} {...props}>
+    <ProgressPrimitive.Root value={done} max={max} className={cn("h-2 w-full overflow-hidden rounded-lg bg-secondary", className)} {...props}>
       <ProgressPrimitive.Indicator
         className={cn("size-full origin-left bg-primary transition-transform", done === null && "animate-pulse")}
-        // eslint-disable-next-line -- the fill is a runtime number, which no utility class can carry
-        style={done === null ? undefined : { transform: `scaleX(${done})` }}
+        style={done === null ? undefined : { transform: `scaleX(${done / max})` }}
       />
     </ProgressPrimitive.Root>
   );

@@ -1,13 +1,21 @@
 # Team task dashboard, modelled
 
-A synthesized team task dashboard: tasks live in a shared spreadsheet people
-also edit by hand, a chat app carries commands and notifications, a web
-dashboard shows the state.
+Tasks in a shared spreadsheet, edited by hand and through a chat dashboard.
 
 ```sh
-pnpm install
-pnpm check
+pnpm install --ignore-workspace   # here, after `pnpm install` at the repository root for the tools
+pnpm check                        # model, proofs, types (vibelang --noEmit), tests and review
+pnpm test                         # the journeys alone: vitest run
+pnpm build                        # vibelang: JavaScript in dist/
 ```
+
+Run them from this directory: the example is a package of its own, with its
+own lock file, outside the root workspace.
+
+The shell is [VibeLang](https://github.com/smithersai/vibelang): Effect in
+TypeScript syntax, in `.vibe` files. `pnpm gen` writes an adapter
+`gen/<name>.effect.vibe` beside each generated module; the shell takes the
+tracker's types from its adapter, and the test drives that adapter's `Machine`.
 
 | Path | Kind | Covers |
 |---|---|---|
@@ -19,17 +27,27 @@ pnpm check
 
 Not modelled: the chat app, HTTP, spreadsheet access, the web dashboard.
 
+## The shell
+
+| In `src/notify.vibe` | Is |
+|---|---|
+| `messages` | notes grouped into one message per person |
+| `Chat` | the chat app as a service: `post(handle, text)`, failing with `Undelivered` |
+| `send` | posts one pass's messages in order, one after another; how many went out |
+
+`test/notify.test.vibe` walks the journey through the tracker's `Machine` and
+gives `send` the one fake, a `Chat` that records what is posted to it.
+
+`gen/*.ts` stays TypeScript; the adapters only wrap it.
+
 ## What the checks found
 
 - **A name typed twice was notified twice.** A cell is a list, not a set
-  (`ana, ana`), and "Nothing is sent twice" failed in simulation. Fixed: the
-  notifier treats a cell as a set of people, and `test/notify.test.vibe` types
-  a name twice.
+  (`ana, ana`), and "Nothing is sent twice" failed in simulation. Fixed by
+  the rule "A person named twice in a cell is told once"; `test/notify.test.vibe`
+  types a name twice.
 - **A rename left a name in a cell twice.** Fixed: a rename removes duplicate
   names from every owners cell.
 
-Obligations accepted as holding in simulation only are recorded in
-`spec/lock.json`, under `unproved`; `pnpm check` shows where each stands.
-
-The VibeLang shell uses the generated tracker adapter and sends notifications
-through the `Chat` service. `pnpm test` runs the notifier journeys.
+Obligations that hold in simulation only are listed under `unproved` in
+`spec/lock.json`.

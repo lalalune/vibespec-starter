@@ -1,4 +1,0 @@
-@import "@repo/design-system/theme.css";
-@source "../../../packages/ui/src";
-@source "./components.tsx";
-@source "./components-app.tsx";

@@ -1,5 +1,5 @@
-// The Effect face of a generated module, in VibeLang: gen/<name>.effect.vibe beside gen/<name>.ts for every project.
-// It is read off the generated TypeScript itself, so it cannot say anything that module does not.
+// The Effect face of a generated module, in VibeLang: gen/<name>.effect.vibe beside gen/<name>.ts. It is read off the
+// generated TypeScript itself, so it cannot say anything that module does not.
 import ts from "typescript";
 import { fail } from "./types.ts";
 
@@ -38,11 +38,7 @@ export function effectAdapter(name: string, source: string, text: string, namesp
     return `${doc(f)}\n  export function ${f.name!.text}(${params}): ${f.type!.getText(file)} { return M.${f.name!.text}(${f.parameters.map((p) => p.name.getText(file)).join(", ")}) }`;
   };
   const names = [...consts.map((c) => c.name), ...funs.map((f) => f.name!.text)];
-  const out = [
-    `// GENERATED from ${source} by vibestack/spec.ts. Do not edit: change the spec and run \`pnpm gen\`.`,
-    `// gen/${name}.ts for Effect code: its definitions as functions that throw nothing${funs.some((f) => f.name!.text === "step") ? ", and its state machine as typed failures and a service" : ""}.`,
-    `export type * from "./${name}.ts"`,
-    ``,
+  const body = names.length ? [
     `module pure {`,
     `  import * as M from "./${name}.ts"`,
     ...(types.length ? [`  import type { ${types.join(", ")} } from "./${name}.ts"`] : []),
@@ -52,6 +48,13 @@ export function effectAdapter(name: string, source: string, text: string, namesp
     `}`,
     `import { ${names.join(", ")} } from pure`,
     `export { ${names.join(", ")} }`,
+  ] : [];
+  const out = [
+    `// GENERATED from ${source} by vibestack/spec.ts. Do not edit: change the spec and run \`pnpm gen\`.`,
+    `// gen/${name}.ts for Effect code: its definitions as functions that throw nothing${funs.some((f) => f.name!.text === "step") ? ", and its state machine as typed failures and a service" : ""}.`,
+    `export type * from "./${name}.ts"`,
+    ``,
+    ...body,
   ];
   const step = funs.find((f) => f.name!.text === "step");
   if (!step) return [...out, ``].join("\n");
@@ -109,10 +112,13 @@ export function effectAdapter(name: string, source: string, text: string, namesp
     ``,
     `/** The state, and the one way to change it: an event the rules allow, applied before the next is looked at. */`,
     `export service Machine {`,
-    // The package and spec both identify a machine; two packages may each have spec/index.md.
+    // VibeLang derives a key from the nearest package.json's name, and gen/package.json has none (genDir in units.ts).
+    // The package and the spec together name a machine: two packages may each have spec/index.md.
     `  static readonly key = ${JSON.stringify(`${namespace}/${source}#Machine`)}`,
+    `  /** The current state, then every later one. */`,
     `  readonly changes: Stream.Stream<${state}>`,
     `  get(): ${state}!!`,
+    `  /** An event already parsed; a value from outside goes through \`receive\`. */`,
     `  send(event: T.Event${by}): ${stepped}!Rejected`,
     `  receive(input: unknown${by}): ${stepped}!(NotAnEvent | Rejected)`,
     `}`,

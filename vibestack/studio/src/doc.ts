@@ -181,7 +181,7 @@ export function manifestOf(root: string, baseline: Record<string, string>, curre
 
 // --- the prompt ---------------------------------------------------------------------------------
 
-/** The sync request for an agent, at most `limit` characters; the whole manifest is in `.studio/manifest.json`. */
+/** The sync request for an agent, at most `limit` characters; the whole manifest is in `.studio/manifest.json`. @throws {never} */
 export function promptFor(m: Manifest | undefined, { skill, check }: { skill: string; check: string }, limit = Infinity): string {
   const head = [
     `Sync the specs: follow the sync skill in ${skill}, after reading AGENTS.md in full.`,

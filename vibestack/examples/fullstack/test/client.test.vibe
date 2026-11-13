@@ -1,6 +1,4 @@
 // spec/client.md, "Story: Edit the list in the browser"; spec/client.md, "Story: Hear back from the server"
-// A tab applies events with the generated client machine; these tests drive
-// it the way the page does.
 import { assert, it } from "@effect/vitest"
 import { type Client, type Event, initial, inv, step, view, visible } from "../gen/client.effect.vibe"
 

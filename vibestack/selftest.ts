@@ -10,7 +10,7 @@ import { after, describe, test } from "node:test";
 import { LIB_FILE, isolatedCopies, parseProofFile, readVerdict, splice } from "./prove.ts";
 import { exec, run as tool } from "./run.ts";
 import { migrateLocks, pendingSpecs, readLedger, writeLedger } from "./review.ts";
-import { packageScripts, nodeRunsVibelang } from "./util.ts";
+import { nodeRunsVibelang, packageScripts } from "./util.ts";
 import { canonical, departure } from "./conformance.ts";
 import { conformance as checkTraces, conformanceFound, writeConformance } from "./conform.ts";
 import { acceptContracts, acceptReviews, check, checkVerifiedSource, danglingCitations, expandListHelpers, generated, init, parseSpec, pending, pendingContracts, readSpecs, replay, show, typecheckAll, type Result, type Spec } from "./spec.ts";
@@ -19,10 +19,8 @@ const project = path.join(import.meta.dirname, "..");
 const EXAMPLE = path.join(project, "vibestack/examples/order");
 const read = (file: string, from = project): string => fs.readFileSync(path.join(from, file), "utf8");
 const F = "`".repeat(3);
-/** What `init` writes for a package in plain TypeScript, which a scratch project is unless its manifest lists `vibelang`. */
-const TSCONFIG = JSON.stringify({ compilerOptions: { target: "es2023", module: "nodenext", strict: true, noEmit: true, allowImportingTsExtensions: true, erasableSyntaxOnly: true, skipLibCheck: true, types: ["node"] }, include: ["src", "test", "gen/*.ts"] }, null, 2) + "\n";
 /** What makes the order example a VibeLang package: its manifest, and what its compiler and test runner read. */
-const VIBELANG = Object.fromEntries(["package.json", "tsconfig.json", "vitest.config.ts"].map((f) => [f, fs.readFileSync(path.join(EXAMPLE, f), "utf8")]));
+const PACKAGE = Object.fromEntries(["package.json", "tsconfig.json", "vitest.config.ts"].map((f) => [f, read(f, EXAMPLE)]));
 const roots: string[] = [];
 const nodeModules = (function find(dir: string): string {
   const here = path.join(dir, "node_modules");
@@ -39,15 +37,9 @@ function scratch(files: Record<string, string>): string {
     fs.writeFileSync(path.join(root, file), text);
   }
   if (Object.keys(files).some((f) => /^(src|test)\//.test(f)) && !files["tsconfig.json"]) {
-    fs.writeFileSync(path.join(root, "tsconfig.json"), TSCONFIG);
+    fs.writeFileSync(path.join(root, "tsconfig.json"), PACKAGE["tsconfig.json"]);
     fs.symlinkSync(nodeModules, path.join(root, "node_modules"), "dir");
   }
-  return root;
-}
-/** A scratch project whose shell is VibeLang, configured as the order example is. */
-function vibeScratch(files: Record<string, string>): string {
-  const root = scratch({ ...VIBELANG, ...files });
-  fs.symlinkSync(nodeModules, path.join(root, "node_modules"), "dir");
   return root;
 }
 /** A scratch project whose specs are the named fixtures, with their proof files, each changed by `edit` if it is given. */
@@ -90,8 +82,8 @@ async function until(ready: () => boolean | Promise<boolean>, why: () => string 
 // The order example with whatever awaits sign-off here accepted, checked once
 // so that every copy starts with its cache: an edit then re-runs only what it changes.
 const pristine = scratch({});
-for (const file of ["spec/index.md", "src", "test", "tsconfig.json"]) fs.cpSync(path.join(EXAMPLE, file), path.join(pristine, file), { recursive: true });
-for (const [file, text] of Object.entries(VIBELANG)) fs.writeFileSync(path.join(pristine, file), text);
+for (const file of ["spec/index.md", "src", "test"]) fs.cpSync(path.join(EXAMPLE, file), path.join(pristine, file), { recursive: true });
+for (const [file, text] of Object.entries(PACKAGE)) fs.writeFileSync(path.join(pristine, file), text);
 fs.symlinkSync(nodeModules, path.join(pristine, "node_modules"), "dir");
 for (const spec of readSpecs(pristine)) acceptReviews(pristine, spec);
 acceptContracts(pristine);
@@ -127,6 +119,14 @@ const failedStages = async (file: string, edit: (text: string) => string) => (aw
 const pendingItems = (root: string) => readSpecs(root).flatMap((spec) => pending(root, spec).map((p) => `${p.where.split("  ")[1]}: ${p.status}${p.note ?? ""}`));
 /** gen/ for one spec, as `check` and `spec gen` generate it. */
 const gen = async (root: string, spec: Spec) => generated(root, spec, await typecheckAll({ root, fresh: true, used: new Set() }, readSpecs(root)).get(spec.name)!, new Map());
+/** gen/ for every spec of a project, in dependency order: the files it holds. */
+async function genAll(root: string): Promise<string[]> {
+  const specs = readSpecs(root);
+  const typed = typecheckAll({ root, fresh: true, used: new Set() }, specs);
+  const models = new Map();
+  for (const spec of specs) generated(root, spec, await typed.get(spec.name)!, models);
+  return fs.readdirSync(path.join(root, "gen")).sort();
+}
 /** Run a fresh CLI process so toolchain fingerprints cannot carry over from another invocation. */
 const runCli = (script: string, root: string, ...args: string[]) => exec(process.execPath, [script, ...args], root);
 const unguarded = (s: string) => s.replace("o.status == Draft and o.units > 0", "o.status == Draft");
@@ -230,7 +230,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
 
     const quiet = oneRule("quiet", "Wait", "pure val initial: int = 0\npure def stay(n: int): int = n\npure def alwaysZero(n: int): bool = n == 0");
     const quietSpec = parseSpec(quiet, "spec/quiet.md"), quietModel = await gen(quiet, quietSpec);
-    const quietDomain = await import(path.join(quiet, "gen/quiet.ts"));
+    await import(path.join(quiet, "gen/quiet.ts"));
     writeConformance(quiet, quietModel, conformanceFound(quietModel, quietSpec, [[{ state: 0 }, { event: { type: "stay" }, state: 0 }]], []));
     const quietHelper = await import(path.join(quiet, "gen/quiet.conformance.ts"));
     await quietHelper.conformance({ reset() {}, dispatch: () => "accepted", observe: () => 0 }, { walks: 1, steps: 2 });
@@ -438,16 +438,15 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
   });
 
   test("hand-written code that changes what it is checked against is refused or flagged", async () => {
-    const reexport = await failedStages("src/ledger.ts", (s) => s + '\nexport * from "./app.vibe";\n');
-    assert.ok(reexport.includes("proof"), reexport.join());
     const { said, text } = await run(copyOfProject("src/ledger.ts", (s) => s.replace(/(\/\/@ ensures)/, "//@ requires true\n$1")));
     assert.ok(said("proof", /^src-ledger\.ts: .*under 2 \/\/@ requires/), text);
   });
 
-  test("the application's types and tests are checked, in VibeLang as in TypeScript", async () => {
+  test("the application's types and tests are checked, in VibeLang and in the TypeScript beside it, on a Node that loads both", async () => {
     const [mistyped, failing, plain] = await Promise.all([
       run(copyOfProject("src/app.vibe", (s) => s + "\nconst wrong: number = \"x\"\n")),
       run(copyOfProject("test/app.test.vibe", (s) => s + '\nit("never holds", () => { assert.strictEqual(1, 2) })\n')),
+      // Without a test script Node runs test/**/*.test.ts, through VibeLang's loader.
       run(fixtures(["door"], (f) => Object.assign(f, {
         "src/wrong.ts": 'export const wrong: number = "x";\n',
         "test/never.test.ts": 'import { test } from "node:test";\ntest("never holds", () => { throw new Error("no"); });\n',
@@ -467,24 +466,15 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.deepEqual(["22.22.2", "22.22.3", "23.11.1", "24.5.0", "24.11.1", "26.0.0"].map((v) => nodeRunsVibelang(v)), [false, true, false, false, true, true]);
   });
 
-  test("a VibeLang shell written for a transition the spec has since renamed no longer fits the generated contract", async () => {
+  test("a shell written for a transition the spec has since renamed no longer fits the generated contract", async () => {
     const { said, next, text } = await run(copyOfProject("spec/index.md", (s) => s.replace(/\b(a|canA)ddItem\b/g, "$1ddItems")));
     assert.equal(said("types", /src\/demo\.vibe\(\d+,\d+\): error TS\d+: Type '"addItem"' is not assignable/)?.summary, "application does not fit the generated contract", text);
     assert.match(next, /^types \(src\/ and test\/\) is the first ✗: update src\/ and test\/ to the generated contract/);
   });
 
-  test("every package gets the Effect face of each generated module, and VibeLang checks the shell, senders, effects and independent package machines", async () => {
+  test("every generated module has an Effect adapter, which the compiler accepts inside gen/ with a shell that uses it, for a library, a machine built on it, one built on a machine, one with a sender and one with effects", async () => {
     const names = ["lamp", "lib", "mailer", "room", "shop", "vault"];
-    const specs = Object.fromEntries(names.map((n) => [`spec/${n}.md`, read(`vibestack/fixtures/${n}.md`)]));
-    const generate = async (root: string) => {
-      const specs = readSpecs(root), models = new Map();
-      const typed = typecheckAll({ root, fresh: true, used: new Set() }, specs);
-      for (const spec of specs) generated(root, spec, await typed.get(spec.name)!, models);
-      return fs.readdirSync(path.join(root, "gen")).sort();
-    };
-    const plain = await generate(scratch(specs));
-    assert.deepEqual(plain, ["_conformance.ts", "package.json", ...names.flatMap((n) => [`${n}.qnt`, `${n}.run.qnt`, `${n}.ts`, `${n}.effect.vibe`, ...(n === "lib" ? [] : [`${n}.conformance.ts`])])].sort());
-    const root = vibeScratch({ ...specs, "src/desk.vibe": `import { total } from "../gen/lib.effect.vibe"
+    const root = scratch({ ...Object.fromEntries(names.map((n) => [`spec/${n}.md`, read(`vibestack/fixtures/${n}.md`)])), "src/desk.vibe": `import { total } from "../gen/lib.effect.vibe"
 import { Machine as Mailer, machine as mailer } from "../gen/mailer.effect.vibe"
 import { add, apply, initial } from "../gen/shop.effect.vibe"
 import { type NotASender, type Rejected, Machine as Vault, decodeSender, machine as vault } from "../gen/vault.effect.vibe"
@@ -513,15 +503,17 @@ export effect function filled(sku: string, qty: number) {
   return [cart.count, add(initial, sku, qty).count, total([qty])] as const
 }
 ` });
-    const faces = (await generate(root)).filter((f) => f.endsWith(".effect.vibe"));
-    assert.deepEqual(faces, names.map((n) => `${n}.effect.vibe`));
+    assert.deepEqual(await genAll(root), ["_conformance.ts", "package.json", ...names.flatMap((n) => [`${n}.qnt`, `${n}.run.qnt`, `${n}.ts`, `${n}.effect.vibe`, ...(n === "lib" ? [] : [`${n}.conformance.ts`])])].sort());
+    // gen/package.json names no package, so the compiler has no key to derive for a service: the adapter states its own (EK0903).
+    assert.deepEqual(JSON.parse(read("gen/package.json", root)), { type: "module" });
+    assert.match(read("gen/vault.effect.vibe", root), new RegExp(`^export service Machine \\{\\n  static readonly key = ${JSON.stringify(`${root}/spec/vault.md#Machine`).replace(/[./]/g, "\\$&")}$`, "m"));
     const compiled = await tool("vibelang", ["--noEmit", "-p", "."], root);
     assert.ok(compiled.ok, compiled.out);
     const counter = ruleSpec("pure val initial: int = 0\npure def add(n: int): int = n + 1");
-    const named = (name: string) => vibeScratch({ "package.json": JSON.stringify({ ...JSON.parse(VIBELANG["package.json"]), name }), "spec/index.md": counter });
+    // Two packages may each have spec/index.md: the package's name is part of its machine's key.
+    const named = (name: string) => scratch({ "package.json": JSON.stringify({ ...JSON.parse(PACKAGE["package.json"]), name }), "spec/index.md": counter, "src/.keep": "" });
     const first = named("first-machine"), second = named("second-machine");
-    await Promise.all([generate(first), generate(second)]);
-    fs.mkdirSync(path.join(first, "src"), { recursive: true });
+    await Promise.all([genAll(first), genAll(second)]);
     fs.writeFileSync(path.join(first, "src/pair.vibe"), `import { Machine as First, machine as first } from "../gen/index.effect.vibe"
 import { Machine as Second, machine as second } from ${JSON.stringify(path.relative(path.join(first, "src"), path.join(second, "gen/index.effect.vibe")).split(path.sep).join("/"))}
 export effect function independent() {
@@ -537,16 +529,13 @@ export effect function independent() {
     assert.equal(paired.status, 0, paired.stdout + paired.stderr);
   });
 
-  test("a machine cannot bind a name of its Effect face, and a library may bind it", async () => {
-    const machine = "pure val initial: int = 0\npure def apply(n: int, k: int): int = n + k";
-    const { failed, said, text } = await run(vibeScratch({ "spec/t.md": ruleSpec(machine) }));
+  test("a machine that binds a name of its Effect adapter is refused, and a library, which has no such names, may bind it", async () => {
+    const { failed, said, text } = await run(oneRule("t", "A rule", "pure val initial: int = 0\npure def apply(n: int, k: int): int = n + k"));
     assert.deepEqual(failed, ["model"], text);
     assert.ok(said("model", /^spec\/t\.md is not a valid model\n\s+spec\/t\.md: `apply` is a name of the generated Effect adapter \(gen\/t\.effect\.vibe\); name the definition otherwise$/), text);
-    const plain = oneRule("t", "A rule", machine);
-    await assert.rejects(gen(plain, parseSpec(plain, "spec/t.md")), /`apply` is a name of the generated Effect adapter/);
-    const library = vibeScratch({ "spec/t.md": ruleSpec("pure def apply(n: int, k: int): int = n + k") });
+    const library = oneRule("t", "A rule", "pure def apply(n: int, k: int): int = n + k");
     await gen(library, parseSpec(library, "spec/t.md"));
-    assert.match(fs.readFileSync(path.join(library, "gen/t.effect.vibe"), "utf8"), /^export \{ apply \}$/m);
+    assert.match(read("gen/t.effect.vibe", library), /^export \{ apply \}$/m);
   });
 
   test("Markdown the tools would read differently from a viewer is refused or read as a viewer does", async () => {
@@ -869,13 +858,6 @@ export effect function independent() {
     assert.ok(lying.said("proof", /may only import generated modules/), lying.text);
     assert.deepEqual(disguised.failed, ["proof"], disguised.text);
     assert.ok(disguised.said("proof", /may only import generated modules/), disguised.text);
-    // Annotations in a file the prover does not read are refused, not ignored.
-    const [module, vibe] = await Promise.all([
-      run(copyOfProject("src/dec.mts", () => "//@ backend dafny\nexport function dec(x: number): number {\n  //@ ensures \\result > x\n  return x - 1;\n}\n")),
-      run(copyOfProject("src/dec.vibe", () => "//@ backend dafny\nexport const dec = 1\n")),
-    ]);
-    assert.equal(module.said("proof", /src\/dec\.mts: `\/\/@` appears in it, but only \.ts files under src\/ are proved/)?.ok, false, module.text);
-    assert.equal(vibe.said("proof", /src\/dec\.vibe: `\/\/@` appears in it, but only \.ts files under src\/ are proved/)?.ok, false, vibe.text);
   });
 
   test("a law that needs induction is proved by a proof file, and only then offered to the spec that imports it", async () => {
@@ -1037,47 +1019,48 @@ export effect function independent() {
     }
   });
 
-  test("init starts a package that has no code in VibeLang, with the order example's toolchain, and leaves one that has code or a tsconfig.json in TypeScript; a second run adds nothing", () => {
-    const common = [".claude/skills/sync/SKILL.md", ".agents/skills/sync", ".claude/skills/design/SKILL.md", ".agents/skills/design", "AGENTS.md (Vibestack instructions)", "CLAUDE.md (imports AGENTS.md)"];
-    const json = (root: string, file: string) => JSON.parse(fs.readFileSync(path.join(root, file), "utf8"));
-    const text = (root: string, file: string) => fs.readFileSync(path.join(root, file), "utf8");
-    const scripts = { dev: "spec studio", check: "spec check", gen: "spec gen", accept: "spec accept" };
-    const example = JSON.parse(VIBELANG["package.json"]);
-    const pins = JSON.parse(read("package.json")).devDependencies;
-    const pinned = (deps: Record<string, string>) => Object.fromEntries(Object.keys(deps).map((name) => [name, pins[name]]));
+  test("init sets a package up for a VibeLang shell: compiler and test runner configuration, scripts, the pinned toolchain with one Effect; what the package already has is kept, and a second run adds nothing", () => {
+    const json = (root: string, file: string) => JSON.parse(read(file, root));
+    const pins: Record<string, string> = { ...json(project, "package.json").dependencies, ...json(project, "package.json").devDependencies };
+    const pinned = (...names: string[]) => Object.fromEntries(names.map((n) => [n, pins[n]]));
+    const [runtime, tooling] = [["effect", "@effect/platform-node", "vibelang-runtime"], ["vibelang", "vibelang-vite", "vite", "vitest", "@effect/vitest", "@types/node"]];
+    // VibeLang's packages move together, and with one version of Effect: each is pinned exactly.
+    for (const name of [...runtime, ...tooling].filter((n) => n !== "@types/node")) assert.match(pins[name], /^\d+\.\d+\.\d+$/, name);
+    // A workspace's `catalog:` means nothing in the package `init` writes it into.
+    assert.match(pins["@types/node"], /^\^\d+\.\d+\.\d+$/);
+    const one = { "@effect/platform-node-shared": pins["@effect/platform-node"] };
+    const scripts = { dev: "spec studio", check: "spec check", gen: "spec gen", accept: "spec accept", build: "vibelang", test: "vitest run" };
 
     const fresh = scratch({ "package.json": '{"name":"fresh"}' });
-    assert.deepEqual(init(fresh), [...common, "tsconfig.json", "vitest.config.ts", "spec/index.md", ".gitignore",
-      "package.json scripts: dev, check, gen, accept, build, test",
-      "package.json VibeLang toolchain: effect, @effect/platform-node, vibelang-runtime, vibelang, vibelang-vite, vite, vitest, @effect/vitest, @types/node (run your package manager's install)",
-      'package.json packageManager: pnpm@10.24.0', 'package.json engines.node: >=26', 'package.json "type": "module"']);
-    assert.deepEqual(json(fresh, "tsconfig.json"), JSON.parse(VIBELANG["tsconfig.json"]));
-    assert.match(text(fresh, "vitest.config.ts"), /^import vibelang from "vibelang-vite";\n[\s\S]*plugins: \[vibelang\(\)\], test: \{ include: \["test\/\*\*\/\*\.test\.vibe"\]/);
-    assert.equal(text(fresh, ".gitignore"), "gen/\n.spec-cache/\n.studio/\ndist/\n.vibe/\n");
+    assert.deepEqual(init(fresh), [".claude/skills/sync/SKILL.md", ".agents/skills/sync", ".claude/skills/design/SKILL.md", ".agents/skills/design", "AGENTS.md (Vibestack instructions)", "CLAUDE.md (imports AGENTS.md)",
+      "tsconfig.json", "vitest.config.ts", "spec/index.md", ".gitignore", "package.json scripts: dev, check, gen, accept, build, test",
+      `package.json VibeLang toolchain: ${[...runtime, ...tooling].join(", ")} (run your package manager's install)`, 'package.json "type": "module"']);
+    assert.deepEqual(json(fresh, "tsconfig.json"), {
+      compilerOptions: { target: "es2023", module: "nodenext", strict: true, skipLibCheck: true, types: ["node"], rootDir: ".", rootDirs: [".", ".vibe/declarations"], outDir: "dist", noEmitOnError: true, rewriteRelativeImportExtensions: true },
+      include: ["src", "test", "gen/*.ts", "gen/*.vibe"], vibe: { sidecarDir: ".vibe/declarations" },
+    });
+    assert.equal(read("vitest.config.ts", fresh), 'import vibelang from "vibelang-vite";\nimport { defineConfig } from "vitest/config";\n\nexport default defineConfig({ plugins: [vibelang()], test: { include: ["test/**/*.test.vibe"], passWithNoTests: true, testTimeout: 60_000 } });\n');
+    assert.equal(read(".gitignore", fresh), "gen/\n.spec-cache/\n.studio/\ndist/\n.vibe/\n");
     assert.deepEqual(json(fresh, "package.json"), {
-      name: "fresh", type: "module", packageManager: "pnpm@10.24.0", scripts: { ...scripts, build: "vibelang", test: "vitest run" }, engines: { node: ">=26" },
-      dependencies: pinned(example.dependencies), devDependencies: pinned(example.devDependencies), pnpm: { overrides: { "@effect/platform-node-shared": pins["@effect/platform-node"] } },
+      name: "fresh", type: "module", scripts, engines: { node: "^22.22.3 || >=24.11.1" },
+      dependencies: pinned(...runtime), devDependencies: pinned(...tooling), overrides: one, pnpm: { overrides: one },
     });
     assert.ok(Object.values({ ...json(fresh, "package.json").dependencies, ...json(fresh, "package.json").devDependencies }).every((version) => typeof version === "string" && !/^(catalog|workspace):/.test(version)));
     assert.deepEqual(init(fresh), []);
 
-    const coded = scratch({ "package.json": '{"name":"coded"}' });
-    fs.mkdirSync(path.join(coded, "src"));
-    const configured = scratch({ "package.json": '{"name":"configured"}', "tsconfig.json": "{}\n" });
-    for (const [root, name, config, added] of [[coded, "coded", TSCONFIG, ["tsconfig.json"]], [configured, "configured", "{}\n", []]] as const) {
-      assert.deepEqual(init(root), [...common, ...added, "spec/index.md", ".gitignore", "package.json scripts: dev, check, gen, accept", 'package.json packageManager: pnpm@10.24.0', 'package.json engines.node: >=26', 'package.json "type": "module"']);
-      assert.deepEqual(json(root, "tsconfig.json"), JSON.parse(config));
-      assert.ok(!fs.existsSync(path.join(root, "vitest.config.ts")));
-      assert.equal(text(root, ".gitignore"), "gen/\n.spec-cache/\n.studio/\n");
-      assert.deepEqual(json(root, "package.json"), { name, type: "module", packageManager: "pnpm@10.24.0", engines: { node: ">=26" }, scripts });
-      assert.deepEqual(init(root), []);
-    }
-    const explicit = scratch({ "package.json": JSON.stringify({ name: "existing", packageManager: "npm@10.9.0", engines: { node: ">=28" }, pnpm: { overrides: { "@effect/platform-node-shared": "4.2.0" } } }), "tsconfig.json": "{}" });
-    init(explicit);
-    const preserved = json(explicit, "package.json");
-    assert.equal(preserved.packageManager, "npm@10.9.0");
-    assert.deepEqual(preserved.engines, { node: ">=28" });
-    assert.deepEqual(preserved.pnpm, { overrides: { "@effect/platform-node-shared": "4.2.0" } });
+    // The placeholder `npm init` writes is no test script; a script, a dependency, an override or an ignored path already there stays.
+    const own = { name: "own", type: "module", scripts: { build: "mine", test: 'echo "Error: no test specified" && exit 1' }, engines: { node: ">=26" },
+      dependencies: { effect: "mine" }, devDependencies: { vitest: "mine" }, overrides: { "@effect/platform-node-shared": "mine" }, pnpm: { overrides: { other: "mine" } } };
+    const kept = scratch({ "package.json": JSON.stringify(own), "tsconfig.json": "{}\n", "vitest.config.ts": "export default {};\n", ".gitignore": "dist/\n" });
+    const added = init(kept);
+    assert.deepEqual(added.filter((a) => /^(package\.json|tsconfig|vitest|\.gitignore)/.test(a)), [".gitignore", "package.json scripts: dev, check, gen, accept, test",
+      `package.json VibeLang toolchain: ${[...runtime, ...tooling].filter((n) => n !== "effect" && n !== "vitest").join(", ")} (run your package manager's install)`]);
+    assert.deepEqual([read("tsconfig.json", kept), read("vitest.config.ts", kept), read(".gitignore", kept)], ["{}\n", "export default {};\n", "dist/\ngen/\n.spec-cache/\n.studio/\n.vibe/\n"]);
+    assert.deepEqual(json(kept, "package.json"), {
+      ...own, scripts: { ...scripts, build: "mine" }, dependencies: { ...pinned(...runtime), effect: "mine" }, devDependencies: { ...pinned(...tooling), vitest: "mine" },
+      pnpm: { overrides: { ...one, other: "mine" } },
+    });
+    assert.deepEqual(init(kept), []);
   });
 
   test("nested specs link to children and reuse a machine through its directory index", async () => {
@@ -1175,15 +1158,16 @@ export effect function independent() {
     assert.equal(fs.readFileSync(path.join(root, "spec/lock.json"), "utf8"), before);
   });
 
-  test("the package's own test script is what runs, never the check itself; without one Node runs test/**/*.test.ts and a VibeLang test has no runner; a citation of a heading the spec does not have is caught, in a .vibe file as in a test", async () => {
-    const manifest = (scripts: Record<string, string>) => JSON.stringify({ ...JSON.parse(VIBELANG["package.json"]), scripts });
+  test("the package's own test script is what runs, never the check itself; without one Node runs test/**/*.test.ts and says that nothing runs a VibeLang test; a citation of a heading the spec does not have is caught, in a .vibe file as in a test, and never in what the compiler wrote for one", async () => {
+    // The manifest keeps its name: the compiler derives the key of a service in src/ from it.
+    const manifest = (scripts: Record<string, string>) => JSON.stringify({ ...JSON.parse(PACKAGE["package.json"]), scripts });
     const root = copyOfProject("package.json", () => manifest({ test: `node ${JSON.stringify(path.join(project, "vibestack/spec.ts"))} check` }));
     const again = await run(root);
     assert.deepEqual(again.failed, ["tests"], again.text);
     assert.ok(again.said("tests", /a test script cannot run spec check or accept: the check already runs the tests/), again.text);
     // A test script may check another project, as a tool's journey tests do: only its own project's lock is held.
     const other = fixtures(["door"]);
-    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { test: `cd ${JSON.stringify(other)} && node ${JSON.stringify(path.join(project, "vibestack/spec.ts"))} check --json > /dev/null; test -f gen/door.ts` } }));
+    fs.writeFileSync(path.join(root, "package.json"), manifest({ test: `cd ${JSON.stringify(other)} && node ${JSON.stringify(path.join(project, "vibestack/spec.ts"))} check --json > /dev/null; test -f gen/door.ts` }));
     const elsewhere = await run(root);
     assert.ok(elsewhere.said("tests", /^pass/), elsewhere.text);
     fs.writeFileSync(path.join(root, "package.json"), manifest({}));
@@ -1208,7 +1192,7 @@ export effect function independent() {
     assert.ok(oracle.said("tests", /conformance drivers must reach the application[\s\S]*checkout\.test\.ts:4: driver uses generated step/), oracle.text);
   });
 
-  test("a conformance driver that asks the Effect face of the generated oracle is refused, though it may name a typed failure", async () => {
+  test("a conformance driver that asks the Effect adapter of the generated oracle is refused, though it may name a typed failure", async () => {
     const { said, text } = await run(copyOfProject("test/app.test.vibe", (s) => s.replace("import { type Event, Rejected }", "import { type Event, Rejected, apply, initial }")
       .replace("app.runPromise(outcome(id, event))", 'app.runPromise(Effect.match(apply(initial, event), { onSuccess: () => "accepted" as const, onFailure: (error) => (error instanceof Rejected ? "refused" as const : "accepted" as const) }))')));
     assert.match(said("tests", /^conformance drivers must reach the application, not call the generated oracle\n/)?.detail ?? "",
@@ -1220,7 +1204,7 @@ export effect function independent() {
     fs.mkdirSync(path.join(root, "gen"), { recursive: true });
     for (const stale of ["renamed.ts", "renamed.effect.vibe"]) fs.writeFileSync(path.join(root, "gen", stale), "export const stale = true;\n");
     await check(root);
-    // The VibeLang compiler also emits the declarations of the adapter's pure module.
+    // index.effect.vibe.pure.d.ts is the VibeLang compiler's: the declarations of the adapter's `module pure` body.
     assert.deepEqual(fs.readdirSync(path.join(root, "gen")).filter((f) => /\.(ts|vibe)$/.test(f)).sort(),
       ["_conformance.ts", "index.conformance.ts", "index.effect.vibe", "index.effect.vibe.pure.d.ts", "index.ts"]);
   });
@@ -1262,7 +1246,7 @@ export effect function independent() {
     assert.ok(fs.readFileSync(path.join(root, "gen/proof/highest/highest.dfy"), "utf8").includes(marker));
     fs.writeFileSync(path.join(root, "tsconfig.json"), '{"compilerOptions":{"noEmit":true},"include":["gen/*.ts"]}');
     if (process.platform !== "win32") {
-      const compiler = path.join(root, "node_modules/.bin/tsc");
+      const compiler = path.join(root, "node_modules/.bin/vibelang");
       fs.writeFileSync(compiler, "#!/bin/sh\nexit 1\n");
       fs.chmodSync(compiler, 0o644);
     }
@@ -1375,12 +1359,11 @@ export effect function independent() {
 
   test("a rebuilt packaged command can generate a project from the repository root", async () => {
     const root = oneRule("packaged", "A packaged value", "pure val answer = 42");
-    const copy = toolchain(scratch({ "package.json": read("package.json"), "tsconfig.build.json": read("tsconfig.build.json") }), "quint", "lsc", "tsc");
-    const built = await tool("tsc", ["-p", "tsconfig.build.json"], copy);
-    assert.ok(built.ok, built.out);
-    fs.mkdirSync(path.join(copy, "dist/proof"), { recursive: true });
-    fs.copyFileSync(LIB_FILE, path.join(copy, "dist/proof/lib.dfy"));
-    fs.cpSync(path.join(project, "vibestack/std"), path.join(copy, "dist/std"), { recursive: true });
+    const copy = toolchain(scratch({ "package.json": read("package.json"), "tsconfig.build.json": read("tsconfig.build.json"), "tsconfig.base.json": read("tsconfig.base.json") }), "quint", "lsc", "vibelang");
+    // Studio's page is built from the workspace packages it shares with every interface.
+    fs.cpSync(path.join(project, "packages"), path.join(copy, "packages"), { recursive: true, verbatimSymlinks: true });
+    const built = await exec(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "build"], copy);
+    assert.equal(built.status, 0, built.stdout + built.stderr);
     const script = path.join(copy, "dist/spec.js");
     fs.chmodSync(script, 0o755);
     const generated = await exec(process.platform === "win32" ? process.execPath : script,
@@ -1643,6 +1626,18 @@ export effect function independent() {
     checkVerifiedSource("src/fields.ts", "//@ backend dafny\nexport interface Box { Std: number; ProofLib: number }\n//@ pure\nexport function value(box: Box): number { return box.Std + box.ProofLib; }\n");
     checkVerifiedSource("src/x.ts", '//@ backend dafny\n// What the //@ lines promise.\nimport { type C, inv } from "../gen/c.ts";\nexport type D = C;\nexport interface E { c: C }\nconst limit = 3;\n//@ pure\nexport function f(c: C): boolean {\n  //@ ensures \\result === inv(c)\n  return inv(c) && limit > 0 || inv(c);\n}\n');
     checkVerifiedSource("src/x.ts", "//@ backend dafny\nexport function f(x: number): number { //@ requires x > 0\n  let i = 0; //@ type nat\n  return x + i;\n}\n");
+  });
+
+  test("verified code that renames an import or re-exports, or annotations in a file that is not .ts, a VibeLang one included, fail the proof", async () => {
+    const renamed = copyOfProject("src/guard.ts", () => '//@ backend dafny\nimport { canSubmit as canCancel, type Order } from "../gen/index.ts";\n//@ pure\nexport function cancellable(o: Order): boolean {\n  //@ ensures \\result === (o.status === "Pending")\n  return canCancel(o);\n}\n');
+    const module = copyOfProject("src/dec.mts", () => "//@ backend dafny\nexport function dec(x: number): number {\n  //@ ensures \\result > x\n  return x - 1;\n}\n");
+    const reexport = copyOfProject("src/ledger.ts", (s) => s + '\nexport * from "./app.vibe";\n');
+    const vibe = copyOfProject("src/dec.vibe", () => "//@ backend dafny\nexport const dec = 1\n");
+    const [r, m, x, v] = await Promise.all([run(renamed), run(module), run(reexport), run(vibe)]);
+    assert.equal(r.said("proof", /src\/guard\.ts:2: `canSubmit as canCancel`: verified code may not rename what it imports/)?.ok, false, r.text);
+    assert.equal(m.said("proof", /src\/dec\.mts: `\/\/@` appears in it, but only \.ts files under src\/ are proved/)?.ok, false, m.text);
+    assert.equal(v.said("proof", /src\/dec\.vibe: `\/\/@` appears in it, but only \.ts files under src\/ are proved/)?.ok, false, v.text);
+    assert.equal(x.said("proof", /src\/ledger\.ts.*may hold only imports, functions with a body/)?.ok, false, x.text);
   });
 
   test("hand-written code is not simulated, so none of its obligations can be accepted as simulated only", async () => {

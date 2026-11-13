@@ -1,37 +1,20 @@
 {
+  "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "target": "es2023",
-    "module": "nodenext",
-    "strict": true,
-    "noEmit": true,
-    "rootDir": ".",
-    "rootDirs": [
-      ".",
-      ".vibe/declarations"
-    ],
-    "outDir": "build",
-    "noEmitOnError": true,
-    "rewriteRelativeImportExtensions": true,
     "erasableSyntaxOnly": true,
-    "skipLibCheck": true,
     "types": [
       "node"
     ]
   },
   "include": [
-    "vibestack/*.ts",
-    "vibestack/gen/**/*.ts",
-    "src",
-    "test",
-    "gen/*.ts",
-    "gen/*.vibe"
+    "vibestack",
+    "gen/*.ts"
   ],
   "exclude": [
     "vibestack/examples",
     "vibestack/studio",
-    "node_modules"
-  ],
-  "vibe": {
-    "sidecarDir": ".vibe/declarations"
-  }
+    "node_modules",
+    "vibestack/design/test",
+    "vibestack/stories/test"
+  ]
 }

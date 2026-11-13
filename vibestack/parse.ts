@@ -1,8 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { BUILTINS, LIST_HELPERS } from "./gen/print.ts";
-import { scanSpec } from "./scan.ts";
-import { plainText } from "./util.ts";
+import { plainText, scanSpec } from "./scan.ts";
 
 /** `defs` are the rule's top-level definitions and types; `locals` the names it binds inside a definition (`val x = …` in a body). */
 export interface Rule { key: string; story: string; line: number; prose: string; code: string; defs: string[]; locals: string[] }
@@ -147,7 +146,7 @@ export function parseSpec(root: string, file: string, text = fs.readFileSync(loc
     importSources.set(spec, sources);
     return spec;
   } catch (e) {
-    throw new Error(`${file}:${(e as Error).message}`);
+    throw new Error(`${file}:${(e as Error).message}`, { cause: e });
   }
 }
 
