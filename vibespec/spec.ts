@@ -12,7 +12,7 @@ import { contracts, pending, pendingContracts, acceptAllReviews, pendingSpecs, m
 import { entry, remembered, collectGarbage, dafnyVersion, type Memory } from "./cache.ts";
 import { gen, generated, typecheckAll, proofUnits, strayProofFiles } from "./units.ts";
 import { SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, LASSO_TRACES, STEPS, DEPTHS, SEARCHED, simulate, search, firstBreak, lasso, showTrace, replay, type Step } from "./simulate.ts";
-import { sha, indent, tests, readSrc, type SrcFile } from "./util.ts";
+import { sha, indent, tests, readSrc, projectRoot, type SrcFile } from "./util.ts";
 
 export { readSpecs, badSpecName, parseSpec, scanSpec, expandListHelpers, type Spec, type Rule, type Story } from "./parse.ts";
 export { pending, pendingContracts, acceptReviews, acceptContracts, fingerprint, dependencies, type Pending } from "./review.ts";
@@ -585,7 +585,7 @@ const isMain = (): boolean => {
   }
 };
 
-const USAGE = "usage: spec check [--json] | watch | gen | accept | accept unproved | new [<path>] | init | migrate | studio [<example>] [--port <n>]";
+const USAGE = "usage: spec check [<directory>] [--json] | watch [<directory>] | gen [<directory>] [--if-valid] | accept [<directory>] [unproved] | new [<path>] | init [<directory>] | migrate [<directory>] | studio [<example|directory>] [--port <n>]";
 
 /**
  * Check, then check again whenever spec/, src/, test/ or tsconfig.json changes. One process stays warm between runs
@@ -644,11 +644,19 @@ async function watch(root: string) {
 }
 
 if (isMain()) {
-  const root = process.cwd();
+  let root = process.cwd();
   const [command, ...args] = process.argv.slice(2);
   const takes = (...allowed: string[][]) => allowed.some((a) => a.length === args.length && a.every((x, i) => x === "*" || x === args[i]));
   try {
     if (Number(process.versions.node.split(".")[0]) < 24) throw new Error(`spec needs Node 24 or later; this is Node ${process.versions.node}`);
+    const options: Record<string, string[]> = { check: ["--json"], gen: ["--if-valid"], accept: ["unproved"], watch: [], init: [], migrate: [] };
+    if (Object.hasOwn(options, command)) {
+      const directories = args.filter((arg) => !options[command].includes(arg));
+      if (directories.length === 1 && !directories[0].startsWith("-")) {
+        root = projectRoot(directories[0]);
+        args.splice(args.indexOf(directories[0]), 1);
+      }
+    }
     if (command === "gen" && takes([], ["--if-valid"])) {
       // --if-valid is for `npm install`: a spec in the middle of an edit must not make installing fail.
       try {
@@ -684,7 +692,7 @@ if (isMain()) {
     } else if (command === "new" && takes([], ["*"])) {
       console.log(`wrote ${newSpec(root, args[0])}; run \`npm run check\``);
     } else {
-      console.error(command === "accept" ? `accept takes no argument, or \`unproved\`; not ${args.join(" ")}\n${USAGE}` : USAGE);
+      console.error(USAGE);
       process.exitCode = 2;
     }
   } catch (e) {

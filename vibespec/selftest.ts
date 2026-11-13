@@ -2,19 +2,19 @@
 // scratch project, from this project's own spec or from the small specs in
 // vibespec/fixtures/, breaks one thing, and asserts which stage of `check` fails.
 import assert from "node:assert/strict";
-import { execFile, spawnSync } from "node:child_process";
+import { execFile, spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { after, describe, test } from "node:test";
-import { LIB_FILE, isolatedCopies, parseProofFile, readVerdict, splice } from "./prove.ts";
+import { exec, LIB_FILE, isolatedCopies, parseProofFile, readVerdict, splice } from "./prove.ts";
 import { migrateLocks, pendingSpecs, readLedger, writeLedger } from "./review.ts";
 import { danglingCitations } from "./util.ts";
 import { nodesOf } from "./studio/doc.ts";
 import { canonical, departure } from "./conformance.ts";
 import { conformance as checkTraces, conformanceFound, writeConformance } from "./conform.ts";
-import { projectsOf, startStudio } from "./studio/server.ts";
+import { projectsOf, serve, startStudio } from "./studio/server.ts";
 import { acceptContracts, acceptReviews, check, checkVerifiedSource, expandListHelpers, gen, init, parseSpec, pending, pendingContracts, readSpecs, replay, show, type Result } from "./spec.ts";
 
 const project = path.join(import.meta.dirname, "..");
@@ -902,11 +902,11 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       for (const response of concurrent) assert.equal(response.status, 400, await response.text());
       assert.ok(!fs.existsSync(path.join(root, "spec/parallel.md")));
       let current = await (await fetch(`${url}/api/project`)).json();
-      while (current.job?.status === "running") {
+      while (current.jobs.check?.status === "running") {
         await new Promise((resolve) => setTimeout(resolve, 50));
         current = await (await fetch(`${url}/api/project`)).json();
       }
-      assert.equal(current.job?.status, "failed");
+      assert.equal(current.jobs.check?.status, "failed");
       assert.equal(current.check?.next.includes("npm run accept"), true);
       const created = await post("spec", { name: "nested/child" });
       assert.equal(created.status, 200, await created.clone().text());
@@ -949,6 +949,45 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     } finally {
       await studio.close();
     }
+  });
+
+  test("the studio opens the requested example or project folder", async () => {
+    const repo = scratch({ "spec/index.md": "", "vibespec/examples/order/spec/index.md": "# Order\n" });
+    const outside = scratch({ "a project/spec/index.md": "# Outside\n", "a project/package.json": '{"name":"order"}' });
+    const example = path.join(repo, "vibespec/examples/order");
+    const external = path.join(outside, "a project");
+    const cases: [string | undefined, string, number][] = [
+      [undefined, repo, 2], [".", repo, 2], ["order", example, 2],
+      ["vibespec/examples/order", example, 2], [example, example, 2],
+      [external, external, 3], [path.relative(repo, external), external, 3],
+    ];
+    for (const [target, expected, count] of cases) {
+      const studio = await serve(repo, [...(target === undefined ? [] : [target]), "--port", "0"]);
+      try {
+        const projects = await (await fetch(`${studio.url}/api/projects`)).json();
+        const current = await (await fetch(`${studio.url}/api/project`)).json();
+        assert.equal(projects.projects.length, count);
+        assert.equal(projects.open, current.project.id);
+        assert.equal(current.project.root, fs.realpathSync(expected));
+        assert.equal(current.specs[0].text, fs.readFileSync(path.join(expected, "spec/index.md"), "utf8"));
+        if (target === external) {
+          const checked = await fetch(`${studio.url}/api/check`, {
+            method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+          });
+          assert.equal(checked.status, 200);
+          let state = await (await fetch(`${studio.url}/api/project`)).json();
+          while (state.jobs.check.status === "running") {
+            await new Promise((resolve) => setTimeout(resolve, 50));
+            state = await (await fetch(`${studio.url}/api/project`)).json();
+          }
+          assert.ok(state.check.results.every((r: Result) => r.ok || r.stage === "review"));
+          assert.ok(fs.existsSync(path.join(external, "gen/index.ts")));
+          assert.ok(!fs.existsSync(path.join(repo, "gen")));
+        }
+      } finally { await studio.close(); }
+    }
+    await assert.rejects(serve(repo, ["missing", "--port", "0"]), /not an existing project directory/);
+    await assert.rejects(serve(repo, ["spec/index.md", "--port", "0"]), /not an existing project directory/);
   });
 
   test("a truncated cache entry is recomputed and generated modules run in a CommonJS project", async () => {
@@ -1129,9 +1168,23 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.ok(fs.readdirSync(path.dirname(lock)).length > 0, "the entries it used are kept");
   });
 
-  test("the command line: spec new, the arguments it accepts, gen --if-valid and check --json", async () => {
-    const cli = (root: string, ...args: string[]) => runCli(path.join(project, "vibespec/spec.ts"), root, ...args);
-    const root = scratch({});
+  test("a rebuilt packaged command can generate a project from the repository root", async () => {
+    const root = oneRule("packaged", "A packaged value", "pure val answer = 42");
+    const built = await exec(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "build"], project);
+    assert.equal(built.status, 0, built.stdout + built.stderr);
+    const script = path.join(project, "dist/spec.js");
+    const generated = await exec(process.platform === "win32" ? process.execPath : script,
+      [...(process.platform === "win32" ? [script] : []), "gen", root], project);
+    assert.equal(generated.status, 0, generated.stdout + generated.stderr);
+    assert.equal((await import(path.join(root, "gen/packaged.ts"))).answer, 42);
+  });
+
+  test("the command line checks, generates and watches a project directory from its parent", async () => {
+    const script = path.join(project, "vibespec/spec.ts");
+    const cli = (root: string, ...args: string[]) => runCli(script, root, ...args);
+    const parent = scratch({});
+    const root = path.join(parent, "a project");
+    fs.mkdirSync(root);
     const blank = scratch({ "spec/index.md": "" });
     assert.equal((await cli(blank, "new")).status, 0);
     assert.match(fs.readFileSync(path.join(blank, "spec/index.md"), "utf8"), /## Story:/);
@@ -1148,18 +1201,67 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.ok(fs.existsSync(path.join(namedSrc, "spec/src/index.md")), "the unified ledger leaves src available as a spec name");
     assert.equal((await cli(root, "new", "tally")).status, 0);
     assert.match((await cli(root, "new", "tally")).stderr, /spec\/tally\/index\.md already exists/);
-    assert.equal((await cli(root, "accept", "unprovd")).status, 2);
+    const missing = await cli(root, "accept", "unprovd");
+    assert.equal(missing.status, 1);
+    assert.match(missing.stderr, /not an existing project directory/);
+    assert.equal((await cli(root, "accept", "--unprovd")).status, 2);
     assert.equal((await cli(root, "check", "--everything")).status, 2);
     // The starter spec passes every stage but review, and proves without a proof file.
-    const checked = JSON.parse((await cli(root, "check", "--json")).stdout);
+    const checked = JSON.parse((await cli(parent, "check", "a project", "--json")).stdout);
     assert.deepEqual([...new Set(checked.results.filter((r: Result) => !r.ok).map((r: Result) => r.stage))], ["review"], JSON.stringify(checked, null, 2));
     for (const stage of ["model", "always", "sometimes", "replay", "proof"]) assert.ok(checked.results.some((r: Result) => r.stage === stage && r.ok), stage);
     assert.match(checked.next, /npm run accept/);
+    assert.ok(fs.existsSync(path.join(root, "gen/tally.ts")));
+    assert.ok(!fs.existsSync(path.join(parent, "gen")));
+    const accepted = await cli(parent, "accept", root);
+    assert.equal(accepted.status, 0, accepted.stdout + accepted.stderr);
+    assert.ok(fs.existsSync(path.join(root, "spec/lock.json")));
+    assert.ok(!fs.existsSync(path.join(parent, "spec")));
+    assert.equal((await cli(parent, "migrate", root)).status, 0);
+    assert.equal((await cli(parent, "gen", root)).status, 0);
     fs.appendFileSync(path.join(root, "spec/tally/index.md"), `\n### Broken\n\n${F}quint\npure def\n${F}\n`);
-    const lenient = await cli(root, "gen", "--if-valid");
+    const lenient = await cli(parent, "gen", "--if-valid", root);
     assert.equal(lenient.status, 0, lenient.stderr);
     assert.match(lenient.stdout, /^note: gen\/ was not generated/);
+    assert.equal((await cli(parent, "gen", root)).status, 1);
     assert.equal((await cli(root, "gen")).status, 1);
+    for (const target of ["missing", path.join(root, "spec/tally/index.md")]) {
+      const invalid = await cli(parent, "check", target);
+      assert.equal(invalid.status, 1);
+      assert.match(invalid.stderr, /not an existing project directory/);
+    }
+    assert.equal((await cli(parent, "check", root, parent)).status, 2);
+
+    const watchedRoot = path.join(parent, "watched project");
+    fs.mkdirSync(watchedRoot);
+    assert.equal((await cli(parent, "init", watchedRoot)).status, 0);
+    const watcher = spawn(process.execPath, [script, "watch", watchedRoot], { cwd: parent, stdio: ["ignore", "pipe", "pipe"] });
+    let output = "";
+    watcher.stdout.on("data", (chunk) => { output += chunk; });
+    watcher.stderr.on("data", (chunk) => { output += chunk; });
+    const waitFor = async (ready: () => boolean) => {
+      const until = Date.now() + 120_000;
+      while (!ready()) {
+        assert.equal(watcher.exitCode, null, output);
+        assert.ok(Date.now() < until, output);
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    };
+    try {
+      await waitFor(() => output.includes("watching spec/"));
+      fs.writeFileSync(path.join(watchedRoot, "spec/index.md"), `# Watched\n\n## Story\n\n### Value\n\n${F}quint\npure val watchedValue = 1\n${F}\n`);
+      const generated = path.join(watchedRoot, "gen/index.ts");
+      await waitFor(() => fs.existsSync(generated) && fs.readFileSync(generated, "utf8").includes("export const watchedValue"));
+      await waitFor(() => (output.match(/watching spec\//g)?.length ?? 0) >= 2);
+      assert.equal((await import(generated)).watchedValue, 1);
+      assert.ok(!fs.existsSync(path.join(parent, "gen")));
+    } finally {
+      if (watcher.exitCode === null && watcher.signalCode === null) {
+        const closed = new Promise((resolve) => watcher.once("close", resolve));
+        watcher.kill("SIGTERM");
+        await closed;
+      }
+    }
   });
 
   test("a fence of any length or kind holds prose, and closes only with its own kind and length", () => {
