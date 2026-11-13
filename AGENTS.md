@@ -209,6 +209,7 @@ is generated. The role of a definition comes from its name and signature:
 | `pure def stepNeverGoesBack(before: Order, after: Order): bool` | a rule about every single step | a postcondition on every transition; simulated and proved |
 | `pure def stepAuthorized(before: Order, via: str, after: Order): bool` | a step rule that also sees the transition name | a postcondition on every transition |
 | `pure def sometimesPaid(o: Order): bool` | a state that must be reachable | a reachability check with a witness trace |
+| `pure def refinesL(s: Switch): L::Lamp` | the spec [refines](#refinement) the machine imported as `L` | an obligation on every transition and on `initial`; simulated and proved |
 | `pure def leadsToPaid(o: Order, later: Order): bool` | a liveness rule: from every reachable state `o`, every fair run reaches a state `later` that it relates to `o` (`o` itself counts) | a search of simulated traces for a fair run that breaks it ("Liveness", below) |
 | `pure def lawTotalIsNotNegative(xs: List[int]): bool` | a law: true for every value of its parameters | a function proved to return `true`, and sampled by the simulator |
 | `pure val idValues = Set(1, 2, 3)` | what the simulator tries for a parameter named `id`. It must be a set whose elements match the parameter type; any supported Quint is allowed in it | nothing: it never reaches TypeScript |
@@ -270,6 +271,30 @@ A spec is imported once, one way or the other, and imports cannot form a
 circle. Navigation links may point back to a parent. In the generated
 TypeScript a name from another module is spelled
 `<module>_<name>`, for example `lamp_toggle`.
+
+### Refinement
+
+A spec refines a machine it imports under a name by defining
+`refines<Alias>`, which maps its state onto that machine's
+(`vibestack/fixtures/switch.md` refines `lamp.md` in the vibestack
+repository):
+
+```quint
+import lamp as L from "./lamp"
+pure def refinesL(s: Switch): L::Lamp = { mode: if (s.lit) L::On else L::Off, flips: s.presses }
+```
+
+- `refinesL(initial)` must be `L::initial`.
+- Every transition must either leave `refinesL` of the state unchanged, or be
+  the transition of `L` with the same name, allowed by its guard, on
+  `refinesL` of the state before. That transition's parameters are taken from
+  this one's by name, as a guard's are. A transition that `L` has no
+  namesake for must leave `refinesL` unchanged.
+- Simulation checks both on every step, and each is an obligation of the
+  proof. Every reachable state then maps onto a reachable state of `L`, so
+  every rule of `L` holds of `refinesL` of it, as far as `L`'s own unit
+  proved it: the proof line lists what of `L` is simulated only.
+- A spec refines at most one machine, whose state holds no set.
 
 ### Supported Quint
 
@@ -571,7 +596,7 @@ type Event = { type: "addItem"; qty: number } | { type: "submit" } | …
 function parseEvent(x: unknown): Event | undefined   // an untrusted value as an event, or not
 function parseState(x: unknown): Order | undefined   // an untrusted value as a state that satisfies inv, or not
 function enabled(current: Order, event: Event): boolean  // do the rules allow event now?
-function step(current: Order, event: Event): Order       // apply event; unchanged if not allowed
+function step(current: Order, event: Event): Order       // apply event; unchanged if not allowed; { state, out } with output
 function inv(current: Order): boolean                    // every always-rule at once
 ```
 

@@ -141,8 +141,11 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const model = await gen(lists, parseSpec(lists, "spec/lists.md"));
     assert.equal(model.evals.find((e) => e.name === "stepHasOneEffect")?.params.at(-1)?.from, "emitted");
     const root = fixtures(["mailer"]);
-    const result = await run(root);
+    const swapped = fixtures(["mailer"], (f) => { f["spec/mailer.md"] = f["spec/mailer.md"].replace("List(Saved({ n: n }), Sent({ n: n }))", "List(Sent({ n: n }), Saved({ n: n }))"); });
+    const [result, wrongOrder] = await Promise.all([run(root), run(swapped)]);
     assert.deepEqual(result.failed, ["review"], result.text);
+    // A counterexample shows what each event output.
+    assert.ok(wrongOrder.said("always", /a step breaks .*A message is saved before anything is sent[\s\S]*send\{"n":\d+\}\s+-> sent = 1, out \[\{"tag":"Sent"/), wrongOrder.text);
     const domain = await import(path.join(root, "gen/mailer.ts"));
     assert.deepEqual(domain.step(domain.initial, { type: "send", n: 4 }), {
       state: { sent: 1 }, out: [{ tag: "Saved", n: 4 }, { tag: "Sent", n: 4 }],
@@ -152,6 +155,11 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const emitted = domain.step(domain.initial, { type: "send", n: 4 });
     assert.equal(departure(domain, helper.found, [{ state: domain.initial }, { event: { type: "send", n: 4 }, state: emitted.state, out: emitted.out }]), undefined);
     assert.match(departure(domain, helper.found, [{ event: { type: "send", n: 4 }, state: emitted.state, out: emitted.out.toReversed() }])?.why ?? "", /effects differ/);
+    // Replay compares what TypeScript outputs with what Quint does.
+    const mailer = await gen(root, parseSpec(root, "spec/mailer.md"));
+    const trace = [{ state: domain.initial, out: [] }, { event: { type: "send", n: 4 }, state: emitted.state, out: emitted.out }];
+    replay(domain, trace, mailer);
+    assert.throws(() => replay({ ...domain, step: (s: unknown, e: unknown) => ({ ...domain.step(s, e), out: [] }) }, trace, mailer), /disagree on what \{"type":"send","n":4\} outputs/);
   });
 
   test("conformance observes scalar states, real program traces, and only demands behavior present in the oracle", async () => {
@@ -304,6 +312,8 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       ["a variant field called tag", "type P = A({ tag: int }) | B\npure val initial: int = 0\npure def tick(n: int): int = n", /cannot be called `tag`/],
       ["a match binder used as a whole value", "type N = { n: int }\ntype P = A(N) | B\npure val initial: int = 0\npure def g(r: N): int = r.n\npure def f(p: P): int = match p { | A(x) => g(x) | _ => 0 }\npure def tick(n: int): int = n", /is what a match arm carries/],
       ["state declared by hand", "pure val initial: int = 0\nvar n: int", /only types, imports, `pure val` and `pure def` belong in a spec/],
+      ["a step rule's output where no transition outputs", "pure val initial: int = 0\npure def tick(n: int): int = n\npure def stepQuiet(a: int, b: int, out: List[int]): bool = true", /no transition returns `\{ state, out \}`/],
+      ["a refinement of a machine not imported", "pure val initial: int = 0\npure def tick(n: int): int = n\npure def refinesL(n: int): int = n", /no machine is imported as L/],
       ["a rule written as a `pure val`", "pure val initial: int = 0\npure val alwaysNever = false", /is a `pure def` with parameters/],
       ["a sample of the wrong type", 'pure val amountValues = Set("bad")\n' + sampled, /amountValues.*holds.*parameter amount/],
       ["an unused sample set", "pure val typoValues = Set(1)\n" + sampled, /no parameter is named typo/],
@@ -588,6 +598,21 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const { failed, said, text } = await run(fixtures(["lamp", "room"]));
     assert.deepEqual(failed, ["review"], text);
     assert.ok(said("proof", /^room\.ts: all \d+ obligations proved/), text);
+  });
+
+  test("a spec that refines another is held to it on every step, and proved to be", async () => {
+    const sw = (edit: (s: string) => string = (s) => s) => fixtures(["lamp", "switch"], (f) => { f["spec/switch.md"] = edit(f["spec/switch.md"]); });
+    const [ok, uncounted, lit, started] = await Promise.all([
+      sw(),
+      sw((s) => s.replace("presses: s.presses + 1", "presses: s.presses")),
+      sw((s) => s.replace("{ ...s, held: true }", "{ ...s, held: true, lit: true }")),
+      sw((s) => s.replace("{ lit: false, presses: 0, held: false }", "{ lit: false, presses: 1, held: false }")),
+    ].map((r) => run(r)));
+    assert.deepEqual(ok.failed, ["review"], ok.text);
+    assert.ok(ok.said("proof", /^switch\.ts: all \d+ obligations proved/), ok.text);
+    assert.ok(uncounted.said("always", /\(spec\/switch\.md:\d+\) is not a step of L: it changes refinesL, but not as L::toggle would/), uncounted.text);
+    assert.ok(lit.said("always", /\(spec\/switch\.md:\d+\) changes refinesL, but L has no transition press/), lit.text);
+    assert.ok(started.said("always", /\(spec\/switch\.md:\d+\) does not map the initial state onto L::initial/), started.text);
   });
 
   test("a map is looked up safely, division and remainder agree with Quint for negative numbers, and the parsers admit only what fits", async () => {

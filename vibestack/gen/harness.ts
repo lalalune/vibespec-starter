@@ -10,7 +10,7 @@ export interface Eval { name: string; params: (Param & { from: "state" | "prev" 
 export type Fairness = "weak" | "strong";
 
 /** The harness's variables, in the order it declares them. */
-const VARS = ["state", "prev", "moved", "last", "lawsHold", "outcome", "emitted", "fairEnabled"];
+const VARS = ["state", "prev", "moved", "last", "lawsHold", "outcome", "emitted", "refined", "fairEnabled"];
 /** Every name the harness binds itself, which a spec parameter would hide (TAKEN in gen.ts). */
 export const HARNESS = [...VARS, "fairOn", "init", "step", "probe", "inv", "Out", "Nothing"];
 
@@ -19,7 +19,7 @@ const TRIED: Record<string, string> = { int: "(-1).to(6)", bool: "Set(true, fals
 
 export function harness(
   module: string, source: string, imports: string[], funs: Json[], sig: (d: Json) => { params: Param[]; result: Json },
-  samples: Map<string, { elem: Json; ref: string; line: number | undefined }>, { stateType, transitions, always, sometimes, steps, laws, output }: Roles,
+  samples: Map<string, { elem: Json; ref: string; line: number | undefined }>, { stateType, transitions, always, sometimes, steps, laws, output, refines }: Roles,
   { fields, typedef, resolve, shape, tagged, named, qType }: Types,
   { weights, fair }: { weights: Map<string, number>; fair: Map<string, Fairness> },
 ): { text: string; evals: Eval[]; uncompared: string[] } {
@@ -91,16 +91,25 @@ export function harness(
     }
   });
 
-  const declared: Record<string, unknown> = { state: stateType, prev: stateType, moved: stateType, last: stateType, lawsHold: true, outcome: evals.length, emitted: output, fairEnabled: fair.size };
+  const declared: Record<string, unknown> = { state: stateType, prev: stateType, moved: stateType, last: stateType, lawsHold: true, outcome: evals.length, emitted: output, refined: refines, fairEnabled: fair.size };
   const vars = VARS.filter((v) => declared[v]);
   /** An action body: the given conditions and assignments, with every other variable left as it is. */
   const frame = (conditions: string[], set: Record<string, string>) =>
     `all { ${[...conditions, ...vars.map((v) => `${v}' = ${set[v] ?? v}`)].join(", ")} }`;
   const call = (fn: string, params: string[], from = "state") => `M::${fn}(${[from, ...params].join(", ")})`;
+  /** The step from `state` to `after` leaves the abstract state as it was, or is the abstract step of its name (AGENTS.md, "Refinement"; gen/typescript.ts). */
+  const refined = (t: Transition, after: string) => {
+    const A = `D_${refines!.of.module}`;
+    const [from, to] = ["state", after].map((s) => `M::${refines!.fn}(${s})`);
+    const u = refines!.of.transitions.find((u) => u.name === t.name);
+    const guard = u?.guard ? `${A}::${u.guard}(${[from, ...u.guardParams].join(", ")}) and ` : "";
+    return `(${to} == ${from}${u ? ` or (${guard}${to} == ${A}::${u.name}(${[from, ...u.params.map((p) => p.name)].join(", ")})${u.emits ? ".state" : ""})` : ""})`;
+  };
   const action = (t: Transition) => {
     const result = call(t.name, t.params.map((p) => p.name));
+    const after = t.emits ? `${result}.state` : result;
     return `  action ${t.name} = ${braces(t.params, t.name, frame(t.guard ? [call(t.guard, t.guardParams)] : [],
-      { state: t.emits ? `${result}.state` : result, emitted: t.emits ? `${result}.out` : "List()", prev: "state", moved: "true", last: JSON.stringify(t.name), fairEnabled: `fairOn(${t.emits ? `${result}.state` : result})` }))}`;
+      { state: after, emitted: t.emits ? `${result}.out` : "List()", refined: refines ? refined(t, after) : "", prev: "state", moved: "true", last: JSON.stringify(t.name), fairEnabled: `fairOn(${after})` }))}`;
   };
 
   /** Whether a fair event is possible in state `x0`: its guard allows it for some value the simulator tries. */
@@ -136,17 +145,19 @@ export function harness(
     ...(evals.length ? [`  type Out = Nothing | ${evals.map((v) => `Out_${v.name}(${qType(v.result)})`).join(" | ")}`, `  var outcome: Out`] : []),
     ...(stateType ? [`  var state: ${qType(stateType)}`, `  var prev: ${qType(stateType)}`, `  var moved: bool`, `  var last: str`] : []),
     ...(output ? [`  var emitted: ${qType(output.out)}`] : []),
+    ...(refines ? [`  var refined: bool`] : []),
     `  var lawsHold: bool`,
     ...(fair.size ? [`  var fairEnabled: Set[str]`,
       `  pure def fairOn(x0: ${qType(stateType)}): Set[str] = Set(${[...fair.keys()].map((e) => JSON.stringify(e)).join(", ")}).filter(x1 => or { ${transitions.filter((t) => fair.has(t.name)).map((t) => `x1 == ${JSON.stringify(t.name)} and ${possible(t)}`).join(", ")} })`] : []),
-    `  action init = ${frame([], { state: "M::initial", prev: "M::initial", moved: "false", last: '""', lawsHold: "true", outcome: "Nothing", emitted: "List()", fairEnabled: "fairOn(M::initial)" })}`,
+    `  action init = ${frame([], { state: "M::initial", prev: "M::initial", moved: "false", last: '""', lawsHold: "true", outcome: "Nothing", emitted: "List()",
+      refined: refines ? `M::${refines.fn}(M::initial) == D_${refines.of.module}::initial` : "", fairEnabled: "fairOn(M::initial)" })}`,
     ...transitions.map(action),
     ...sampled.map(lawAction),
     ...evals.map(evalAction),
     `  action step = ${any(events)}`,
     // Half events, half evaluations, so that definitions are evaluated on states well into a trace and not just near its start.
     `  action probe = ${events.length && evals.length ? `any { step, ${any(evals.map((v) => `eval_${v.name}`))} }` : any([...events, ...evals.map((v) => `eval_${v.name}`)])}`,
-    `  val inv = and { lawsHold, ${[...always.map((a) => `M::${a}(state)`), ...steps.map((r) => `(not(moved) or M::${r.name}(prev, ${r.via ? "last, " : ""}state${r.out ? ", emitted" : ""}))`), "true"].join(", ")} }`,
+    `  val inv = and { lawsHold, ${[...(refines ? ["refined"] : []), ...always.map((a) => `M::${a}(state)`), ...steps.map((r) => `(not(moved) or M::${r.name}(prev, ${r.via ? "last, " : ""}state${r.out ? ", emitted" : ""}))`), "true"].join(", ")} }`,
     // A witness search also stops at a broken rule, so that no run can step over one unreported.
     ...sometimes.map((w) => `  val never_${w} = inv and not(M::${w}(state))`),
     // A guard's witnesses, for the `probe` step: breaking `never_allows_X` shows a reachable state and values for

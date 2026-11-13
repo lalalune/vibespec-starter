@@ -9,7 +9,7 @@
 // name is spelled. The rest is in gen/: types.ts (everything decided by a type),
 // print.ts (expressions), classify.ts (which definition is a transition, a guard
 // or a rule), typescript.ts and harness.ts (the two outputs).
-import { classify, ROLES, type Param, type Roles } from "./gen/classify.ts";
+import { classify, ROLES, type Machine, type Param, type Roles } from "./gen/classify.ts";
 import { harness, HARNESS, type Eval, type Fairness } from "./gen/harness.ts";
 import { BUILTIN, printer } from "./gen/print.ts";
 import { EMITTED, HELPERS, typescript } from "./gen/typescript.ts";
@@ -155,7 +155,14 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
   // A rule must be a definition: as a `pure val` it would be generated as a constant and never checked.
   for (const v of vals) if (RULE_OR_GUARD.test(v.name) && typeOf(v.id).kind === "bool") fail(`${v.name}: a rule or guard is a \`pure def\` with parameters (AGENTS.md, "What goes in the Quint blocks"), not a \`pure val\`; if it is a constant, name it otherwise`);
   const initial = vals.find((d) => d.name === "initial");
-  const roles = classify(funs, initial && typeOf(initial.id), sig, types);
+  // The machines imported under a name, as this module spells their types: what a `refines<Alias>` may map onto.
+  const machines = links.flatMap((l): Machine[] => {
+    const dep = deps.get(l.module)!;
+    const spelled = (t: Json) => requalify(t, l.alias);
+    return l.alias && dep.stateType ? [{ alias: l.alias, module: l.module, stateType: spelled(dep.stateType),
+      transitions: dep.transitions.map((t) => ({ ...t, params: t.params.map((p) => ({ ...p, type: spelled(p.type) })) })) }] : [];
+  });
+  const roles = classify(funs, initial && typeOf(initial.id), sig, types, machines);
   const events = roles.transitions.map((t) => t.name);
   const setting = (kind: string, targets: string[], what: string, ok: (e: Json) => boolean, want: string) => new Map(settings.filter((d) => d.name.startsWith(`${kind}_`)).map((d) => {
     const target = d.name.slice(kind.length + 1);

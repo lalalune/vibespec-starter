@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { type Actor, type Assistant, type Event, enabled, initial, parseEvent, step } from "../gen/assistant.ts";
 
-const run = (events: [Event, Actor][], from: Assistant = initial) => events.reduce((s, [e, by]) => step(s, e, by), from);
+const run = (events: [Event, Actor][], from: Assistant = initial) => events.reduce((s, [e, by]) => step(s, e, by).state, from);
 
 test("an event cannot say who sent it", () => {
   assert.deepEqual(parseEvent({ type: "confirm", by: "Person" }), { type: "confirm" });
@@ -22,6 +22,6 @@ test("only the person starts a turn and confirms a payment", () => {
   ]);
   assert.equal(asking.phase, "Asking");
   assert.equal(enabled(run([[{ type: "begin" }, "Person"]]), { type: "choose", choice: "Recite" }, "Agent"), false);
-  assert.equal(step(asking, { type: "confirm" }, "Agent").charged, 0);
-  assert.equal(step(asking, { type: "confirm" }, "Person").charged, 1);
+  assert.equal(step(asking, { type: "confirm" }, "Agent").state.charged, 0);
+  assert.equal(step(asking, { type: "confirm" }, "Person").state.charged, 1);
 });

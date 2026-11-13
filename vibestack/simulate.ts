@@ -27,6 +27,8 @@ export interface Step {
   state?: unknown;
   /** What the event output, in a spec whose transitions may output (AGENTS.md, "Transitions with output"). */
   out?: unknown[];
+  /** Whether the last step refined the machine the spec refines (AGENTS.md, "Refinement"). */
+  refined?: boolean;
   lawsHold?: boolean;
   /** The fair events this state allows, if the spec declares any. */
   fair?: string[];
@@ -47,6 +49,7 @@ function readTrace(file: string, model: Model): Step[] {
       law: l && { name: l.name, args: picked(l.params) },
       state: model.stateType ? read(model.stateType, st.state) : undefined,
       out: model.output && read(model.output.out, st.emitted),
+      refined: model.refines && st.refined,
       lawsHold: st.lawsHold,
       fair: st.fairEnabled?.["#set"],
     };
@@ -165,13 +168,20 @@ export function replay(domain: any, trace: Step[], model?: Model) {
 /** The first rule a trace breaks, in the spec's words, and how many steps it took; undefined if it breaks none. */
 export function firstBreak(domain: any, model: Model, trace: Step[], cite: (def: string) => string): { why: string; steps: number } | undefined {
   let before: unknown;
-  for (const [i, { event, law, evaluated, state, out, lawsHold }] of trace.entries()) {
+  for (const [i, { event, law, evaluated, state, out, refined, lawsHold }] of trace.entries()) {
     const found = (why: string) => ({ why, steps: i + 1 });
     if (law && lawsHold === false) return found(`the law ${cite(law.name)} is false for ${JSON.stringify(law.args)}`);
     if (evaluated?.result === false && lawsHold === false && model.laws.some((l) => l.name === evaluated.name))
       return found(`the law ${cite(evaluated.name)} is false in state ${JSON.stringify(state)} with sampled parameters ${JSON.stringify(evaluated.picks)}`);
     const always = model.always.filter((a) => !domain[a](state)).map(cite);
     if (always.length) return found(`a reachable state breaks ${always.join(", ")}`);
+    if (refined === false) {
+      const { fn, of } = model.refines!;
+      const u = event && of.transitions.find((u) => u.name === event.type);
+      return found(!event ? `${cite(fn)} does not map the initial state onto ${of.alias}::initial`
+        : u ? `${cite(event.type)} is not a step of ${of.alias}: it changes ${fn}, but not as ${of.alias}::${u.name}${u.guard ? `, allowed by ${of.alias}::${u.guard},` : ""} would`
+        : `${cite(event.type)} changes ${fn}, but ${of.alias} has no transition ${event.type} for it to be`);
+    }
     const steps = event ? model.steps.filter((r) => !domain[r.name](before, ...(r.via ? [event.type] : []), state, ...(r.out ? [out] : []))).map((r) => cite(r.name)) : [];
     if (steps.length) return found(`a step breaks ${steps.join(", ")}`);
     before = state;
