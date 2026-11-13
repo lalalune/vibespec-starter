@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "specs": {
+    "spec/app/index.md": {
+      "@document": [
+        "9710899a7696"
+      ]
+    },
+    "spec/index.md": {
+      "@document": [
+        "b4f1b3b07f62"
+      ]
+    }
+  },
+  "contracts": {},
+  "unproved": {}
+}

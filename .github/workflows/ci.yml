@@ -1,0 +1,47 @@
+name: ci
+
+# Every run is `pnpm verify`, the tools' own self-test included; Turborepo and
+# spec skip what the change does not reach, from the cache of the last run.
+# What is headed for main, and every push to develop or main, also gets larger
+# property budgets. Standalone examples are checked manually.
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop, main]
+
+concurrency:
+  # A newer commit on a pull request replaces its run; every push to develop or main is checked to the end.
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+env:
+  TURBO_TELEMETRY_DISABLED: "1"
+  FULL: ${{ github.event_name == 'push' || github.base_ref == 'main' }}
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - run: pnpm verify --continue
+        env:
+          FUZZ_RUNS: ${{ env.FULL == 'true' && '1000' || '100' }}
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: proof
+          path: |
+            gen/proof/
+            vibestack/studio/gen/proof/
+          if-no-files-found: ignore
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: failures
+          path: |
+            **/test/counterexamples/
+            **/test/__traces__/
+            !**/node_modules/**
+          if-no-files-found: ignore
