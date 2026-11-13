@@ -1,23 +1,48 @@
 import { assert, it } from "@effect/vitest"
+import { TestClock } from "effect/testing"
 import { type Note, Machine, debounce, machine } from "../gen/tracker.effect.vibe"
-import { Chat, messages, send } from "../src/notify.vibe"
+import { Chat, Undelivered, messages, pass } from "../src/notify.vibe"
 
 const handles = { ana: "@ana", ben: "@ben", cal: "@cal" }
 
-// spec/tracker.md, "Nothing is sent twice"
-it.effect("a name typed twice is told once", () => effect {
+// spec/tracker.md, "Story: Be told what changed and what is due"
+it.effect("Be told what changed and what is due", () => effect {
   const posted: [string, string][] = []
-  provide machine(), Chat = { effect post(handle: string, text: string) { posted.push([handle, text]) } } {
+  const attempts: Record<string, number> = {}
+  const chat = {
+    effect post(handle: string, text: string) {
+      attempts[handle] = (attempts[handle] ?? 0) + 1
+      if (handle === "@cal" || attempts[handle]! < 3) throw new Undelivered({ handle, cause: "busy" })
+      posted.push([handle, text])
+    },
+  }
+  provide machine(), Chat = chat {
     const tracker = try Machine
     try tracker.send({ type: "create", actor: "ben" })
     try tracker.send({ type: "handAddOwner", id: 1, name: "ana" })
+    try tracker.send({ type: "handAddOwner", id: 1, name: "cal" })
     const typed = try tracker.send({ type: "handAddOwner", id: 1, name: "ana" })
-    try Effect.try(() => assert.deepStrictEqual(typed.tasks[0]!.owners, ["ana", "ana"]))
+    try Effect.try(() => assert.deepStrictEqual(typed.state.tasks[0]!.owners, ["ana", "cal", "ana"]))
     for (let i = 0; i < debounce; i++) try tracker.send({ type: "tick" })
-    const { sent } = try tracker.send({ type: "notify" })
 
-    const count = try send(sent, handles)
-    try Effect.try(() => assert.strictEqual(count, 1))
+    const first = fork pass(handles)
+    try TestClock.adjust("999 millis")
+    try Effect.try(() => assert.deepStrictEqual(attempts, { "@ana": 1 }))
+    try TestClock.adjust("1 millis")
+    try Effect.try(() => assert.deepStrictEqual(attempts, { "@ana": 2 }))
+    try TestClock.adjust("1 minute")
+    const undelivered = try join first
+    // spec/tracker.md, "Nothing is sent twice"; spec/tracker.md, "A pass sends exactly the notes it records"
+    try Effect.try(() => assert.deepStrictEqual(posted, [["@ana", "✎ #1 changed"]]))
+    try Effect.try(() => assert.deepStrictEqual(attempts, { "@ana": 3, "@cal": 3 }))
+    try Effect.try(() => assert.deepStrictEqual(undelivered, [{ to: "cal", handle: "@cal", text: "✎ #1 changed" }]))
+
+    try tracker.send({ type: "tick" })
+    const second = fork pass(handles)
+    try TestClock.adjust("1 minute")
+    const none = try join second
+    // spec/tracker.md, "A pass sends exactly the notes it records"
+    try Effect.try(() => assert.deepStrictEqual(none, []))
     try Effect.try(() => assert.deepStrictEqual(posted, [["@ana", "✎ #1 changed"]]))
   }
 })
