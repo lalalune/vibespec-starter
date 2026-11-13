@@ -13,7 +13,8 @@ import { dafnyVersion, solver } from "./prove.ts";
 const toolchains = new Map<string, Promise<string>>();
 function toolchainId(stage: "model" | "simulate" | "prove"): Promise<string> {
   let id = toolchains.get(stage);
-  if (!id) toolchains.set(stage, (id = (async () => {
+  if (id) return id;
+  toolchains.set(stage, (id = (async () => {
     const version = (dep: string) => {
       for (let dir = import.meta.dirname; dir !== path.dirname(dir); dir = path.dirname(dir)) {
         const file = path.join(dir, "node_modules", dep, "package.json");
@@ -33,6 +34,8 @@ function toolchainId(stage: "model" | "simulate" | "prove"): Promise<string> {
     }
     return parts.join(" ");
   })()));
+  // A failed probe is not remembered: the next check probes again.
+  id.catch(() => toolchains.delete(stage));
   return id;
 }
 
