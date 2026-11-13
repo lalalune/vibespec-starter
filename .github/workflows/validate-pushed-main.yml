@@ -1,4 +1,4 @@
-name: Validate pushed main cda0304
+name: Validate selftest corrections f6dc9c0
 on:
   push:
     branches: [codex/hierarchy-pushed-validation]
@@ -9,11 +9,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [root, order, assistant, dashboard, fullstack, selftest]
+        target: [selftest]
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: cda0304b218a9e2f38e83f3f264f237c439655ca
+          ref: f6dc9c0636cabb9fd393be1747d292773bf4584a
       - uses: dafny-lang/setup-dafny-action@v1
         with:
           dafny-version: '4.11.0'
