@@ -131,6 +131,19 @@ export function Build({ onPublish }: { onPublish: () => void }) {
         <div><IconButton name="copy" label="Copy the sync prompt" onClick={copyPrompt} /></div>
       </div>
 
+      {snap.app.script && (
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center gap-2">
+            <Dot mark={snap.session.previewing ? "ok" : ""} label={snap.session.previewing ? "running" : "stopped"} />
+            <span className="flex-1 font-semibold">App <span className="font-mono text-xs font-normal text-muted-foreground">pnpm {snap.app.script}</span></span>
+            {snap.session.previewing && snap.app.url && <Button variant="outline" size="sm" asChild><a href={snap.app.url} target="_blank" rel="noreferrer"><Icon name="open" />Open</a></Button>}
+            {can({ type: "preview" }) && <Button variant="outline" size="sm" onClick={() => start("app", { start: true })}><Icon name="play" />Start</Button>}
+            {can({ type: "endPreview" }) && <Button variant="outline" size="sm" onClick={() => start("app", { start: false })}><Icon name="stop" />Stop</Button>}
+          </div>
+          {snap.app.log.length > 0 && <Code className="max-h-40 whitespace-pre-wrap">{snap.app.log.slice(-40).join("\n")}</Code>}
+        </div>
+      )}
+
       {job && (
         <div className="overflow-hidden rounded-lg border border-border">
           <div className="flex items-center gap-2 border-b border-border py-1.5 pr-2 pl-3 text-[13px]">

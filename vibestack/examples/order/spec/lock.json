@@ -13,7 +13,7 @@
         "8fd81fe95a77"
       ],
       "Domain / Unit price and order size": [
-        "512ae41064ba",
+        "081d3bb6430d",
         "19a262d0782b"
       ],
       "## Story: Fill a draft": [
@@ -31,7 +31,7 @@
       ],
       "Story: Fill a draft / The amount due is always the price of the units": [
         "e3b0c44298fc",
-        "041c05666241",
+        "f6753e36ffd0",
         "f0eeb179cbae"
       ],
       "## Story: Check out": [
@@ -57,7 +57,7 @@
         "73220ebdc580",
         "30c94ef58160"
       ],
-      "Story: Check out / A paid order is paid in full": [
+      "Story: Check out / A paid order is paid in full, and something was owed on it": [
         "e3b0c44298fc",
         "a3ece0b8c407",
         "30c94ef58160"
@@ -67,16 +67,21 @@
         "f666fb37c8b5",
         "30c94ef58160"
       ],
+      "Story: Check out / An order can be partly paid": [
+        "e3b0c44298fc",
+        "eeab816c4ae6",
+        "30c94ef58160"
+      ],
       "## Story: Cancel": [
         "90e052b70a7c"
       ],
       "Story: Cancel / A pending order can be cancelled, refunding every payment": [
-        "e3b0c44298fc",
+        "0b65f9715334",
         "0051487844db",
         "30c94ef58160"
       ],
       "Story: Cancel / Drafts and cancelled orders hold no money": [
-        "e3b0c44298fc",
+        "90667f8b44b1",
         "41c345e7be97",
         "30c94ef58160"
       ],
@@ -109,7 +114,7 @@
       "## Story: Take back a payment": [
         "7d1cf8e4adb9"
       ],
-      "Story: Take back a payment / Part of what was paid on a pending order can be taken back": [
+      "Story: Take back a payment / Some or all of what was paid on a pending order can be taken back": [
         "df9450cb4332",
         "de8ae586606b",
         "c51e3bc1a098"
@@ -128,14 +133,19 @@
         "5c50a0f73fa6"
       ],
       "## Story: Put an order on hold": [
-        "fbd4502669d5"
+        "a2d8bb5e7b28"
       ],
       "Story: Put an order on hold / Staff can put a pending order on hold and release it again": [
         "3145f9e5c406",
-        "8806c315f395",
+        "9330d8df7746",
         "30c94ef58160"
       ],
-      "Story: Put an order on hold / No payment is taken while an order is on hold": [
+      "Story: Put an order on hold / An order can be put on hold": [
+        "e3b0c44298fc",
+        "1f28cb6c4e9f",
+        "30c94ef58160"
+      ],
+      "Story: Put an order on hold / Nothing paid on an order on hold changes: no payment is taken and none is given back": [
         "e3b0c44298fc",
         "cb645ca40a0d",
         "30c94ef58160"
@@ -148,7 +158,7 @@
     }
   },
   "contracts": {
-    "src/ledger.ts": "c09eafd8fc4e"
+    "src/ledger.ts": "30b6581b2559"
   },
   "unproved": {}
 }
