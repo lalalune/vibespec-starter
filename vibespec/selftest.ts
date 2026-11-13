@@ -783,10 +783,12 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.equal(fs.readFileSync(path.join(root, "CLAUDE.md"), "utf8"), "My existing instructions.\n\n@AGENTS.md\n");
     assert.equal(fs.readFileSync(agents, "utf8"), expected);
     assert.deepEqual(init(root), []);
-    fs.writeFileSync(agents, "before\r\n<!-- vibespec:start -->\r\nold instructions\r\n<!-- vibespec:end -->\r\nafter\r\n");
-    init(root);
-    assert.equal(fs.readFileSync(agents, "utf8"), `before\r\n<!-- vibespec:start -->\r\n${read("AGENTS.md").trim().replace(/\r?\n/g, "\r\n")}\r\n<!-- vibespec:end -->\r\nafter\r\n`);
-    assert.deepEqual(init(root), []);
+    for (const marker of ["onespec", "vibespec"]) {
+      fs.writeFileSync(agents, `before\r\n<!-- ${marker}:start -->\r\nold instructions\r\n<!-- ${marker}:end -->\r\nafter\r\n`);
+      init(root);
+      assert.equal(fs.readFileSync(agents, "utf8"), `before\r\n<!-- vibespec:start -->\r\n${read("AGENTS.md").trim().replace(/\r?\n/g, "\r\n")}\r\n<!-- vibespec:end -->\r\nafter\r\n`);
+      assert.deepEqual(init(root), []);
+    }
     for (const invalid of [
       "<!-- vibespec:start -->\nincomplete\n",
       "<!-- vibespec:end -->\n<!-- vibespec:start -->\n",
