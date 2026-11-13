@@ -1,9 +1,51 @@
 {
   "version": 1,
   "specs": {
+    "spec/components.md": {
+      "@document": [
+        "dde622558ae6"
+      ],
+      "## Story: Inspect a component and its stories": [
+        "f13cd64cf2c3"
+      ],
+      "Story: Inspect a component and its stories / A catalog records how many stories each component has": [
+        "610ae75c7311",
+        "fe82d844a9d5"
+      ],
+      "Story: Inspect a component and its stories / Before a catalog is loaded nothing is selected": [
+        "e3b0c44298fc",
+        "291fdbd0a25f",
+        "a4907880c200"
+      ],
+      "Story: Inspect a component and its stories / Loading a catalog selects its first component and that component's first story": [
+        "0086558d7ec8",
+        "b0e242aef8a0",
+        "a4907880c200"
+      ],
+      "Story: Inspect a component and its stories / Choosing a component selects its first story and clears prop overrides": [
+        "e2960302d872",
+        "c8167959e7d0",
+        "a4907880c200"
+      ],
+      "Story: Inspect a component and its stories / Choosing a story stays within its component and clears prop overrides": [
+        "35ac0f524b94",
+        "bd9ea8fb9000",
+        "a4907880c200"
+      ],
+      "Story: Inspect a component and its stories / Every selected component and story exists in the loaded catalog": [
+        "3bdab4f28974",
+        "4eca41859a33",
+        "a4907880c200"
+      ],
+      "Story: Inspect a component and its stories / A component without stories and a later story can both be inspected": [
+        "b8a4f0cf25cb",
+        "18eeb0da2346",
+        "a4907880c200"
+      ]
+    },
     "spec/index.md": {
       "@document": [
-        "81198bbc1e24"
+        "9153c98da278"
       ],
       "## Domain": [
         "e3b0c44298fc"
@@ -46,7 +88,7 @@
       ],
       "Story: Edit, then publish / A change to the specs on disk makes the last verdict unknown": [
         "138035ee6d59",
-        "fe2b176979b6",
+        "7e82c53c95e2",
         "4c46885f2276"
       ],
       "## Story: Sync with an agent": [
@@ -88,6 +130,11 @@
       "Story: Check / A check can start whenever no job runs": [
         "e3b0c44298fc",
         "74d77c7205ca",
+        "4c46885f2276"
+      ],
+      "Story: Check / A change to the specs on disk is checked when no job runs and nothing is unpublished": [
+        "8deb2090e3da",
+        "a910b026bac1",
         "4c46885f2276"
       ],
       "Story: Check / A finished check gives its verdict": [

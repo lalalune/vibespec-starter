@@ -136,12 +136,12 @@
       ],
       "Domain / What the simulator tries": [
         "a2464fc28450",
-        "f549ec5694f9",
+        "6e4633b6feb9",
         "475cacf40ce9"
       ],
       "Domain / Small helpers": [
         "e3b0c44298fc",
-        "aa43c455f3d6",
+        "87f31dc7a064",
         "56d1326e6033"
       ],
       "## Story: See what is wrong with the data": [
@@ -155,35 +155,35 @@
       "Story: See what is wrong with the data / The problems of one task": [
         "a7c960a881af",
         "85d0322c503a",
-        "dc349cb74148"
+        "8e552da094a3"
       ],
       "Story: See what is wrong with the data / The warning list is empty exactly when the data is well formed": [
         "1c1ce603dba0",
         "d582feb0c364",
-        "aa9366894320"
+        "0ce557cfe6c4"
       ],
       "## Story: Edit through the dashboard": [
         "7b326345d1a3"
       ],
       "Story: Edit through the dashboard / Only a project member can edit through the dashboard": [
-        "da2096fe43ba",
-        "365a1a99e205",
+        "e98189403206",
+        "dfc98e807114",
         "56d1326e6033"
       ],
       "Story: Edit through the dashboard / A task edited through the dashboard is signed by a member": [
         "4e40f22bc051",
         "c27f328069b7",
-        "4c252baabdb6"
+        "7d21edf2515c"
       ],
       "Story: Edit through the dashboard / Only a hand edit can make the data worse": [
         "bb0d225d2ba1",
         "0c5266b98950",
-        "aa9366894320"
+        "0ce557cfe6c4"
       ],
       "Story: Edit through the dashboard / A new task gets a number that was never issued and that nothing points at": [
         "ad79ced80701",
-        "3385b14454be",
-        "d1e06d762845"
+        "d4873cc68c62",
+        "2c7e579f207d"
       ],
       "Story: Edit through the dashboard / Task numbers are unique, and the counter is never negative and never below a task number": [
         "e3b0c44298fc",
@@ -197,33 +197,33 @@
       ],
       "Story: Edit through the dashboard / Status and due date can be changed on any task that exists": [
         "e3b0c44298fc",
-        "bce02ae6876a",
-        "474fff5a55a6"
+        "24d714d4860f",
+        "1345c8502f3f"
       ],
       "Story: Edit through the dashboard / An owner added through the dashboard must be a project member": [
         "ec1bfc232411",
-        "97eaca1c6b24",
-        "474fff5a55a6"
+        "a4b776b247b4",
+        "1345c8502f3f"
       ],
       "Story: Edit through the dashboard / A parent must exist and must not already depend on the task": [
         "2b121a9c6c8d",
-        "bdcb64db195d",
-        "be9186736390"
+        "191c8e3d0a9e",
+        "86b8fa73c05c"
       ],
       "Story: Edit through the dashboard / Related is written on both tasks at once": [
         "db4040318ab3",
-        "e9c18358588c",
-        "474fff5a55a6"
+        "3008e9ef869a",
+        "1345c8502f3f"
       ],
       "Story: Edit through the dashboard / Deleting a task through the dashboard removes every link to it": [
         "e3b0c44298fc",
-        "fa92319624da",
-        "474fff5a55a6"
+        "846ad4257399",
+        "1345c8502f3f"
       ],
       "Story: Edit through the dashboard / Renaming or removing a person through the dashboard rewrites every cell that names them": [
         "434eed54cf1b",
-        "7c3354ffe2a1",
-        "474fff5a55a6"
+        "a02daf56ee7e",
+        "1345c8502f3f"
       ],
       "## Story: Edit the spreadsheet directly": [
         "a3982ccab1fd"
@@ -231,17 +231,17 @@
       "Story: Edit the spreadsheet directly / A hand edit is accepted whatever it says": [
         "acddbb3f32aa",
         "869911c9b8e7",
-        "c55235751286"
+        "028c710e5864"
       ],
       "Story: Edit the spreadsheet directly / A hand edit can leave a problem behind": [
         "e3b0c44298fc",
         "bdb442052062",
-        "aa9366894320"
+        "0ce557cfe6c4"
       ],
       "Story: Edit the spreadsheet directly / A one-click fix removes a problem and adds none": [
         "bd8bb74a603f",
-        "c3785ef3f089",
-        "445442801085"
+        "8f7c2b1bd5f2",
+        "1767131a6225"
       ],
       "## Story: Be told what changed and what is due": [
         "e544ed61e830"
@@ -254,7 +254,7 @@
       "Story: Be told what changed and what is due / One pass of the notifier sends everything that is due and records that it was sent": [
         "c82dfc52efa7",
         "a7425c539a4f",
-        "e068f7cc742b"
+        "3bd2ff328377"
       ],
       "Story: Be told what changed and what is due / A pass sends exactly the notes it records": [
         "367c73329db3",
@@ -274,7 +274,7 @@
       "Story: Be told what changed and what is due / Nothing is sent twice": [
         "17ed9a9e8d31",
         "3d3f525b31b3",
-        "c55235751286"
+        "028c710e5864"
       ],
       "Story: Be told what changed and what is due / Every note sent is recorded on its task": [
         "e907ecfa6bd1",
