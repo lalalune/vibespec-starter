@@ -36,6 +36,8 @@ export interface Model {
   laws: Law[];
   /** Events the spec declares fair (`fair_<event>`), each "weak" or "strong". */
   fair: Map<string, Fairness>;
+  /** How many events every run Apalache checks exhaustively has (`exhaustiveSteps`), if the spec asks for it. */
+  exhaustive: number | undefined;
   /** The type of who sends events (the transitions' `by`), if they say. */
   sender: Json | undefined;
   /** What transitions with output return, `{ state, out }`, and the type of `out`. */
@@ -122,8 +124,9 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
   const ownSamples = defs.filter(isSampleSet).map((d) => ({ name: d.name as string, elem: inferred(d.id)!.elem as Json }));
   const sampleSets = new Set([...ownSamples.map((s) => s.name), ...links.flatMap((l) => l.exports.samples.map((s) => qualify(l.alias, s.name)))]);
   // `weight_<event>` and `fair_<event>` tell the simulator how often to try an event and which events a run cannot
-  // put off for ever (AGENTS.md, "What goes in the Quint blocks"); like sample sets, they never reach TypeScript.
-  const settings = defs.filter((d) => d.qualifier === "pureval" && /^(weight|fair)_/.test(d.name));
+  // put off for ever, and `exhaustiveSteps` how deep Apalache checks (AGENTS.md, "What goes in the Quint blocks");
+  // like sample sets, they never reach TypeScript.
+  const settings = defs.filter((d) => d.qualifier === "pureval" && (/^(weight|fair)_/.test(d.name) || d.name === "exhaustiveSteps"));
   const code = defs.filter((d) => !isSampleSet(d) && !settings.includes(d));
   const localNames = new Set(code.map((d) => d.name as string));
   const beneath = (m: string): string[] => [m, ...deps.get(m)!.imports.flatMap(beneath)];
@@ -186,6 +189,9 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
   }));
   const weights = setting("weight", (e) => e.kind === "int" && e.value >= 1 && e.value <= 100, "a whole number from 1 to 100: how many times as often as an event of weight 1 the simulator tries it");
   const fair = setting("fair", (e) => e.kind === "str" && ["weak", "strong"].includes(e.value), '"weak" (taken if it stays possible) or "strong" (taken if it keeps becoming possible)') as Map<string, Fairness>;
+  const depth = settings.find((d) => d.name === "exhaustiveSteps");
+  if (depth && !(roles.stateType && depth.expr.kind === "int" && depth.expr.value >= 1 && depth.expr.value <= 100))
+    fail(`exhaustiveSteps (${source}${origin(depth.name) ? `:${origin(depth.name)!.line}` : ""}): write a whole number of events from 1 to 100, in a spec with a state`);
   if (fair.size && !roles.leadsTo.length) fail(`${[...fair.keys()].map((e) => `fair_${e}`).join(", ")}: fairness matters only to \`leadsTo\` rules, and the spec has none`);
 
   // --- TypeScript -------------------------------------------------------------------
@@ -216,7 +222,7 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
 
   const run = harness(name, source, [...imports, ...typeOnly], funs, sig, samples, roles, types, { weights, fair });
   return {
-    name, source, imports, ...roles, fair, evals: run.evals, uncompared: run.uncompared, harness: run.text,
+    name, source, imports, ...roles, fair, exhaustive: depth?.expr.value, evals: run.evals, uncompared: run.uncompared, harness: run.text,
     ts: own.text, render: (prefix, docs) => render(prefix, docs).text, decode: types.decode, canon: types.canon,
     shape: roles.stateType ? types.comparison(roles.stateType) : undefined,
     outputShape: roles.output ? types.comparison(roles.output.out) : undefined,

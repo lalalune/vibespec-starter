@@ -14,6 +14,7 @@ import { danglingCitations } from "./util.ts";
 import { nodesOf } from "./studio/doc.ts";
 import { canonical, departure } from "./conformance.ts";
 import { conformance as checkTraces, conformanceFound, writeConformance } from "./conform.ts";
+import { hasJava } from "./simulate.ts";
 import { projectsOf, serve, startStudio } from "./studio/server.ts";
 import { acceptContracts, acceptReviews, check, checkVerifiedSource, expandListHelpers, gen, init, parseSpec, pending, pendingContracts, readSpecs, replay, show, type Result } from "./spec.ts";
 
@@ -175,13 +176,21 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.match(departure(domain, found, [{ event: { type: "inc" } }])?.why ?? "", /no observed state/);
     fs.mkdirSync(path.join(root, "test/traces"), { recursive: true });
     fs.writeFileSync(path.join(root, "test/traces/counter.jsonl"), '{"state":0}\n{"event":{"type":"inc"},"state":1}\n');
-    fs.writeFileSync(path.join(root, "offset.json"), "0");
-    fs.writeFileSync(path.join(root, "driver.mjs"), 'import fs from "node:fs"; import readline from "node:readline"; let n=0; for await (const line of readline.createInterface({input:process.stdin})) { const request=JSON.parse(line); if (!request.event) n=0; else if (n<2) n++; console.log(JSON.stringify({state:n+Number(fs.readFileSync("offset.json","utf8"))})); }');
+    fs.writeFileSync(path.join(root, "driver.json"), '{"offset":0,"limit":2}');
+    fs.writeFileSync(path.join(root, "driver.mjs"), 'import fs from "node:fs"; import readline from "node:readline"; let n=0; for await (const line of readline.createInterface({input:process.stdin})) { const request=JSON.parse(line), {offset,limit}=JSON.parse(fs.readFileSync("driver.json","utf8")); if (!request.event) n=0; else if (n<limit) n++; console.log(JSON.stringify({state:n+offset})); }');
     fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({type:"module",scripts:{"driver:counter":`${JSON.stringify(process.execPath)} driver.mjs`}}));
     const machines = new Map([["counter", { domain, model, found }]]);
-    assert.ok((await checkTraces(root, machines)).every(([ok]) => ok));
-    fs.writeFileSync(path.join(root, "offset.json"), "1");
-    assert.ok((await checkTraces(root, machines)).some(([ok, , summary]) => !ok && summary.startsWith("script driver:counter")));
+    const departs = async () => (await checkTraces(root, machines)).filter(([ok]) => !ok).map(([, , summary, detail]) => `${summary}\n${detail}`);
+    assert.deepEqual(await departs(), []);
+    // A driver that starts elsewhere, or takes the event the spec refuses in the last state of a trace, departs.
+    fs.writeFileSync(path.join(root, "driver.json"), '{"offset":1,"limit":2}');
+    assert.match((await departs()).join(), /^script driver:counter: the program departs[\s\S]*reset/);
+    fs.writeFileSync(path.join(root, "driver.json"), '{"offset":0,"limit":3}');
+    assert.match((await departs()).join(), /^script driver:counter: the program departs[\s\S]*line 4/);
+    // So does a trace the program wrote, at the first line that differs.
+    fs.writeFileSync(path.join(root, "driver.json"), '{"offset":0,"limit":2}');
+    fs.writeFileSync(path.join(root, "test/traces/counter.jsonl"), '{"state":0}\n{"event":{"type":"inc"},"state":2}\n');
+    assert.match((await departs()).join(), /^test\/traces\/counter\.jsonl: the program departs[\s\S]*line 2/);
 
     const quiet = oneRule("quiet", "Wait", "pure val initial: int = 0\npure def stay(n: int): int = n\npure def alwaysZero(n: int): bool = n == 0");
     const quietSpec = parseSpec(quiet, "spec/quiet.md"), quietModel = await gen(quiet, quietSpec);
@@ -398,14 +407,27 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       ["pure val weight_nope = 2", /weight_nope .*no transition named nope/],
       ["pure val weight_add = 0", /weight_add .*a whole number from 1 to 100/],
       ['pure val fair_add = "always"', /fair_add .*"weak"/],
+      ["pure val exhaustiveSteps = 0", /exhaustiveSteps .*a whole number of events from 1 to 100/],
       ["pure def leadsToOne(s: S): bool = true", /leadsToOne: a `leadsTo` rule takes a state and a later state/],
     ];
     for (const [quint, message] of cases) await assert.rejects(model(quint), message, quint);
-    const weighted = await model('pure val weight_add = 3\npure val fair_add = "weak"');
+    const weighted = await model('pure val weight_add = 3\npure val fair_add = "weak"\npure val exhaustiveSteps = 4');
     assert.match(weighted.harness, /action step = any \{ add, add, add \}/);
-    assert.doesNotMatch(weighted.ts, /weight_|fair_/);
+    assert.doesNotMatch(weighted.ts, /weight_|fair_|exhaustiveSteps/);
+    assert.equal(weighted.exhaustive, 4);
     const lone = oneRule("f", "Fair", 'type S = { n: int }\npure val initial: S = { n: 0 }\npure def add(s: S): S = { n: s.n + 1 }\npure val fair_add = "weak"');
     await assert.rejects(gen(lone, parseSpec(lone, "spec/f.md")), /fairness matters only to `leadsTo` rules/);
+  });
+
+  test("Apalache, given Java, checks every run up to the spec's exhaustiveSteps and finds the one random simulation misses", async () => {
+    const safe = (edit: (s: string) => string) => fixtures(["safe"], (f) => { f["spec/safe.md"] = edit(f["spec/safe.md"]); });
+    const [kept, broken] = await Promise.all([run(safe((s) => s)), run(safe((s) => s.replace("opened <= 3", "opened < 3")))]);
+    if (!(await hasJava())) return assert.ok(kept.said("skipped", /^exhaustive check of spec\/safe\.md: .*Java 17/), kept.text);
+    assert.deepEqual(kept.failed, ["review"], kept.text);
+    assert.ok(kept.said("always", /no run of up to 3 events breaks a rule/), kept.text);
+    assert.deepEqual(broken.failed, ["always", "review"], broken.text);
+    assert.ok(broken.said("always", /no rule broken in \d+ simulated traces/), broken.text);
+    assert.ok(broken.said("always", /Apalache found among all of up to 3 events[\s\S]*press +-> state = 3/), broken.text);
   });
 
   test("a `leadsTo` rule is broken by a fair run that stops or loops, until the events it waits on are fair; std/net is imported, simulated and proved beside the spec", async () => {

@@ -1,4 +1,6 @@
+import { execFile } from "node:child_process";
 import fs from "node:fs";
+import net from "node:net";
 import path from "node:path";
 import os from "node:os";
 import { createRequire } from "node:module";
@@ -32,12 +34,14 @@ export interface Step {
   fair?: string[];
 }
 
+/** A trace Quint simulated (`--mbt`), or one Apalache found, which names only the event taken (the harness's `last`). */
 function readTrace(file: string, model: Model): Step[] {
   return JSON.parse(fs.readFileSync(file, "utf8")).states.map((st: any): Step => {
     // Values are decoded by their type, and sets put in a fixed order, so that they compare equal to TypeScript's.
     const read = (type: any, itf: any) => model.canon(type, model.decode(type, itf));
-    const picked = (ps: { name: string; type: any }[]) => Object.fromEntries(ps.map((p) => [p.name, read(p.type, st["mbt::nondetPicks"][p.name].value)]));
-    const taken: string = st["mbt::actionTaken"];
+    const picks = st["mbt::nondetPicks"] ?? {};
+    const picked = (ps: { name: string; type: any }[]) => Object.fromEntries(ps.filter((p) => picks[p.name]).map((p) => [p.name, read(p.type, picks[p.name].value)]));
+    const taken: string = st["mbt::actionTaken"] ?? (st.moved ? st.last : "init");
     const t = model.transitions.find((t) => t.name === taken);
     const v = model.evals.find((v) => `eval_${v.name}` === taken);
     const l = model.laws.find((l) => l.name === taken);
@@ -135,6 +139,29 @@ export async function search(root: string, model: Model, invariant: string, step
   return run;
 }
 export const SEARCHED = () => `${WITNESS_SAMPLES} traces of ${STEPS} events and longer ones up to ${DEPTHS.at(-1)}`;
+
+/** Whether Java 17 or later, which Apalache needs, is on the PATH; read once. */
+let java: Promise<boolean> | undefined;
+export const hasJava = () => (java ??= new Promise((resolve) => execFile("java", ["-version"], { encoding: "utf8", timeout: 60_000 }, (error, stdout, stderr) =>
+  resolve(!error && Number(`${stdout}${stderr}`.match(/version "(\d+)/)?.[1]) >= 17))));
+
+/**
+ * Check every run of up to `model.exhaustive` events with Apalache, for the values the simulator tries: the first trace
+ * that breaks `inv`, if one does, or why Apalache could not check. Each run starts an Apalache server of its own on a
+ * free port, so that runs at once, and the servers of other projects, never share one; Quint stops it when it ends.
+ */
+export async function exhaust(root: string, model: Model): Promise<{ trace?: Step[]; problem?: string; again: string }> {
+  const port = await new Promise<number>((resolve, reject) => {
+    const probe = net.createServer().on("error", reject).listen(0, "127.0.0.1", () => { const { port } = probe.address() as net.AddressInfo; probe.close(() => resolve(port)); });
+  });
+  const args = ["verify", `${model.name}.run.qnt`, "--main", `${model.name}_run`, "--invariant", "inv", "--max-steps", String(model.exhaustive)];
+  const found = `${model.name}.exhaust.itf.json`;
+  // From gen/, where Apalache writes its own output.
+  const r = await run("quint", [...args, "--server-endpoint", `localhost:${port}`, "--out-itf", found], path.join(root, "gen"));
+  const again = `to check again, in gen/: npx quint ${args.join(" ")}`;
+  if (r.out.includes("[violation]")) return { trace: readTrace(path.join(root, "gen", found), model), again };
+  return { problem: r.ok ? undefined : r.out.trim().split("\n").slice(-20).join("\n"), again };
+}
 
 /**
  * Replay one Quint trace through the TypeScript domain; throws at the first difference. With the model, sets are

@@ -11,7 +11,7 @@ import { readSpecs, badSpecName, specFiles, specName, isStd, located, type Spec 
 import { contracts, pending, pendingContracts, acceptAllReviews, pendingSpecs, migrateLocks, moved, showPending, ledgerFile, readLedger, writeLedger, type Pending, type Accepted } from "./review.ts";
 import { entry, remembered, collectGarbage, dafnyVersion, type Memory } from "./cache.ts";
 import { gen, generated, typecheckAll, proofUnits, strayProofFiles } from "./units.ts";
-import { SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, LASSO_TRACES, STEPS, DEPTHS, SEARCHED, simulate, search, firstBreak, lasso, showTrace, replay, type Step } from "./simulate.ts";
+import { SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, LASSO_TRACES, STEPS, DEPTHS, SEARCHED, simulate, search, firstBreak, lasso, showTrace, replay, exhaust, hasJava, type Step } from "./simulate.ts";
 import { sha, indent, tests, readSrc, projectRoot, type SrcFile } from "./util.ts";
 
 export { readSpecs, badSpecName, parseSpec, scanSpec, expandListHelpers, type Spec, type Rule, type Story } from "./parse.ts";
@@ -275,6 +275,15 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
     const ran = new Set(found.map((r) => r.stage));
     const notRun = (["sometimes", "replay"] as const).filter((s) => !ran.has(s) && (s !== "sometimes" || model.sometimes.length));
     if (notRun.length && found.some((r) => !r.ok)) skip(`${notRun.join(" and ")} of ${spec.file}`, "simulation stopped at the failure above");
+    // Once simulation finds nothing, Apalache checks every run up to the depth the spec asks for (simulate.ts, `exhaust`).
+    const depth = model.exhaustive;
+    if (!depth || found.some((r) => !r.ok)) continue;
+    if (!(await hasJava())) { skip(`exhaustive check of ${spec.file}`, "Apalache needs Java 17 or later on the PATH"); continue; }
+    const { trace, problem, again } = await remembered(memory, entry(root, "simulate", [closure(spec.imports), spec.meaning, model.harness, `exhaust ${depth}`]), () => exhaust(root, model), (r) => !r.problem);
+    const broken = trace && firstBreak(domain, model, trace, cite);
+    if (trace) report(false, "always", `${broken?.why ?? "a run breaks a rule"}, in a run Apalache found among all of up to ${depth} events: fix the model, or add the rule that forbids this trace`, `${showTrace(trace.slice(0, broken?.steps))}\n      ${again}`, spec.file);
+    else if (problem) report(false, "always", `Apalache could not check every run of up to ${depth} events; if what it says is a limit of Apalache, not a mistake in the spec, remove exhaustiveSteps`, indent(problem), spec.file);
+    else report(true, "always", `no run of up to ${depth} events breaks a rule, for the values the simulator tries: checked exhaustively by Apalache`, "", spec.file);
   }
 
   const complete = allOk;

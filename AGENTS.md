@@ -214,6 +214,7 @@ is generated. The role of a definition comes from its name and signature:
 
 | `pure val weight_pay = 5` | how often the simulator tries `pay`: a whole number from 1 to 100, times as often as an event of weight 1 (the default). For deep interleavings, such as a message lost, repeated and reordered | nothing |
 | `pure val fair_pay = "weak"` or `"strong"` | an assumption for `leadsTo` rules: a fair run does not put `pay` off for ever while its guard keeps allowing it (`"weak"`), or while it allows it again and again (`"strong"`) | nothing |
+| `pure val exhaustiveSteps = 10` | that Apalache checks every run of up to 10 events (1 to 100) ([checking harder](#checking-harder)) | nothing |
 | any other `pure val` or `pure def` | a constant or helper | the same constant or function |
 
 A transition parameter named `by` identifies its sender. All such parameters
@@ -660,18 +661,48 @@ with `tsc`; it has no dependencies.
   hand-written around the generated core, as `vibespec/examples/dashboard/src/notify.ts`
   does for sending messages.
 
+## Checking a running program
+
+The `traces` stage holds a program to the spec through the generated `step`;
+it runs once `tests` has, so a test may write the traces it checks. A trace is
+JSON Lines, one object per line:
+
+| Line | Means |
+|---|---|
+| `{"event": {...}, "by": ..., "state": {...}, "out": [...]}` | the program took this event, from this sender (only for a spec with senders), reached this state and output this (only for [transitions with output](#what-goes-in-the-quint-blocks)). `state` and `out` are optional |
+| `{}` or `{"state": {...}}` | the program started, from `initial` or from this state, which `parseState` must accept |
+
+A value is written as the generated TypeScript holds it. An event the spec
+refuses must leave the state unchanged, as `step` does.
+
+- **Traces the program wrote**: `test/traces/<spec>.jsonl` or
+  `test/traces/<spec>.<anything>.jsonl`. The stage names the first line where
+  the program departs from the spec, and what differs.
+- **A driver**, for code in any language: a `package.json` script
+  `driver:<spec>` that starts a program which reads one line at a time on
+  stdin, `{}` (start again from `initial`) or `{"event": {...}, "by": ...}`,
+  and answers each within 10 seconds with one line `{"state": {...}, "out": [...]}`
+  on stdout. The stage feeds it up to 100 simulated traces and, before each event
+  and after the last, up to two events the spec refuses in that state, then
+  checks its answers as a trace it wrote; on a departure it prints what the
+  driver was sent, to send again by hand.
+
 ## Checking harder
 
 Simulation is seeded from what it simulates, so a run repeats exactly. A
 failing `always` rule or an unreached `sometimes` goal prints its seed and the
 `npx quint run` command that replays it.
 
-To check a model exhaustively up to a depth with the Apalache model checker
-(needs Java 17+, downloads Apalache on first use):
-
-```sh
-npx quint verify gen/index.run.qnt --main index_run --invariant inv --max-steps 10
-```
+`pure val exhaustiveSteps = 10` in a spec has the Apalache model checker
+check every run of up to that many events, after simulation passes, for the
+values the simulator tries (`<param>Values`). A run that breaks an `always`
+or `step` rule fails `always` with its trace (Apalache does not say which
+values it picked; the states show what each event did). Apalache needs Java
+17 or later, and downloads on first use; without Java the check is skipped
+and says so. It is slow: seconds to minutes a spec, more for folds over
+lists, so ask for it in specs where simulation may miss a rare state, at a
+depth that keeps it within a minute. The result is remembered as a
+simulation is.
 
 ## Changing the tools
 
@@ -691,6 +722,7 @@ In the vibespec-starter repository:
 | `vibespec/gen/print.ts` | expressions |
 | `vibespec/gen/classify.ts` | which definition is a transition, a guard or a rule |
 | `vibespec/gen/typescript.ts`, `vibespec/gen/harness.ts` | the two outputs |
+| `vibespec/conform.ts`, `vibespec/conformance.ts` | the `traces` stage and the generated conformance helper: a program's traces and drivers, replayed through `step` |
 
 Node runs all of it directly; `npm run build` compiles it for the packaged
 `spec` command.
