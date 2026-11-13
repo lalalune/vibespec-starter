@@ -23,11 +23,11 @@ export interface Roles {
   output: { type: Json; out: Json } | undefined;
 }
 
-/** The parameter that names who sent an event (AGENTS.md, "Who sent an event"). */
+/** The parameter that names who sent an event (AGENTS.md, "What goes in the Quint blocks"). */
 export const SENDER = "by";
 /** The parameter of a `step` rule that names the transition taken (AGENTS.md, "What goes in the Quint blocks"). */
 export const VIA = "via";
-/** The last parameter of a `step` rule that sees what the transition output (AGENTS.md, "Transitions with output"). */
+/** The last parameter of a `step` rule that sees what the transition output (AGENTS.md, "What goes in the Quint blocks"). */
 const OUT = "out";
 /** The prefixes that make a definition a rule; all but `law` are rules about states. */
 const STATE_ROLES = ["always", "sometimes", "step", "leadsTo"];

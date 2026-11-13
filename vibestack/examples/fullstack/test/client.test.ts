@@ -4,7 +4,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { type Client, type Event, initial, inv, step, view, visible } from "../gen/client.ts";
-import { drain } from "../src/inbox.ts";
 
 const run = (events: Event[], from: Client = initial) => events.reduce(step, from);
 const milk = { id: "x", title: "milk", done: false, deleted: false };
@@ -64,7 +63,7 @@ test("a confirmed copy that already holds a queued edit shows it once", () => {
 });
 
 test("a batch of pushes is drained in order and keeps the client's rules", () => {
-  const c = drain(initial, [
+  const c = run([
     { type: "receiveSnapshot", version: 1, todos: [milk] },
     { type: "receiveSnapshot", version: 3, todos: [] },
     { type: "receiveSnapshot", version: 2, todos: [milk] },

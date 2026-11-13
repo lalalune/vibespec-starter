@@ -3,17 +3,16 @@
 // manifest (./doc.ts), and serves the page (./page.ts) with the modules it imports.
 // README, "Studio".
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import ts from "typescript";
-import { parseSpec, pending, pendingKey, readSpecs, type Lock, type Result } from "../../spec.ts";
+import { acceptable, parseSpec, pending, pendingKey, readSpecs, type Lock, type Result } from "../../spec.ts";
 import { specFiles, specName } from "../../parse.ts";
-import { filesUnder, projectRoot } from "../../util.ts";
+import { filesUnder, projectRoot, short } from "../../util.ts";
 import { enabled, initial, step, type Event, type Session, type Verdict } from "../gen/index.ts";
 import { manifestOf, nodesOf, promptFor, type Ids, type Manifest } from "./doc.ts";
-import { outlineOf } from "./markdown.ts";
+import { outlineOf, specOrder } from "./markdown.ts";
 
 const EXT = path.extname(import.meta.filename);
 /** The tools: vibestack/ from source, dist/ when built. */
@@ -51,6 +50,7 @@ export const AGENTS: Record<string, Agent> = {
 
 /** The process behind the session's job, and what it printed. The last of each kind is kept, for its log. */
 interface Job { kind: "check" | "agent" | "accept"; label: string; status: "running" | "passed" | "failed" | "stopped"; started: number; finished?: number; log: string[]; child?: ChildProcess }
+export type JobView = Omit<Job, "kind" | "child">;
 interface State { baseline: Record<string, string>; ids: Ids }
 interface Live {
   project: Project;
@@ -66,7 +66,6 @@ interface Live {
 /** A request the session does not allow now. */
 class Refused extends Error {}
 
-const hash = (text: string) => createHash("sha256").update(text).digest("hex").slice(0, 16);
 const readJson = <T>(file: string): T | undefined => (fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : undefined);
 const projectName = (root: string) => readJson<{ name?: string }>(path.join(root, "package.json"))?.name ?? path.basename(root);
 const writeJson = (file: string, value: unknown) => {
@@ -84,8 +83,8 @@ function specTexts(root: string): Record<string, string> {
 /** The command a person or agent runs in a project to check it: its own script if it can, else the tools of this repository. */
 function checkCommand(root: string): string {
   const scripts = readJson<{ scripts?: Record<string, string> }>(path.join(root, "package.json"))?.scripts ?? {};
-  const installed = fs.existsSync(path.join(root, "node_modules/.bin/spec")) || !scripts.check?.startsWith("spec ");
-  return scripts.check && installed ? "npm run check" : `node ${path.relative(root, SPEC)} check`;
+  const hasSpecBin = fs.existsSync(path.join(root, "node_modules/.bin/spec")) || !scripts.check?.startsWith("spec ");
+  return scripts.check && hasSpecBin ? "npm run check" : `node ${path.relative(root, SPEC)} check`;
 }
 
 /** The sync skill, as a path from the project root: its own copy, or the nearest one above it. */
@@ -100,13 +99,13 @@ function skillPath(root: string): string {
 /** The review ledgers and Studio state belong to the tools, not the sync agent. */
 function ownedFiles(root: string): Record<string, string> {
   return Object.fromEntries([...filesUnder(root, "spec").filter((f) => f.endsWith("lock.json")), ...filesUnder(root, ".studio")]
-    .map((f) => [f, hash(fs.readFileSync(path.join(root, f), "utf8"))]));
+    .map((f) => [f, short(fs.readFileSync(path.join(root, f), "utf8"))]));
 }
 
-const installed = new Map<string, boolean>();
+const onPathCache = new Map<string, boolean>();
 const onPath = (program: string) => {
-  if (!installed.has(program)) installed.set(program, spawnSync(process.platform === "win32" ? "where" : "which", [program]).status === 0);
-  return installed.get(program)!;
+  if (!onPathCache.has(program)) onPathCache.set(program, spawnSync(process.platform === "win32" ? "where" : "which", [program]).status === 0);
+  return onPathCache.get(program)!;
 };
 
 /**
@@ -114,10 +113,7 @@ const onPath = (program: string) => {
  * passed, every story has rules and every rule has Quint.
  */
 export function verdictOf(results: Result[]): Verdict {
-  const failed = results.filter((r) => !r.ok);
-  if (!failed.length) return "Green";
-  const reviewOnly = failed.every((r) => r.stage === "review") && !failed.some((r) => /story has no rules|not formalized/.test(r.detail));
-  return reviewOnly ? "Reviewable" : "Failing";
+  return !results.some((r) => !r.ok) ? "Green" : acceptable(results) ? "Reviewable" : "Failing";
 }
 
 /** Everything the page shows for a project. */
@@ -127,7 +123,9 @@ function snapshot(live: Live, agents: Record<string, Agent>) {
   let texts: Record<string, string> = {};
   let review: Record<string, Record<string, string>> = {};
   let problem: string | undefined;
+  let manifest: Manifest | undefined;
   try {
+    manifest = readJson<Manifest>(manifestFile(root));
     texts = specTexts(root);
     const specs = readSpecs(root);
     const locks = new Map<string, Lock>();
@@ -135,14 +133,12 @@ function snapshot(live: Live, agents: Record<string, Agent>) {
   } catch (e) {
     problem = (e as Error).message;
   }
-  const manifest = readJson<Manifest>(manifestFile(root));
   const context = { skill: skillPath(root), check: checkCommand(root) };
-  const order = (file: string) => file.replace(/(?:^spec\/|\/)index\.md$/, "/");
   return {
     project: live.project,
     session: live.session,
-    specs: Object.entries(texts).sort(([a], [b]) => order(a).localeCompare(order(b)))
-      .map(([file, text]) => ({ file, module: specName(file), hash: hash(text), text, outline: outlineOf(file, text), review: review[file] ?? {} })),
+    specs: Object.entries(texts).sort(([a], [b]) => specOrder(a).localeCompare(specOrder(b)))
+      .map(([file, text]) => ({ file, module: specName(file), hash: short(text), text, outline: outlineOf(file, text), review: review[file] ?? {} })),
     problem,
     manifest,
     prompt: promptFor(manifest, context),
@@ -151,7 +147,8 @@ function snapshot(live: Live, agents: Record<string, Agent>) {
     agents: Object.entries(agents).map(([id, a]) => ({ id, label: a.label, available: onPath(a.command({ root, check: context.check })[0]), link: a.link?.({ root, prompt: promptFor(manifest, context, DEEPLINK_LIMIT) }) })),
   };
 }
-const jobsView = (live: Live) => Object.fromEntries(Object.values(live.jobs).map((j) => [j.kind, { label: j.label, status: j.status, started: j.started, finished: j.finished, log: j.log.slice(-400) }]));
+export type Snapshot = ReturnType<typeof snapshot>;
+const jobsView = (live: Live): Partial<Record<Job["kind"], JobView>> => Object.fromEntries(Object.values(live.jobs).map((j) => [j.kind, { label: j.label, status: j.status, started: j.started, finished: j.finished, log: j.log.slice(-400) }]));
 
 /** A line of an agent's JSON output, as a person would want to read it; undefined for bookkeeping. */
 function readable(line: string): string | undefined {
@@ -181,7 +178,9 @@ function pageModule(file: string): string {
 
 /** The studio's HTTP server. `open` is the project shown first. */
 export async function startStudio({ projects, open = projects[0].id, port = 4321, agents = AGENTS }: { projects: Project[]; open?: string; port?: number; agents?: Record<string, Agent> }) {
-  const lives = new Map<string, Live>(projects.map((p) => [p.id, { project: p, session: initial, jobs: {}, clients: new Set() }]));
+  // spec/index.md, "A studio that starts again picks up what was waiting"
+  const waitingIn = (root: string) => { try { return readJson<Manifest>(manifestFile(root))?.changes.length ?? 0; } catch { return 0; } };
+  const lives = new Map<string, Live>(projects.map((p) => [p.id, { project: p, session: step(initial, { type: "resume", changes: waitingIn(p.root) }), jobs: {}, clients: new Set() }]));
 
   const broadcast = (live: Live, event: string, data: unknown) => {
     for (const res of live.clients) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
@@ -222,7 +221,7 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
     let out = "";
     const child = spawn(program, args, { cwd: live.project.root, env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1" }, stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"] });
     job.child = child;
-    if (input !== undefined) child.stdin!.end(input);
+    if (input !== undefined) child.stdin!.on("error", (e) => job.log.push(`✗ ${e.message}`)).end(input);
     const lines = (stream: NodeJS.ReadableStream, keep: boolean) => {
       let rest = "";
       stream.on("data", (chunk: Buffer) => {
@@ -279,7 +278,7 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
     allow(live, { type: "publish", changes: 0 }, session);
     const { root } = live.project;
     const disk = specTexts(root);
-    const conflicts = body.force ? [] : body.files.filter((f) => (f.file in disk ? hash(disk[f.file]) : null) !== f.base).map((f) => f.file);
+    const conflicts = body.force ? [] : body.files.filter((f) => (f.file in disk ? short(disk[f.file]) : null) !== f.base).map((f) => f.file);
     if (conflicts.length) return { status: 409, body: { error: "changed on disk since you loaded it", conflicts } };
     const next = { ...disk };
     for (const f of body.files) {
@@ -384,12 +383,14 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
           runCheck(live);
           return send(res, 200, {});
         case "/api/agent": {
-          const agent = agents[body.agent];
+          const agent = Object.hasOwn(agents, body.agent) ? agents[body.agent] : undefined;
           if (!agent) return send(res, 400, { error: `no agent ${body.agent}` });
-          act(live, { type: "sync" });
           const check = checkCommand(root);
+          const command = agent.command({ root, check });
+          const prompt = promptFor(readJson<Manifest>(manifestFile(root)), { skill: skillPath(root), check });
           const owned = ownedFiles(root);
-          run(live, "agent", agent.label, agent.command({ root, check }), promptFor(readJson<Manifest>(manifestFile(root)), { skill: skillPath(root), check }), readable, (job) => {
+          act(live, { type: "sync" });
+          run(live, "agent", agent.label, command, prompt, readable, (job) => {
             // The review ledgers and Studio's state are the tools' to write: a sync that touched them is not trusted.
             // Whatever happens here, the sync ends (spec/index.md, "A sync that ends well leaves nothing waiting and checks again").
             try {

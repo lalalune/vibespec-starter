@@ -1,6 +1,4 @@
 // spec/system.md, "Story: Edit together, online or not"; spec/system.md, "Story: Editing alone is never refused"
-// Two tabs and the real HTTP server: the convergence the system spec says is
-// possible, checked on the running application.
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import { test } from "node:test";
@@ -9,7 +7,7 @@ import { sameTodos } from "../gen/todo.ts";
 import { createServer, TodoStore } from "../src/server.ts";
 import { Tab, fetchSnapshot, newId } from "../src/web/sync.ts";
 
-async function until(ok: () => boolean, ms = 2000): Promise<void> {
+async function until(ok: () => boolean, ms = 5000): Promise<void> {
   const end = Date.now() + ms;
   while (!ok()) {
     if (Date.now() > end) throw new Error("timed out");
@@ -29,16 +27,16 @@ test("two tabs, one of them offline for a while, end up with the server's list",
   try {
     // a adds milk; b hears about it through the push stream.
     const milk = newId("a", a.state);
-    await a.edit({ kind: "create", id: milk, title: "milk", done: false });
+    await a.edit({ type: "create", id: milk, title: "milk" });
     await until(() => b.state.seen === 1);
 
     // a goes offline and keeps editing; b ticks milk off meanwhile.
     a.goOffline();
     const eggs = newId("a", a.state);
-    await a.edit({ kind: "create", id: eggs, title: "eggs", done: false });
-    await a.edit({ kind: "rename", id: milk, title: "oat milk", done: false });
+    await a.edit({ type: "create", id: eggs, title: "eggs" });
+    await a.edit({ type: "rename", id: milk, title: "oat milk" });
     assert.equal(a.state.pending.length, 2);
-    await b.edit({ kind: "done", id: milk, title: "", done: true });
+    await b.edit({ type: "setDone", id: milk, done: true });
     assert.equal(store.state.version, 2);
 
     // A request that arrives twice is applied once.
@@ -51,13 +49,19 @@ test("two tabs, one of them offline for a while, end up with the server's list",
     await until(() => b.state.seen === store.state.version);
     b.dispatch(await fetchSnapshot(base));
 
+    // spec/client.md, "Story: Hear back from the server": b's stream drops, b reconnects
+    server.closeAllConnections();
+    await a.edit({ type: "setDone", id: eggs, done: true });
+    await a.flush();
+    await until(() => b.state.seen === store.state.version);
+
     assert.equal(a.state.pending.length, 0);
     assert.equal(b.state.pending.length, 0);
     assert.equal(a.state.seen, store.state.version);
     assert.equal(b.state.seen, store.state.version);
     assert.ok(sameTodos(view(a.state), view(b.state)));
     assert.ok(sameTodos(view(a.state), store.state.todos));
-    assert.deepEqual(view(a.state).map((t) => [t.title, t.done]), [["oat milk", true], ["eggs", false]]);
+    assert.deepEqual(view(a.state).map((t) => [t.title, t.done]), [["oat milk", true], ["eggs", true]]);
   } finally {
     a.close();
     b.close();
@@ -74,9 +78,9 @@ test("a lone user's queued edits reach the server in order, and none is refused"
   try {
     a.goOffline();
     const milk = newId("a", a.state);
-    await a.edit({ kind: "create", id: milk, title: "milk", done: false });
-    await a.edit({ kind: "done", id: milk, title: "", done: true });
-    await a.edit({ kind: "rename", id: milk, title: "oat milk", done: false });
+    await a.edit({ type: "create", id: milk, title: "milk" });
+    await a.edit({ type: "setDone", id: milk, done: true });
+    await a.edit({ type: "rename", id: milk, title: "oat milk" });
     await a.goOnline();
     assert.equal(a.state.pending.length, 0);
     assert.equal(a.state.refusals, 0);

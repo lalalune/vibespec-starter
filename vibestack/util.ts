@@ -48,16 +48,20 @@ export function readSrc(root: string): SrcFile[] {
   const files = filesUnder(root, "src").map((f) => f.slice(4)).filter((f) => /\.(?:[mc]?ts|tsx|[mc]?jsx?)$/.test(f));
   return files.map((f) => ({ file: f, code: fs.readFileSync(path.join(src, f), "utf8"), ts: /\.ts$/.test(f) })).filter((u) => u.code.includes("//@"));
 }
-/** Compatibility view of the verified or unsupported source files. */
-export function srcUnits(root: string, other = false): { file: string; code: string }[] {
-  return readSrc(root).filter((u) => other ? !u.ts : u.ts).map(({ file, code }) => ({ file, code }));
-}
 
 /** One result as `report` in spec.ts takes it. */
 export type Reported<S extends Result["stage"] = Result["stage"]> = [ok: boolean, stage: S, summary: string, detail?: string, where?: string];
 
-/** A directory's package.json, or nothing. */
-const manifest = (dir: string) => fs.existsSync(path.join(dir, "package.json")) ? JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8")) : {};
+/** A directory's package.json, or nothing; one that is not JSON is refused with its path. */
+function manifest(dir: string) {
+  const file = path.join(dir, "package.json");
+  if (!fs.existsSync(file)) return {};
+  try {
+    return JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch (e) {
+    throw new Error(`${file}: ${(e as Error).message}`);
+  }
+}
 /** A package's scripts. */
 export const packageScripts = (root: string): Record<string, string> => manifest(root).scripts ?? {};
 

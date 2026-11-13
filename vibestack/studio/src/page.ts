@@ -2,26 +2,12 @@
 // spec is an outline event, applied only if `enabled` allows it; every action on the project is offered only if the
 // session allows it. This file draws what they hold and turns clicks, keys and drags into their events.
 import { enabled as allowed, type Event as SessionEvent, type Session } from "../gen/index.ts";
-import { enabled, headingsAreSound, parseState, step, type Event as Edit, type Outline, type Rule, type Story } from "../gen/outline.ts";
-import { bodyOf, itemsOf, nodeId, ruleKey, storyKey, textBody, textOf, type Item } from "./markdown.ts";
+import { enabled, headingsAreSound, step, type Event as Edit, type Outline, type Rule, type Story } from "../gen/outline.ts";
+import { bodyOf, itemsOf, nodeId, ruleKey, SIGN, specOrder, storyKey, textBody, textOf, type Item } from "./markdown.ts";
+import type { Result } from "../../spec.ts";
+import type { JobView, Snapshot } from "./server.ts";
 
-// --- what the server sends -------------------------------------------------------------------------------
-
-interface Result { ok: boolean; stage: string; summary: string; detail: string; where?: string }
-interface JobView { label: string; status: "running" | "passed" | "failed" | "stopped"; started: number; finished?: number; log: string[] }
-interface Change { action: "added" | "deleted" | "changed"; kind: "spec" | "story" | "rule"; spec: string; key: string; what: string[] }
-interface SpecView { file: string; module: string; hash: string; text: string; outline: Outline; review: Record<string, string> }
-interface Snapshot {
-  project: { id: string; name: string; root: string };
-  session: Session;
-  specs: SpecView[];
-  problem?: string;
-  manifest?: { changes: Change[]; regenerate: { gen: string }[] };
-  prompt: string;
-  check?: { ok: boolean; results: Result[]; next: string; finished: number };
-  jobs: Partial<Record<"check" | "agent" | "accept", JobView>>;
-  agents: { id: string; label: string; available: boolean; link?: string }[];
-}
+type SpecView = Snapshot["specs"][number];
 
 // --- the working copy --------------------------------------------------------------------------------------
 
@@ -39,14 +25,11 @@ const S = {
   editing: new Set<string>(),
   /** The prose and Quint of each rule being edited, while it is edited. */
   items: new Map<string, Item[]>(),
-  q: "",
-  attention: false,
   history: [] as string[],
   conflicts: [] as string[],
   publishing: false,
 };
 const ui = (file: string, id: number | "head") => `${file}#${id}`;
-const draftKey = () => `studio:${S.snap?.project.root}`;
 
 const working = (spec: SpecView): Working => ({ file: spec.file, base: spec.hash, orig: spec.text, was: spec.outline, outline: spec.outline, deleted: false });
 /** The text a spec would be published as: as it was if nothing changed, tidied if something did. */
@@ -72,21 +55,6 @@ function ruleChanged(spec: Working, s: Story, r: Rule, j: number) {
   return !home || home.id !== s.id || was !== j || home.rules[was].title !== r.title || home.rules[was].body !== r.body;
 }
 
-function saveDraft() {
-  try {
-    const dirty = dirtySpecs();
-    if (dirty.length) localStorage.setItem(draftKey(), JSON.stringify({ specs: dirty, sel: S.sel }));
-    else localStorage.removeItem(draftKey());
-  } catch { /* storage unavailable: the draft lives only in this tab */ }
-}
-function loadDraft(): { specs: Working[]; sel: string } | null {
-  try {
-    const draft = JSON.parse(localStorage.getItem(draftKey()) ?? "null");
-    // A draft is outside input: each outline must still keep every rule of spec/outline.md.
-    return draft && { ...draft, specs: draft.specs.filter((s: Working) => parseState(s.outline) && parseState(s.was)) };
-  } catch { return null; }
-}
-
 /** The specs on disk, with the ones this page changed kept, and those that changed on disk underneath them noted. */
 function merge(snap: Snapshot, mine: Working[]): Working[] {
   const keys = (specs: Working[]) => new Map(specs.flatMap((w) => w.outline.stories.flatMap((s) => [
@@ -100,16 +68,16 @@ function merge(snap: Snapshot, mine: Working[]): Working[] {
     out.push(d);
   }
   for (const f of snap.specs) if (!out.some((o) => o.file === f.file)) out.push(working(f));
-  const order = (file: string) => file.replace(/(?:^spec\/|\/)index\.md$/, "/");
-  out.sort((a, b) => order(a.file).localeCompare(order(b.file)));
+  out.sort((a, b) => specOrder(a.file).localeCompare(specOrder(b.file)));
   // A story or rule stays open, or being edited, across a reload: by what it is called, since its number may change.
   const after = keys(out);
-  const carry = (set: Set<string>) => new Set([...set].map((id) => {
+  const remap = (id: string) => {
     const key = [...before].find(([, v]) => v === id)?.[0];
-    return (key && after.get(key)) ?? id;
-  }));
-  S.open = carry(S.open);
-  S.editing = carry(S.editing);
+    return key ? after.get(key) : id;
+  };
+  S.open = new Set([...S.open].flatMap((id) => remap(id) ?? []));
+  S.editing = new Set([...S.editing].flatMap((id) => remap(id) ?? []));
+  S.items = new Map([...S.items].flatMap(([id, v]) => { const to = remap(id); return to ? [[to, v] as const] : []; }));
   return out;
 }
 
@@ -131,10 +99,8 @@ async function refresh(force = false) {
   const first = !S.snap;
   S.snap = snap;
   if (typing && !force && !first) { renderRail(); renderBuild(); return; }
-  const draft = first ? loadDraft() : null;
-  S.specs = merge(snap, first ? draft?.specs ?? [] : S.specs);
-  if (first && draft?.specs.some(isDirty)) toast("Unpublished changes restored");
-  if (!S.specs.some((s) => s.file === S.sel)) S.sel = draft?.sel && S.specs.some((s) => s.file === draft.sel) ? draft.sel : S.specs[0]?.file ?? "";
+  S.specs = merge(snap, S.specs);
+  if (!S.specs.some((s) => s.file === S.sel)) S.sel = S.specs[0]?.file ?? "";
   render();
 }
 
@@ -238,24 +204,6 @@ function highlight(code: string) {
   return out.join("") + esc(code.slice(end));
 }
 
-/** What a rule's Quint defines, read off the names (AGENTS.md, "What goes in the Quint blocks"). */
-const KINDS: [string, RegExp | null, string, string][] = [
-  ["type", /^\s*type\s+\w+/m, "T", "a type"],
-  ["initial", /^\s*pure\s+val\s+initial\b/m, "●", "the initial state"],
-  ["guard", /^\s*pure\s+def\s+can[A-Z]/m, "?", "a guard"],
-  ["transition", null, "→", "a transition"],
-  ["always", /^\s*pure\s+def\s+always[A-Z]/m, "□", "an always rule"],
-  ["step", /^\s*pure\s+def\s+step[A-Z]/m, "Δ", "a step rule"],
-  ["sometimes", /^\s*pure\s+def\s+sometimes[A-Z]/m, "◇", "a sometimes rule"],
-  ["law", /^\s*pure\s+def\s+law[A-Z]/m, "∀", "a law"],
-];
-function kindsOf(items: Item[]) {
-  const code = items.filter((i) => i.quint).map((i) => i.text).join("\n");
-  return KINDS.filter(([kind, re]) => kind === "transition"
-    ? [...code.matchAll(/^\s*pure\s+def\s+(\w+)\s*\(\s*\w+\s*:\s*(\w+)[^)]*\)\s*:\s*(\w+)/gm)].some((m) => m[2] === m[3] && !/^(always|step|sometimes|law|can)[A-Z]/.test(m[1]))
-    : re!.test(code));
-}
-
 // --- what the checks say about each story and rule ------------------------------------------------------------
 
 /** Failing check results by the spec file and the rule key they cite. */
@@ -304,7 +252,6 @@ function remember() {
 function change(fn: () => boolean | void, message?: string) {
   remember();
   if (fn() === false) { S.history.pop(); return toast("The outline does not allow that"); }
-  saveDraft();
   render();
   if (message) toast(message, { label: "Undo", run: undo });
 }
@@ -313,12 +260,10 @@ function undo() {
   if (!was) return;
   S.specs = JSON.parse(was);
   S.editing.clear();
-  saveDraft();
   render();
 }
 /** Typing changes only the outline and the marks; the document is not redrawn under the caret. */
 function edited() {
-  saveDraft();
   renderRail();
   renderBuild();
   document.querySelectorAll<HTMLElement>("[data-uid]").forEach((el) => {
@@ -332,7 +277,7 @@ function edited() {
 
 function addStory(spec: Working) {
   const id = spec.outline.counter;
-  change(() => apply(spec, { type: "addStory", at: spec.outline.stories.length, title: "Story: ", body: "\n", origin: "" }) && editNode(ui(spec.file, id), false));
+  change(() => apply(spec, { type: "addStory", at: spec.outline.stories.length, title: "Story:", body: "\n", origin: "" }) && editNode(ui(spec.file, id), false));
 }
 function addRule(spec: Working, s: number) {
   const id = spec.outline.counter;
@@ -430,7 +375,7 @@ function render() {
 }
 
 /** A spec's name in the rail: its path below spec/, and its directory for an index. */
-const specName = (file: string) => file.slice(5, -3).replace(/(^|\/)index$/, "") || "index";
+const specLabel = (file: string) => file.slice(5, -3).replace(/(^|\/)index$/, "") || "index";
 
 function renderRail() {
   const fails = failures().bySpec;
@@ -441,18 +386,18 @@ function renderRail() {
     h("select", { class: "project", "aria-label": "Project", onchange: (e: any) => { location.search = `?project=${encodeURIComponent(e.target.value)}`; } },
       S.projects.map((p) => h("option", { value: p.id, selected: p.id === S.project }, p.name))),
     h("ul", { class: "specs" }, S.specs.map((spec) => {
-      const review = Object.keys(S.snap?.specs.find((s) => s.file === spec.file)?.review ?? {}).length;
+      const review = reviewCount(spec.file);
       const status = isDirty(spec) ? ["dirty", "unpublished changes"] : fails.has(spec.file) ? ["bad", "failing checks"] : review ? ["review", `${review} to review`] : ["", ""];
-      const depth = specName(spec.file).split("/").length - (spec.file === "spec/index.md" ? 1 : 0);
+      const depth = specLabel(spec.file).split("/").length - (spec.file === "spec/index.md" ? 1 : 0);
       const li = h("li", { class: `spec${spec.deleted ? " deleted" : ""}`, style: `padding-left: ${8 + 12 * depth}px`, "aria-current": spec.file === S.sel ? "true" : "false", tabindex: 0, title: spec.file,
         onclick: () => { S.sel = spec.file; render(); }, onkeydown: (e: KeyboardEvent) => { if (e.key === "Enter") { S.sel = spec.file; render(); } } },
         h("span", { class: `dot ${status[0]}`, role: "img", "aria-label": status[1] || "in step", title: status[1] }),
-        h("span", { class: "name" }, specName(spec.file).split("/").pop()),
+        h("span", { class: "name" }, specLabel(spec.file).split("/").pop()),
         h("span", { class: "count", title: "stories · rules" }, `${spec.outline.stories.length}·${spec.outline.stories.reduce((n, s) => n + s.rules.length, 0)}`),
         spec.deleted ? iconButton("undo", `Keep ${spec.file}`, () => change(() => { spec.deleted = false; }))
           : iconButton("trash", `Delete ${spec.file}`, () => change(() => { spec.deleted = true; }, `${spec.file} will be deleted on publish`), "danger"));
       // A story dropped on a spec moves to its end.
-      li.addEventListener("dragover", (e) => { if (drag?.kind === "story" && find(drag.uid)?.spec.file !== spec.file) { e.preventDefault(); li.classList.add("drop"); } });
+      li.addEventListener("dragover", (e) => { if (drag?.kind === "story" && !spec.deleted && find(drag.uid)?.spec.file !== spec.file) { e.preventDefault(); li.classList.add("drop"); } });
       li.addEventListener("dragleave", () => li.classList.remove("drop"));
       li.addEventListener("drop", (e) => { e.preventDefault(); li.classList.remove("drop"); if (drag) move(drag.uid, { spec: spec.file }); });
       return li;
@@ -520,22 +465,15 @@ function headingInput(value: string, set: (v: string) => void, label: string) {
   });
   return input;
 }
-const matches = (text: string) => !S.q || text.toLowerCase().includes(S.q.toLowerCase());
 
 function renderDoc() {
   const el = doc();
   const spec = current();
   const scroll = el.scrollTop;
   const active = (document.activeElement?.closest("[data-uid]") as HTMLElement | null)?.dataset.uid;
-  if (!spec) return el.replaceChildren(h("div", { class: "empty" }, "No specs yet: name one on the left."));
+  if (!spec) { el.replaceChildren(); return focusLater(".newspec input"); }
   const { byKey, bySpec } = failures();
   const o = spec.outline;
-  const search = h("input", { class: "search", type: "search", placeholder: "Search  /", value: S.q, "aria-label": "Search stories and rules", oninput: (e: any) => { S.q = e.target.value; renderDoc(); focusLater(".search"); } });
-  const ids = o.stories.flatMap((s) => [ui(spec.file, s.id), ...s.rules.map((r) => ui(spec.file, r.id))]);
-  const anyOpen = ids.some((id) => S.open.has(id));
-  const toolbar = h("div", { class: "toolbar" }, search,
-    h("button", { class: "btn toggle", type: "button", "aria-pressed": String(S.attention), title: "Only what changed or needs review", onclick: () => { S.attention = !S.attention; renderDoc(); } }, "Needs attention"),
-    h("button", { class: "btn", type: "button", onclick: () => { for (const id of ids) anyOpen ? S.open.delete(id) : S.open.add(id); renderDoc(); } }, anyOpen ? "Collapse" : "Expand"));
 
   const conflict = S.conflicts.includes(spec.file) && renderConflict(spec);
   const problem = S.snap?.problem && h("pre", { class: "problem" }, S.snap.problem);
@@ -547,16 +485,14 @@ function renderDoc() {
       headingInput(o.title, (title) => apply(spec, { type: "retitle", title, body: spec.outline.body }), "Title"),
       textBox(o.body.trim(), (v) => apply(spec, { type: "retitle", title: spec.outline.title, body: textBody(v) }), { label: "What the application is for" }),
       h("div", { class: "bar" }, h("span", { class: "spacer" }), h("button", { class: "btn", type: "button", onclick: () => { S.editing.delete(headId); renderDoc(); } }, icon("check"), "Done")))
-    : [h("h1", { ondblclick: () => editNode(headId), title: "Double-click to edit" }, o.title || specName(spec.file), " ", iconButton("edit", "Edit title and introduction", () => editNode(headId))),
+    : [h("h1", { ondblclick: () => editNode(headId) }, o.title || specLabel(spec.file), " ", iconButton("edit", "Edit title and introduction", () => editNode(headId))),
       o.body.trim() && h("div", { class: "intro prose", html: markdown(o.body, spec.file) })]);
 
-  const stories = o.stories.map((s, i) => renderStory(spec, s, i, byKey)).filter((x): x is HTMLElement => !!x);
-  el.replaceChildren(toolbar, conflict || "", problem || "",
+  el.replaceChildren(conflict || "", problem || "",
     specFails?.length ? h("div", { class: "banner bad" }, h("span", {}, specFails.map((r) => `${r.stage}: ${r.summary}`).join("\n"))) : "",
     spec.deleted ? h("div", { class: "banner bad" }, h("span", {}, "Deleted on publish."), h("button", { class: "btn", type: "button", onclick: () => change(() => { spec.deleted = false; }) }, "Keep")) : "",
-    head, ...stories,
-    !S.q && !S.attention ? h("div", { class: "add newstory" }, h("button", { class: "btn", type: "button", onclick: () => addStory(spec) }, icon("plus"), "Story")) : "",
-    stories.length || !(S.q || S.attention) ? "" : h("div", { class: "empty" }, "Nothing matches."));
+    head, ...o.stories.map((s, i) => renderStory(spec, s, i, byKey)),
+    h("div", { class: "add newstory" }, h("button", { class: "btn", type: "button", onclick: () => addStory(spec) }, icon("plus"), "Story")));
   el.scrollTop = scroll;
   if (active && !document.activeElement?.closest("[data-uid]")) document.querySelector<HTMLElement>(`[data-uid="${active}"] > .row`)?.focus({ preventScroll: true });
 }
@@ -578,16 +514,14 @@ function renderStory(spec: Working, story: Story, s: number, byKey: Map<string, 
   const id = ui(spec.file, story.id);
   const review = reviewOf(spec, storyKey(story.title));
   const changed = storyChanged(spec, story, s);
-  const rules = story.rules.map((r, j) => renderRule(spec, story, s, r, j, byKey)).filter(Boolean);
-  if (!(matches(`${story.title}\n${story.body}`) && (!S.attention || changed || review)) && !rules.length) return null;
-  const open = S.open.has(id) || !!S.q || S.attention;
+  const open = S.open.has(id);
   const editing = S.editing.has(id);
   const [cls, label] = statusOf(changed, undefined, review);
   const unique = soleHeading(spec.outline.stories.map((x) => x.title.trim()), story.title.trim());
   const row = h("div", { class: `row${editing ? " editing" : ""}`, tabindex: 0, onkeydown: (e: KeyboardEvent) => keys(e, id) },
-    h("span", { class: "grip", title: "Drag to reorder, or to another spec", "aria-hidden": "true" }, icon("grip")),
+    h("span", { class: "grip", "aria-hidden": "true" }, icon("grip")),
     h("span", { class: `chev${open ? " open" : ""}`, "aria-hidden": "true", onclick: () => toggle(id) }, icon("chev")),
-    h("span", { class: "title", onclick: () => toggle(id), ondblclick: () => editNode(id), style: unique ? undefined : "color: var(--bad)", title: unique ? undefined : "Every story needs its own heading" }, story.title.trim() || "Untitled"),
+    h("span", { class: "title", onclick: () => toggle(id), ondblclick: () => editNode(id), style: unique ? undefined : "color: var(--bad)" }, story.title.trim() || "Untitled"),
     h("span", { class: "meta", title: "rules" }, story.rules.length),
     h("span", { class: `dot ${cls}`, role: "img", "aria-label": label || "in step", title: label }),
     h("span", { class: "actions" },
@@ -604,7 +538,8 @@ function renderStory(spec: Working, story: Story, s: number, byKey: Map<string, 
       h("div", { class: "bar" }, h("span", { class: "spacer" }), h("button", { class: "btn", type: "button", onclick: () => { S.editing.delete(id); renderDoc(); } }, icon("check"), "Done")))
       : open && story.body.trim() ? h("div", { class: "story prose", html: markdown(story.body, spec.file), ondblclick: () => editNode(id) }) : "",
     open && review && !editing ? h("div", { class: "story status review" }, review) : "",
-    open ? h("ul", { class: "rules" }, rules, !S.q && !S.attention ? h("li", { class: "add" }, h("button", { class: "btn", type: "button", onclick: () => addRule(spec, s) }, icon("plus"), "Rule")) : "") : "");
+    open ? h("ul", { class: "rules" }, story.rules.map((r, j) => renderRule(spec, story, s, r, j, byKey)),
+      h("li", { class: "add" }, h("button", { class: "btn", type: "button", onclick: () => addRule(spec, s) }, icon("plus"), "Rule"))) : "");
   draggable(card, id, "story");
   dropTarget(card, id, (k) => k === "story" || k === "rule");
   return card;
@@ -618,22 +553,20 @@ function renderRule(spec: Working, story: Story, s: number, rule: Rule, r: numbe
   const review = reviewOf(spec, key);
   const fails = byKey.get(nodeId(spec.file, key));
   const changed = ruleChanged(spec, story, rule, r);
-  if (!matches(`${rule.title}\n${rule.body}`) || (S.attention && !changed && !review && !fails)) return null;
   const open = S.open.has(id);
   const editing = S.editing.has(id);
   const [cls, label] = statusOf(changed, fails, review);
   const items = itemsOf(rule.body);
   const unique = soleHeading(story.rules.map((x) => x.title.trim()), rule.title.trim());
   const row = h("div", { class: `row${editing ? " editing" : ""}`, tabindex: 0, onkeydown: (e: KeyboardEvent) => keys(e, id) },
-    h("span", { class: "grip", title: "Drag to reorder, or into another story", "aria-hidden": "true" }, icon("grip")),
+    h("span", { class: "grip", "aria-hidden": "true" }, icon("grip")),
     h("span", { class: `chev${open ? " open" : ""}`, "aria-hidden": "true", onclick: () => toggle(id) }, icon("chev")),
-    h("span", { class: "title", onclick: () => toggle(id), ondblclick: () => editNode(id), style: unique ? undefined : "color: var(--bad)", title: unique ? undefined : "Every rule of a story needs its own heading" }, rule.title.trim() || "Untitled"),
-    h("span", { class: "kinds" }, kindsOf(items).map(([, , glyph, name]) => h("span", { title: name, role: "img", "aria-label": name }, glyph))),
+    h("span", { class: "title", onclick: () => toggle(id), ondblclick: () => editNode(id), style: unique ? undefined : "color: var(--bad)" }, rule.title.trim() || "Untitled"),
+    items.some((i) => i.quint) ? "" : h("span", { class: "kinds", role: "img", "aria-label": "no Quint", title: "no Quint" }, "∅"),
     h("span", { class: `dot ${cls}`, role: "img", "aria-label": label || "in step", title: label }),
     h("span", { class: "actions" }, iconButton("edit", "Edit rule", () => editNode(id)), moveMenu(id, "rule"), iconButton("trash", "Delete rule", () => removeNode(id), "danger")));
   const body = !open ? "" : editing ? renderRuleEditor(spec, id) : h("div", { class: "body" },
     items.map((i) => (i.quint ? h("pre", { class: "code", html: highlight(i.text) }) : h("div", { class: "prose", html: markdown(i.text, spec.file) }))),
-    !items.some((i) => i.quint) ? h("div", { class: "status review" }, "No Quint yet: the agent writes it on sync.") : "",
     review ? h("div", { class: "status review" }, review) : "",
     fails ? fails.map((f) => h("div", { class: "status bad" }, f)) : "");
   const li = h("li", { class: `rule${open ? " open" : ""}${changed ? " changed" : ""}`, "data-uid": id, ondblclick: (e: MouseEvent) => { if (!editing && (e.target as Element).closest(".body")) editNode(id); } }, row, body);
@@ -677,8 +610,8 @@ function moveMenu(id: string, kind: "story" | "rule") {
     } },
   h("option", { value: "", selected: true, disabled: true }, "⇅"),
   kind === "rule"
-    ? S.specs.filter((s) => !s.deleted).map((spec) => h("optgroup", { label: specName(spec.file) }, spec.outline.stories.map((s) => h("option", { value: `story|${ui(spec.file, s.id)}` }, s.title.trim() || "(untitled)"))))
-    : S.specs.filter((s) => !s.deleted && s.file !== home).map((spec) => h("option", { value: `spec|${spec.file}` }, `to ${specName(spec.file)}`)));
+    ? S.specs.filter((s) => !s.deleted).map((spec) => h("optgroup", { label: specLabel(spec.file) }, spec.outline.stories.map((s) => h("option", { value: `story|${ui(spec.file, s.id)}` }, s.title.trim() || "(untitled)"))))
+    : S.specs.filter((s) => !s.deleted && s.file !== home).map((spec) => h("option", { value: `spec|${spec.file}` }, `to ${specLabel(spec.file)}`)));
 }
 
 function toggle(id: string) {
@@ -702,8 +635,8 @@ function renderConflict(spec: Working) {
   const now = fresh ? titles(fresh.outline) : new Map<string, string>();
   const there = [...now].filter(([k, v]) => was.get(k) !== v).map(([k]) => k).concat([...was.keys()].filter((k) => !now.has(k)).map((k) => `${k} (removed)`));
   return h("div", { class: "banner" },
-    h("span", {}, fresh ? `${spec.file} changed on disk while you were editing it${there.length ? `: ${there.map((k) => k.replace(/^## /, "")).join("; ")}` : ""}.` : `${spec.file} was deleted on disk while you were editing it.`),
-    h("button", { class: "btn", type: "button", title: "Publishing will replace what changed on disk", onclick: () => keepMine(spec.file) }, "Keep mine"),
+    h("span", {}, fresh && there.length ? there.map((k) => k.replace(/^## /, "")).join(" · ") : `${spec.file}${fresh ? "" : " (removed)"}`),
+    h("button", { class: "btn", type: "button", onclick: () => keepMine(spec.file) }, "Keep mine"),
     h("button", { class: "btn", type: "button", onclick: () => takeTheirs(spec.file) }, "Take disk"));
 }
 function keepMine(file: string) {
@@ -712,20 +645,19 @@ function keepMine(file: string) {
   mine.base = fresh?.hash ?? null;
   mine.orig = fresh?.text ?? null;
   S.conflicts = S.conflicts.filter((f) => f !== file);
-  saveDraft();
   render();
 }
 function takeTheirs(file: string) {
   const fresh = S.snap!.specs.find((s) => s.file === file);
   S.specs = S.specs.flatMap((s) => (s.file !== file ? [s] : fresh ? [working(fresh)] : []));
   S.conflicts = S.conflicts.filter((f) => f !== file);
-  saveDraft();
   render();
 }
 
 // --- the build panel: the session -----------------------------------------------------------------------------
 
-const STAGES = ["model", "always", "sometimes", "replay", "types", "proof", "tests", "review"];
+/** Stories and rules waiting for review, in one spec or in all. */
+const reviewCount = (file?: string) => (S.snap?.specs ?? []).filter((s) => !file || s.file === file).reduce((n, s) => n + Object.keys(s.review).length, 0);
 
 function renderBuild() {
   const build = document.getElementById("build")!;
@@ -740,7 +672,7 @@ function renderBuild() {
   const manifest = snap.manifest;
   const results = check?.results ?? [];
   const blocking = results.filter((r) => !r.ok && r.stage !== "review");
-  const reviewCount = snap.specs.reduce((n, s) => n + Object.keys(s.review).length, 0);
+  const review = reviewCount();
 
   const stage = (name: string, state: string, mark: string | number, label: string) => h("div", { class: `stage ${state}` }, h("div", { class: "node", role: "img", "aria-label": `${name}: ${label}`, title: label }, mark), name);
   const pipeline = h("div", { class: "pipeline", "aria-label": "Where the project stands" },
@@ -748,26 +680,25 @@ function renderBuild() {
     stage("Publish", dirty.length ? "todo" : waiting ? "ok" : "idle", "", dirty.length ? "waiting to publish" : waiting ? "published" : "nothing to publish"),
     stage("Sync", running === "Syncing" ? "running" : waiting ? "todo" : "ok", waiting || "", waiting ? `${waiting} changes for the agent` : "in step"),
     stage("Check", running === "Checking" ? "running" : verdict === "Unknown" ? "idle" : verdict === "Failing" ? "bad" : "ok", blocking.length || "", { Unknown: "not checked since the specs changed", Failing: `${blocking.length} failing`, Reviewable: "only review left", Green: "all green" }[verdict]),
-    stage("Sign off", running === "SigningOff" ? "running" : reviewCount ? "todo" : verdict === "Green" ? "ok" : "idle", reviewCount || "", reviewCount ? `${reviewCount} to review` : "nothing to review"));
+    stage("Sign off", running === "SigningOff" ? "running" : review ? "todo" : verdict === "Green" ? "ok" : "idle", review || "", review ? `${review} to review` : "nothing to review"));
 
   const publishBlock = h("div", { class: "block" },
     h("div", { class: "buttons" },
       h("button", { class: "btn primary", type: "button", disabled: !can({ type: "publish", changes: 0 }), onclick: openPublish, title: "⌘S" }, icon("check"), dirty.length ? `Publish ${dirty.length}` : "Publish"),
       can({ type: "discard" }) ? h("button", { class: "btn", type: "button", onclick: discard }, "Discard") : ""));
 
-  const sign = { added: "+", deleted: "−", changed: "~" };
   const manifestBlock = manifest && h("div", { class: "block" },
-    h("h2", {}, "To sync", h("span", { class: "spacer" }), h("button", { class: "btn", type: "button", disabled: !can({ type: "markSynced" }), title: "The agent has synced these; start a new manifest", onclick: markSynced }, "Mark synced")),
-    h("ul", { class: "changes" }, manifest.changes.map((c) => h("li", {}, h("span", { class: `sign ${c.action}`, "aria-label": c.action }, sign[c.action]),
+    h("ul", { class: "changes" }, manifest.changes.map((c) => h("li", {}, h("span", { class: `sign ${c.action}`, "aria-label": c.action }, SIGN[c.action]),
       h("span", {}, c.kind === "spec" ? c.key : c.key.replace(/^## /, "").replace(/^Story: /, ""), c.what.length ? h("div", { class: "what" }, c.what.join(" · ")) : "")))),
-    manifest.regenerate.length ? h("div", { class: "what" }, `↻ ${manifest.regenerate.map((r) => r.gen).join(", ")}`) : "");
+    manifest.regenerate.length ? h("div", { class: "what" }, `↻ ${manifest.regenerate.map((r) => r.gen).join(", ")}`) : "",
+    h("div", { class: "buttons" }, h("button", { class: "btn", type: "button", disabled: !can({ type: "markSynced" }), onclick: () => start("synced") }, icon("check"), "Mark synced")));
 
   const agents = h("div", { class: "block" },
-    h("h2", {}, "Agent", h("span", { class: "spacer" }), iconButton("copy", "Copy the sync prompt", copyPrompt)),
     snap.agents.map((a) => h("div", { class: "agent" },
       h("span", { class: "label" }, a.label),
-      h("button", { class: "btn", type: "button", disabled: !a.available || !can({ type: "sync" }), title: !a.available ? `${a.label} is not installed` : dirty.length ? "Publish first" : `Run ${a.label} here on the sync prompt`, onclick: () => start("agent", { agent: a.id }) }, icon("play"), "Run"),
-      a.link ? h("a", { class: "btn", href: a.link, title: `Open ${a.label} on the sync prompt in a new chat` }, icon("open"), "Open") : "")));
+      h("button", { class: "btn", type: "button", disabled: !a.available || !can({ type: "sync" }), title: a.available ? undefined : `${a.label} is not installed`, onclick: () => start("agent", { agent: a.id }) }, icon("play"), "Run"),
+      a.link ? h("a", { class: "btn", href: a.link }, icon("open"), "Open") : "")),
+    h("div", { class: "buttons" }, iconButton("copy", "Copy the sync prompt", copyPrompt)));
 
   const jobBlock = job && h("div", { class: "job" },
     h("div", { class: "top" },
@@ -778,19 +709,14 @@ function renderBuild() {
     h("pre", { id: "log" }, job.log.join("\n") || "…"));
 
   const checkBlock = h("div", { class: "block" },
-    h("h2", {}, "Check", h("span", { class: "spacer" }), check ? h("span", { class: "meta" }, new Date(check.finished).toLocaleTimeString()) : ""),
-    check ? h("div", { class: "stages" }, STAGES.map((st) => {
-      const of = results.filter((r) => r.stage === st);
-      const state = of.some((r) => !r.ok) ? (st === "review" ? "review" : "bad") : of.length ? "ok" : "";
-      return h("span", { class: state, title: of.map((r) => r.summary).join("\n") || "skipped" }, st);
-    })) : "",
     running === "Checking" && jobs.check ? h("div", { class: "agent" }, h("span", { class: "label" }, "Checking…"), h("span", { class: "meta", "data-elapsed": "check" }, elapsed(jobs.check)), iconButton("stop", "Stop", () => start("stop")))
       : jobs.check?.status === "failed" && !check ? h("div", { class: "results" }, h("details", { open: true }, h("summary", {}, "The check did not finish"), h("pre", {}, jobs.check.log.join("\n")))) : "",
     check ? h("div", { class: "next" }, check.next) : "",
     blocking.length ? h("div", { class: "results" }, blocking.map((r) => h("details", {}, h("summary", {}, `${r.stage}: ${r.summary}`), r.detail ? h("pre", {}, r.detail) : ""))) : "",
     h("div", { class: "buttons" },
       h("button", { class: "btn", type: "button", disabled: !can({ type: "check" }), onclick: () => start("check") }, icon("play"), "Run check"),
-      h("button", { class: "btn", type: "button", disabled: !can({ type: "signOff" }), title: can({ type: "signOff" }) ? "Record the reviewed rules (npm run accept)" : "Only once a check has left only review, with nothing unpublished and nothing waiting for the agent", onclick: signOff }, icon("check"), "Sign off")));
+      h("button", { class: "btn", type: "button", disabled: !can({ type: "signOff" }), onclick: signOff }, icon("check"), "Sign off"),
+      check ? h("span", { class: "meta" }, new Date(check.finished).toLocaleTimeString()) : ""));
 
   build.replaceChildren(pipeline, publishBlock, manifestBlock || "", agents, jobBlock || "", checkBlock);
   const log = document.getElementById("log");
@@ -810,13 +736,8 @@ async function start(route: string, body: unknown = {}) {
 async function copyPrompt() {
   try { await navigator.clipboard.writeText(S.snap!.prompt); toast("Sync prompt copied"); } catch { toast("Could not copy"); }
 }
-async function markSynced() {
-  await start("synced");
-  await refresh();
-}
 function signOff() {
-  const count = S.snap!.specs.reduce((n, s) => n + Object.keys(s.review).length, 0);
-  if (confirm(`Sign off ${count} stories and rules? Do so only once you have read each one's prose and Quint and found they say the same thing.`)) start("accept");
+  if (confirm(`Sign off ${reviewCount()}?`)) start("accept");
 }
 function discard() {
   if (!confirm(`Discard unpublished changes to ${dirtySpecs().map((s) => s.file).join(", ")}?`)) return;
@@ -851,7 +772,7 @@ function openPublish() {
   dialog.replaceChildren(h("form", { method: "dialog" },
     h("header", {}, `Publish ${dirty.length === 1 ? dirty[0].file : `${dirty.length} specs`}`),
     h("div", { class: "content" },
-      unsound.length ? h("div", { class: "banner bad" }, h("span", {}, `${unsound.join(", ")}: every story and rule needs a heading, unique where it is (marked in red).`)) : "",
+      unsound.length ? h("div", { class: "banner bad" }, h("span", {}, unsound.join(", "))) : "",
       dirty.map((spec) => h("div", { class: "diff" }, h("div", { class: "file" }, spec.deleted ? `${spec.file} (deleted)` : spec.orig === null ? `${spec.file} (new)` : spec.file),
         spec.deleted ? "" : diff(spec.orig ?? "", publishedText(spec)!)))),
     h("footer", {},
@@ -881,7 +802,6 @@ async function publish(force = false): Promise<void> {
   S.items.clear();
   S.history = [];
   S.publishing = false;
-  try { localStorage.removeItem(draftKey()); } catch { /* nothing saved */ }
   await refresh(true);
   toast("Published");
 }
@@ -892,7 +812,6 @@ document.addEventListener("keydown", (e) => {
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName ?? "");
   if ((e.metaKey || e.ctrlKey) && e.key === "s") { e.preventDefault(); openPublish(); }
   else if ((e.metaKey || e.ctrlKey) && e.key === "z" && !typing && S.history.length) { e.preventDefault(); undo(); }
-  else if (e.key === "/" && !typing) { e.preventDefault(); document.querySelector<HTMLElement>(".search")?.focus(); }
   else if (e.key === "Escape" && typing && S.editing.size && !(document.getElementById("dialog") as HTMLDialogElement).open) {
     const id = (document.activeElement!.closest("[data-uid]") as HTMLElement | null)?.dataset.uid;
     if (id && S.editing.delete(id)) { S.items.delete(id); renderDoc(); focusLater(`[data-uid="${id}"] > .row`); }
@@ -909,7 +828,8 @@ document.addEventListener("click", (e) => {
   S.sel = link.dataset.spec!;
   render();
 });
-window.addEventListener("beforeunload", () => { if (dirtySpecs().length) saveDraft(); });
+// spec/index.md, "Edits stay in the page until they are published or discarded"
+window.addEventListener("beforeunload", (e) => { if (dirtySpecs().length) e.preventDefault(); });
 
 const { projects, open } = await (await fetch("/api/projects")).json();
 S.projects = projects;

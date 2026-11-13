@@ -25,7 +25,7 @@ export interface Step {
   /** A definition the simulator evaluated: what was picked for its sampled parameters, and what Quint got. */
   evaluated?: { name: string; picks: Record<string, unknown>; result: unknown };
   state?: unknown;
-  /** What the event output, in a spec whose transitions may output (AGENTS.md, "Transitions with output"). */
+  /** What the event output, in a spec whose transitions may output (gen/classify.ts, `Roles.output`). */
   out?: unknown[];
   lawsHold?: boolean;
   /** The fair events this state allows, if the spec declares any. */
@@ -67,16 +67,13 @@ let evaluatorInstalled = false;
 let firstRun: Promise<void> | undefined;
 function evaluatorIsInstalled(root: string): boolean {
   if (evaluatorInstalled) return true;
-  try {
-    for (const from of [import.meta.url, pathToFileURL(path.join(root, "package.json")).href]) {
-      let manager: string;
-      try { manager = createRequire(from).resolve("@informalsystems/quint/dist/src/rust/binaryManager.js"); } catch { continue; }
-      const version = fs.readFileSync(manager, "utf8").match(/QUINT_EVALUATOR_VERSION = '([^']+)'/)?.[1];
-      const home = process.env.QUINT_HOME ?? path.join(os.homedir(), ".quint");
-      const exe = process.platform === "win32" ? "quint_evaluator.exe" : "quint_evaluator";
-      if (version && fs.existsSync(path.join(home, `rust-evaluator-${version}`, exe))) return (evaluatorInstalled = true);
-    }
-  } catch { /* not known to be installed */ }
+  for (const from of [import.meta.url, pathToFileURL(path.join(root, "package.json")).href]) {
+    let version: string | undefined;
+    try { version = fs.readFileSync(createRequire(from).resolve("@informalsystems/quint/dist/src/rust/binaryManager.js"), "utf8").match(/QUINT_EVALUATOR_VERSION = '([^']+)'/)?.[1]; } catch { continue; }
+    const home = process.env.QUINT_HOME ?? path.join(os.homedir(), ".quint");
+    const exe = process.platform === "win32" ? "quint_evaluator.exe" : "quint_evaluator";
+    if (version && fs.existsSync(path.join(home, `rust-evaluator-${version}`, exe))) return (evaluatorInstalled = true);
+  }
   return false;
 }
 async function simulating<T>(root: string, go: () => Promise<T>): Promise<T> {
@@ -104,7 +101,7 @@ export async function simulate(root: string, model: Model, invariant: string, tr
   const runs = Array.from({ length: shards }, async (_, k) => {
     const out = shards === 1 ? dir : path.join(dir, String(k));
     fs.mkdirSync(out, { recursive: true });
-    const seed = shards === 1 ? seedFor(model.harness, invariant, step, String(samples), String(steps)) : seedFor(model.harness, invariant, step, String(samples), String(steps), `${k} of ${shards}`);
+    const seed = seedFor(model.harness, invariant, step, String(samples), String(steps), ...(shards === 1 ? [] : [`${k} of ${shards}`]));
     const args = ["run", `gen/${model.name}.run.qnt`, "--main", `${model.name}_run`, "--step", step, "--invariant", invariant,
       "--max-samples", String(Math.ceil(samples / shards)), "--max-steps", String(steps), "--mbt", "--seed", seed, ...(shards === 1 ? [] : ["--n-threads", "1"])];
     const r = await simulating(root, () => run("quint", [...args, "--n-traces", String(Math.ceil(traces / shards)), "--out-itf", path.join(out, "{seq}.itf.json")], root));
@@ -133,7 +130,7 @@ export async function search(root: string, model: Model, invariant: string, step
   for (const steps of depths) if ((run = await simulate(root, model, invariant, 1, Math.ceil(WITNESS_SAMPLES * STEPS / steps), step, false, steps)).broken) break;
   return run;
 }
-export const SEARCHED = () => `${WITNESS_SAMPLES} traces of ${STEPS} events and longer ones up to ${DEPTHS.at(-1)}`;
+export const SEARCHED = `${WITNESS_SAMPLES} traces of ${STEPS} events and longer ones up to ${DEPTHS.at(-1)}`;
 
 /**
  * Replay one Quint trace through the TypeScript domain; throws at the first difference. With the model, sets are
@@ -151,7 +148,7 @@ export function replay(domain: any, trace: Step[], model?: Model) {
       const { [SENDER]: by, ...carried } = event as Record<string, unknown>;
       if (!domain.enabled(s, carried, by)) throw differ(`on whether ${JSON.stringify(event)} is allowed in ${JSON.stringify(s)}`);
       const next = domain.step(s, carried, by);
-      // Where transitions output, `step` returns the state and the output (AGENTS.md, "Transitions with output").
+      // Where transitions output, `step` returns the state and the output (gen/classify.ts, `Roles.output`).
       [before, s, emitted] = model?.output ? [s, next.state, next.out] : [s, next, []];
       if (model?.output && !isDeepStrictEqual(canon(model.output.out, emitted), out)) throw differ(`on what ${JSON.stringify(event)} outputs in ${JSON.stringify(before)}: TypeScript gives ${JSON.stringify(emitted)}, Quint gives ${JSON.stringify(out)}`);
     } else if (evaluated && model) {

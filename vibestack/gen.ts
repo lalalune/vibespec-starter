@@ -42,8 +42,8 @@ export interface Model extends Roles {
   shape: ComparisonShape | undefined;
   /** The shape of emitted effects, when transitions return them beside the state. */
   outputShape: ComparisonShape | undefined;
-  /** What importers may refer to: `typedefs` are owned here; `visible` includes imported types. */
-  exports: { types: string[]; values: string[]; variants: string[]; typedefs: Json[]; visible: Json[]; samples: { name: string; elem: Json }[] };
+  /** What importers may refer to; `visible` includes imported types. */
+  exports: { types: string[]; values: string[]; variants: string[]; visible: Json[]; samples: { name: string; elem: Json }[] };
   ts: string;
   harness: string;
 }
@@ -53,7 +53,7 @@ export interface Origin { rule: string; line: number }
 
 /** Names a spec may not bind: the generated code, the harness, Dafny's standard library (Std) or the proof library (ProofLib) use them, or TypeScript reserves them. */
 const TAKEN = new Set([...EMITTED, ...HARNESS, ...`
-  Std ProofLib Number Math Object Array JSON Record Set Map String Boolean Symbol Error undefined NaN Infinity globalThis
+  Std ProofLib Number Math Object Array JSON Record Set Map String Boolean Symbol Error RangeError undefined NaN Infinity globalThis
   break case catch class const continue debugger default delete do else enum export extends false finally for function
   if import in instanceof new null return super switch this throw true try typeof var void while with yield let static await
   eval arguments implements interface package private protected public
@@ -200,6 +200,6 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
     ts, render, decode: types.decode, canon: types.canon,
     shape: roles.stateType ? types.comparison(roles.stateType) : undefined,
     outputShape: roles.output ? types.comparison(roles.output.out) : undefined,
-    exports: { types: localTypedefs.map((d) => d.name as string), values: [...localNames], variants: localVariants, typedefs: localTypedefs, visible: typedefs, samples: ownSamples },
+    exports: { types: localTypedefs.map((d) => d.name as string), values: [...localNames], variants: localVariants, visible: typedefs, samples: ownSamples },
   };
 }

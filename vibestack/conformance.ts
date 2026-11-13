@@ -80,7 +80,7 @@ export async function check<S, E, V>(oracle: Oracle<S, E>, found: Found<E>, driv
     for (const [i, [key, sent]] of trace.entries()) {
       const at = `event ${i + 1}, ${key} ${show(sent)}`;
       const { by, ...rawEvent } = sent as Sent<E> & Record<string, unknown>;
-      const before = model.get(key) ?? oracle.initial;
+      const before = model.get(key)!;
       const applied = transition(oracle, found, before, rawEvent, by);
       if (typeof applied === "string") return `${at}: ${applied}`;
       const { event, allowed, after, out } = applied;
@@ -176,7 +176,8 @@ export function transition<S, E>(oracle: Oracle<S, E>, found: Found<E>, before: 
   if (found.sender ? by === undefined || !oracle.parseSender || oracle.parseSender(by) === undefined : by !== undefined)
     return found.sender ? "the event needs a valid sender" : "the spec's events have no sender";
   const result = oracle.step(before, event, by);
-  return { event, allowed: oracle.enabled(before, event, by), after: found.outputShape ? (result as { state: S }).state : result as S, ...(found.outputShape ? { out: (result as { out: unknown }).out } : {}) };
+  const { state: after, out } = found.outputShape ? result as { state: S; out: unknown } : { state: result as S, out: undefined };
+  return { event, allowed: oracle.enabled(before, event, by), after, out };
 }
 
 /** Compare what the real application exposed, keeping sets independent of their iteration order. */
