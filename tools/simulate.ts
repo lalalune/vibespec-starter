@@ -13,6 +13,8 @@ export const SAMPLES = 10000;
 export const WITNESS_SAMPLES = 20 * SAMPLES;
 export const COMPARED_SAMPLES = 2000;
 export const REPLAYED = 200;
+/** Traces of the first simulation kept, for a spec with `leadsTo` rules, to look for runs that break one (`lasso`). */
+export const LASSO_TRACES = 2000;
 export const STEPS = 20; // events per trace
 /** Trace lengths a search for something reachable tries in turn, the longer ones only if the shorter found nothing. */
 export const DEPTHS = [STEPS, 2 * STEPS, 5 * STEPS];
@@ -24,6 +26,8 @@ export interface Step {
   evaluated?: { name: string; picks: Record<string, unknown>; result: unknown };
   state?: unknown;
   lawsHold?: boolean;
+  /** The fair events this state allows, if the spec declares any. */
+  fair?: string[];
 }
 
 function readTrace(file: string, model: Model): Step[] {
@@ -41,6 +45,7 @@ function readTrace(file: string, model: Model): Step[] {
       law: l && { name: l.name, args: picked(l.params) },
       state: model.stateType ? read(model.stateType, st.state) : undefined,
       lawsHold: st.lawsHold,
+      fair: st.fairEnabled?.["#set"],
     };
   });
 }
@@ -166,6 +171,42 @@ export function firstBreak(domain: any, model: Model, trace: Step[], cite: (def:
     if (steps.length) return found(`a step breaks ${steps.join(", ")}`);
     before = state;
   }
+}
+
+/**
+ * The shortest fair run in a trace that breaks a `leadsTo` rule, and how many loops the trace holds. A run is a lasso: the
+ * trace up to state `end`, then for ever either nothing (`loop === end`), which is fair if that state allows no fair event,
+ * or the states from `loop` to `end`, equal at both ends, again and again, which is fair if it takes every weakly fair
+ * event that each of its states allows and every strongly fair one that any allows. It breaks the rule if some state
+ * `from` on it is followed by none, itself included, that the rule relates it to.
+ */
+export function lasso(domain: any, model: Model, trace: Step[]): { broken?: { rule: string; from: number; loop: number; end: number }; loops: number } {
+  const keys = trace.map((s) => JSON.stringify(s.state));
+  const memo = new Map<string, boolean>();
+  const relates = (rule: string, i: number, j: number) => {
+    const at = `${rule} ${i} ${j}`;
+    if (!memo.has(at)) memo.set(at, domain[rule](trace[i].state, trace[j].state));
+    return memo.get(at)!;
+  };
+  const fair = (loop: number, end: number) => {
+    const allowed = trace.slice(loop, Math.max(end, loop + 1)).map((s) => s.fair ?? []);
+    const taken = trace.slice(loop + 1, end + 1).map((s) => s.event?.type);
+    return [...model.fair].every(([e, how]) => taken.includes(e) || !(how === "weak" ? allowed.every((a) => a.includes(e)) : allowed.some((a) => a.includes(e))));
+  };
+  let loops = 0;
+  for (let end = 0; end < trace.length; end++)
+    for (let loop = 0; loop <= end; loop++) {
+      if (loop < end && keys[loop] !== keys[end]) continue;
+      if (loop < end) loops++;
+      if (!fair(loop, end)) continue;
+      for (const rule of model.leadsTo)
+        for (let from = 0; from <= end; from++) {
+          let answered = false;
+          for (let j = Math.min(from, loop); j <= end && !answered; j++) answered = relates(rule, from, j);
+          if (!answered) return { broken: { rule, from, loop, end }, loops };
+        }
+    }
+  return { loops };
 }
 
 /**

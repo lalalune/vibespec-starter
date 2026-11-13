@@ -8,6 +8,12 @@ export interface Story { title: string; line: number; prose: string }
 /** `meaning` is the Quint as written, with every line of prose blank: what a cache key may depend on. */
 export interface Spec { name: string; file: string; rules: Rule[]; stories: Story[]; imports: string[]; qnt: string; meaning: string }
 
+/** The specs that ship with the tools (std/net.md); a spec imports one as it would one of its own. */
+const PACKAGE = path.join(import.meta.dirname, "..");
+export const isStd = (file: string) => file.startsWith("std/");
+/** Where a spec's file, or its proof file, is: in the project, or in the package for a spec from std/. */
+export const located = (root: string, file: string) => path.join(isStd(file) ? PACKAGE : root, file);
+
 /** Why a name cannot name a spec, or undefined if it can. */
 export function badSpecName(name: string): string | undefined {
   if (!/^[a-z][A-Za-z0-9]*$/.test(name)) return `a spec's file name becomes a module name, so it must look like \`order.md\` or \`orderBook.md\``;
@@ -46,7 +52,7 @@ export function scanSpec(text: string): { text: string; kind: LineKind }[] {
  * Markdown file. A fence of any other kind (``` or ~~~, of any length) is
  * prose, and closes only with a fence of the same character at least as long.
  */
-export function parseSpec(root: string, file: string, text = fs.readFileSync(path.join(root, file), "utf8")): Spec {
+export function parseSpec(root: string, file: string, text = fs.readFileSync(located(root, file), "utf8")): Spec {
   const name = path.basename(file, ".md");
   const bad = badSpecName(name);
   if (bad) throw new Error(`${file}: ${bad}`);
@@ -161,18 +167,23 @@ export function expandListHelpers(text: string): string {
   return expand(0, text.length);
 }
 
-/** Every spec, with each one after the specs it imports. */
+/** Every spec, with each one after the specs it imports; an import that names no spec of the project names one in std/. */
 export function readSpecs(root: string): Spec[] {
   const dir = path.join(root, "spec");
   const files = fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => f.endsWith(".md")).sort() : [];
   if (!files.length) throw new Error(`there are no specs: ${dir} holds no .md file`);
   const all = files.map((f) => parseSpec(root, path.join("spec", f)));
   const ordered: Spec[] = [];
+  const fromStd = (name: string) => {
+    if (!fs.existsSync(located(root, `std/${name}.md`))) return undefined;
+    all.push(parseSpec(root, `std/${name}.md`));
+    return all.at(-1);
+  };
   const visit = (spec: Spec, trail: string[]) => {
     if (ordered.includes(spec)) return;
     if (trail.includes(spec.name)) throw new Error(`specs import each other in a circle: ${[...trail, spec.name].join(" -> ")}`);
     for (const i of spec.imports) {
-      const dep = all.find((s) => s.name === i);
+      const dep = all.find((s) => s.name === i) ?? fromStd(i);
       if (!dep) throw new Error(`${spec.file} imports ${i}, but there is no spec/${i}.md`);
       visit(dep, [...trail, spec.name]);
     }
