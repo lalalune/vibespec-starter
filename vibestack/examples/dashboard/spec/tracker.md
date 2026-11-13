@@ -273,6 +273,9 @@ pure def removeOwner(s: Tracker, id: int, owner: str, actor: str): Tracker =
 
 ### A parent must exist and must not already depend on the task
 
+The parent must be another task. Any parent link can be removed, including one
+to a missing task or to the task itself.
+
 ```quint
 pure def canAddParent(s: Tracker, id: int, other: int, actor: str): bool =
   isMember(s, actor) and hasTask(s, id) and hasTask(s, other) and id != other and not(ancestors(s, other).includes(id))
@@ -288,8 +291,8 @@ pure def removeParent(s: Tracker, id: int, other: int, actor: str): Tracker =
 
 ### Related is written on both tasks at once
 
-Only the task the person edits counts as edited, so the other task's owners
-are not told. Any related link can be removed, including one to a missing
+A link is added only to another task that exists. Only the task the person
+edits counts as edited, so the other task's owners are not told. Any related link can be removed, including one to a missing
 task or to the task itself.
 
 ```quint
@@ -323,8 +326,10 @@ pure def deleteTask(s: Tracker, id: int, actor: str): Tracker =
 
 ### Renaming or removing a person through the dashboard rewrites every cell that names them
 
-Renaming a person removes duplicate names from every owners cell, even if the
-new name had already been entered there directly.
+A person can be renamed only to a name no team member has. Renaming a person
+removes duplicate names from every owners cell, even if the new name had
+already been entered there directly. Removing a person takes them off the team
+and out of every owners cell.
 
 ```quint
 pure def canRenameOwner(s: Tracker, owner: str, name: str, actor: str): bool =
@@ -351,10 +356,12 @@ pure def deleteOwner(s: Tracker, owner: str, actor: str): Tracker =
 ### A hand edit is accepted whatever it says
 
 Any name may be entered as an owner, including one already present, and any
-number as a link. Rows may be removed, leaving references to them dangling.
+number as a link. Rows may be removed, leaving references to them dangling,
+and a person may be removed from the team, leaving their name in owners cells.
 Rows are added only through the dashboard. The task number and bookkeeping
 columns (last edit, last announcement, reminders sent) are protected from
-direct edits; the system records the time and editor when a hand edit arrives.
+direct edits; when a hand edit to a row arrives, the system records the time,
+and `sheet` as the editor, so no owner counts as its author.
 
 ```quint
 pure def canHandAddOwner(s: Tracker, id: int, name: str): bool = hasTask(s, id)
@@ -441,7 +448,8 @@ An edit is announced to the task's owners who are project members, apart from
 the person who made it. When two people edit a task within the quiet period,
 only the last of them is left out. Deleting a task, renaming or removing a
 person, and a fix are not announced. A reminder goes to all such owners. A
-finished task, or one without a due date, gets no reminder.
+finished task, or one without a due date (a due date of 0 or less), gets no
+reminder.
 
 ```quint
 pure def knownOwners(s: Tracker, t: Task): List[str] = distinctNames(t.owners.select(o => s.owners.includes(o)))
@@ -489,8 +497,8 @@ pure def sometimesAnOwnerIsToldOfAnEdit(s: Tracker): bool = s.sent.some(n => n.k
 
 ### Nothing is sent twice
 
-Each settled version of an edit is announced to each person once. A reminder
-goes to each person once per due date, even when the date is changed and later
+Each settled version of an edit is announced to each person once. Each kind of
+reminder goes to each person once per due date, even when the date is changed and later
 changed back, because the spreadsheet keeps every date already reminded for.
 
 Discovered by simulation: when a name appeared twice in an owners cell, the
@@ -527,7 +535,9 @@ pure def alwaysWhatWasSentIsRecorded(s: Tracker): bool =
 
 ### Reminders go out at the right distance from the due date
 
-Both kinds of reminder do go out.
+A heads-up goes out 1 to `soonDays` days before the due date, and a due-day
+reminder on the day or up to `lateDays` days after it. Both kinds of reminder
+do go out.
 
 ```quint
 pure def alwaysRemindersAreTimely(s: Tracker): bool =
