@@ -198,7 +198,10 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
       job.finished = Date.now();
       if (job.status === "running") job.status = code === 0 ? "passed" : "failed";
       job.child = undefined;
-      try { done(job, out); } catch (e) { job.log.push(`✗ ${(e as Error).message}`); }
+      try { done(job, out); } catch (e) {
+        if (job.status !== "stopped") job.status = "failed";
+        job.log.push(`✗ ${(e as Error).message}`);
+      }
       jobChanged(live);
     });
     jobChanged(live);

@@ -897,6 +897,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     fs.mkdirSync(path.join(root, "src/components.ts"), { recursive: true });
     const studio = await startStudio({ projects: [{ id: ".", name: "Door", root }], port: 0, agents: {
       ledgerEdit: { label: "Ledger writer", command: () => [process.execPath, ["-e", "require('node:fs').appendFileSync('spec/lock.json', '\\n')"]] },
+      invalidState: { label: "State writer", command: () => [process.execPath, ["-e", "const fs = require('node:fs'); fs.rmSync('.studio', { recursive: true }); fs.writeFileSync('.studio', 'invalid')"]] },
     } });
     const url = studio.url.replace("localhost", "127.0.0.1");
     const post = (route: string, body: unknown, headers: Record<string, string> = {}) => fetch(`${url}/api/${route}`, {
@@ -985,6 +986,26 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       assert.equal(editedLedger.jobs.agent.status, "failed");
       assert.match(editedLedger.jobs.agent.log.join("\n"), /spec\/lock.json: not marked synced/);
       assert.ok(fs.existsSync(path.join(root, ".studio/manifest.json")));
+      const events = await fetch(`${url}/api/events`, { signal: AbortSignal.timeout(30_000) });
+      const reader = events.body!.getReader();
+      try {
+        assert.equal((await post("agent", { agent: "invalidState" })).status, 200);
+        let text = "", finished = false;
+        while (!finished) {
+          const { value, done } = await reader.read();
+          assert.equal(done, false);
+          text += new TextDecoder().decode(value);
+          const frames = text.split("\n\n");
+          text = frames.pop()!;
+          for (const frame of frames.filter((f) => f.startsWith("event: job\n"))) {
+            const job = JSON.parse(frame.split("\ndata: ")[1]).jobs.agent;
+            if (!job.finished) continue;
+            assert.equal(job.status, "failed");
+            assert.match(job.log.join("\n"), /ENOTDIR/);
+            finished = true;
+          }
+        }
+      } finally { await reader.cancel(); }
     } finally {
       await studio.close();
     }
