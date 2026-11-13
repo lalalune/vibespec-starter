@@ -4,12 +4,20 @@
   "private": true,
   "type": "module",
   "sideEffects": false,
-  "exports": { ".": "./src/index.ts" },
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "scripts": {
-    "test": "vitest run",
+    "stories": "node ../../vibestack/stories/cli.ts gen --check",
+    "storybook": "storybook dev --no-open",
+    "build": "pnpm stories && storybook build",
+    "test": "pnpm stories && vitest run",
     "typecheck": "tsc --noEmit -p ."
   },
-  "peerDependencies": { "react": "^19", "react-dom": "^19" },
+  "peerDependencies": {
+    "react": "^19",
+    "react-dom": "^19"
+  },
   "dependencies": {
     "@radix-ui/react-checkbox": "catalog:",
     "@radix-ui/react-dialog": "catalog:",
@@ -21,6 +29,11 @@
     "tailwind-merge": "catalog:"
   },
   "devDependencies": {
+    "@repo/design-system": "workspace:*",
+    "@storybook/addon-a11y": "catalog:",
+    "@storybook/addon-vitest": "catalog:",
+    "@storybook/react-vite": "catalog:",
+    "@tailwindcss/vite": "catalog:",
     "@testing-library/dom": "catalog:",
     "@testing-library/react": "catalog:",
     "@testing-library/user-event": "catalog:",
@@ -29,7 +42,11 @@
     "happy-dom": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
+    "storybook": "catalog:",
+    "tailwindcss": "catalog:",
     "typescript": "catalog:",
+    "vibestack": "workspace:*",
+    "vite": "catalog:",
     "vitest": "catalog:"
   }
 }

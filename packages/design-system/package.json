@@ -11,7 +11,7 @@
   "scripts": {
     "build": "node ../../vibestack/design/cli.ts build",
     "check": "node ../../vibestack/design/cli.ts check",
-    "test": "vitest run --root ../.. vibestack/design/test"
+    "test": "vitest run"
   },
   "devDependencies": {
     "eslint": "catalog:",

@@ -16,7 +16,6 @@ export function Progress({ value, max = 100, className, ...props }: ProgressProp
     <ProgressPrimitive.Root value={value} max={max} className={cn("h-2 w-full overflow-hidden rounded-lg bg-secondary", className)} {...props}>
       <ProgressPrimitive.Indicator
         className={cn("size-full origin-left bg-primary transition-transform", done === null && "animate-pulse")}
-        // eslint-disable-next-line -- the fill is a runtime number, which no utility class can carry
         style={done === null ? undefined : { transform: `scaleX(${done})` }}
       />
     </ProgressPrimitive.Root>

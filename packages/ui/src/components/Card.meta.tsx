@@ -1,4 +1,4 @@
-import type { ComponentMeta } from "@repo/storybook";
+import type { ComponentMeta } from "vibestack/stories";
 import { Button } from "./Button.tsx";
 import { CardFooter, type CardProps, CardTitle } from "./Card.tsx";
 import { Progress } from "./Progress.tsx";
