@@ -192,7 +192,14 @@ export function checkVerifiedSource(file: string, code: string) {
   const lineComments: [number, number][] = [];
   const visit = (n: TS.Node) => {
     if (n.kind >= ts.SyntaxKind.FirstJSDocNode && n.kind <= ts.SyntaxKind.LastJSDocNode) return;
-    if (ts.isIdentifier(n) && (n.text === "Std" || n.text === "ProofLib")) refuse(n.getStart(), `\`${n.text}\` names a Dafny library in the proof; use another name`);
+    if (ts.isIdentifier(n) && (n.text === "Std" || n.text === "ProofLib")) {
+      const declaration = n.parent;
+      if ((ts.isVariableDeclaration(declaration) || ts.isParameter(declaration) || ts.isFunctionDeclaration(declaration)
+        || ts.isFunctionExpression(declaration) || ts.isInterfaceDeclaration(declaration) || ts.isTypeAliasDeclaration(declaration)
+        || ts.isTypeParameterDeclaration(declaration) || ts.isBindingElement(declaration) || ts.isImportSpecifier(declaration)
+        || ts.isImportClause(declaration) || ts.isNamespaceImport(declaration)) && declaration.name === n)
+        refuse(n.getStart(), `\`${n.text}\` names a Dafny library in the proof; use another name`);
+    }
     for (const c of ts.getLeadingCommentRanges(code, n.pos) ?? []) if (c.kind === ts.SyntaxKind.SingleLineCommentTrivia) lineComments.push([c.pos, c.end]);
     n.getChildren(sf).forEach(visit);
   };
