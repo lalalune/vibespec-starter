@@ -175,6 +175,7 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
       ["a variant field called tag", "type P = A({ tag: int }) | B\npure val initial: int = 0\npure def tick(n: int): int = n", /cannot be called `tag`/],
       ["a match binder used as a whole value", "type N = { n: int }\ntype P = A(N) | B\npure val initial: int = 0\npure def g(r: N): int = r.n\npure def f(p: P): int = match p { | A(x) => g(x) | _ => 0 }\npure def tick(n: int): int = n", /is what a match arm carries/],
       ["state declared by hand", "pure val initial: int = 0\nvar n: int", /only types, imports, `pure val` and `pure def` belong in a spec/],
+      ["a constant without a value", "pure val initial: int = 0\nconst n: int\npure def tick(k: int): int = k", /a `const` is an opaque function/],
     ];
     for (const [what, quint, message] of refused) {
       const { said, text } = await run(oneRule("t", "A rule", quint));
@@ -210,6 +211,47 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.ok(broken.said("always", /a step breaks[\s\S]*\n\s+close\s+-> open = true\n/), broken.text);
     const stray = await run(vault((s) => s.replace("canRelabel(v: Vault, by: Actor): bool = by", "canRelabel(v: Vault, who: Actor): bool = who")));
     assert.ok(stray.said("model", /canRelabel: `who` must be a parameter of relabel/), stray.text);
+  });
+
+  test("a secret reaches no place whose type is not secret, but through a declassify function that review names", async () => {
+    const card = (edit: (s: string) => string = (s) => s) => fixtures(["card"], (f) => { f["spec/card.md"] = edit(f["spec/card.md"]); });
+    const shown = 'Shown({ text: if (declassifyNone(w.card)) "none" else "saved" })';
+    const leaks: [string, (s: string) => string, RegExp][] = [
+      ["shown", (s) => s.replace(shown, "Shown({ text: w.card })"), /\bhint \(spec\/card\.md:\d+\): a secret reaches the field text, of type str, which is not secret/],
+      ["choosing what is shown", (s) => s.replace("declassifyNone(w.card)", 'w.card == ""'), /\bhint .*: a secret reaches the field text/],
+      ["through a helper", (s) => s.replace(shown, "show(w.card)").replace("pure def hint(", "pure def show(t: str): Effect = Shown({ text: t })\npure def hint("), /\bshow \(.*: a secret reaches the field text/],
+      ["kept in a field that is not secret", (s) => s.replace("{ card: SecretCard, out", "{ card: SecretCard, note: str, out").replace('{ card: "", out', '{ card: "", note: "", out').replace("{ ...w, card: card }", "{ ...w, card: card, note: card }"), /\bsave .*: a secret reaches the field note/],
+      ["deciding whether an event may happen", (s) => s.replace("pure def pay(", 'pure def canPay(w: Wallet): bool = w.card == "4111"\npure def pay('), /\bcanPay .*: what it returns depends on a secret, but its type bool is not secret/],
+    ];
+    const [ok, ...broken] = await Promise.all([run(card()), ...leaks.map(([, edit]) => run(card(edit)))]);
+    assert.deepEqual(ok.failed, ["review"], ok.text);
+    assert.ok(ok.said("review", /new, and declassifies a secret through declassifyNone/), ok.text);
+    leaks.forEach(([what, , message], i) => assert.equal(broken[i].said("model", message)?.ok, false, `${what}\n${broken[i].text}`));
+  });
+
+  test("an opaque function is simulated as a table its laws allow, chosen per trace, and proved only through its laws", async () => {
+    const proof = "lemma issue_ensures(d: Desk, name: string)\n  ensures (inv(d) ==> alwaysTheLastCodeIsADigit(issue(d, name)))\n{\n  lawCodeIsADigit_ensures(name);\n}\n";
+    const badge = (edit: (s: string) => string = (s) => s, files: Record<string, string> = { "spec/badge.proof.dfy": proof }) =>
+      fixtures(["badge"], (f) => { f["spec/badge.md"] = edit(f["spec/badge.md"]); Object.assign(f, files); });
+    const root = badge();
+    const [ok, unproved, chance, contradiction] = await Promise.all([
+      run(root),
+      run(badge(undefined, {})),
+      run(badge((s) => s.replace("0 <= d.last and d.last <= 9", "d.last <= 5"))),
+      run(badge((s) => s.replace("pure def lawCodeIsADigit", "pure def lawCodeIsNegative(name: str): bool = code(name) < 0\npure def lawCodeIsADigit"),
+        { "spec/user.md": `# User\n\n## Group\n\n### Uses badges\n\n${F}quint\nimport badge as B from "./badge"\npure val two = 2\n${F}\n` })),
+    ]);
+    assert.deepEqual(ok.failed, ["review"], ok.text);
+    assert.ok(ok.said("proof", /^badge\.ts: all 3 obligations proved/), ok.text);
+    assert.match(fs.readFileSync(path.join(root, "gen/proof/badge/badge.dfy"), "utf8"), /^function \{:axiom\} code\(p0: string\): int$[\s\S]*^lemma \{:axiom\} lawCodeIsADigit_ensures\(name: string\)$/m);
+    const gen = await import(path.join(root, "gen/badge.ts"));
+    assert.throws(() => gen.step(gen.initial, { type: "issue", name: "a" }), /code is opaque in spec\/badge\.md/);
+    gen.opaque.code = (name: string) => name.length;
+    assert.equal(gen.step(gen.initial, { type: "issue", name: "abc" }).last, 3);
+    assert.equal(unproved.said("proof", /^badge\.ts: 2 of 3 obligations not proved/)?.ok, false, unproved.text);
+    assert.equal(chance.said("always", /breaks "Story: Issue a badge \/ The last code issued is a digit"/)?.ok, false, chance.text);
+    assert.equal(contradiction.said("always", /no table the simulator chose for code satisfies the laws stated with them/)?.ok, false, contradiction.text);
+    assert.equal(contradiction.said("model", /import of badge: it declares opaque functions \(code\)/)?.ok, false, contradiction.text);
   });
 
   test("a rule broken only on the way to a `sometimes` goal is still reported", async () => {

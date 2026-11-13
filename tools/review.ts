@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { readSpecs, type Spec, type Story, type Rule } from "./parse.ts";
 import { short, srcUnits, indent } from "./util.ts";
+import { DECLASSIFY } from "./gen/secrecy.ts";
 
 const lockFile = (root: string, spec: Spec) => path.join(root, spec.file.replace(/\.md$/, ".lock.json"));
 /** Prose may be re-wrapped without becoming a different sentence. Code may not: a line break can end a comment. */
@@ -118,6 +119,9 @@ export function pending(root: string, spec: Spec, specs: Spec[] = readSpecs(root
       note = changed.length ? ` through ${changed.map((d) => `${[...d.names].join(", ")} (${d.spec === spec ? "" : `${d.spec.file}: `}${d.rule.key})`).join("; ")}`
         : was[1] === code ? (was.length < 3 ? " (what it relies on was not recorded before)" : " through a definition it relies on") : undefined;
     }
+    // A way out for a secret is named in review whenever it is new or changed (tools/gen/secrecy.ts).
+    const outlet = rule.defs.filter((d) => DECLASSIFY.test(d));
+    if (status && outlet.length) note = `${note ?? ""}, and declassifies a secret through ${outlet.join(", ")}`;
     if (status) out.push({ where: `${spec.file}:${rule.line}  ${rule.key}`, rule, status, note });
   }
   for (const key of Object.keys(lock))

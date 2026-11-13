@@ -1,6 +1,6 @@
 // The TypeScript module for one spec: its types, its definitions with their proof obligations, and, for a state
 // machine, the event type and the functions that apply and admit events.
-import { SENDER, type Param, type Roles, type Transition } from "./classify.ts";
+import { SENDER, type Opaque, type Param, type Roles, type Transition } from "./classify.ts";
 import type { Printer } from "./print.ts";
 import type { Json, Types } from "./types.ts";
 
@@ -16,11 +16,12 @@ export interface Source {
   doc: (def: string) => string;
   /** One of the module's own top-level names, as this rendering spells it. */
   local: (name: string) => string;
+  source: string;
 }
 
-export function typescript({ header, typedefs, vals, funs, sig, typeOf, doc, local: L }: Source, roles: Roles, types: Types, print: Printer, helper: (which: string) => string): string {
+export function typescript({ header, typedefs, vals, funs, sig, typeOf, doc, local: L, source }: Source, roles: Roles, types: Types, print: Printer, helper: (which: string) => string): string {
   const { tsType, declaration, wellFormed, copy } = types;
-  const { transitions, always, steps, laws, sender } = roles;
+  const { transitions, always, steps, laws, sender, opaques } = roles;
   const state = roles.stateType && tsType(roles.stateType);
   // Who sent an event is never part of it: the program passes it to `enabled` and `step` from what it trusts.
   const carried = (t: Transition) => t.params.filter((p) => p.name !== SENDER);
@@ -31,6 +32,25 @@ export function typescript({ header, typedefs, vals, funs, sig, typeOf, doc, loc
     `/** One variant per transition in the spec${sender ? `, without \`${SENDER}\`: who sent it is passed beside it` : ""}. */`,
     `export type ${L("Event")} =`,
     ...transitions.map((t) => `  | { type: ${JSON.stringify(t.name)}${carried(t).map((p) => `; ${p.name}: ${tsType(p.type)}`).join("")} }`).map((l, i, all) => (i === all.length - 1 ? l + ";" : l)),
+  );
+  // The program gives each opaque function, and replay gives the table a trace chose (tools/simulate.ts, standIn). The
+  // proof knows one only by its type and the laws assumed of it: LemmaScript declares an extern without its body.
+  const signature = (o: Opaque) => `(${o.params.map((p) => `${p.name}: ${tsType(p.type)}`).join(", ")}): ${tsType(o.result)}`;
+  if (opaques.length) out.push(
+    ``,
+    `/** The spec's opaque functions, which the program sets before it calls anything that uses them. */`,
+    `//@ skip`,
+    `export const ${L("opaque")}: { ${opaques.map((o) => `${o.name}?: ${signature(o).replace("): ", ") => ")}`).join("; ")} } = {};`,
+  );
+  for (const o of opaques) out.push(
+    ``,
+    `${doc(o.name)}//@ extern`,
+    `//@ pure`,
+    `export function ${L(o.name)}${signature(o)} {`,
+    `  const given = ${L("opaque")}.${o.name};`,
+    `  if (!given) throw new Error(${JSON.stringify(`${o.name} is opaque in ${source}: set opaque.${o.name} first`)});`,
+    `  return given(${o.params.map((p) => p.name).join(", ")});`,
+    `}`,
   );
   out.push(``, ...vals.map((d) => `${doc(d.name)}export const ${L(d.name)}: ${tsType(typeOf(d.id))} = ${print.ex(d.expr)};`));
   if (state) out.push(

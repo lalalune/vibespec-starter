@@ -64,8 +64,10 @@ export function typeWalks(typedefs: Json[], module: string, prefix = "") {
   // --- spellings -------------------------------------------------------------
   const typeName = (d: Json): string => (d.module === module ? prefix + d.name : `${d.module}_${d.base}`);
   const tsType = (t: Json): string => {
+    // An alias of int, bool or str is spelled as what it names: LemmaScript reads a comparison with a string literal
+    // on such an alias as a test of a variant's tag.
+    if (PRIMITIVE[resolve(t).kind]) return PRIMITIVE[resolve(t).kind];
     if (t.kind === "const") return typeName(typedef(t.name));
-    if (PRIMITIVE[t.kind]) return PRIMITIVE[t.kind];
     if (t.kind === "list") return `${tsType(t.elem)}[]`;
     if (t.kind === "set") return `${tsType(setElem(t))}[]`;
     if (t.kind === "fun") return resolve(t.arg).kind === "str" ? `Record<string, ${tsType(t.res)}>` : fail("a map's keys must be strings");

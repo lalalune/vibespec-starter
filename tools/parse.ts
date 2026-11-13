@@ -77,7 +77,7 @@ export function parseSpec(root: string, file: string, text = fs.readFileSync(pat
       block += text + "\n";
       meaning.push(text);
       rule!.code += text + "\n";
-      const def = text.match(/^\s*(?:pure\s+)?(?:def|val|type)\s+(\w+)/);
+      const def = text.match(/^\s*(?:pure\s+)?(?:def|val|type|const)\s+(\w+)/);
       if (def) rule!.defs.push(def[1]);
       const dep = text.match(/^\s*import\s+(\w+)\b/);
       if (dep) imports.push(dep[1]);

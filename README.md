@@ -427,6 +427,12 @@ Trusted, not proved:
 - **The shell** (`src/app.ts`), LemmaScript, Dafny and Quint.
 - **Built-ins.** The proofs assume that built-ins such as `Math` and
   `Array.prototype` are not modified at run time, anywhere in the process.
+- **Opaque functions.** The laws stated with a `const` are assumed, and what
+  the program sets as its implementation is not checked against them
+  ([Opaque functions](AGENTS.md#opaque-functions)).
+- **Secrets.** The flow check reads the spec: a `declassify…` function lets
+  out what it returns, and the shell must keep secrets from logs itself
+  ([Secrets](AGENTS.md#secrets)).
 - **Preconditions.** A `//@ requires` that can never hold makes a contract
   vacuous: everything after it is proved. That is why contracts are reviewed,
   through `spec/src.lock.json`.
