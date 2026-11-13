@@ -12,7 +12,7 @@ import { importedMeanings, originalColumn, type Spec } from "./parse.ts";
 import { defines } from "./review.ts";
 import { entry, recall, store, type Memory } from "./cache.ts";
 import { plainText } from "./scan.ts";
-import { filesUnder, readSrc, type SrcFile } from "./util.ts";
+import { codeDirOf, codeDirs, filesUnder, owner, readSrc, type SrcFile } from "./util.ts";
 import { effectAdapter } from "./gen/vibe.ts";
 
 const ANNOTATIONS = ["backend", "pure", "requires", "ensures", "invariant", "decreases", "type", "ghost", "assert"];
@@ -63,6 +63,26 @@ export function generated(root: string, spec: Spec, ir: any, models: Map<string,
   writeConformance(root, model);
   models.set(spec.name, model);
   return model;
+}
+
+/**
+ * Each owner's gen/, written anew from the root's: the modules of its specs and of every spec they import, under the
+ * root's module names, with their Effect adapters and conformance helpers, so that a package imports only from its
+ * own gen/. A module not generated, because its spec is not valid, is not there.
+ */
+export function mirrorGen(root: string, specs: Spec[]) {
+  const from = path.join(root, "gen");
+  for (const dir of codeDirs(root).filter(Boolean)) {
+    const needed = new Set<string>();
+    const need = (name: string) => { if (!needed.has(name)) { needed.add(name); specs.find((s) => s.name === name)?.imports.forEach(need); } };
+    for (const spec of specs) if (`${owner(root, spec.file)}/` === dir) need(spec.name);
+    const to = path.join(root, dir, "gen");
+    fs.rmSync(to, { recursive: true, force: true });
+    const files = fs.readdirSync(from).filter((f) => needed.has(f.match(/^(\w+)\.(?:ts|effect\.vibe|conformance\.ts)$/)?.[1] ?? ""));
+    if (!files.length) continue;
+    fs.mkdirSync(to, { recursive: true });
+    for (const f of [...files, "package.json", ...files.some((f) => f.endsWith(".conformance.ts")) ? ["_conformance.ts"] : []]) fs.copyFileSync(path.join(from, f), path.join(to, f));
+  }
 }
 
 /**
@@ -147,33 +167,33 @@ export function proofUnits(root: string, models: Model[], srcFiles: SrcFile[] = 
     transitions: m.stateType ? m.transitions.map((t) => ({ name: t.name, params: t.params.map((p) => p.name) })) : undefined,
   }));
 
-  const src = path.join(root, "src");
   const other = srcFiles.find((u) => !u.ts);
-  if (other) throw new Error(`src/${other.file}: \`//@\` appears in it, but only .ts files under src/ are proved; rename it to .ts or remove the annotations`);
+  if (other) throw new Error(`${other.file}: \`//@\` appears in it, but only .ts files under src/ are proved; rename it to .ts or remove the annotations`);
   for (const { file: f, code } of srcFiles.filter((u) => u.ts)) {
     // Wherever `//@` appears, even after other text on the line, LemmaScript may read it.
     const used = [...code.matchAll(/\/\/@\s*([\w-]*)/g)].map((m) => m[1]);
     const refused = used.find((k) => !ANNOTATIONS.includes(k));
-    if (refused !== undefined) throw new Error(`src/${f}: \`//@ ${refused}\` is not allowed; verified code may only use ${ANNOTATIONS.join(", ")}`);
-    if (/\bimport\s*\(|\brequire\s*\(/.test(code)) throw new Error(`src/${f}: verified code may not load other code with import() or require()`);
-    checkVerifiedSource(`src/${f}`, code);
+    if (refused !== undefined) throw new Error(`${f}: \`//@ ${refused}\` is not allowed; verified code may only use ${ANNOTATIONS.join(", ")}`);
+    if (/\bimport\s*\(|\brequire\s*\(/.test(code)) throw new Error(`${f}: verified code may not load other code with import() or require()`);
+    checkVerifiedSource(f, code);
     const { kept, from } = withoutImports(code);
     const deps = from.map((spec) => {
-      const target = path.resolve(src, path.dirname(f), spec);
-      return models.find((m) => target === path.join(root, `gen/${m.name}.ts`))?.name ?? fail(`src/${f}: verified code may only import generated modules (gen/<name>.ts), not ${spec}`);
+      // The gen/ of the file's own package: the root's, or the one an owner is given (mirrorGen).
+      const target = path.resolve(root, path.dirname(f), spec);
+      return models.find((m) => target === path.join(root, `${codeDirOf(f)}gen/${m.name}.ts`))?.name ?? fail(`${f}: verified code may only import generated modules (gen/<name>.ts), not ${spec}`);
     });
-    if (new Set(deps).size > 1) throw new Error(`src/${f}: verified code may import one generated module; put what it needs from the others into that module's spec`);
+    if (new Set(deps).size > 1) throw new Error(`${f}: verified code may import one generated module; put what it needs from the others into that module's spec`);
     // The module it imports sits beside it under its own names, as the code refers to them.
     const d = deps[0];
     const beside = (docs: boolean) => d ? bundle(byName.get(d)!, docs).map(withoutObligations) : [];
     units.push({
       requires: used.filter((k) => k === "requires").length,
-      unit: `src-${f.replaceAll("/", "-")}`,
-      text: [...beside(true), `// ---- src/${f} ----`, kept].join("\n"),
+      unit: f.replaceAll("/", "-"),
+      text: [...beside(true), `// ---- ${f} ----`, kept].join("\n"),
       // The hand-written code exactly as it is: only what the tools generated is read without its citations.
-      meaning: [...beside(false), `// ---- src/${f} ----`, kept].join("\n"),
+      meaning: [...beside(false), `// ---- ${f} ----`, kept].join("\n"),
       src: true,
-      proofFile: `src/${f.replace(/\.ts$/, ".proof.dfy")}`,
+      proofFile: f.replace(/\.ts$/, ".proof.dfy"),
       imports: imported(d ? [...prefixed(needs(byName.get(d)!)), [d, ""]] : []),
       rests: d ? [...needs(byName.get(d)!), d].map((m) => `${m}.ts`) : [],
       ...assumptions(d ? byName.get(d) : undefined),
@@ -230,7 +250,7 @@ export function checkVerifiedSource(file: string, code: string) {
 }
 
 /** Every proof file of the project. */
-export const proofFiles = (root: string) => ["spec", "src"].flatMap((dir) => filesUnder(root, dir)).filter((f) => f.endsWith(".proof.dfy"));
+export const proofFiles = (root: string) => ["spec", ...codeDirs(root).map((dir) => `${dir}src`)].flatMap((dir) => filesUnder(root, dir)).filter((f) => f.endsWith(".proof.dfy"));
 
 /** Proof files that belong to no unit: a typo, or a source file that is no longer proved. */
 export const strayProofFiles = (root: string, units: Unit[]) => proofFiles(root).filter((f) => !units.some((u) => u.proofFile === f));

@@ -43,12 +43,31 @@ export function nodeRunsVibelang(version = process.versions.node): boolean {
   return major === 22 ? from(22, 3) : major === 24 ? from(11, 1) : major > 24;
 }
 
+/**
+ * The workspace package a spec belongs to by name, as a path from the root: `spec/<name>/…` is `apps/<name>` or
+ * `packages/<name>`, if that is a package with no `spec/` of its own. The root's check generates into its `gen/` and
+ * checks its code (AGENTS.md, "One spec tree").
+ */
+export function owner(root: string, spec: string): string | undefined {
+  const [top, name, below] = spec.split("/");
+  if (top !== "spec" || below === undefined) return undefined;
+  return [`apps/${name}`, `packages/${name}`].find((dir) => fs.existsSync(path.join(root, dir, "package.json")) && !fs.existsSync(path.join(root, dir, "spec")));
+}
+/**
+ * The directories whose code a check reads, each as the prefix of a path from the root: "" for the root's own
+ * `src/` and `test/`, then `apps/app/` for each package that owns a directory of the spec tree.
+ */
+export const codeDirs = (root: string): string[] => ["", ...!fs.existsSync(path.join(root, "spec")) ? []
+  : [...new Set(fs.readdirSync(path.join(root, "spec")).flatMap((name) => owner(root, `spec/${name}/`) ?? []))].sort().map((dir) => `${dir}/`)];
+/** Which of `codeDirs` a path from the root is in: the root holds no `apps/` or `packages/` code of its own. */
+export const codeDirOf = (file: string): string => file.match(/^(?:(?:apps|packages)\/[^/]+\/)?/)![0];
+
+/** A file with `//@` under a `src/` the check reads; `file` is its path from the root (`src/x.ts`, `apps/app/src/x.ts`). */
 export interface SrcFile { file: string; code: string; ts: boolean }
 /** Every such file, read once: a check proves and reviews the same text, even if a file changes while it runs. */
 export function readSrc(root: string): SrcFile[] {
-  const src = path.join(root, "src");
-  const files = filesUnder(root, "src").map((f) => f.slice(4)).filter((f) => /\.(?:[mc]?ts|tsx|[mc]?jsx?|vibex?)$/.test(f) && !SIDECAR.test(f));
-  return files.map((f) => ({ file: f, code: fs.readFileSync(path.join(src, f), "utf8"), ts: /\.ts$/.test(f) })).filter((u) => u.code.includes("//@"));
+  const files = codeDirs(root).flatMap((dir) => filesUnder(root, `${dir}src`)).filter((f) => /\.(?:[mc]?ts|tsx|[mc]?jsx?|vibex?)$/.test(f) && !SIDECAR.test(f));
+  return files.map((f) => ({ file: f, code: fs.readFileSync(path.join(root, f), "utf8"), ts: /\.ts$/.test(f) })).filter((u) => u.code.includes("//@"));
 }
 
 /** One result as `report` in spec.ts takes it. */
@@ -67,13 +86,15 @@ function manifest(dir: string) {
 /** A package's scripts. */
 export const packageScripts = (root: string): Record<string, string> => manifest(root).scripts ?? {};
 
-/** The tests stage: citations that name nothing, then the package's own tests. */
-export async function tests(root: string, specs: Spec[], scripts: Record<string, string>): Promise<Reported<"tests">[]> {
+/** The tests stage of one of `codeDirs`: citations that name nothing, then the package's own tests, run in its directory. */
+export async function tests(checking: string, dir: string, specs: Spec[]): Promise<Reported<"tests">[]> {
   const said: Reported<"tests">[] = [];
+  const root = path.join(checking, dir);
   try {
-    const dangling = danglingCitations(root, specs);
+    const scripts = packageScripts(root);
+    const dangling = danglingCitations(checking, specs, dir);
     if (dangling.length) said.push([false, "tests", `${dangling.length} citations name no story or rule of the spec`, indent(dangling.join("\n"))]);
-    const directOracle = conformanceImports(root);
+    const directOracle = conformanceImports(root).map((problem) => dir + problem);
     if (directOracle.length) said.push([false, "tests", "conformance drivers must reach the application, not call the generated oracle", indent(directOracle.join("\n"))]);
     // The package's own tests, in whatever runner it chose (AGENTS.md, "Tests"): its `test` script, or else
     // Node's on test/**/*.test.ts. The placeholder `npm init` writes is no script.
@@ -86,7 +107,8 @@ export async function tests(root: string, specs: Spec[], scripts: Record<string,
     const [command, args] = script ? [packageManager(root), ["run", "test"]] : [process.execPath, ["--import", "vibelang/register", "--test", ...files]];
     if (script || files.length) {
       const { NODE_TEST_CONTEXT: _, ...env } = process.env;
-      const t = await exec(command, args, root, { ...env, SPEC_TESTS: fs.realpathSync(root) });
+      // The root that is checking: spec.ts refuses a check of it, or of a package below it, started from these tests.
+      const t = await exec(command, args, root, { ...env, SPEC_TESTS: fs.realpathSync(checking) });
       const failures = t.stdout.includes("✖ failing tests:") ? t.stdout.slice(t.stdout.indexOf("✖ failing tests:")) : t.stdout.split("\n").slice(-80).join("\n");
       const ok = t.status === 0 && !t.stopped;
       said.push([ok, "tests", ok ? "pass" : "fail", indent((failures + t.stderr + (t.stopped ? `\n${t.stopped}` : "")).trim()), script ? `${command} run test` : "test/"]);
@@ -98,12 +120,13 @@ export async function tests(root: string, specs: Spec[], scripts: Record<string,
 }
 
 /**
- * Every `spec/<name>.md, "<heading>"` in the package's code whose heading is no story or rule of that spec, as
- * `file:line  citation`. Build output and packages nested inside it, which have specs of their own, are not read.
+ * Every `spec/<name>.md, "<heading>"` in a package's code whose heading is no story or rule of that spec, as
+ * `file:line  citation`, both paths from the root. The package is one of `codeDirs`: an owner cites as the root does.
+ * Build output and the packages nested inside it, which are checked on their own, are not read.
  */
-export function danglingCitations(root: string, specs: Spec[]): string[] {
+export function danglingCitations(root: string, specs: Spec[], dir = ""): string[] {
   const names = (s: Spec, h: string) => s.stories.some((t) => t.title === h) || s.rules.some((r) => heading(r) === h);
-  return packageCode(root).flatMap((f) =>
+  return packageCode(path.join(root, dir)).map((f) => dir + f).flatMap((f) =>
     fs.readFileSync(path.join(root, f), "utf8").split("\n").flatMap((line, i) =>
       [...line.matchAll(/(?<![\w/.-])(spec\/(?:[A-Za-z0-9]+\/)*[A-Za-z0-9]+\.md), "([^"]+)"/g)]
         .filter(([, file, h]) => !specs.some((s) => s.file === file && names(s, h)))
