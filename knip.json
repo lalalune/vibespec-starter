@@ -1,23 +1,63 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  "ignore": ["vibestack/examples/**", "vibestack/fixtures/**", "**/gen/**", "**/dist/**", "**/generated/**", "**/test/fixtures/**", "vibestack/stories/test/project/**"],
+  "ignore": [
+    "vibestack/examples/**",
+    "vibestack/fixtures/**",
+    "**/gen/**",
+    "**/dist/**",
+    "**/generated/**",
+    "**/test/fixtures/**",
+    "vibestack/stories/test/project/**"
+  ],
   "ignoreExportsUsedInFile": true,
   "workspaces": {
     ".": {
-      "entry": ["vibestack/design/cli.ts", "vibestack/stories/cli.ts", "vibestack/*/test/*.test.ts"],
-      "project": ["vibestack/**/*.{ts,tsx}", "!vibestack/studio/**"],
-      "ignoreDependencies": ["@informalsystems/quint", "lemmascript", "@vitest/browser"]
+      "entry": [
+        "vibestack/design/cli.ts",
+        "vibestack/stories/cli.ts",
+        "vibestack/*/test/*.test.ts"
+      ],
+      "project": [
+        "vibestack/**/*.{ts,tsx}",
+        "!vibestack/studio/**"
+      ],
+      "ignoreDependencies": [
+        "@informalsystems/quint",
+        "lemmascript",
+        "@vitest/browser"
+      ]
     },
     "packages/ui": {
-      "entry": ["src/**/*.{meta,stories}.tsx", "test/**/*.test.{ts,tsx}"],
-      "project": ["**/*.{ts,tsx}"]
+      "entry": [
+        "src/**/*.{meta,stories}.tsx",
+        "test/**/*.test.{ts,tsx}"
+      ],
+      "project": [
+        "**/*.{ts,tsx}"
+      ],
+      "ignoreDependencies": [
+        "tailwindcss"
+      ]
     },
     "packages/design-system": {
-      "ignoreDependencies": ["eslint", "eslint-plugin-better-tailwindcss", "tailwindcss", "typescript-eslint"]
+      "ignoreDependencies": [
+        "eslint",
+        "eslint-plugin-better-tailwindcss",
+        "tailwindcss",
+        "typescript-eslint"
+      ]
     },
     "vibestack/studio": {
-      "entry": ["src/server.ts", "src/page.ts", "test/*.test.ts"],
-      "project": ["src/**/*.ts", "test/**/*.ts"]
+      "entry": [
+        "src/server.ts",
+        "src/page.ts",
+        "test/*.test.ts",
+        "src/components.ts"
+      ],
+      "project": [
+        "src/**/*.ts",
+        "test/**/*.ts"
+      ]
     }
   }
 }
