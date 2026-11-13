@@ -1322,6 +1322,8 @@ export effect function independent() {
     const binaries = path.join(consumer, "node_modules/.bin");
     fs.mkdirSync(binaries, { recursive: true });
     fs.symlinkSync(path.join(nodeModules, ".pnpm"), path.join(consumer, "node_modules/.pnpm"), "dir");
+    for (const dependency of ["@informalsystems", "typescript"])
+      fs.symlinkSync(path.join(nodeModules, dependency), path.join(consumer, "node_modules", dependency), "dir");
     for (const command of ["quint", "tsc"]) {
       const name = process.platform === "win32" ? `${command}.cmd` : command;
       fs.symlinkSync(path.join(nodeModules, ".bin", name), path.join(binaries, name), "file");
