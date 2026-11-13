@@ -81,6 +81,13 @@ build step) and Dafny on the path. The page loads React 18 from esm.sh.
 - **Copies in flight need a rule of their own.** "A tab's copy is the list at
   its version" is only inductive together with the same statement for every
   answer on the network; the system spec states both.
+- **A request number does not identify its edit.** A retry must carry the
+  same edit before an earlier acceptance can acknowledge it.
+- **A user's dependent edits must arrive in order.** Sending the oldest
+  unanswered edit first prevents a later edit reaching the server before
+  the to-do it changes has been created.
+- **The forgery count is nonnegative.** Otherwise a forgery could change a
+  negative count to zero and incorrectly restore the lone-user guarantee.
 
 ## Limits of the spec language met here
 

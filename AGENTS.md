@@ -309,7 +309,7 @@ is in the [`sync` skill](.claude/skills/sync/SKILL.md).
 |---|---|---|---|
 | story | `spec/<name>.lock.json`, `## <title>` | its text, whitespace collapsed | `story has no rules`, `new story`, `story changed`, `removed or renamed` |
 | rule | `spec/<name>.lock.json`, `<story> / <heading>` | 1. its prose, whitespace collapsed<br>2. its Quint<br>3. the Quint of every rule it relies on | `not formalized` (no Quint), `new`, `prose changed`, `model changed`, `model changed through <names> (<rule>)`, `prose and model both changed`, `removed or renamed` |
-| contract | `spec/src.lock.json`, `src/<path>.ts` | its `//@` lines | `new contract`, `contract changed`, `contract removed` |
+| contract | `spec/src.lock.json`, `src/<path>.ts` | its `//@` lines and the declarations they belong to | `new contract`, `contract changed`, `contract removed` |
 
 ```mermaid
 flowchart LR
@@ -545,14 +545,15 @@ a tarball made with `npm pack`.
 
 ```sh
 npm install --save-dev /path/to/vibespec-0.1.0.tgz
-npx spec init          # adds what is missing; replaces nothing
+npx spec init          # adds what is missing; updates only its own marked instructions
 npx spec new <name>    # a starter spec/<name>.md
 npm run check
 ```
 
 | `spec init` adds | |
 |---|---|
-| `.claude/skills/sync/`, `.claude/skills/design/`, `AGENTS.md`, `CONTRIBUTING.md` | the agent's procedure and this reference, and a pointer to them |
+| `.claude/skills/sync/`, `.claude/skills/design/`, `AGENTS.md`, `CONTRIBUTING.md` | the agent's procedure and this reference; existing AGENTS content is kept around a marked Vibespec section |
+| `CLAUDE.md` | imports `AGENTS.md`, preserving any existing instructions |
 | `tsconfig.json`, `spec/` | |
 | `.gitignore` | `gen/`, `.spec-cache/` |
 | `package.json` scripts | `check`, `gen`, `accept` |

@@ -206,11 +206,12 @@ pure def alwaysPaidOnlyReviewed(s: Assistant): bool = s.bill.paid implies s.bill
 
 ### A reviewed bill has a positive amount
 
-Discovered by the proof: without this, a paid bill could have no amount, and
-reviewing it again could erase the review needed for a payment.
+Discovered by the proof: a paid bill with a zero amount otherwise satisfies
+the rules, but reviewing it again would erase its reviewed status.
 
 ```quint
-pure def alwaysReviewedHasAmount(s: Assistant): bool = s.bill.reviewed implies s.bill.amount > 0
+pure def alwaysReviewedHasPositiveAmount(s: Assistant): bool =
+  s.bill.reviewed implies s.bill.amount > 0
 ```
 
 ### A bill is charged once, and only when the person confirms

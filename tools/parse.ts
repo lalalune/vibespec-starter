@@ -66,7 +66,7 @@ export function parseSpec(root: string, file: string, text = fs.readFileSync(pat
         if (def[1] === "type" || (depth === 0 && (top === undefined || indent <= top))) { r.defs.push(def[2]); if (depth === 0) top = indent; }
         else r.locals.push(def[2]);
       }
-      const dep = line.match(/^\s*import\s+(\w+)\s*(\([^)]*\))?\s*(?:\.\s*(\*|\w+))?(?:\s+as\s+(\w+))?/);
+      const dep = line.match(/^\s*import\s+(\w+)(?:\s*(\([^)]*\)))?(?:\s*\.\s*(\*|\w+)|\s+as\s+(\w+))?/);
       if (dep && code[at + indent]) {
         imports.push(dep[1]);
         // A form this does not recognise is read as `.*`, which can only add dependencies.
