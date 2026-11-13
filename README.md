@@ -477,12 +477,13 @@ Stages run cheapest first. `✓` passed, `✗` failed, `-` skipped: blocked by a
 | Stage | Question | Strength |
 |---|---|---|
 | `model` | Is the spec well-typed and inside the supported subset? | exact; anything unsupported is refused by name |
-| `always` | Does a reachable state break an `always` rule, a step break a `step` rule, a sampled argument break a law, or a fair run that stops or loops break a [`leadsTo` rule](AGENTS.md#liveness)? | 10,000 random traces; a failure comes with the shortest trace and its seed |
+| `always` | Does a reachable state break an `always` rule, a step break a `step` rule, a sampled argument break a law, or a fair run that stops or loops break a [`leadsTo` rule](AGENTS.md#liveness)? | 10,000 random traces; a failure comes with the shortest trace and its seed. With `exhaustiveSteps` and Java, every run up to that depth ([Apalache](AGENTS.md#checking-harder)) |
 | `sometimes` | Can each `sometimes` goal be reached? Does each guard allow its event in some reachable state? | a witness trace is a proof; a failure means searches of 20, 40 and 100 events found none (200,000 traces at depth 20, with proportionally fewer at larger depths). [Guards never seen to refuse](AGENTS.md#writing-good-rules) are listed, not failed |
 | `replay` | Does the generated TypeScript mean what the Quint means? | 400 sampled traces and every witness: every state, every law, and every definition the simulator can evaluate. The rest are listed |
 | `types` | Does the application fit the generated contract? | exact |
 | `proof` | Does every transition preserve every `always` and `step` rule, does every law hold, and does hand-written logic meet its `//@` contract? | all states, all inputs, counted per obligation under a fixed resource limit. What Dafny cannot prove alone is proved in a proof file (`spec/<path>.proof.dfy`: lemmas only, checked to add nothing but proof), or listed; a listed obligation passes only once the user records it in `spec/lock.json` under `unproved`, for that text of the unit |
 | `tests` | Does the shell work with the real services around it? | whole user journeys, where the checks above cannot see ([AGENTS.md](AGENTS.md#tests)) |
+| `traces` | Does the running program do what the spec says? | every line of the traces it wrote (`test/traces/<spec>.jsonl`), and a program in any language (`driver:<spec>` script) fed simulated traces and refused events ([AGENTS.md](AGENTS.md#checking-a-running-program)); silent when there are neither |
 | `review` | Does every story have rules and every rule Quint? Has every new or changed story, rule and `//@` contract been reconciled? | exact |
 
 ## What lives where
@@ -589,8 +590,8 @@ around the generated core and covered by tests.
 **Which agent?** Claude Code loads the skills in `.claude/skills/` directly.
 Any other agent reads [AGENTS.md](AGENTS.md).
 
-**Can I check harder than simulation?** Yes: run the Apalache model checker
-on the generated harness, exhaustively up to a depth
+**Can I check harder than simulation?** Yes: `pure val exhaustiveSteps = 10`
+has `check` run the Apalache model checker on every run up to that depth
 ([checking harder](AGENTS.md#checking-harder)).
 
 ## Contributing

@@ -29,5 +29,10 @@ In short:
   for what Quint cannot express or what touches the outside world.
 - Tests cover only what the checks cannot: whole user journeys through the
   real shell, against real services (AGENTS.md, "Tests").
+- A running program is held to its spec by the JSON Lines traces it writes to
+  `test/traces/` and by a `driver:<spec>` script speaking JSON on
+  stdin/stdout (AGENTS.md, "Checking a running program"); a spec's
+  `exhaustiveSteps` has Apalache check every run to that depth when Java is
+  installed (AGENTS.md, "Checking harder").
 - A change to `vibespec/` passes `npm run selftest`, with a new case for each new
   kind of mistake it catches.
