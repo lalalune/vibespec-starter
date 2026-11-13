@@ -111,8 +111,9 @@ export function typecheckAll(memory: Memory, specs: Spec[]): Map<string, Promise
  * An imported module comes with its names prefixed by the module's name and
  * without its own obligations, which are proved once, in its own unit; that
  * keeps the cost of a proof proportional to the module, not to everything
- * beneath it. A law an imported module proved is offered to the unit's proof
- * file as a lemma; nothing else of it is.
+ * beneath it. What an imported module's own unit proved (each clause of its
+ * `_ensures` lemmas) is offered to the unit's proof file as a lemma; nothing
+ * else of it is.
  *
  * A unit may have a proof file: spec/<name>.proof.dfy for a spec,
  * src/<path>.proof.dfy for src/<path>.ts.
@@ -133,16 +134,21 @@ export async function proofUnits(root: string, models: Model[], srcFiles: SrcFil
     return seen;
   };
   const asDependency = (name: string, docs = true) => withoutObligations(withoutImports(byName.get(name)!.render(`${name}_`, docs)).kept);
-  /** The laws of modules placed beside a unit, as the unit spells them. */
-  const lawsOf = (names: string[], spelled: (dep: string) => string) =>
-    names.flatMap((dep) => byName.get(dep)!.laws.map((l) => ({ fn: `${spelled(dep)}${l.name}`, law: l.name, from: `${dep}.ts` })));
+  /** The definitions whose `_ensures` lemma a module's own unit proves (gen/typescript.ts). */
+  const proving = (m: Model) => [...m.laws.map((l) => l.name), ...(m.stateType ? [...m.transitions.map((t) => t.name), "step", "initialHolds"] : [])];
+  /** Modules placed beside a unit, each with the prefix the unit spells it with: their text with their obligations, and those lemmas. */
+  const imported = (beside: string[][]): Unit["imports"] => ({
+    text: beside.map(([n, prefix]) => withoutImports(byName.get(n)!.render(prefix, false)).kept).join("\n"),
+    lemmas: beside.flatMap(([n, prefix]) => proving(byName.get(n)!).map((def) => ({ fn: `${prefix}${def}`, def, from: `${n}.ts` }))),
+  });
+  const prefixed = (names: string[]) => names.map((n) => [n, `${n}_`]);
   const units: Unit[] = models.map((m) => ({
     unit: `${m.name}.ts`,
     text: [...needs(m).map((n) => asDependency(n)), withoutImports(m.render("")).kept].join("\n"),
     meaning: [...needs(m).map((n) => asDependency(n, false)), withoutImports(m.render("", false)).kept].join("\n"),
     src: false,
     proofFile: m.source.replace(/\.md$/, ".proof.dfy"),
-    laws: lawsOf(needs(m), (dep) => `${dep}_`),
+    imports: imported(prefixed(needs(m))),
     rests: [], // proved against the definitions of what it imports, never against their obligations
     transitions: m.stateType ? m.transitions.map((t) => ({ name: t.name, params: t.params.map((p) => p.name) })) : undefined,
   }));
@@ -174,7 +180,7 @@ export async function proofUnits(root: string, models: Model[], srcFiles: SrcFil
       meaning: [...beside(false), `// ---- src/${f} ----`, kept].join("\n"),
       src: true,
       proofFile: `src/${f.replace(/\.ts$/, ".proof.dfy")}`,
-      laws: d ? [...lawsOf(needs(byName.get(d)!), (dep) => `${dep}_`), ...lawsOf([d], () => "")] : [],
+      imports: imported(d ? [...prefixed(needs(byName.get(d)!)), [d, ""]] : []),
       rests: d ? [...needs(byName.get(d)!), d].map((m) => `${m}.ts`) : [],
     });
   }

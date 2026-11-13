@@ -434,7 +434,7 @@ lemma WireSubset(sys: System, kept: seq<Msg>)
 }
 
 lemma ClientDistinctBridge(c: client_Client)
-  ensures client_alwaysQueuedEditsHaveDistinctNumbers(c) == Std.Collections.Seq.All(c.pending, (p: client_Pending) => (|ProofLib.Filter((q: client_Pending) => (q.seq_ == p.seq_), c.pending)| == 1))
+  ensures client_alwaysQueuedEditsHaveDistinctNumbers(c) == !(exists p :: p in c.pending && !(|ProofLib.Filter((q: client_Pending) => (q.seq_ == p.seq_), c.pending)| == 1))
 { }
 
 lemma OldestFacts(sys: System, who: string)
@@ -696,14 +696,14 @@ lemma ServeInStep(sys: System, i: int, owner: string)
 // Delivering an answer drops at most the answered head and keeps versioned copies aligned.
 lemma DeliverInStep(sys: System, i: int, owner: string)
   requires inv(sys) && canDeliver(sys, i) && isClient(owner)
-  ensures lone(deliver(sys, i), owner) ==> (var after := deliver(sys, i); var c := clientOf(after, owner); var s := after.server; Std.Collections.Seq.All(c.pending, (p: client_Pending) => (!(server_answered(s, owner, p.seq_)) || server_acceptedAs(s, owner, p.seq_, p.op))))
-  ensures lone(deliver(sys, i), owner) ==> (var after := deliver(sys, i); var c := clientOf(after, owner); var s := after.server; Std.Collections.Seq.All(after.net, (m: Msg) => (((((!m.kind.Ack?) || (m.client != owner)) || (|c.pending| == 0)) || (m.seq_ != oldest(c).seq_)) || (m.version == s.version))))
+  ensures lone(deliver(sys, i), owner) ==> (var after := deliver(sys, i); var c := clientOf(after, owner); var s := after.server; !(exists p :: p in c.pending && !(!(server_answered(s, owner, p.seq_)) || server_acceptedAs(s, owner, p.seq_, p.op))))
+  ensures lone(deliver(sys, i), owner) ==> (var after := deliver(sys, i); var c := clientOf(after, owner); var s := after.server; !(exists m :: m in after.net && !(((((!m.kind.Ack?) || (m.client != owner)) || (|c.pending| == 0)) || (m.seq_ != oldest(c).seq_)) || (m.version == s.version))))
   ensures lone(deliver(sys, i), owner) ==> (var after := deliver(sys, i); var c := clientOf(after, owner); var s := after.server; !(oldestAnswered(after, owner)) || todo_sameTodos(todo_applyOp(s.todos, oldest(c).op), s.todos))
   ensures lone(deliver(sys, i), owner) ==> (var after := deliver(sys, i); var c := clientOf(after, owner); var s := after.server; oldestAnswered(after, owner) || (c.seen == s.version))
-  ensures lone(deliver(sys, i), owner) ==> (var after := deliver(sys, i); var c := clientOf(after, owner); var s := after.server; Std.Collections.Seq.All(after.net, (m: Msg) => (((isRequest(m) || (m.client != owner)) || (m.version <= c.seen)) || (m.version == s.version))))
+  ensures lone(deliver(sys, i), owner) ==> (var after := deliver(sys, i); var c := clientOf(after, owner); var s := after.server; !(exists m :: m in after.net && !(((isRequest(m) || (m.client != owner)) || (m.version <= c.seen)) || (m.version == s.version))))
   ensures lone(deliver(sys, i), owner) ==> (var after := deliver(sys, i); var c := clientOf(after, owner); var s := after.server; todo_sameTodos(client_view(c), replay(s.todos, c.pending)))
   ensures lone(deliver(sys, i), owner) ==> (var after := deliver(sys, i); var c := clientOf(after, owner); var s := after.server; allowedInTurn(s.todos, unapplied(after, owner)))
-  ensures lone(deliver(sys, i), owner) ==> (var after := deliver(sys, i); var c := clientOf(after, owner); var s := after.server; Std.Collections.Seq.All(after.net, (m: Msg) => (((!m.kind.Refusal?) || (m.client != owner)) || !(client_waiting(c, m.seq_)))))
+  ensures lone(deliver(sys, i), owner) ==> (var after := deliver(sys, i); var c := clientOf(after, owner); var s := after.server; !(exists m :: m in after.net && !(((!m.kind.Refusal?) || (m.client != owner)) || !(client_waiting(c, m.seq_)))))
   ensures lone(deliver(sys, i), owner) ==> (var after := deliver(sys, i); var c := clientOf(after, owner); var s := after.server; c.refusals == 0)
 {
   var after := deliver(sys, i);

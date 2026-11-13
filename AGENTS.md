@@ -320,7 +320,10 @@ stage with the name of the construct.
 - **`every`, `some`, `includes` and `listMap` are not Quint.** They are
   rewritten into `foldl` before Quint reads the spec, because Quint evaluates
   a definition that takes a lambda wrongly when it is used inside its own
-  argument.
+  argument. In TypeScript they are the array methods, except that `every`, a
+  set's `forall` and `subseteq` are written `!xs.some(x => !…)`: the proof
+  then sees each as a quantifier over the members
+  (`!(exists x :: x in xs && !…)`), as it sees `some` and `includes`.
 - **The simulator tries small values**: integers −1…6, both booleans, three
   strings, every variant of a plain sum type, and short lists and sets of
   those. Define `<param>Values` to choose, which a record or a variant that
@@ -474,7 +477,7 @@ a body.
   `match`, `var`, `reveal`, calls to lemmas, and the attributes `{:trigger}`
   and `{:induction}`.
 - Names from Dafny's standard library (`Std.…`) only as the generated code
-  writes them, such as `Std.Collections.Seq.All`: the library holds axioms,
+  writes them, such as `Std.Collections.Seq.Filter`: the library holds axioms,
   and `dafny audit` does not report them in the unit. `ProofLib.<Name>` only
   for what `vibespec/proof/lib.dfy` declares.
 - Refused: block comments, `@`, any other attribute, character literals, NUL,
@@ -504,10 +507,15 @@ a body.
   Read the file for what each states. A lemma general enough for any project
   belongs there, with its proof; one about your spec belongs in your proof
   file.
-- A law of an imported module, if its own unit proved it in the same run,
-  neither simulated only nor resting on an obligation that is:
-  `<module>_<law>_ensures(args)` gives `<module>_<law>(args) == true`. (In a
-  `src` unit, the laws of the module it imports are `<law>_ensures`.)
+- What an imported module's own unit proved in the same run, neither
+  simulated only nor resting on an obligation that is: its lemmas
+  `<module>_<fn>_ensures(args)` for each law, transition, `step` and
+  `initialHolds`, with the clauses proved. `<module>_<law>_ensures(args)`
+  gives `<module>_<law>(args) == true`, and `<module>_<transition>_ensures(s, …)`
+  gives each rule of that module for `<module>_<transition>(s, …)`, under its
+  `inv` and guard, so a machine that holds another need not prove its rules
+  again (`vibespec/fixtures/office.md` in the vibespec-starter repository). (In a
+  `src` unit, those of the module it imports are `<fn>_ensures`.)
 - The generated `_ensures` lemmas, and Dafny's standard library by the names
   the generated code uses.
 
@@ -521,7 +529,7 @@ supply one to replace it.
   State facts about `ProofLib.Filter`, and connect them to the rule with a
   helper whose `ensures` is the rule's body with `ProofLib.Filter` in place of
   `Std.Collections.Seq.Filter`; it proves with an empty body:
-  `lemma KeysBridge(r: Registry) ensures alwaysAKeyNamesOneProject(r) == Std.Collections.Seq.All(r.entries, (a: Entry) => (|ProofLib.Filter((b: Entry) => (b.key == a.key), r.entries)| == 1)) { }`.
+  `lemma KeysBridge(r: Registry) ensures alwaysAKeyNamesOneProject(r) == !(exists a :: a in r.entries && !(|ProofLib.Filter((b: Entry) => (b.key == a.key), r.entries)| == 1)) { }`.
 - A lambda is the same term only if it is the same text: pass the lambda the
   generated code uses, copied verbatim from the `.dfy`.
 
@@ -652,7 +660,7 @@ with `tsc`; it has no dependencies.
   that import machines where rules span them. `check` runs them in dependency
   order and proves each against the *definitions* of what it imports, not
   their proofs, so the cost of a proof grows with the spec, not with
-  everything beneath it.
+  everything beneath it. Its proof file may call what their units proved.
 - **Only what changed is checked again.** Each passing simulation and proof
   result is kept in `.spec-cache/` under a fingerprint of the spec, everything it
   imports and the versions of the tools.
