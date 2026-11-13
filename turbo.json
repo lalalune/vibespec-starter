@@ -151,7 +151,11 @@
     },
     "//#selftest": {
       "dependsOn": [
-        "//#build"
+        "//#build",
+        "//#test",
+        "vibestack-studio#typecheck",
+        "vibestack-studio#test",
+        "vibestack-studio#test:browser"
       ],
       "inputs": [
         "vibestack/**",

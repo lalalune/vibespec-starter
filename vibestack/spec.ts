@@ -749,7 +749,7 @@ if (isMain()) {
       const text = JSON.stringify(await toolchainFingerprint()) + "\n";
       fs.mkdirSync(path.dirname(fingerprint), { recursive: true });
       if (!fs.existsSync(fingerprint) || fs.readFileSync(fingerprint, "utf8") !== text) fs.writeFileSync(fingerprint, text);
-      let env = { ...process.env };
+      let env: NodeJS.ProcessEnv = { ...process.env, TURBO_TELEMETRY_DISABLED: "1" };
       const credentials = path.join(os.homedir(), ".config", "vibestack", "turbo-cache.json");
       if (env.TURBO_TOKEN === undefined && fs.existsSync(credentials)) {
         const cache = JSON.parse(fs.readFileSync(credentials, "utf8"));

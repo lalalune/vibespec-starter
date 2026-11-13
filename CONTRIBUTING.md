@@ -212,6 +212,8 @@ run keeps `test/counterexamples/` and `test/__traces__/` as an artifact.
 
 Each run restores pnpm's store, every `.spec-cache/`, and Quint's evaluator.
 Turborepo shares task results through the private Cloudflare/R2 cache.
+The task entry point disables Turbo telemetry. Selftest waits for the root and
+Studio test tasks so those integration journeys do not compete with it.
 Pull requests read shared results; only branch pushes receive the publishing
 credential, protected by the `turbo-cache-publish` environment's branch
 policy. Newer runs replace older runs for the same branch or pull request.
