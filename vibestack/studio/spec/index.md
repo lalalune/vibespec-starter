@@ -69,6 +69,8 @@ pure def publish(s: Session, changes: int): Session =
 
 ### Publishing always starts a check
 
+It also leaves no edit unpublished.
+
 ```quint
 pure def stepPublishingChecks(before: Session, via: str, after: Session): bool =
   via == "publish" implies (after.job == Checking and not(after.unpublished))
@@ -103,8 +105,8 @@ pure def sync(s: Session): Session = { ...s, job: Syncing }
 
 ### A sync that ends well leaves nothing waiting and checks again
 
-A sync that fails leaves what was waiting, and what the agent did is not
-known to check until it is checked.
+A sync that fails leaves what was waiting and starts no check; what the agent
+did leaves the verdict unknown either way.
 
 ```quint
 pure def canSynced(s: Session): bool = s.job == Syncing
@@ -206,6 +208,8 @@ pure def sometimesGreen(s: Session): bool = s.verdict == Green
 > that the spec I sign off is the one that was checked.
 
 ### Sign-off needs a check that left only review, nothing unpublished and nothing waiting
+
+No job may be running either.
 
 ```quint
 pure def canSignOff(s: Session): bool =

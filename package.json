@@ -6,7 +6,8 @@
     "node": ">=26"
   },
   "scripts": {
-    "dev": "node vibestack/spec.ts studio",
+    "dev": "turbo run dev //#studio",
+    "studio": "node vibestack/spec.ts studio",
     "check": "node vibestack/spec.ts check",
     "gen": "node vibestack/spec.ts gen",
     "accept": "node vibestack/spec.ts accept",
