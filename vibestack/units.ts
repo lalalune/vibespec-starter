@@ -4,6 +4,7 @@ import type * as TS from "typescript";
 import ts from "typescript";
 import { generate, type Model, type Origin } from "./gen.ts";
 import { writeConformance } from "./conform.ts";
+import { simulated } from "./gen/harness.ts";
 import { fail } from "./gen/types.ts";
 import type { Unit } from "./prove.ts";
 import { run } from "./run.ts";
@@ -53,6 +54,7 @@ export function generated(root: string, spec: Spec, ir: any, models: Map<string,
   const model = generate(ir, spec.name, spec.file, (d) => origins.get(d), models);
   fs.writeFileSync(path.join(dir, `${spec.name}.ts`), model.ts);
   fs.writeFileSync(path.join(dir, `${spec.name}.run.qnt`), model.harness);
+  if (model.opaques.length) fs.writeFileSync(path.join(dir, `${spec.name}.sim.qnt`), simulated(spec.qnt, model.opaques));
   writeConformance(root, model);
   models.set(spec.name, model);
   return model;
@@ -123,6 +125,8 @@ export async function proofUnits(root: string, models: Model[], srcFiles: SrcFil
     lemmas: beside.flatMap(([n, prefix]) => proving(byName.get(n)!).map((def) => ({ fn: `${prefix}${def}`, def, from: `${n}.ts` }))),
   });
   const prefixed = (names: string[]) => names.map((n): [string, string] => [n, `${n}_`]);
+  /** What a unit takes on trust from its module's opaque functions: their types, and the laws stated with them. */
+  const assumptions = (m: Model | undefined) => ({ externs: m?.opaques.map((o) => o.name) ?? [], assumed: m?.opaques.flatMap((o) => o.laws.map((l) => l.name)) ?? [] });
   const units: Unit[] = models.map((m) => ({
     unit: `${m.name}.ts`,
     text: [...needs(m).map((n) => asDependency(n)), withoutImports(m.render("")).kept].join("\n"),
@@ -133,6 +137,7 @@ export async function proofUnits(root: string, models: Model[], srcFiles: SrcFil
     // Proved against the definitions of what it imports, never against their obligations; but the abstract rules
     // carry over to a refining spec only as far as the machine it refines proved them (AGENTS.md, "Refinement").
     rests: m.refines ? [`${m.refines.of.module}.ts`] : [],
+    ...assumptions(m),
     transitions: m.stateType ? m.transitions.map((t) => ({ name: t.name, params: t.params.map((p) => p.name) })) : undefined,
   }));
 
@@ -165,6 +170,7 @@ export async function proofUnits(root: string, models: Model[], srcFiles: SrcFil
       proofFile: `src/${f.replace(/\.ts$/, ".proof.dfy")}`,
       imports: imported(d ? [...prefixed(needs(byName.get(d)!)), [d, ""]] : []),
       rests: d ? [...needs(byName.get(d)!), d].map((m) => `${m}.ts`) : [],
+      ...assumptions(d ? byName.get(d) : undefined),
     });
   }
   const twice = units.find((u, i) => units.findIndex((v) => v.unit === u.unit) !== i);

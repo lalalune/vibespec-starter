@@ -20,11 +20,11 @@ type Actor = Person | Agent | World
 ### A turn
 
 A turn is idle, planning its next action, asking the person, or done. The
-model chooses among seven actions, and a turn may take at most four.
+model chooses among six actions, and a turn may take at most four.
 
 ```quint
 type Phase = Idle | Planning | Asking | Done
-type Choice = Lookup | Review | Fill | Pay | Speak | Recite | Finish
+type Choice = Lookup | Review | Fill | Pay | Speak | Finish
 pure val maxActions = 4
 ```
 
@@ -41,29 +41,29 @@ type Bill = { amount: int, reviewed: bool, paid: bool }
 ### What the program carries out
 
 The assistant does not speak or type itself. A choice returns what the
-program must carry out beside the new state. A spoken sentence says whether
-it holds a secret; a filled form says which page it went to.
+program must carry out beside the new state: a sentence to say, or the saved
+card typed into a page.
 
 ```quint
-type Effect = Said({ secret: bool }) | Filled({ page: Page })
+type Effect = Said({ text: str }) | Filled({ page: Page, card: SecretCard })
 ```
 
 ### The assistant
 
-What is saved survives a restart: the bill, what was charged, the last request
-and the one last answered. The rest is in memory.
+What is saved survives a restart: the card, the bill, what was charged, the
+last request and the one last answered. The rest is in memory.
 
 ```quint
 type Assistant = {
   phase: Phase, budget: int, page: Page, waiting: bool,
-  bill: Bill, charged: int, request: int, answered: int,
+  card: SecretCard, bill: Bill, charged: int, request: int, answered: int,
 }
 
 type Chosen = { state: Assistant, out: List[Effect] }
 
 pure val initial: Assistant = {
   phase: Idle, budget: 0, page: Unknown, waiting: false,
-  bill: { amount: 0, reviewed: false, paid: false }, charged: 0, request: 0, answered: 0,
+  card: "", bill: { amount: 0, reviewed: false, paid: false }, charged: 0, request: 0, answered: 0,
 }
 ```
 
@@ -85,13 +85,13 @@ pure def begin(s: Assistant, by: Actor): Assistant =
 ### The model chooses each action, and each costs one from the turn
 
 Looking the bill up sends a new request. Reviewing checks an amount that has
-arrived. Filling types saved card details, and only into the biller's own
-page. Paying asks the person. Reciting would read the saved card aloud, so it
-is refused. The turn ends when the model finishes or the budget runs out.
+arrived. Filling types the saved card, and only into the biller's own page.
+Paying asks the person. Speaking says how far the turn has got. The turn ends
+when the model finishes or the budget runs out.
 
 ```quint
 pure def canChoose(s: Assistant, choice: Choice, by: Actor): bool =
-  by == Agent and s.phase == Planning and s.budget > 0 and choice != Recite
+  by == Agent and s.phase == Planning and s.budget > 0
 
 pure def choose(s: Assistant, choice: Choice, by: Actor): Chosen =
   val t = { ...s, budget: s.budget - 1 }
@@ -104,8 +104,8 @@ pure def choose(s: Assistant, choice: Choice, by: Actor): Chosen =
   {
     state: if (chosen.phase == Planning and chosen.budget == 0) { ...chosen, phase: Done } else chosen,
     out:
-      if (choice == Fill and t.page == Genuine) List(Filled({ page: t.page }))
-      else if (choice == Speak or choice == Recite) List(Said({ secret: choice == Recite }))
+      if (choice == Fill and t.page == Genuine) List(Filled({ page: t.page, card: t.card }))
+      else if (choice == Speak) List(Said({ text: if (t.bill.paid) "paid" else "working" }))
       else List(),
   }
 ```
@@ -250,9 +250,11 @@ pure def stepFilledOnlyGenuine(before: Assistant, after: Assistant, out: List[Ef
 
 ### Nothing secret is said aloud
 
+The card is secret, so `check` refuses the model if the card, or anything
+decided by it, can reach what is said, or any other place that is not secret.
+
 ```quint
-pure def stepNothingSecretSaid(before: Assistant, after: Assistant, out: List[Effect]): bool =
-  out.every(e => match e { | Said(x) => not(x.secret) | _ => true })
+type SecretCard = str
 ```
 
 ## Story: Survive a restart

@@ -289,7 +289,7 @@ interface Additions {
   proof?: { file: string; text: string };
   /** The body the tools give `step_ensures` when the proof file does not. */
   stepBody?: string;
-  /** Lemmas the tools add: what the units this one imports proved, each in its own unit (importedAxioms). */
+  /** Lemmas the tools add: what the units this one imports proved, each in its own unit (importedAxioms), and the laws assumed of opaque functions (assumedAxioms). */
   axioms: string[];
   /** The library, added when there is a proof file. */
   lib?: string;
@@ -371,7 +371,7 @@ export function splice(gen: string, { proof, stepBody, axioms, lib }: Additions,
     if (body) add(body, region);
   });
   const tail: [string, Region][] = [
-    ...axioms.map((a, i): [string, Region] => [`${i ? "" : "// ---- what the units this one imports proved, each in its own unit (added by the tools) ----\n\n"}${a}`, { def: a.match(/^lemma \{:axiom\} (\w+)/)![1], generated: false }]),
+    ...axioms.map((a, i): [string, Region] => [`${i ? "" : "// ---- taken as given: what the units this one imports proved, each in its own unit, and the laws of opaque functions (added by the tools) ----\n\n"}${a}`, { def: a.match(/^lemma \{:axiom\} (\w+)/)![1], generated: false }]),
     ...helpers.map((h, i): [string, Region] => [`${i ? "" : `// ---- helpers from ${proof!.file} ----\n\n`}${h.text}`, { def: h.name, generated: false }]),
     ...(usedLibrary ? [[`// ---- vibestack/proof/lib.dfy ----\n\n${usedLibrary.trimEnd()}`, { def: LIB_MODULE, generated: false }] as [string, Region]] : []),
   ];
@@ -412,6 +412,24 @@ function importedAxioms(gen: string, offered: Offered[]): string[] {
     if (!clauses || (proved && (proved.length !== clauses || !proved.some(Boolean)))) return [];
     let i = 0;
     return [[first.replace(/^lemma /, "lemma {:axiom} "), ...rest.filter((l) => !ENSURES.test(l) || (proved?.[i++] ?? true))].join("\n")];
+  });
+}
+
+/**
+ * The laws assumed of the unit's opaque functions (AGENTS.md, "Opaque functions"), each as a lemma `<law>_ensures`
+ * without a body, from the law's function as LemmaScript generated it.
+ */
+function assumedAxioms(gen: string, laws: string[]): string[] {
+  return laws.flatMap((law) => {
+    const params = gen.match(new RegExp(`^function ${law}\\((.*)\\): bool$`, "m"))?.[1];
+    if (params === undefined) return [];
+    let depth = 0;
+    const names = params.split("").reduce((parts, c) => {
+      depth += "<([".includes(c) ? 1 : ">)]".includes(c) ? -1 : 0;
+      if (c === "," && !depth) parts.push(""); else parts[parts.length - 1] += c;
+      return parts;
+    }, [""]).filter((p) => p.trim()).map((p) => p.split(":")[0].trim());
+    return [`lemma {:axiom} ${law}_ensures(${params})\n  ensures ${law}(${names.join(", ")})`];
   });
 }
 
@@ -652,6 +670,9 @@ export interface Unit {
   imports: { text: string; lemmas: { fn: string; def: string; from: string }[] };
   /** The units whose assurance this one's rests on. */
   rests: string[];
+  /** Opaque functions, which the Dafny declares without a body, and the laws assumed of them, which a proof file may call as `<law>_ensures`. */
+  externs: string[];
+  assumed: string[];
   /** The generated code without comments naming the source rules. */
   meaning: string;
   /** The caller preconditions of hand-written code. */
@@ -743,8 +764,8 @@ export async function prove(root: string, u: Unit, offered: { proof?: { file: st
     definition = line.match(DEFINITION)?.[1] ?? definition;
     if (/^\s*ensures\b/.test(line) && !(definition && prelude.has(definition))) total++;
   }
-  const axioms = imported ? importedAxioms(imported.gen!, offered.axioms) : [];
-  const axiomNames = new Set(axioms.map((a) => a.match(/^lemma \{:axiom\} (\w+)/)![1]));
+  const axioms = [...(imported ? importedAxioms(imported.gen!, offered.axioms) : []), ...(offered.proof ? assumedAxioms(gen, u.assumed) : [])];
+  const axiomNames = new Set([...axioms.map((a) => a.match(/^lemma \{:axiom\} (\w+)/)![1]), ...u.externs]);
   let spliced: Spliced;
   try {
     spliced = splice(gen, { proof: offered.proof, lib: offered.proof && offered.lib, axioms, stepBody: u.transitions && stepBody(gen, u.transitions) }, where.dfy, prelude);

@@ -83,10 +83,10 @@ export function parseSpec(root: string, file: string, text = fs.readFileSync(loc
     let top: number | undefined;
     for (const line of text.split("\n")) {
       const indent = line.length - line.trimStart().length;
-      const def = line.match(/^\s*(?:pure\s+)?(def|val|type)\s+(\w+)/);
+      const def = line.match(/^\s*(?:pure\s+)?(def|val|type|const)\s+(\w+)/);
       if (def && code[at + indent]) {
-        // A type is never local.
-        if (def[1] === "type" || (depth === 0 && (top === undefined || indent <= top))) { r.defs.push(def[2]); if (depth === 0) top = indent; }
+        // A type, or the `const` of an opaque function, is never local.
+        if (def[1] === "type" || def[1] === "const" || (depth === 0 && (top === undefined || indent <= top))) { r.defs.push(def[2]); if (depth === 0) top = indent; }
         else r.locals.push(def[2]);
       }
       for (let i = 0; i < line.length; i++) if (code[at + i]) depth += "([{".includes(line[i]) ? 1 : ")]}".includes(line[i]) ? -1 : 0;

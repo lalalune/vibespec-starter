@@ -195,9 +195,10 @@ Quint errors are reported at the source file's path and `line:col`.
 
 ### What goes in the Quint blocks
 
-Only types, imports, `pure val` and `pure def`. There is no `var`, no
-`action`, and no `init` or `step`: the state machine around your definitions
-is generated. The role of a definition comes from its name and signature:
+Only types, imports, `pure val`, `pure def` and the `const` of an opaque
+function. There is no `var`, no `action`, and no `init` or `step`: the state
+machine around your definitions is generated. The role of a definition comes
+from its name and signature:
 
 | You write | It is | Generated from it |
 |---|---|---|
@@ -212,6 +213,9 @@ is generated. The role of a definition comes from its name and signature:
 | `pure def refinesL(s: Switch): L::Lamp` | the spec [refines](#refinement) the machine imported as `L` | an obligation on every transition and on `initial`; simulated and proved |
 | `pure def leadsToPaid(o: Order, later: Order): bool` | a liveness rule: from every reachable state `o`, every fair run reaches a state `later` that it relates to `o` (`o` itself counts) | a search of simulated traces for a fair run that breaks it ("Liveness", below) |
 | `pure def lawTotalIsNotNegative(xs: List[int]): bool` | a law: true for every value of its parameters | a function proved to return `true`, and sampled by the simulator |
+| `const hash: (str) => int` | an opaque function: a type and no body. The laws in its rule are assumed of it | see [Opaque functions](#opaque-functions) |
+| `type SecretCard = str` | a secret: a type named `Secret…` | nothing new; `check` keeps its values out of every other place ([Secrets](#secrets)) |
+| `pure def declassifyLast4(c: SecretCard): str` | the one way out for a secret | a function whose result is public; review names it |
 | `pure val idValues = Set(1, 2, 3)` | what the simulator tries for a parameter named `id`. It must be a set whose elements match the parameter type; any supported Quint is allowed in it | nothing: it never reaches TypeScript |
 | `pure val weight_pay = 5` | how often the simulator tries `pay`: a whole number from 1 to 100, times as often as an event of weight 1 (the default). For deep interleavings, such as a message lost, repeated and reordered | nothing |
 | `pure val fair_pay = "weak"` or `"strong"` | an assumption for `leadsTo` rules: a fair run does not put `pay` off for ever while its guard keeps allowing it (`"weak"`), or while it allows it again and again (`"strong"`) | nothing |
@@ -271,6 +275,48 @@ A spec is imported once, one way or the other, and imports cannot form a
 circle. Navigation links may point back to a parent. In the generated
 TypeScript a name from another module is spelled
 `<module>_<name>`, for example `lamp_toggle`.
+
+### Opaque functions
+
+`const f: (A, B) => R`, on one line under a rule, declares a function with no
+body: a hash, a check the spec does not model, a model's judgement. What the
+spec knows of it is the laws in the same rule; they are assumed, not proved,
+and review shows them with it. A law about `f` in another rule is proved as
+any law is. `vibestack/fixtures/badge.md` in the vibestack repository is the
+example.
+
+- **Simulated** as a table chosen for each trace: for each argument the
+  simulator tries (the values of its type), a result from the values of `R`,
+  or from `fValues` if the spec defines it. A trace starts only with a table
+  on which every law of `f` holds for every value tried, so a rule that holds
+  only for some tables is broken in simulation. If no table satisfies the
+  laws, they may contradict each other, and `always` fails.
+- **Proved** with `f` uninterpreted (`function {:axiom} f` in the Dafny) and
+  each of its laws as a lemma `<law>_ensures(args)` that a proof file calls.
+- **In TypeScript** the program gives it before anything calls it:
+  `opaque.f = hashName`, from `gen/<name>.ts`; until then `f` throws. Its
+  parameters are `p0`, `p1`, … Nothing proves that what the program gives
+  satisfies the laws: prove that in `src/` with a `//@` contract.
+- Only simple values (`int`, `bool`, `str`, a plain variant) are its
+  arguments, and a spec with an opaque function cannot be imported.
+
+### Secrets
+
+A type whose name starts with `Secret` (`type SecretCard = str`, or a record)
+is secret. `model` refuses a spec in which a secret value can reach a place
+whose type is not secret: a field, a variant's field such as the text of
+something said, an element of a list, set or map, or the result of a
+transition, a guard or a helper. A value computed from a secret, or chosen by a
+condition on one, is secret too, through calls to helpers as well. Rules only
+check, so they may read secrets freely.
+
+The one way out is a definition named `declassify…`: what it returns is
+public. Review marks a rule that defines one, whenever it is new or changed,
+`and declassifies a secret through <name>`; confirm that what it lets out may
+be public. `vibestack/fixtures/card.md` in the vibestack repository is the
+example, and `vibestack/examples/assistant` keeps a saved card out of speech
+this way. The check reads the spec only: the shell must keep secrets out of
+its own logs.
 
 ### Refinement
 
@@ -548,6 +594,8 @@ a body.
   `inv` and guard, so a machine that holds another need not prove its rules
   again (`vibestack/fixtures/office.md`). (In a `src` unit, those of the module
   it imports are `<fn>_ensures`.)
+- The laws of the unit's [opaque functions](#opaque-functions), assumed:
+  `<law>_ensures(args)`.
 - The generated `_ensures` lemmas, and Dafny's standard library by the names
   the generated code uses.
 
@@ -754,6 +802,7 @@ In the vibestack repository:
 | `vibestack/gen/types.ts` | everything decided by a type |
 | `vibestack/gen/print.ts` | expressions |
 | `vibestack/gen/classify.ts` | which definition is a transition, a guard or a rule |
+| `vibestack/gen/secrecy.ts` | where a secret may go |
 | `vibestack/gen/typescript.ts`, `vibestack/gen/harness.ts` | the two outputs |
 
 Node runs all of it directly; `npm run build` compiles it for the packaged

@@ -344,7 +344,7 @@ example's directory to open its specs in Studio:
 | [Order checkout](vibestack/examples/order/README.md) | Guards, payments, cancellation and a proved event ledger | `npm run dev -- vibestack/examples/order` |
 | [Team dashboard](vibestack/examples/dashboard/README.md) | Shared spreadsheets, chat notifications and a project registry | `npm run dev -- vibestack/examples/dashboard` |
 | [Shared to-do list](vibestack/examples/fullstack/README.md) | HTTP server, browser client and two tabs over an unreliable network | `npm run dev -- vibestack/examples/fullstack` |
-| [Assistant](vibestack/examples/assistant/README.md) | Trusted senders, bounded turns, late replies and confirmation before payment | `npm run dev -- vibestack/examples/assistant` |
+| [Assistant](vibestack/examples/assistant/README.md) | Trusted senders, bounded turns, late replies, confirmation before payment and a secret card | `npm run dev -- vibestack/examples/assistant` |
 
 The same argument accepts any project directory containing `spec/`, including
 projects outside this repository. Studio edits and checks the selected
