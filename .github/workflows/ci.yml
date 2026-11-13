@@ -3,7 +3,8 @@ name: ci
 # Every run asks for the same tasks; Turborepo and spec skip what the change
 # does not reach, from the cache of the last run. What is headed for main, and
 # every push to develop or main, also gets larger property budgets, the
-# standalone examples and the tools' own self-test.
+# standalone examples and the tools' own self-test. A pull request into develop
+# runs the examples too when it changes what they are built from.
 on:
   pull_request:
     branches: [develop, main]
@@ -47,12 +48,29 @@ jobs:
           if-no-files-found: ignore
 
   examples:
-    if: github.event_name == 'push' || github.base_ref == 'main'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        example: [order, assistant, dashboard, fullstack]
     steps:
       - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup
-      - run: pnpm examples
+        with:
+          fetch-depth: 2
+      # A pull request is checked out as its merge into the base, so HEAD^ is the base.
+      - id: gate
+        run: |
+          if [ "$FULL" = true ] || ! git diff --quiet HEAD^ HEAD -- vibestack package.json pnpm-lock.yaml .nvmrc .github; then
+            echo run=true >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.gate.outputs.run
+        uses: ./.github/actions/setup
+        with:
+          cache: ${{ matrix.example }}
+      - if: steps.gate.outputs.run
+        run: |
+          pnpm -C vibestack/examples/${{ matrix.example }} install --frozen-lockfile --ignore-workspace
+          pnpm -C vibestack/examples/${{ matrix.example }} check
 
   selftest:
     if: github.event_name == 'push' || github.base_ref == 'main'

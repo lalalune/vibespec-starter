@@ -125,13 +125,27 @@ pure def alwaysBudgetBounded(s: Assistant): bool =
 
 ### Every choice spends the budget
 
-So a turn holds at most four model choices. Waiting for the person or
-the outside world has no time bound; this is a bound on model actions, not a
-proof that every participant eventually responds.
+So a turn holds at most four model choices. That planning then ends is the
+next rule.
 
 ```quint
 pure def stepChoicesSpendBudget(before: Assistant, via: str, after: Assistant): bool =
   via == "choose" implies after.budget < before.budget
+```
+
+### A turn being planned ends
+
+If the model's choices are not put off for ever, a turn being planned comes
+to be asking the person, done, or idle after a restart. Pages loading and
+replies arriving cannot hold it in planning. This does not say that the
+person answers when asked, or that the biller replies: a turn may wait on
+either without end.
+
+```quint
+pure def leadsToPlanningEnds(s: Assistant, later: Assistant): bool =
+  s.phase == Planning implies later.phase != Planning
+
+pure val fair_choose = "weak"
 ```
 
 ### A turn can end
@@ -282,6 +296,19 @@ decided by it, can reach what is said, or any other place that is not secret.
 
 ```quint
 type SecretCard = str
+```
+
+### The model sees nothing secret
+
+What the model is shown to choose its next action: the turn, the page and the
+bill. `Seen` has no secret field, so `check` refuses any of its fields that
+the card could reach.
+
+```quint
+type Seen = { phase: Phase, budget: int, page: Page, waiting: bool, bill: Bill }
+
+pure def seen(s: Assistant): Seen =
+  { phase: s.phase, budget: s.budget, page: s.page, waiting: s.waiting, bill: s.bill }
 ```
 
 ## Story: Survive a restart
