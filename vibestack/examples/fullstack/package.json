@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=24"
+    "node": ">=26"
   },
   "scripts": {
     "check": "node ../../spec.ts check",
@@ -12,6 +12,6 @@
     "start": "node src/main.ts"
   },
   "devDependencies": {
-    "@types/node": "^24.0.0"
+    "@types/node": "^26.0.0"
   }
 }
