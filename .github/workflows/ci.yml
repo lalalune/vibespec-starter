@@ -1,7 +1,9 @@
 name: ci
 
-# A pull request into develop checks what it affects; anything headed for main,
-# and every push to develop or main, gets the complete validation.
+# Every run asks for the same tasks; Turborepo and spec skip what the change
+# does not reach, from the cache of the last run. What is headed for main, and
+# every push to develop or main, also gets larger property budgets, the
+# standalone examples and the tools' own self-test.
 on:
   pull_request:
     branches: [develop, main]
@@ -17,59 +19,50 @@ env:
   FULL: ${{ github.event_name == 'push' || github.base_ref == 'main' }}
 
 jobs:
-  static:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
       - uses: ./.github/actions/setup
-      - if: env.FULL != 'true'
-        run: pnpm quick
-      - if: env.FULL == 'true'
-        run: pnpm exec turbo run build typecheck test //#typecheck:tool //#test:tool //#build:tool //#lint:js //#lint:css //#analyze --continue
+      - run: pnpm exec turbo run build typecheck test test:browser check //#lint:js //#lint:css //#analyze --continue
         env:
-          FUZZ_RUNS: "1000"
-      - if: env.FULL == 'true'
-        name: Generated tests are reproducible
+          FUZZ_RUNS: ${{ env.FULL == 'true' && '1000' || '100' }}
+      - name: Generated tests are reproducible
         run: |
-          node vibestack/testing/generate.ts . && cp -r .cache/generated/tests "$RUNNER_TEMP/generated-first"
-          node vibestack/testing/generate.ts . && diff -r "$RUNNER_TEMP/generated-first" .cache/generated/tests
-
-  models:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - uses: ./.github/actions/setup
-        with:
-          dafny: "true"
-      - if: env.FULL != 'true'
-        run: pnpm exec turbo run check //#check --affected
-      - if: env.FULL == 'true'
-        run: pnpm test:models
+          node vibestack/spec.ts tests apps/web && cp -r apps/web/.cache/generated/tests "$RUNNER_TEMP/generated-first"
+          rm -rf apps/web/.cache/generated/tests
+          node vibestack/spec.ts tests apps/web && diff -r "$RUNNER_TEMP/generated-first" apps/web/.cache/generated/tests
       - if: always()
         uses: actions/upload-artifact@v7
         with:
           name: proof
           path: |
             gen/proof/
-            vibestack/**/gen/proof/
+            apps/*/gen/proof/
+            vibestack/studio/gen/proof/
+          if-no-files-found: ignore
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-failures
+          path: |
+            **/__screenshots__/
+            **/test/__traces__/
+            !**/node_modules/**
           if-no-files-found: ignore
 
-  browser:
+  examples:
     if: github.event_name == 'push' || github.base_ref == 'main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
-        with:
-          browsers: "true"
-      - run: pnpm test:browser
-      - if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: browser-failures
-          path: "**/__screenshots__/"
-          if-no-files-found: ignore
+      - run: pnpm examples
+
+  selftest:
+    if: github.event_name == 'push' || github.base_ref == 'main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+      - run: pnpm selftest

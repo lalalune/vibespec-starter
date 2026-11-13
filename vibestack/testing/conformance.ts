@@ -10,6 +10,8 @@ import { fuzz } from "./properties.ts";
 
 /** What gen/<name>.conformance.ts exports. */
 export interface Machine<E, V, S> {
+  /** Empty until `check` has simulated the spec: `gen` alone writes no events. */
+  found: { events: unknown[] };
   conformance(driver: Driver<E, V>, options?: Options<S, V>): Promise<unknown>;
   replay(driver: Driver<E, V>, trace: Trace<E>, options?: Options<S, V>): Promise<void>;
 }
@@ -30,7 +32,8 @@ export function conformanceTests<E, V, S>(spec: string, machine: Machine<E, V, S
     afterAll(() => driver[Symbol.asyncDispose]?.());
     for (const file of fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => f.endsWith(".json")).sort() : [])
       it(`counterexample ${file}`, () => machine.replay(driver, JSON.parse(fs.readFileSync(path.join(dir, file), "utf8")).trace, options));
-    it(`journeys and walks of seed ${seed}`, async () => {
+    // `check` runs the tests again after it has written the events (vibestack/util.ts, tests), so nothing is lost.
+    it.skipIf(!machine.found.events.length)(`journeys and walks of seed ${seed}${machine.found.events.length ? "" : ": needs the events `pnpm check` writes"}`, async () => {
       try {
         await machine.conformance(driver, { ...options, seed });
       } catch (error) {

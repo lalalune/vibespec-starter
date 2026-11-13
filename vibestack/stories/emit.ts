@@ -25,7 +25,7 @@ export interface Component {
   design?: string[];
   diagnostics: string[];
 }
-export interface ComponentIndex { version: 1; storybook: { url?: string }; components: Component[] }
+interface ComponentIndex { version: 1; storybook: { url?: string }; components: Component[] }
 export interface Options {
   /** The project: globs and paths in the catalog are relative to it. */
   root: string;
@@ -34,7 +34,7 @@ export interface Options {
   /** The most stories generated for one component. */
   cap?: number;
 }
-export interface Result { index: ComponentIndex; written: string[]; removed: string[]; analyzed: number; diagnostics: string[] }
+interface Result { index: ComponentIndex; written: string[]; removed: string[]; analyzed: number; diagnostics: string[] }
 interface Entry { hash: string; inputs: string[]; outputs: string[]; components: Component[] }
 
 const COMPONENTS = ["src/**/*.tsx", "packages/*/src/**/*.tsx"];
@@ -230,7 +230,7 @@ export function generator({ root, out = outOf(root), cap = 12 }: Options): () =>
     const outputs = Object.values(entries).flatMap((e) => e.outputs).sort();
     write("catalog.json", `${JSON.stringify(index, null, 2)}\n`);
     write("stories.test.tsx", smoke(outputs));
-    const preview = ["ts", "tsx", "js", "jsx"].map((ext) => join(root, ".storybook", `preview.${ext}`)).find((file) => existsSync(file));
+    const preview = ["ts", "tsx", "js", "jsx"].map((ext) => join(root, ".storybook", `preview.${ext}`)).find(existsSync);
     write("stories.browser.test.tsx", browser(outputs, preview && from(preview)));
     write("manifest.json", `${JSON.stringify(entries)}\n`);
     const removed = (existsSync(out) ? readdirSync(out) : []).filter((name) => name.endsWith(".stories.tsx") && !outputs.includes(name));

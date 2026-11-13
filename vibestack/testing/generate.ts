@@ -119,8 +119,11 @@ function arbitraryOf(schema: Schema.Schema<unknown>, skip: (reason: string) => v
   }
 }
 
-if (import.meta.main) {
-  const { written, unchanged, removed, skipped } = await generateTests(process.argv[2] ?? ".");
+/** `spec tests [<directory>]` (vibestack/spec.ts), and this file run on its own. */
+export async function main(packageDir = ".") {
+  const { written, unchanged, removed, skipped } = await generateTests(packageDir);
   console.log(`generated tests: ${written.length} written, ${unchanged.length} unchanged, ${removed.length} removed, ${skipped.length} skipped`);
   for (const s of skipped) console.log(`  skipped ${s.file}, ${s.export}: ${s.reason}`);
 }
+
+if (import.meta.main) await main(process.argv[2]);

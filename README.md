@@ -209,9 +209,9 @@ pnpm accept
 
 Before committing your application's starting point:
 
-1. **Remove the example projects.** Delete `vibestack/examples/` and its
-   workspace entry, the `demo` script, and the `paths-ignore` entries in
-   `.github/workflows/check.yml`. Update the package name, description and
+1. **Remove what you do not need.** Delete `vibestack/examples/`, the `demo`
+   and `examples` scripts and the `examples` job in
+   `.github/workflows/ci.yml`; start your application from `apps/web`. Update the package name, description and
    repository links for your project.
 2. **Keep the toolchain guide with the toolchain.** Move this README to
    `vibestack/README.md`, update its relative links, and keep the template

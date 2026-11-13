@@ -10,7 +10,7 @@ export interface Story {
   args: Record<string, unknown>;
 }
 /** A story as the generated file writes it: `args` is source text. */
-export interface Planned { export: string; args: string; play?: string; snapshot: boolean }
+interface Planned { export: string; args: string; play?: string; snapshot: boolean }
 export interface Plan { id: string; title: string; base: string; samples: number; stories: Planned[]; catalog: Story[]; diagnostics: string[] }
 
 /** Source text standing for a value, such as `fn()`; the catalog leaves it out. */
@@ -27,8 +27,8 @@ const fields = (values: Record<string, unknown>) =>
   Object.entries(values).map(([name, value]) => `${/^[A-Za-z_$][\w$]*$/.test(name) ? name : JSON.stringify(name)}: ${value instanceof Code ? value.text : value === undefined ? "undefined" : JSON.stringify(value)}`);
 
 // Storybook's own rules (storybook/src/csf: `sanitize`, `toStartCaseStr`, `toId`), so that an id here is the id it serves.
-export const sanitize = (text: string) => text.toLowerCase().replace(/[ ’–—―′¿'`~!@#$%^&*()_|+\-=?;:'",.<>{}[\]\\/]/gi, "-").replace(/-+/g, "-").replace(/^-+/, "").replace(/-+$/, "");
-export const startCase = (text: string) =>
+const sanitize = (text: string) => text.toLowerCase().replace(/[ ’–—―′¿'`~!@#$%^&*()_|+\-=?;:'",.<>{}[\]\\/]/gi, "-").replace(/-+/g, "-").replace(/^-+/, "").replace(/-+$/, "");
+const startCase = (text: string) =>
   text.replace(/[_\-.]/g, " ").replace(/([^\n])([A-Z])([a-z])/g, "$1 $2$3").replace(/([a-z])([A-Z])/g, "$1 $2").replace(/([a-z])([0-9])/gi, "$1 $2").replace(/([0-9])([a-z])/gi, "$1 $2")
     .replace(/(\s|^)(\w)/g, (_, space: string, letter: string) => space + letter.toUpperCase()).replace(/ +/g, " ").trim();
 const storyId = (component: string, exportName: string) => `${component}--${sanitize(startCase(exportName))}`;

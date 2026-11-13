@@ -127,7 +127,7 @@ it.live("a spec is published with its origins, checked, synced by an agent, and 
   const signOff = try post("accept", {})
   try check(() => {
     assert.equal(checked.session.verdict, "Reviewable")
-    assert.match(checked.check!.next, /npm run accept/)
+    assert.match(checked.check!.next, /pnpm accept/)
     assert.equal(signOff.status, 409)
   })
 

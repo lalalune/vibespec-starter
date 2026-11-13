@@ -8,11 +8,11 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "stories": "node ../../vibestack/stories/cli.ts gen --check",
+    "gen": "node ../../vibestack/stories/cli.ts gen --check",
     "storybook": "storybook dev --no-open",
-    "build": "pnpm stories && storybook build",
-    "test": "pnpm stories && vitest run --project dom",
-    "test:browser": "pnpm stories && vitest run --project browser",
+    "build": "storybook build",
+    "test": "vitest run",
+    "test:browser": "vitest run -c vitest.browser.config.ts",
     "typecheck": "tsc --noEmit -p ."
   },
   "peerDependencies": {

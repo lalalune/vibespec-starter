@@ -3,7 +3,7 @@ export const colorNames = [
   "primary", "primary-foreground", "secondary", "secondary-foreground", "muted", "muted-foreground",
   "accent", "accent-foreground", "destructive", "destructive-foreground", "border", "input", "ring", "ok", "warn",
 ] as const
-export type ColorName = (typeof colorNames)[number]
+type ColorName = (typeof colorNames)[number]
 type Named = Record<string, string>
 export interface Tokens {
   color: { light: Record<ColorName, string>; dark: Record<ColorName, string> }
@@ -14,7 +14,7 @@ export interface Tokens {
   breakpoint: Named
 }
 /** The only way a proposed change enters: a token's dotted path, its new value and why. */
-export interface TokenChange { path: string; value: string; reason: string }
+interface TokenChange { path: string; value: string; reason: string }
 
 const text: [RegExp, string] = [/\S/, "a value"]
 const length: [RegExp, string] = [/^\d*\.?\d+(?:rem|px)$/, "a length in rem or px"]
@@ -61,13 +61,13 @@ const luminance = (color: string) => {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b
 }
 /** WCAG 2 contrast ratio of two oklch colors. */
-export const contrast = (one: string, other: string) => {
+const contrast = (one: string, other: string) => {
   const [dark, light] = [luminance(one), luminance(other)].sort((x, y) => x - y) as [number, number]
   return (light + 0.05) / (dark + 0.05)
 }
 
 /** Text color on surface: each `x-foreground` on `x`, and every color used as text on the page and on a card. */
-export const contrastPairs: [ColorName, ColorName][] = [
+const contrastPairs: [ColorName, ColorName][] = [
   ["foreground", "background"], ["foreground", "muted"], ["muted-foreground", "popover"],
   ...colorNames.filter((name) => name.endsWith("-foreground")).map((name): [ColorName, ColorName] => [name, name.slice(0, -11) as ColorName]),
   ...(["muted-foreground", "primary", "destructive", "ok", "warn"] as const).flatMap((name): [ColorName, ColorName][] => [[name, "background"], [name, "card"]]),

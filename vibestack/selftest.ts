@@ -24,7 +24,7 @@ const PACKAGE = Object.fromEntries(["package.json", "tsconfig.json", "vitest.con
 const roots: string[] = [];
 const nodeModules = (function find(dir: string): string {
   const here = path.join(dir, "node_modules");
-  return fs.existsSync(here) ? here : dir === path.dirname(dir) ? assert.fail("no node_modules: run npm install") : find(path.dirname(dir));
+  return fs.existsSync(here) ? here : dir === path.dirname(dir) ? assert.fail("no node_modules: run pnpm install") : find(path.dirname(dir));
 })(project);
 after(() => roots.forEach((root) => fs.rmSync(root, { recursive: true, force: true })));
 
@@ -893,7 +893,7 @@ export effect function filled(sku: string, qty: number) {
 
   test("init sets a package up for a VibeLang shell: compiler and test runner configuration, scripts, the pinned toolchain with one Effect; what the package already has is kept, and a second run adds nothing", () => {
     const json = (root: string, file: string) => JSON.parse(read(file, root));
-    const pins: Record<string, string> = json(project, "package.json").devDependencies;
+    const pins: Record<string, string> = { ...json(project, "package.json").dependencies, ...json(project, "package.json").devDependencies };
     const pinned = (...names: string[]) => Object.fromEntries(names.map((n) => [n, pins[n]]));
     const [runtime, tooling] = [["effect", "@effect/platform-node", "vibelang-runtime"], ["vibelang", "vibelang-vite", "vite", "vitest", "@effect/vitest", "@types/node"]];
     // VibeLang's packages move together, and with one version of Effect: each is pinned exactly.
@@ -1197,7 +1197,7 @@ export effect function filled(sku: string, qty: number) {
     const before = await run(root);
     assert.deepEqual(before.failed, ["review"], before.text);
     assert.ok(before.said("review", /story changed/) && before.said("review", /src\/ledger\.ts\n\s+contract changed/), before.text);
-    assert.match(before.next, /npm run accept/);
+    assert.match(before.next, /pnpm accept/);
     await check(root, "reviews");
     const after = await run(root);
     assert.deepEqual(after.failed, [], after.text);
@@ -1224,7 +1224,9 @@ export effect function filled(sku: string, qty: number) {
 
   test("a rebuilt packaged command can generate a project from the repository root", async () => {
     const root = oneRule("packaged", "A packaged value", "pure val answer = 42");
-    const copy = toolchain(scratch({ "package.json": read("package.json"), "tsconfig.build.json": read("tsconfig.build.json") }), "quint", "lsc", "tsc");
+    const copy = toolchain(scratch({ "package.json": read("package.json"), "tsconfig.build.json": read("tsconfig.build.json") }), "quint", "lsc", "vibelang");
+    // Studio's page is built from the workspace packages it shares with every interface.
+    fs.cpSync(path.join(project, "packages"), path.join(copy, "packages"), { recursive: true, verbatimSymlinks: true });
     const built = await exec(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "build"], copy);
     assert.equal(built.status, 0, built.stdout + built.stderr);
     const script = path.join(copy, "dist/spec.js");
@@ -1265,7 +1267,7 @@ export effect function filled(sku: string, qty: number) {
     const checked = JSON.parse((await cli(parent, "check", "a project", "--json")).stdout);
     assert.deepEqual([...new Set(checked.results.filter((r: Result) => !r.ok).map((r: Result) => r.stage))], ["review"], JSON.stringify(checked, null, 2));
     for (const stage of ["model", "always", "sometimes", "replay", "proof"]) assert.ok(checked.results.some((r: Result) => r.stage === stage && r.ok), stage);
-    assert.match(checked.next, /npm run accept/);
+    assert.match(checked.next, /pnpm accept/);
     assert.ok(fs.existsSync(path.join(root, "gen/tally.ts")));
     assert.ok(!fs.existsSync(path.join(parent, "gen")));
     const accepted = await cli(parent, "accept", root);

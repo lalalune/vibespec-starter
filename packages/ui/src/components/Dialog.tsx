@@ -1,6 +1,6 @@
 import type { ComponentProps } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
-import { cn } from "../lib/cn.ts";
+import { cn, focusRing } from "../lib/cn.ts";
 
 export type DialogProps = ComponentProps<typeof DialogPrimitive.Root>;
 export type DialogContentProps = ComponentProps<typeof DialogPrimitive.Content> & {
@@ -31,7 +31,7 @@ export function DialogContent({ closeLabel = "Close", className, children, ...pr
         {...props}
       >
         {children}
-        <DialogPrimitive.Close aria-label={closeLabel} className="absolute top-4 right-4 rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring">
+        <DialogPrimitive.Close aria-label={closeLabel} className={cn(focusRing, "absolute top-4 right-4 rounded-sm text-muted-foreground hover:text-foreground")}>
           <svg aria-hidden viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="size-4">
             <path d="m3 3 10 10M13 3 3 13" />
           </svg>

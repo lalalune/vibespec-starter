@@ -52,6 +52,9 @@ Every project built here uses this, and nothing beside it:
 | `vibestack/` | the tools: the `spec` command, Studio, and what any project uses but does not own (`vibestack/testing`, `vibestack/design`, `vibestack/stories`) |
 | `vibestack/examples/` | standalone projects, each with its own install; never part of the workspace |
 
+[docs/architecture.md](docs/architecture.md) maps what is generated from what,
+which test is for what, and what each green result means.
+
 A package states what it offers in `exports`; import a package by name, never
 by a path into its `src/`. Domain code does not import React, and a UI package
 holds no business rules. A shared type lives with the contract that owns it.
@@ -59,21 +62,34 @@ holds no business rules. A shared type lives with the contract that owns it.
 | Command | Does |
 |---|---|
 | `pnpm dev` | Studio |
-| `pnpm quick` | the fast local check: types, lint and tests of what changed since the base branch |
-| `pnpm verify` | everything CI runs for `main`: build, types, lint, tests, browser tests, every `check`, Knip, Madge, the examples |
-| `pnpm build`, `pnpm typecheck`, `pnpm test`, `pnpm test:affected`, `pnpm test:browser` | one kind of task in every package |
+| `pnpm quick` | the fast local check: types, tests, ESLint and Stylelint, in every package |
+| `pnpm verify` | what CI runs: build, types, tests, browser tests, every `check`, lint, Knip, Madge, the examples |
+| `pnpm all <task>…` | one or more kinds of task in every package: `pnpm all build typecheck test` |
+| `pnpm test:browser` | the browser tests |
 | `pnpm test:models` | `check` in every package with a `spec/`, and in the examples |
-| `pnpm lint`, `pnpm lint:css` | ESLint; Stylelint |
+| `pnpm lint` | ESLint and Stylelint (`pnpm lint:js`, `pnpm lint:css` for one) |
 | `pnpm analyze` | Knip (unused files, exports, dependencies) and Madge (import cycles) |
-| `pnpm check` | this package's own `check`, as everywhere else in this file |
+| `pnpm check`, `pnpm gen`, `pnpm build`, `pnpm typecheck`, `pnpm test` | this package's own, here as in every package: at the root, the root project and the tools |
 
-Turborepo (`turbo.json`) orders these and caches each by its inputs, the lock
-file and the Node version; `spec` keeps its own finer cache in `.spec-cache/`.
-A package joins by having a script named `build`, `typecheck`, `test`,
-`test:browser` or `check`. Pull requests go to `develop` and run what they
-affect; `develop` to `main` runs `pnpm verify`
-(`.github/workflows/ci.yml`), and `fuzz.yml` runs the property tests nightly
-with a larger budget and a new seed.
+Turborepo (`turbo.json`) orders these and skips a task whose inputs it has
+seen: the package's files, the tools under `vibestack/`, the lock file,
+`.nvmrc`, and `FUZZ_RUNS` and `FUZZ_SEED`. So every command above runs only
+what a change reaches. `check` is never skipped whole: `spec` keeps its own
+finer cache in `.spec-cache/`, keyed on the prover's versions too, and runs
+the application again each time.
+
+A package joins by having a script named `gen`, `build`, `typecheck`, `test`,
+`test:browser` or `check`. Its other tasks wait for its `gen`, and its `check`
+for all of them, since `check` rewrites `gen/`. `pnpm lint:js` on its own
+needs what `gen` and `typecheck` write (`gen/`, `.vibe/declarations`); `pnpm
+lint` runs them first.
+
+Pull requests go to `develop`, and `develop` to `main`. Every CI run
+(`.github/workflows/ci.yml`) asks for the same tasks and restores the caches
+of the last run; a pull request into `main` and every push to `develop` or
+`main` add 1000 runs per property, the examples and `pnpm selftest`.
+`fuzz.yml` runs properties and model-based tests nightly with 20000 runs and
+a new seed.
 
 ## Hard rules
 
@@ -778,12 +794,13 @@ repository they are `@repo/ui`; a standalone project keeps its own.
 
 | | Source, kept in Git | Generated, never committed | Command, in the project |
 |---|---|---|---|
-| Tokens | `tokens.json`, and `design.md` describing them | `generated/tokens.css`, `generated/theme.css` (the Tailwind v4 entry) | `node <tools>/design/cli.ts build`, `check` |
-| Stories | the component, and `<Name>.meta.tsx` where its types are not enough | `generated/stories/`: Storybook stories, `catalog.json`, `stories.test.tsx` | `node <tools>/stories/cli.ts gen [--watch] [--check]` |
+| Tokens | `tokens.json`, and `design.md` describing them | `generated/tokens.css`, `generated/theme.css` (the Tailwind v4 entry) | `spec tokens build`, `check` |
+| Stories | the component, and `<Name>.meta.tsx` where its types are not enough | `generated/stories/`: Storybook stories, `catalog.json`, and a mount test and a browser test (accessibility, marked snapshots) of every story | `spec stories gen [--watch] [--check]` |
 
-`<tools>` is `vibestack/` here (`../../vibestack` from a package, `../..`
-from an example). In `@repo/ui`: `pnpm stories`, `pnpm storybook`,
-`pnpm test`; in `@repo/design-system`: `pnpm build`, `pnpm check`.
+`spec` is the tool's command: `pnpm exec spec` in a project that installed
+it, `node ../../spec.ts` in an example. In `@repo/ui`: `pnpm gen` (the stories),
+`pnpm storybook`, `pnpm test`, `pnpm test:browser`; in
+`@repo/design-system`: `pnpm build`, `pnpm check`.
 
 - **Never write a story for what the generator can derive.** It reads each
   prop's type, default and JSDoc and writes a Default story, one per option
@@ -809,14 +826,14 @@ from an example). In `@repo/ui`: `pnpm stories`, `pnpm storybook`,
   only where a component has real variants.
 - **A design change is a token change.** Describe it in `design.md`, write
   it as `[{ "path": "color.light.primary", "value": "oklch(…)", "reason": "…" }]`,
-  and run `node <tools>/design/cli.ts apply changes.json`: it refuses an
+  and run `spec tokens apply changes.json`: it refuses an
   unknown path, an invalid value and a contrast below WCAG AA, and prints
   the diff; `--write` applies it and rebuilds the CSS. Prose is never read
   as tokens.
 
 To change a component: find it in `generated/stories/catalog.json` or in
 Studio's Components view, read its props and model there, edit the source,
-run `pnpm stories` (or leave `pnpm storybook` running), look at it, then
+run `pnpm gen` (or leave `pnpm storybook` running), look at it, then
 `pnpm test` and `pnpm lint`.
 
 ### Building, running and testing
