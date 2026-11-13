@@ -8,6 +8,7 @@ import { stripTypeScriptTypes } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { after, describe, test } from "node:test";
+import { stripVTControlCharacters } from "node:util";
 import { Miniflare } from "miniflare";
 import { cacheCredentials, collectGarbage } from "./cache.ts";
 import { LIB_FILE, isolatedCopies, parseProofFile, readVerdict, splice } from "./prove.ts";
@@ -491,12 +492,14 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       run(plainRoot),
     ]);
     const unfit = "application does not fit the generated contract";
-    assert.equal(mistyped.said("types", /src\/app\.vibe\(\d+,\d+\): error TS2322/)?.summary, unfit, mistyped.text);
+    assert.equal(mistyped.said("types", /./)?.summary, unfit, mistyped.text);
+    assert.match(stripVTControlCharacters(mistyped.text), /src\/app\.vibe(?:\(\d+,\d+\):|:\d+:\d+ -) error TS2322/);
     assert.deepEqual(failing.failed, ["tests"], failing.text);
     // Colored runner output still starts at the failure list and names the failed assertion.
     assert.ok(failing.said("tests", /^fail\n +⎯+ Failed Tests 1 ⎯+\n[\s\S]*test\/app\.test\.vibe > never holds[\s\S]*expected 1 to equal 2/), failing.text);
     assert.deepEqual(plain.failed, ["types", "tests", "review"], plain.text);
-    assert.equal(plain.said("types", /src\/wrong\.ts\(1,14\): error TS2322/)?.summary, unfit, plain.text);
+    assert.equal(plain.said("types", /./)?.summary, unfit, plain.text);
+    assert.match(stripVTControlCharacters(plain.text), /src\/wrong\.ts(?:\(1,14\):|:1:14 -) error TS2322/);
     assert.ok(plain.said("tests", /^test\/ had nothing to run it: added "test": "vitest run" to package\.json, and vitest\.config\.ts, as `spec init` does\n$/), plain.text);
     assert.ok(plain.said("tests", /^fail\n[\s\S]*never holds/), plain.text);
     const initialized = scratch({});
