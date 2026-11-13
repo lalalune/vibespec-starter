@@ -72,7 +72,7 @@ and nothing else would catch it.
 |---|---|
 | A whole user journey, or an integration with a real service, through the real shell: input parsing, storage, HTTP, UI wiring | A guard, transition, rule or law the spec already proves, except as a step of a journey |
 | Hand-written code that touches the outside world, through the journey that uses it. Pure logic becomes a `pure def` or gets a `//@` contract instead | Strings, labels, page titles, markup, styles, snapshots |
-| A shell bug that was found: one more step in the journey it broke | That a function was called; what `tsc` already checks |
+| A shell bug that was found: one more step in the journey it broke | That a function was called; what the `types` stage already checks |
 
 - **Journeys.** A test walks a story end to end, is named after it, and cites
   the rule each assertion serves (`// spec/index.md, "…"`). A story whose
@@ -105,8 +105,12 @@ How `npm run check` runs them:
   `bun test` and Playwright all work. Without a `test` script it runs
   `node --test` on `test/**/*.test.ts`. The exit code decides; a failure shows
   the runner's summary of failures, or its last 80 lines.
-- **Citations.** A test, or a shell file in `src/`, names the story or rule it
-  serves by its heading, on one line:
+- **VibeLang.** A VibeLang package's `test` script is `vitest run`, on
+  `test/**/*.test.vibe` ("The VibeLang shell", below). Without a `test`
+  script, its `test/**/*.test.ts` run under `node --test` with VibeLang's
+  loader, so they may import `.vibe` files.
+- **Citations.** A test, or a shell file in `src/`, in TypeScript or
+  VibeLang, names the story or rule it serves by its heading, on one line:
   `// spec/index.md, "A payment never exceeds the balance"`, or
   `// spec/index.md, "Story: Check out"` for a story; several may share a line,
   separated by `;`. `check` fails on a
@@ -238,6 +242,10 @@ Refused, each with a message saying why: the generated and harness names
 keywords (`Number`, `delete`, …); Quint built-ins (`to`, `next`, `all`,
 `size`, …); a parameter named like a variant; a variant field called `tag`;
 and near-misses of the conventions above such as `alwayspaid` or `CanPay`.
+In a VibeLang package, a state machine is also refused the names of its
+Effect adapter: `Rejected`, `NotAnEvent`, `NotAState`, `NotASender`,
+`Machine`, `machine`, `apply`, `decodeEvent`, `decodeState` and
+`decodeSender` ("The VibeLang shell", below).
 
 ### Using one spec from another
 
@@ -576,10 +584,133 @@ line.
   Both return a fresh copy, so nothing the caller keeps can change it
   afterwards.
 - Calling a transition directly (`pay(o, 5)`) is only meaningful when its
-  guard holds. Application code goes through `enabled` and `step`, as
-  `vibespec/examples/order/src/app.ts` does.
+  guard holds. Application code goes through `enabled` and `step`, or in
+  VibeLang through `apply`, as `vibespec/examples/order/src/app.vibe` does.
 - `gen/` is rebuilt by `npm run gen` and `npm run check`, and by
   `npm install` when every spec is valid.
+
+## The VibeLang shell
+
+The shell around the generated code is plain TypeScript or
+[VibeLang](https://github.com/smithersai/vibelang): `.vibe` files, TypeScript
+syntax over [Effect](https://effect.website) 4, in which a function's type
+says what it fails with and which services it needs. It is optional, and the
+verified core is the same either way.
+
+| A package that | Is | `types` runs | `gen` writes |
+|---|---|---|---|
+| lists `vibelang` in its `dependencies` or `devDependencies` | VibeLang | `vibelang --noEmit -p .`, which checks `.vibe` and `.ts` as one program | `gen/<name>.ts` and, beside each, `gen/<name>.effect.vibe` |
+| does not | plain TypeScript | `tsc --noEmit -p .` | `gen/<name>.ts` |
+
+- **In.** `spec init` starts a package that has a `package.json` and no
+  `src/`, `test/` or `tsconfig.json` in VibeLang. To move an existing package,
+  add `vibelang` to its `devDependencies`, delete its `tsconfig.json` and run
+  `spec init`, then the package manager's install.
+- **Out.** `spec init` leaves any other package in the language it has. To
+  leave VibeLang, remove `vibelang` from `package.json` and rewrite the
+  `.vibe` files as TypeScript: `tsc` does not read them.
+- **Before writing any**, read the skill the compiler ships,
+  `node_modules/vibelang/skills/vibelang/SKILL.md`. The language is new: look
+  syntax and Effect APIs up, and compile often.
+
+### The Effect adapter
+
+`gen/<name>.effect.vibe` is `gen/<name>.ts` for effect code. Import it in
+place of the `.ts` module: `"../gen/index.effect.vibe"`.
+
+| It exports | Which is |
+|---|---|
+| every type of `gen/<name>.ts` | the same types |
+| its constants and functions, under their own names: `initial`, `step`, `enabled`, `parseEvent`, your guards, helpers and rules | the same, declared to throw nothing, so effect code calls them bare: `canPay(order, 5)`. The compiler refuses that call (EK0403) when the function is imported from `gen/<name>.ts` |
+
+and for a state machine, with `[, by]`, `NotASender` and `decodeSender` only
+when the spec has a sender:
+
+| It exports | Which is |
+|---|---|
+| `error Rejected { event, state[, by] }` | the rules do not allow this event in this state |
+| `error NotAnEvent { input }`, `NotAState { input }`, `NotASender { input }` | an untrusted value that is not one |
+| `decodeEvent(input)`, `decodeState(input)`, `decodeSender(input)` | `parseEvent`, `parseState` and `parseSender`, failing where they return `undefined` |
+| `apply(current, event[, by])` | `step`, failing with `Rejected` where `enabled` refuses instead of leaving the state unchanged |
+| `service Machine` | the state and the one way to change it: `get()`, `send(event[, by])`, `receive(input[, by])` for an untrusted event (`decodeEvent`, then `send`), and `changes`, a `Stream` of the state, starting with the current one |
+| `machine(start = initial)` | a `Layer` that provides `Machine` in memory, applying one event at a time; `start` may be a state `decodeState` returned |
+
+Where transitions return `{ state, out }`, `apply`, `send` and `receive`
+return that record; `get` and `changes` give the state.
+
+A shell and its test, on the order example's spec:
+
+```vibe
+// src/app.vibe
+import { Machine, NotAnEvent, Rejected, canSubmit } from "../gen/index.effect.vibe"
+
+/** What to tell the sender of an untrusted input. Needs a Machine, which the caller provides. */
+export effect function answer(input: unknown) {
+  const orders = try Machine
+  return effect {
+    const order = try orders.receive(input) // decodeEvent, then apply: the state changes only if both pass
+    return canSubmit(order) ? "ready to submit" : order.status // a guard of the spec, called bare
+  } catch (error) => match (error) {
+    when NotAnEvent: "not an event";
+    when Rejected: `${error.event.type} is not allowed for a ${error.state.status} order`;
+  }
+}
+```
+
+```vibe
+// test/app.test.vibe
+// spec/index.md, "Story: Check out"
+import { assert, it } from "@effect/vitest"
+import { machine } from "../gen/index.effect.vibe"
+import { answer } from "../src/app.vibe"
+
+it.effect("Check out", effect () => {
+  provide machine() {
+    const said = [try answer({ type: "addItem", qty: 2 }), try answer({ type: "pay", amount: 1 }), try answer("pay")]
+    try Effect.try(() => assert.deepStrictEqual(said, ["ready to submit", "pay is not allowed for a Draft order", "not an event"]))
+  }
+})
+```
+
+- **`machine()` forgets when the process ends.** A shell that stores state
+  writes its own service on `apply` and the decoders, as
+  `vibespec/examples/order/src/app.vibe` does.
+- **Match an event by its `type`**: `match (event.type) { when "pay": …; }`.
+  The compiler does not yet check that a `match` on the event itself, or on
+  a variant by its `tag`, covers every case.
+- **A `.vibe` file reaches the platform through Effect**, not through
+  `node:*` imports, `console`, `fetch` or the DOM: an Effect service
+  (`Console`, `FileSystem`, `HttpClient`, …), a `module node { … }` body in
+  the file, or a thin `.ts` file beside it.
+- **`//@` files stay `.ts`** ("Hand-written verified logic"). Effect code
+  calls one through a `module` body that says what its functions throw, as
+  `vibespec/examples/order/src/app.vibe` does for `ledger.ts`.
+
+### Building, running and testing
+
+| | Command | Does |
+|---|---|---|
+| check | `npm run check` | `types` checks `src/`, `test/` and `gen/` with `vibelang --noEmit -p .` |
+| build | `npm run build` (`vibelang`) | checks, and writes JavaScript to `dist/`, as `dist/src/…` and `dist/gen/…` |
+| run | `npm run build && node dist/src/main.js` | runs the built `src/main.vibe` |
+| test | `npm test` (`vitest run`) | `test/**/*.test.vibe`, written with `@effect/vitest`; compiled as they load, no build first |
+
+In the vibespec-starter repository's root, where `dist/` and `npm run build`
+are the tools', `npm start` builds the application into `build/` and runs
+`build/src/main.js`.
+
+| Needs | |
+|---|---|
+| Node | `^22.22.3` or `>=24.11.1`: on another, `types` fails. VibeLang's loader (`node --import vibelang/register`) needs it; the compiler, the built JavaScript and Vitest also ran on Node 24.5 |
+| `dependencies` | `effect` 4.1.1, `@effect/platform-node` 4.1.1, `vibelang-runtime` 0.0.12 |
+| `devDependencies` | `vibelang` 0.0.12, `vibelang-vite` 0.0.12, `vite` 8.3.5, `vitest` 5.1.0, `@effect/vitest` 4.1.1, `@types/node` ^24.0.0 |
+| `overrides` | `@effect/platform-node-shared` 4.1.1 |
+
+The pins are exact: VibeLang's packages move together, and with one version
+of Effect. `spec init` adds whichever a VibeLang package lacks, at the
+versions the tools are tested with. The compiler writes declarations for
+other tools under `.vibe/`, even when it only checks: keep it out of Git,
+like `dist/`.
 
 ## Hand-written verified logic
 
@@ -601,8 +732,9 @@ event log, write TypeScript under `src/` with
   `export { … }`, `export default` or statements. The proof reads names as
   written, and LemmaScript does not model what such statements do at run time.
 - `//@` must be in a `//` comment, never in a block comment or a string. In
-  any other script under `src/` (`.mts`, `.cts`, `.tsx`, `.js`, `.jsx`,
-  `.mjs`, `.cjs`) it is an error.
+  any other script under `src/` (`.vibe`, `.vibex`, `.mts`, `.cts`, `.tsx`,
+  `.js`, `.jsx`, `.mjs`, `.cjs`) it is an error: in a VibeLang package too,
+  verified logic stays in `.ts`.
 - Allowed annotations: `backend`, `pure`, `requires`, `ensures`, `invariant`,
   `decreases`, `type`, `ghost`, `assert`. Any other, such as `assume`,
   `extern`, `havoc`, `skip` or `verify`, is refused wherever on a line it
@@ -637,13 +769,26 @@ npm run check
 | `.agents/skills/` | links to the same skills in `.claude/skills/` |
 | `CLAUDE.md` | imports `AGENTS.md`, preserving any existing instructions |
 | `tsconfig.json`, an empty `spec/index.md` | |
-| `.gitignore` | `gen/`, `.spec-cache/` |
-| `package.json` scripts | `check`, `gen`, `accept` |
+| `.gitignore` | `gen/`, `.spec-cache/`, `.studio/` |
+| `package.json` | `"type": "module"` if it has no `type`, and the scripts `dev`, `check`, `gen`, `accept` |
+
+and for a VibeLang package (["The VibeLang shell"](#the-vibelang-shell)
+says which that is):
+
+| `spec init` adds | |
+|---|---|
+| `tsconfig.json` | for the VibeLang compiler: it also includes `gen/*.vibe`, emits to `dist/` and keeps the compiler's declarations in `.vibe/declarations` |
+| `vitest.config.ts` | Vitest with the VibeLang plugin, on `test/**/*.test.vibe` |
+| `.gitignore` | also `dist/`, `.vibe/` |
+| `package.json` | the scripts `build` (`vibelang`) and `test` (`vitest run`); the toolchain it lacks, at its pins, with their `overrides` entry; `engines.node` |
+
+It replaces no file that exists, and no script or dependency already there.
 
 `spec` works on `spec/**/*.md`, and optionally `src/`, the package's
 [tests](#tests) and a `tsconfig.json`, in the directory it is run from. Without a `tsconfig.json`, a package containing `src/` or `test/` fails the
 types stage; a spec-only package reports that there is no code to typecheck. To hand the generated code to another package, compile `gen/*.ts`
-with `tsc`; it has no dependencies.
+with `tsc`; it has no dependencies. `gen/*.effect.vibe` needs the VibeLang
+toolchain.
 
 ## Large applications
 
@@ -657,7 +802,7 @@ with `tsc`; it has no dependencies.
   result is kept in `.spec-cache/` under a fingerprint of the spec, everything it
   imports and the versions of the tools.
 - **The spec covers the rules, not the plumbing.** Chat, HTTP and storage stay
-  hand-written around the generated core, as `vibespec/examples/dashboard/src/notify.ts`
+  hand-written around the generated core, as `vibespec/examples/dashboard/src/notify.vibe`
   does for sending messages.
 
 ## Checking harder
@@ -683,7 +828,7 @@ In the vibespec-starter repository:
 | `vibespec/parse.ts`, `vibespec/review.ts` | literate specs and the review ledgers |
 | `vibespec/cache.ts`, `vibespec/run.ts` | stage caches and bounded tool execution |
 | `vibespec/units.ts`, `vibespec/simulate.ts` | generation, proof units, simulation and replay |
-| `vibespec/util.ts` | source discovery, test execution and citations |
+| `vibespec/util.ts` | source discovery, whether a package is VibeLang, test execution and citations |
 | `vibespec/prove.ts` | proves one unit: checks and splices the proof file, runs LemmaScript and `dafny audit`, and rechecks alone every postcondition a failing one could hide |
 | `vibespec/proof/lib.dfy` | the library proof files call |
 | `vibespec/gen.ts` | the translator: reads what a module imports and defines |
@@ -691,6 +836,7 @@ In the vibespec-starter repository:
 | `vibespec/gen/print.ts` | expressions |
 | `vibespec/gen/classify.ts` | which definition is a transition, a guard or a rule |
 | `vibespec/gen/typescript.ts`, `vibespec/gen/harness.ts` | the two outputs |
+| `vibespec/gen/vibe.ts` | `gen/<name>.effect.vibe`, read off the generated TypeScript, for a VibeLang package |
 
 Node runs all of it directly; `npm run build` compiles it for the packaged
 `spec` command.

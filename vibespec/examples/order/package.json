@@ -3,13 +3,15 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=24"
+    "node": ">=24.11.1"
   },
   "scripts": {
     "check": "node ../../spec.ts check",
     "gen": "node ../../spec.ts gen",
     "accept": "node ../../spec.ts accept",
-    "demo": "npm run -s gen && node src/demo.ts"
+    "build": "vibelang",
+    "test": "vitest run",
+    "demo": "npm run -s gen && vibelang && node dist/src/demo.js"
   },
   "dependencies": {
     "@effect/platform-node": "4.1.1",

@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=24"
+    "node": ">=24.11.1"
   },
   "scripts": {
     "dev": "node vibespec/spec.ts studio",
@@ -11,6 +11,8 @@
     "gen": "node vibespec/spec.ts gen",
     "accept": "node vibespec/spec.ts accept",
     "new": "node vibespec/spec.ts new",
+    "start": "vibelang --noEmit false && node build/src/main.js",
+    "test": "vitest run",
     "demo": "npm run demo --workspace order-example",
     "selftest": "node --test vibespec/selftest.ts",
     "build": "node -e \"fs.rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json && node -e \"fs.chmodSync('dist/spec.js', 0o755); fs.mkdirSync('dist/proof', { recursive: true }); fs.copyFileSync('vibespec/proof/lib.dfy', 'dist/proof/lib.dfy'); fs.cpSync('vibespec/studio/public', 'dist/studio/public', { recursive: true }); fs.cpSync('vibespec/std', 'dist/std', { recursive: true }); fs.copyFileSync('vibespec/conformance.ts', 'dist/conformance.ts')\"",

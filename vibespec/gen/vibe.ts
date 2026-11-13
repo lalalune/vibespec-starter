@@ -6,8 +6,10 @@ import { fail } from "./types.ts";
 
 /** Helpers the generated module exports for its own use (typescript.ts), and the proof obligation of `initial`. */
 const INTERNAL = /^(?:exact|equal|quotient|remainder|lookup\d+)_|^initialHolds$/;
+/** The adapter's typed failures. A conformance driver may name them, to tell a refusal from a crash (util.ts). */
+export const FAILURES = ["Rejected", "NotAnEvent", "NotAState", "NotASender"];
 /** What the adapter itself exports for a state machine; a spec that binds one of these cannot have an adapter. */
-const OWN = ["Rejected", "NotAnEvent", "NotAState", "NotASender", "Machine", "machine", "apply", "decodeEvent", "decodeState", "decodeSender"];
+const OWN = [...FAILURES, "Machine", "machine", "apply", "decodeEvent", "decodeState", "decodeSender"];
 
 /**
  * `text` is gen/<name>.ts. Every constant and function comes back under its own name from a TypeScript `module` body,
@@ -108,6 +110,8 @@ export function effectAdapter(name: string, source: string, text: string): strin
     ``,
     `/** The state, and the one way to change it: an event the rules allow, applied before the next is looked at. */`,
     `export service Machine {`,
+    // VibeLang derives a key from the nearest package.json's name, and gen/package.json has none (genDir in units.ts).
+    `  static readonly key = ${JSON.stringify(`${source}#Machine`)}`,
     `  readonly changes: Stream.Stream<${state}>`,
     `  get(): ${state}!!`,
     `  send(event: T.Event${by}): ${stepped}!Rejected`,
