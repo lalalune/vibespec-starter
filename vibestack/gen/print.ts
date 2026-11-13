@@ -80,6 +80,9 @@ export const BUILTIN = new RegExp(`^std_(${Object.keys(BUILTINS).join("|")})_`);
 /** The set and the value of a membership test, whichever way round it is written. */
 const members = (op: string, a: Json[]): [Json, Json] => (op === "in" ? [a[1], a[0]] : [a[0], a[1]]);
 
+/** `-1` arrives as `iuminus(1)`: the literal it is, or undefined. */
+const negative = (e: Json): Json | undefined => (e.kind === "app" && e.opcode === "iuminus" && e.args[0].kind === "int" ? { kind: "int", value: -e.args[0].value } : undefined);
+
 /** Puts a binding back as it was before an inner scope shadowed it. */
 const restore = <V>(m: Map<string, V>, k: string, v: V | undefined) => (v === undefined ? m.delete(k) : m.set(k, v));
 
@@ -156,7 +159,9 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
     for (const [n] of hidden) { renamed.delete(n); matchedAs.delete(n); }
     const text = not ? `!${ex(result, ATOM)}` : ex(result, TERNARY);
     for (const [n, r, m] of hidden) { restore(renamed, n, r); restore(matchedAs, n, m); }
-    const param = (p: Json) => (inferred(p.id) ? `${bind(p.name)}: ${tsType(typeOf(p.id))}` : bind(p.name));
+    // The item of a point-free helper is the tangler's own name (expandListHelpers in parse.ts), which no spec can bind.
+    const name = (p: Json) => (/^std_x_\d+$/.test(p.name) ? p.name : bind(p.name));
+    const param = (p: Json) => (inferred(p.id) ? `${name(p)}: ${tsType(typeOf(p.id))}` : name(p));
     return `(${params.map(param).join(", ")}) => ${text.startsWith("{") ? `(${text})` : text}`;
   };
 
@@ -181,6 +186,7 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
     }
     const a: Json[] = e.args;
     const op: string = e.opcode;
+    if (negative(e)) return print(negative(e));
     if (BINARY[op]) {
       const [symbol, prec] = BINARY[op];
       const structural = (op === "eq" || op === "neq") && !isScalar(typeOf(a[0].id)) && comparable(a[0]);
@@ -292,7 +298,7 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
       const t = resolve(typeOf(e.id));
       setElem(t);
       const distinct = [...new Set(a.map((x) => ex(x, TERNARY)))];
-      const literal = (x: Json) => ["int", "str", "bool"].includes(x.kind) || (x.kind === "name" && variants.has(x.name));
+      const literal = (x: Json) => ["int", "str", "bool"].includes(x.kind) || !!negative(x) || (x.kind === "name" && variants.has(x.name));
       if (a.length > 1 && !a.every(literal)) fail("Set(…) with several members that are not literals could hold the same value twice; write Set(a).union(Set(b))");
       return [distinct.length ? `[${distinct.join(", ")}]` : `([] as ${tsType(t.elem)}[])`, ATOM];
     }
