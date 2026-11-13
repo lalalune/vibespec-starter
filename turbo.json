@@ -12,14 +12,15 @@
   "tasks": {
     "gen": {
       "inputs": [
-        "spec/**",
+        "$TURBO_DEFAULT$",
         "$TURBO_ROOT$/vibestack/*.ts",
         "$TURBO_ROOT$/vibestack/{gen,proof,std,testing,stories,design}/**",
         "!$TURBO_ROOT$/vibestack/**/node_modules/**",
         "!$TURBO_ROOT$/vibestack/**/.cache/**"
       ],
       "outputs": [
-        "gen/**"
+        "gen/**",
+        "generated/**"
       ]
     },
     "build": {
