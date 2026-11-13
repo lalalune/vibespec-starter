@@ -272,10 +272,10 @@ npm run accept
 
 Before committing your application's starting point:
 
-1. **Use your own metadata.** Update the package name, description and
-   repository links. Remove `vibespec/examples/` when you no longer need
-   the reference projects, along with their workspace entries, npm scripts
-   and CI steps such as `demo` and `check:dashboard`. Set `check` to
+1. **Remove the example projects.** Delete `vibespec/examples/` and remove
+   its workspace entries, npm scripts and CI steps such as `demo` and
+   `check:dashboard`. Update the package name, description and repository
+   links for your project. Set `check` to
    `node vibespec/spec.ts check` after removing the workspaces.
 2. **Keep the toolchain guide with the toolchain.** Move this README to
    `vibespec/README.md`, update its relative links and the guide references
