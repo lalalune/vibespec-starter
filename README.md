@@ -15,6 +15,7 @@ model in step; you sign off.
 [![check](https://github.com/lalalune/vibespec-starter/actions/workflows/check.yml/badge.svg)](https://github.com/lalalune/vibespec-starter/actions/workflows/check.yml)
 
 [Quick start](#quick-start) ·
+[Project setup](#set-up-a-new-project) ·
 [Tutorial](#tutorial) ·
 [How it works](#what-npm-run-check-checks) ·
 [Guarantees](#what-is-and-is-not-guaranteed) ·
@@ -117,6 +118,39 @@ through a scripted session; every `✗` is a rule refusing an event:
 ✗ {"type":"cancel"}              cancel is not allowed for a Paid order
 balance 0
 ```
+
+## Set up a new project
+
+This repository keeps its examples so people can try the template. When you
+use it for a new project, finish this cleanup before feature work:
+
+1. **Remove the examples.** Delete `vibespec/examples/` and the root order
+   example: `spec/order.*`, `src/app.ts`, `src/ledger.ts`, `src/demo.ts` and
+   `test/app.test.ts`. Remove the example-only npm scripts and CI steps, such
+   as `demo` and `check:dashboard`, and replace the package metadata and
+   repository links with the new project's.
+2. **Keep the toolchain guide with the toolchain.** Move this README to
+   `vibespec/README.md` (the toolchain directory formerly called `tools/`).
+   Update its relative links and the guide references in `AGENTS.md` and the
+   skills. Keep the original template license in `vibespec/LICENSE` alongside
+   the retained Vibespec code.
+3. **Write the project's own files.** Create a new root `README.md` describing
+   what the project does and how to install, run and check it. Rewrite the root
+   `LICENSE` for the project's chosen terms and copyright holder. Add the
+   project's initial stories and rules under `spec/`.
+4. **Check and sign off.** Run `npm install` and `npm run check`, resolve what
+   they report, and have the project owner review and accept the new spec with
+   `npm run accept`.
+5. **Commit the starting point.** Commit all setup changes, including the
+   deletions and reviewed spec ledgers, then confirm the working tree is clean:
+
+   ```bash
+   git add -A
+   git commit -m "Initialize project"
+   git status --short
+   ```
+
+An empty status means the project is ready for its first feature.
 
 ## The studio
 
@@ -247,9 +281,8 @@ npm run new -- tally
 This writes `spec/tally.md`, a [starter spec](AGENTS.md#writing-a-spec)
 that passes every stage but `review`: one story, a state, one guarded
 transition, an `always` and a `sometimes` rule. Replace its story with yours.
-When you no longer need the order example, delete `spec/order.*`, everything
-in `src/` and `test/` (the example's logic, shell and tests), and the `demo` script in
-`package.json`.
+For a repository created from the template, follow [project setup](#set-up-a-new-project)
+to remove the examples and establish the project's own documentation and license.
 
 ### 3. Write a story; let the agent write the rules
 
