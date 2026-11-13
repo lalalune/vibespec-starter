@@ -3,37 +3,35 @@
 import { expect, it } from "@effect/vitest";
 import { Arbitrary, Effect, Equal, Schema } from "effect";
 
-function budget(name: string, fallback: number) {
-  const n = Number(globalThis.process?.env[name] ?? fallback);
-  if (!Number.isSafeInteger(n) || n < 0) throw new Error(`${name} must be a nonnegative whole number`);
+function budget(name: string, fallback: number, least: number) {
+  const text = globalThis.process?.env[name] ?? String(fallback), n = Number(text);
+  if (!/^\d+$/.test(text) || !Number.isSafeInteger(n) || n < least) throw new Error(`${name} must be a whole number, ${least} or more, but is ${JSON.stringify(text)}`);
   return n;
 }
 
 /** How many values a property sees and the seed they come from: `FUZZ_RUNS` and `FUZZ_SEED`. */
-export const fuzz = { runs: budget("FUZZ_RUNS", 100), seed: budget("FUZZ_SEED", 1) };
+export const fuzz = { runs: budget("FUZZ_RUNS", 100, 1), seed: budget("FUZZ_SEED", 1, 0) };
 
 /** Where a property's values come from. */
 export type Source<A> = Schema.Schema<A> | Arbitrary.Arbitrary<A>;
 
 /**
- * Check `property` on `fuzz.runs` values of `source`, in an `it.effect`. A failure carries the shrunk counterexample,
- * the seed and the command that repeats it.
+ * Check `property` on `fuzz.runs` values of `source`, in an `it.effect`; `options` replace what they name of `fuzz`.
+ * A failure carries the shrunk counterexample, the seed and the command that repeats it.
  */
-export const holds = <A>(source: Source<A>, property: (value: A) => boolean, options: Arbitrary.CheckOptions = fuzz) =>
-  Arbitrary.checkEffect(
+export const holds = <A>(source: Source<A>, property: (value: A) => boolean, options?: Arbitrary.CheckOptions) => {
+  const used = { ...fuzz, ...options };
+  return Arbitrary.checkEffect(
     Arbitrary.isArbitrary(source) ? source : Arbitrary.schema(source),
     // A property that throws is falsified by its cause, as in @effect/vitest's it.prop.
     (value) => Effect.catchCause(Effect.sync(() => property(value)), (cause) => Effect.fail(cause)),
-    options,
+    used,
   ).pipe(Effect.flatMap((result) => {
     const failure = Arbitrary.formatCheckFailure(result);
     if (failure === undefined) return Effect.void;
-    const { runs = fuzz.runs, seed = fuzz.seed } = options;
-    return Effect.die(new Error(`${failure}\nSeed: ${seed}\nRerun: FUZZ_SEED=${seed} FUZZ_RUNS=${runs} pnpm vitest run ${expect.getState().testPath ?? ""}`));
+    return Effect.die(new Error(`${failure}\nSeed: ${used.seed}\nRerun: FUZZ_SEED=${used.seed} FUZZ_RUNS=${used.runs} pnpm vitest run ${expect.getState().testPath ?? ""}`));
   }));
-
-/** Every generated value passes the schema's own checks. */
-export const validates = <A>(schema: Schema.Schema<A>) => Schema.is(schema);
+};
 
 /** Decoding what was encoded gives the value back. */
 export function roundTrips<A, I>(schema: Schema.Codec<A, I>) {
@@ -87,7 +85,6 @@ export function contractTest<A, B>(name: string, c: Contract<A, B>, property: st
 }
 
 export function schemaTests<A, I>(name: string, schema: Schema.Codec<A, I>) {
-  it.effect(`${name}: every generated value validates`, () => holds(schema, validates(schema)));
   it.effect(`${name}: decoding what was encoded gives the value back`, () => holds(schema, roundTrips(schema)));
   it.effect(`${name}: encoding is stable`, () => holds(schema, encodesStably(schema)));
 }

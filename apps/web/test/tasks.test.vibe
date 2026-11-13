@@ -1,51 +1,41 @@
-// The shell of src/tasks.vibe against its store: what a browser's localStorage is to the application.
-import { assert, it, layer } from "@effect/vitest"
+// The shell of src/tasks.vibe against its store: what the conformance driver (test/drivers/index.ts) cannot see,
+// which is a store at its limits, two changes at once and two tabs on one store.
+import { assert, layer } from "@effect/vitest"
 import * as KeyValueStore from "effect/persistence/KeyValueStore"
-import { type Event, Machine } from "../gen/index.effect.vibe"
+import type { Event } from "../gen/index.effect.vibe"
 import { TaskList, load, stored } from "../src/tasks.vibe"
+import { limited } from "./storage.ts"
 
-/** What the list answered `event` with: "taken", or the failure. */
-effect function sent(event: Event) {
-  const list = try TaskList
+/** What `list` answered `event` with: "taken", or the failure. */
+effect function sent(list: TaskList.Shape, event: Event) {
   return effect { try list.send(event); return "taken" } catch (error) => error._tag
 }
-/** The list as the application holds it, and as the store does. */
-effect function held() { return [try (try Machine).get(), try load()] }
+/** The list as `list` shows it, and as the store holds it. */
+effect function shown(list: TaskList.Shape) { return [Option.getOrUndefined(try Stream.runHead(list.changes)), try load()] }
+/** One more tab on the store. */
+effect function tab() { return Context.get(try Layer.build(stored), TaskList) }
+const add = (title: string): Event => ({ type: "add", title })
 
-/** A store with room for one write: every later one fails, as a full localStorage does. */
-const full = Layer.sync(KeyValueStore.KeyValueStore, () => {
-  let value: string | undefined
-  return KeyValueStore.makeStringOnly({
-    get: () => succeed(value),
-    set: (key, next) => value === undefined ? sync(() => { value = next }) : Effect.fail(new KeyValueStore.KeyValueStoreError({ message: "full", method: "set", key })),
-    remove: () => Effect.void,
-    clear: Effect.void,
-    size: succeed(1),
-    keys: succeed(["tasks"])
-  })
-})
+layer(limited(KeyValueStore.layerMemory, { writes: 4 }))((it) => {
+  it.effect("Keep a short list, at once, in two tabs and in a store at its limits", () => effect {
+    const store = try KeyValueStore.KeyValueStore
+    // spec/index.md, "A list holds open and done tasks, and starts empty"
+    try store.set("tasks", JSON.stringify({ open: ["a", "b", "c", "d"], done: [] }))
+    const [here, there] = [try tab(), try tab()]
+    const empty = try shown(here)
 
-// spec/index.md, "Story: Keep a short list"
-layer(Layer.provideMerge(stored, KeyValueStore.layerMemory), { buildPerTest: true })((it) => {
-  it.effect("every change the rules allow is stored, and one they refuse is not", () => effect {
-    const answers = [try sent({ type: "add", title: "bread" }), try sent({ type: "add", title: "milk" }), try sent({ type: "complete", title: "bread" }), try sent({ type: "complete", title: "bread" })]
-    const list = { open: ["milk"], done: ["bread"] }
-    const seen = [answers, try held()]
-    try Effect.try(() => assert.deepStrictEqual(seen, [["taken", "taken", "taken", "Rejected"], [list, list]]))
-  })
+    // spec/index.md, "No more than three tasks are open at once"
+    const atOnce = try.all [sent(here, add("bread")), sent(here, add("milk")), sent(here, add("eggs")), sent(here, add("tea"))]
+    // spec/index.md, "A new task needs a title that is not empty and no other task has, and room among the open ones"
+    const elsewhere = [try sent(there, add("milk")), try shown(there)]
+    // spec/index.md, "Story: Keep a short list"
+    const full = [try sent(here, { type: "complete", title: "bread" }), try shown(here)]
+    const unreadable = try exit(Effect.provide(load(), limited(Layer.succeed(KeyValueStore.KeyValueStore, store), { reads: 0 })))
 
-  it.effect("a list starts empty where the store holds something that is no list", () => effect {
-    try (try KeyValueStore.KeyValueStore).set("tasks", JSON.stringify({ open: ["a", "b", "c", "d"], done: [] }))
-    const list = try load()
-    try Effect.try(() => assert.deepStrictEqual(list, { open: [], done: [] }))
-  })
-})
-
-layer(Layer.provideMerge(stored, full), { buildPerTest: true })((it) => {
-  it.effect("a change the store does not take is not made", () => effect {
-    const answers = [try sent({ type: "add", title: "bread" }), try sent({ type: "add", title: "milk" })]
-    const list = { open: ["bread"], done: [] }
-    const seen = [answers, try held()]
-    try Effect.try(() => assert.deepStrictEqual(seen, [["taken", "NotSaved"], [list, list]]))
+    const none = { open: [], done: [] }, list = { open: ["bread", "milk", "eggs"], done: [] }
+    try Effect.try(() => assert.deepStrictEqual(
+      [empty, atOnce, elsewhere, full, Exit.isFailure(unreadable)],
+      [[none, none], ["taken", "taken", "taken", "Rejected"], ["Rejected", [list, list]], ["NotSaved", [list, list]], true]
+    ))
   })
 })

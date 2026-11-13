@@ -25,7 +25,7 @@ pure val limit = 3
 pure def alwaysOpenWithinLimit(l: Tasks): bool = l.open.size() <= limit
 ```
 
-### A new task needs a title no other task has, and room among the open ones
+### A new task needs a title that is not empty and no other task has, and room among the open ones
 
 ```quint
 pure val titleValues = Set("", "bread", "milk", "eggs", "tea")
@@ -56,7 +56,9 @@ pure def remove(l: Tasks, title: str): Tasks =
 pure def alwaysOpenOrDone(l: Tasks): bool = l.open.intersect(l.done).size() == 0
 ```
 
-### The list can fill up, and everything on it can get done
+### The list can fill up, and three tasks can all get done
+
+Three tasks open at once; and, another time, three done with none left open.
 
 ```quint
 pure def sometimesFull(l: Tasks): bool = l.open.size() == limit

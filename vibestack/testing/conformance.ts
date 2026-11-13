@@ -22,20 +22,22 @@ export interface Suite<S, V> extends Options<S, V> {
 }
 
 /**
- * Replay each `dir/*.json`, then run `machine.conformance` with seed `FUZZ_SEED`. A disagreement is saved to `dir`
- * under a name made from its shrunk trace, so the same one is saved once and replayed from then on.
+ * Replay each `dir/*.json`, then run `machine.conformance` with seed `FUZZ_SEED` and, unless `walks` says how many,
+ * `FUZZ_RUNS` walks. A disagreement is saved to `dir` under a name made from its shrunk trace, so the same one is
+ * saved once and replayed from then on.
  */
 export function conformanceTests<E, V, S>(spec: string, machine: Machine<E, V, S>, driver: Driver<E, V> & Partial<AsyncDisposable>, { dir, ...options }: Suite<S, V>) {
   dir = path.resolve(dir);
-  const seed = options.seed ?? fuzz.seed;
+  const seed = options.seed ?? fuzz.seed, walks = options.walks ?? fuzz.runs;
+  // `check` runs the tests again after it has written the events (vibestack/util.ts, tests), so nothing is lost.
+  const simulated = it.skipIf(!machine.found.events.length), needs = machine.found.events.length ? "" : ": needs the events `pnpm check` writes";
   describe(`${spec} conforms to its spec`, () => {
     afterAll(() => driver[Symbol.asyncDispose]?.());
     for (const file of fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => f.endsWith(".json")).sort() : [])
-      it(`counterexample ${file}`, () => machine.replay(driver, JSON.parse(fs.readFileSync(path.join(dir, file), "utf8")).trace, options));
-    // `check` runs the tests again after it has written the events (vibestack/util.ts, tests), so nothing is lost.
-    it.skipIf(!machine.found.events.length)(`journeys and walks of seed ${seed}${machine.found.events.length ? "" : ": needs the events `pnpm check` writes"}`, async () => {
+      simulated(`counterexample ${file}${needs}`, () => machine.replay(driver, JSON.parse(fs.readFileSync(path.join(dir, file), "utf8")).trace, options));
+    simulated(`journeys and ${walks} walks of seed ${seed}${needs}`, async () => {
       try {
-        await machine.conformance(driver, { ...options, seed });
+        await machine.conformance(driver, { ...options, seed, walks });
       } catch (error) {
         // The generated module throws its own copy of the class (gen/_conformance.ts), so it is known by name.
         if (!(error instanceof Error) || error.name !== "ConformanceError") throw error;

@@ -5,7 +5,7 @@ import { effectDriver } from "vibestack/testing";
 import type { Event, Tasks } from "../../gen/index.ts";
 import { TaskList, load, stored } from "../../src/tasks.vibe";
 
-export const driver = effectDriver<Event, Tasks, TaskList | KeyValueStore.KeyValueStore, never>(Layer.provideMerge(stored, KeyValueStore.layerMemory), {
+export const driver = effectDriver<Event, Tasks, TaskList | KeyValueStore.KeyValueStore, KeyValueStore.KeyValueStoreError>(Layer.provideMerge(stored, KeyValueStore.layerMemory), {
   dispatch: (_key, event) => TaskList.use((list) => list.send(event)).pipe(Effect.as("accepted" as const), Effect.catchTag("Rejected", () => Effect.succeed("refused" as const))),
   observe: () => load(),
 });

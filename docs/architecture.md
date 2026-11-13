@@ -55,9 +55,10 @@ twice and compares.
 
 **Seeds and budgets.** Simulation is seeded from what it simulates. Property
 tests take `FUZZ_SEED` (default 1) and `FUZZ_RUNS` (default 100), which is
-also the number of walks of a model-based test: 1000 on a pull request into
-`main` and on every push to `develop` or `main`, 20000 nightly. A failure
-prints the seed and the shrunk counterexample.
+also the number of walks of a model-based test whose driver's `options` set
+no `walks`: 1000 on a pull request into `main` and on every push to `develop`
+or `main`, 20000 nightly. A failure prints the seed and the shrunk
+counterexample.
 
 ## Which test, for what
 

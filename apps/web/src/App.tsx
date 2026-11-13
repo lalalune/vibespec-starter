@@ -1,8 +1,9 @@
 // spec/index.md, "Story: Keep a short list"
 import { Alert, Button, Checkbox, Input, Progress } from "@repo/ui";
-import { Exit } from "effect";
+import { Cause, Exit } from "effect";
 import { useRef, useState } from "react";
 import { type Event, limit } from "../gen/index.ts";
+import { NotSaved } from "./tasks.vibe";
 import { type Runtime, useTasks } from "./useTasks.ts";
 
 /**
@@ -15,11 +16,13 @@ export function App({ runtime }: { runtime: Runtime }) {
   const [unsaved, setUnsaved] = useState(false);
   const titleRef = useRef<HTMLInputElement>(null);
   if (!tasks) return null;
+  if (tasks === "unreadable") return <main className="mx-auto max-w-md p-6"><Alert variant="destructive">The list cannot be read</Alert></main>;
 
+  /** Whether `event` was taken. One the rules refuse is no failure to save: the list shown was behind the stored one. */
   const run = async (event: Event) => {
-    const done = Exit.isSuccess(await send(event));
-    setUnsaved(!done);
-    return done;
+    const exit = await send(event);
+    setUnsaved(Exit.isFailure(exit) && Cause.squash(exit.cause) instanceof NotSaved);
+    return Exit.isSuccess(exit);
   };
   const add = async () => {
     if (!await run({ type: "add", title: draft })) return;
