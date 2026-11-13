@@ -171,8 +171,8 @@
         "56d1326e6033"
       ],
       "Story: Edit through the dashboard / A task edited through the dashboard is signed by a member": [
-        "4e40f22bc051",
-        "c27f328069b7",
+        "618134d3b2fd",
+        "cc60b5b4d5fe",
         "4c252baabdb6"
       ],
       "Story: Edit through the dashboard / Only a hand edit can make the data worse": [
@@ -221,8 +221,8 @@
         "474fff5a55a6"
       ],
       "Story: Edit through the dashboard / Renaming or removing a person through the dashboard rewrites every cell that names them": [
-        "434eed54cf1b",
-        "7c3354ffe2a1",
+        "3ffde1528838",
+        "f88366e16a65",
         "474fff5a55a6"
       ],
       "## Story: Edit the spreadsheet directly": [
@@ -252,7 +252,7 @@
         "56d1326e6033"
       ],
       "Story: Be told what changed and what is due / One pass of the notifier sends everything that is due and records that it was sent": [
-        "c82dfc52efa7",
+        "cce015649e59",
         "a7425c539a4f",
         "e068f7cc742b"
       ],

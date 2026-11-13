@@ -337,7 +337,7 @@
       "## Story: The tabs can synchronize with the server": [
         "f2e37625ede7"
       ],
-      "Story: The tabs can synchronize with the server / The server and both tabs keep their own rules": [
+      "Story: The tabs can synchronize with the server / The server and both tabs keep their own state rules": [
         "e3b0c44298fc",
         "1e4fc1bd8f41",
         "0fc232479527"
@@ -385,15 +385,15 @@
         "6cf2a8e1f2dd",
         "bd9beb738302"
       ],
-      "Story: Nobody can answer for my edits / Every request and answer of a tab belongs to an edit the tab has numbered, and every answer to one the server answered": [
-        "fd8281a9b712",
+      "Story: Nobody can answer for my edits / Every request, acknowledgement and refusal of a tab belongs to an edit the tab has numbered, and every acknowledgement and refusal to one the server answered": [
+        "d17bfd8fedad",
         "86dd297aa9b7",
         "5b575577cade"
       ],
       "Story: Nobody can answer for my edits / A forger can get an edit applied in a tab's name": [
         "e3b0c44298fc",
         "39b872e38d56",
-        "738762862403"
+        "d9a7d301976c"
       ],
       "Story: Nobody can answer for my edits / The count of forged requests is never negative": [
         "46abc0bca015",
@@ -416,7 +416,7 @@
       "Story: Editing alone is never refused / Without forgeries, the network holds no forged request, the server has answered only numbered edits, and of a tab's queued edits only the oldest": [
         "f04abea6f8bf",
         "3129965f8f60",
-        "738762862403"
+        "d9a7d301976c"
       ],
       "Story: Editing alone is never refused / A tab is told of a change only after the other tab or a forger made an edit": [
         "62963caf172b",
