@@ -1,11 +1,11 @@
 // The TypeScript module for one spec: its types, its definitions with their proof obligations, and, for a state
 // machine, the event type and the functions that apply and admit events.
-import { SENDER, type Param, type Roles, type Transition } from "./classify.ts";
+import { SENDER, type Opaque, type Param, type Roles, type Transition } from "./classify.ts";
 import type { Printer } from "./print.ts";
 import type { Json, Types } from "./types.ts";
 
 /** The names a module defines beside the spec's, and the locals of what it defines (TAKEN in gen.ts). */
-export const EMITTED = ["Event", "inv", "enabled", "step", "parseEvent", "parseState", "parseSender", "initialHolds", "current", "event", "raw"];
+export const EMITTED = ["Event", "opaque", "inv", "enabled", "step", "parseEvent", "parseState", "parseSender", "initialHolds", "current", "event", "raw"];
 /** Patterns for the helpers a module may carry for itself, each named `<helper>_<module>`. */
 export const HELPERS = ["quotient", "remainder", "exact", "equal", "lookup\\d+"];
 
@@ -21,15 +21,26 @@ export interface Source {
   doc: (def: string) => string;
   /** One of the module's own top-level names, as this rendering spells it. */
   local: (name: string) => string;
+  /** The spec's file, for messages. */
+  source: string;
 }
 
-export function typescript({ header, typedefs, vals, funs, sig, typeOf, doc, local: L }: Source, roles: Roles, types: Types, print: Printer, helper: (which: string) => string): string {
+export function typescript({ header, typedefs, vals, funs, sig, typeOf, doc, local: L, source }: Source, roles: Roles, types: Types, print: Printer, helper: (which: string) => string): string {
   const { tsType, declaration, wellFormed, copy } = types;
-  const { transitions, always, steps, laws, sender, output } = roles;
+  const { transitions, always, steps, laws, opaques, sender, output, refines } = roles;
   const state = roles.stateType && tsType(roles.stateType);
   // Where some transition has output, `step` returns it beside the state, and a transition without output outputs nothing.
   const nothing = output && `([] as ${tsType(output.out)})`;
   const outputs = (s: string) => (output ? `{ state: ${s}, out: ${nothing} }` : s);
+  // A refining spec's step leaves the abstract state as it was, or takes the abstract step of its name (AGENTS.md,
+  // "Refinement"; gen/harness.ts, `refined`).
+  const abstract = (n: string) => `${refines!.of.module}_${n}`;
+  const refined = (t: Transition, before: string, after: string) => {
+    const [from, to] = [before, after].map((s) => `${L(refines!.fn)}(${s})`);
+    const u = refines!.of.transitions.find((u) => u.name === t.name);
+    const guard = u?.guard ? `${abstract(u.guard)}(${[from, ...u.guardParams].join(", ")}) && ` : "";
+    return `${to} === ${from}${u ? ` || (${guard}${to} === ${abstract(u.name)}(${[from, ...u.params.map((p) => p.name)].join(", ")})${u.emits ? ".state" : ""})` : ""}`;
+  };
   // Who sent an event is never part of it: the program passes it to `enabled` and `step` from what it trusts.
   const carried = (t: Transition) => t.params.filter((p) => p.name !== SENDER);
   const by = sender ? `, ${SENDER}: ${tsType(sender)}` : "";
@@ -39,6 +50,25 @@ export function typescript({ header, typedefs, vals, funs, sig, typeOf, doc, loc
     `/** One variant per transition in the spec${sender ? `, without \`${SENDER}\`: who sent it is passed beside it` : ""}. */`,
     `export type ${L("Event")} =`,
     ...transitions.map((t) => `  | { type: ${JSON.stringify(t.name)}${carried(t).map((p) => `; ${p.name}: ${tsType(p.type)}`).join("")} }`).map((l, i, all) => (i === all.length - 1 ? l + ";" : l)),
+  );
+  // The program gives each opaque function, and replay the table a trace chose (simulate.ts, `standIn`). The proof
+  // knows one only by its type and the laws assumed of it: LemmaScript declares an extern without its body.
+  const signature = (o: Opaque, arrow = ":") => `(${o.params.map((p) => `${p.name}: ${tsType(p.type)}`).join(", ")})${arrow} ${tsType(o.result)}`;
+  if (opaques.length) out.push(
+    ``,
+    `/** The spec's opaque functions, which the program sets before it calls anything that uses them. */`,
+    `//@ skip`,
+    `export const ${L("opaque")}: { ${opaques.map((o) => `${o.name}?: ${signature(o, " =>")}`).join("; ")} } = {};`,
+  );
+  for (const o of opaques) out.push(
+    ``,
+    `${doc(o.name)}//@ extern`,
+    `//@ pure`,
+    `export function ${L(o.name)}${signature(o)} {`,
+    `  const given = ${L("opaque")}.${o.name};`,
+    `  if (!given) throw new Error(${JSON.stringify(`${o.name} is opaque in ${source}: set opaque.${o.name} first`)});`,
+    `  return given(${o.params.map((p) => p.name).join(", ")});`,
+    `}`,
   );
   out.push(``, ...vals.map((d) => `${doc(d.name)}export const ${L(d.name)}: ${tsType(typeOf(d.id))} = ${print.ex(d.expr)};`));
   if (state) out.push(
@@ -57,6 +87,7 @@ export function typescript({ header, typedefs, vals, funs, sig, typeOf, doc, loc
     const given = t && `(${L("inv")}(${params[0].name})${t.guard ? ` && ${L(t.guard)}(${[params[0].name, ...t.guardParams].join(", ")})` : ""}) ==> `;
     const after = t?.emits ? "\\result.state" : "\\result";
     const contract = t ? [
+      ...(refines ? [`  //@ ensures ${given}(${refined(t, params[0].name, after)})`] : []),
       ...always.map((a) => `  //@ ensures ${given}${L(a)}(${after})`),
       ...steps.map((r) => `  //@ ensures ${given}${L(r.name)}(${[params[0].name, ...(r.via ? [JSON.stringify(t.name)] : []), after, ...(r.out ? [t.emits ? "\\result.out" : "[]"] : [])].join(", ")})`),
     ] : laws.some((l) => l.name === d.name) ? [`  //@ ensures \\result === true`] : [];
@@ -124,6 +155,7 @@ export function typescript({ header, typedefs, vals, funs, sig, typeOf, doc, loc
     `/** Proof obligation: the initial state satisfies every \`always\` rule. */`,
     `export function ${L("initialHolds")}(): ${state} {`,
     `  //@ ensures ${L("inv")}(\\result)`,
+    ...(refines ? [`  //@ ensures ${L(refines.fn)}(\\result) === ${abstract("initial")}`] : []),
     `  return ${L("initial")};`,
     `}`,
   );

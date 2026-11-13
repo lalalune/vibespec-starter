@@ -3,7 +3,7 @@
 // queue, which keeps what was true of each edit left in it.
 
 lemma DistinctBridge(c: Client)
-  ensures alwaysQueuedEditsHaveDistinctNumbers(c) == Std.Collections.Seq.All(c.pending, (p: Pending) => (|ProofLib.Filter((q: Pending) => (q.seq_ == p.seq_), c.pending)| == 1))
+  ensures alwaysQueuedEditsHaveDistinctNumbers(c) == !(exists p :: p in c.pending && !(|ProofLib.Filter((q: Pending) => (q.seq_ == p.seq_), c.pending)| == 1))
 { }
 
 lemma WithoutBridge(ps: seq<Pending>, seq_: int)

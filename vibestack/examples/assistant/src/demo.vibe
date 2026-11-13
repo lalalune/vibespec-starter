@@ -15,7 +15,7 @@ function why(refusal: Refusal) {
 
 function shown(carried: T.Effect) {
   return match (carried.tag) {
-    when "Said": carried.secret ? "said a secret" : "said a sentence";
+    when "Said": `said "${carried.text}"`;
     when "Filled": `typed the card into the ${carried.page} page`;
   }
 }

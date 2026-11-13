@@ -80,16 +80,28 @@ its event (`canCreate`, `canSetDone`, `canRename`, `canRemove`, `canGoOffline`,
 - **Tested**: the HTTP shell and two tabs against the real server (`test/`);
   that every story mounts. No test drives the page in a browser.
 - **Trusted**: `src/`, React, Effect, the VibeLang compiler, the generator,
-  Dafny and Quint.
+  Dafny and Quint. Convergence is a `sometimes` rule: the model shows it can
+  happen, not that it always does.
+
+## Simplifying it
+
+The specs were written before the tools could do the following, and still
+work around their absence. Each is a good first exercise:
+
+- **Imported proofs.** The server and client restate "a commit / refusal /
+  queued edit / answer keeps the rules" as laws for the system proof file.
+  It can call `server_<transition>_ensures` and `client_<transition>_ensures`
+  instead (AGENTS.md, "Proof files").
+- **Equality.** `sameTodos` and its reflexivity law can become `==`, which
+  compares lists and records by structure.
+- **List operations.** `dropAt`, and its induction, can become `removeAt`.
+- **Liveness.** "Both tabs eventually agree" is stated as "sometimes they
+  agree"; a `leadsTo` rule with `fair_` events can state it (AGENTS.md,
+  "Liveness").
 
 ## Limits of the spec language met here
 
 - **A machine cannot be imported with `.*`**; the system spec uses `S::` and `C::`.
-- **Proofs about an imported machine's transitions cannot be reused**, so the
-  server and client restate "a commit / refusal / queued edit / answer keeps
-  the rules" as laws, which `system.proof.dfy` calls.
-- **No equality on records or lists**: `sameTodos` is a fold with a position counter.
-- **No list indexing besides `nth`**: taking the i-th message off the network is a fold (`dropAt`).
 - **Folds over records need a named type**, hence `Walk` and `Cut`.
 - **A helper that takes the state first and returns it is a transition**, so
   `commit`, `queue` and `withClient` take it second.

@@ -1,4 +1,4 @@
-// spec/server.md, "A request is answered only once"; spec/server.md, "A new request can be refused, which is logged with its edit and changes nothing else"; spec/client.md, "Story: Hear back from the server"
+// spec/server.md, "The log tells which requests were answered, and with which edit each was accepted"; spec/server.md, "A new request can be refused, which is logged with its edit and changes nothing else"; spec/client.md, "Story: Hear back from the server"
 import { type Rejected, type Server, Machine, NotAnEvent, acceptedAs, answered, decodeEvent, machine } from "../gen/server.effect.vibe"
 import { type Answer, type Request, type Snapshot, opOf } from "./protocol.vibe"
 

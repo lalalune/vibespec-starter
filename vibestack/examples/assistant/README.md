@@ -15,11 +15,18 @@ pnpm demo    # generates gen/, and a scripted model pays a bill, then tries what
 |---|---|
 | Every model choice spends a bounded budget | `stepChoicesSpendBudget`, `alwaysBudgetBounded` |
 | The sender comes from the session, never the message | `by`; `step(s, e, by)` |
-| A late reply is refused, before or after a restart | `stepReplyAnswersWaiting` |
+| A late reply is refused, before or after a restart | `stepReplyAnswersWaiting`, `stepRequestNeverGoesBack` |
 | A bill is reviewed, then paid once, after the person's confirmation | `alwaysPaidOnlyReviewed`, `alwaysChargedOnce`, `stepChargedOnlyOnConfirm` |
-| Card details and payment go only to the biller's own page | `alwaysFilledOnlyGenuine`, `stepPaidOnlyOnGenuine` |
-| The model cannot have the card read aloud | `alwaysNothingSecretSaid` |
-| The program carries out effects from an outbox | `outbox`, `drain` |
+| Card details and payment go only to the biller's own page | `stepFilledOnlyGenuine`, `stepPaidOnlyOnGenuine` |
+| The model cannot have the card read aloud | `SecretCard`: no secret reaches what is said |
+| The program carries out what each choice outputs | `choose` returns `{ state, out }` |
+
+| Need | How |
+|---|---|
+| Termination | a budget every choice spends |
+| Requests in flight | a request number, saved |
+| Crash and restart | `restart` resets what is not saved |
+| The model and the world as adversaries | their choices are event parameters; the simulator tries every sender |
 
 ## The shell
 
@@ -34,7 +41,7 @@ built on its `Machine` service: every event reaches the state through
 |---|---|
 | `Model` | the model as a service: `choose(seen)` returns an untrusted answer, or fails with `NoAnswer` |
 | `World` | the biller and the browser as a service: `bill(request)`, `page()`, `perform(effect)` |
-| `hear(said)` | what the person said, sent as the Person; then the loop: the model's answer offered as the Agent's choice, the outbox that choice left carried out and then drained, the page and the biller's answer sent as the World. It returns where the turn stopped and each answer that ended it, and fails with `Rejected` when the rules refuse the person |
+| `hear(said)` | what the person said, sent as the Person; then the loop: the model's answer offered as the Agent's choice, what that choice output carried out, the page and the biller's answer sent as the World. It returns where the turn stopped and each answer that ended it, and fails with `Rejected` when the rules refuse the person |
 
 An answer of the model that is no choice the rules allow, or no answer at all,
 finishes the turn, so a turn makes at most four passes whatever the model
@@ -48,6 +55,6 @@ bill payment.
 What stays TypeScript is `gen/assistant.ts`, which the proofs are about. This
 example has no hand-written file with `//@` contracts.
 
-The outbox is carried out at least once: an effect is performed before
-`drain` empties it away. There is no live `Model` or `World` here, and the
-tests walk no restart.
+What a choice outputs is carried out once, as the choice returns it; nothing
+records that it was, so a crash between the two loses it. There is no live
+`Model` or `World` here, and the tests walk no restart.

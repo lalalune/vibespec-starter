@@ -26,7 +26,7 @@ export interface Agent {
   command: (p: { root: string; check: string }) => [string, string[]]
   link?: (p: { root: string; prompt: string }) => string
 }
-export const AGENTS: Record<string, Agent> = {
+const AGENTS: Record<string, Agent> = {
   claude: {
     label: "Claude Code",
     command: ({ check }) => ["claude", ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits",
@@ -59,7 +59,7 @@ function readable(line: string): string | undefined {
   // The final message was already shown; the result says only how the run ended, and what it cost.
   if (e.type === "result") return `${e.is_error ? "✗ failed" : "✓ done"}${e.total_cost_usd ? ` · $${Number(e.total_cost_usd).toFixed(2)}` : ""}`
   // Codex's --json events
-  const item = e.item ?? e.msg
+  const item = e.item
   if (e.type === "item.completed" && item?.type === "agent_message") return clip(item.text ?? "")
   if (e.type === "item.started" && item?.type === "command_execution") return `▸ ${clip(item.command ?? "", 200)}`
   if (e.type === "item.completed" && item?.type === "file_change") return `▸ edit ${(item.changes ?? []).map((c: any) => c.path).join(", ")}`

@@ -3,7 +3,7 @@
 import { useLayoutEffect, useRef, useState, type DragEvent, type KeyboardEvent, type ReactNode } from "react";
 import { Button, Input, cn } from "@repo/ui";
 import type { Outline, Rule, Story } from "../../gen/outline.ts";
-import { itemsOf, nodeId, ruleKey, storyKey, textBody, type Item } from "../markdown.ts";
+import { itemsOf, nodeId, nodesOfOutline, ruleKey, storyKey, textBody, type Item } from "../markdown.ts";
 import {
   S, addRule, addStory, deleteSpec, doneEditing, editNode, editRule, editStory, failures, find, focusLater, keepMine,
   move, nudge, removeNode, retitle, reviewOf, ruleChanged, soleHeading, specLabel, storyChanged, takeTheirs, toggle, ui, redraw,
@@ -230,7 +230,7 @@ function RuleEditor({ id, rule }: { id: string; rule: Rule }) {
 /** A spec changed on disk while this page edits it: what changed there, so that keeping these edits is a choice. */
 function Conflict({ spec }: { spec: Working }) {
   const fresh = S.snap!.specs.find((s) => s.file === spec.file);
-  const titles = (o: Outline) => new Map(o.stories.flatMap((s) => [[storyKey(s.title), s.body], ...s.rules.map((r) => [ruleKey(s.title, r.title), r.body])] as [string, string][]));
+  const titles = (o: Outline) => new Map(nodesOfOutline(spec.file, o).map((n) => [n.key, (n.rule ?? n.story).body]));
   const was = titles(spec.was);
   const now = fresh ? titles(fresh.outline) : new Map<string, string>();
   const there = [...now].filter(([k, v]) => was.get(k) !== v).map(([k]) => k).concat([...was.keys()].filter((k) => !now.has(k)).map((k) => `${k} (removed)`));

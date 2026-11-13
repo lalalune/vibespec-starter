@@ -1,4 +1,4 @@
-// spec/server.md, "A request is answered only once"
+// spec/server.md, "The log tells which requests were answered, and with which edit each was accepted"
 // Shared by src/server.vibe and src/web/sync.vibe.
 import type { Event } from "../gen/server.ts"
 import type { Op, Todo } from "../gen/todo.ts"

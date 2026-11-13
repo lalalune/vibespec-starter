@@ -1,6 +1,6 @@
 // The Quint module that drives a spec for simulation: one action per transition, per law, and per definition
 // whose arguments the simulator can supply.
-import { VIA, type Law, type Param, type Roles, type Transition } from "./classify.ts";
+import { VIA, type Law, type Opaque, type Param, type Roles, type Transition } from "./classify.ts";
 import { fail, type Json, type Types } from "./types.ts";
 
 /** A definition the simulator evaluates so that its result can be compared with TypeScript's. */
@@ -10,16 +10,16 @@ export interface Eval { name: string; params: (Param & { from: "state" | "prev" 
 export type Fairness = "weak" | "strong";
 
 /** The harness's variables, in the order it declares them. */
-const VARS = ["state", "prev", "moved", "last", "lawsHold", "outcome", "emitted", "fairEnabled"];
+const VARS = ["state", "prev", "moved", "last", "lawsHold", "outcome", "emitted", "refined", "fairEnabled", "settled"];
 /** Every name the harness binds itself, which a spec parameter would hide (TAKEN in gen.ts). */
-export const HARNESS = [...VARS, "fairOn", "init", "step", "probe", "inv", "Out", "Nothing"];
+export const HARNESS = [...VARS, "fairOn", "init", "settle", "step", "probe", "inv", "Out", "Nothing"];
 
 /** Values the simulator tries for a parameter of each scalar type (the proof covers all values). */
 const TRIED: Record<string, string> = { int: "(-1).to(6)", bool: "Set(true, false)", str: 'Set("", "a", "b")' };
 
 export function harness(
   module: string, source: string, imports: string[], funs: Json[], sig: (d: Json) => { params: Param[]; result: Json },
-  samples: Map<string, { elem: Json; ref: string; line: number | undefined }>, { stateType, transitions, always, sometimes, steps, laws, output }: Roles,
+  samples: Map<string, { elem: Json; ref: string; line: number | undefined }>, { stateType, transitions, always, sometimes, steps, laws, opaques, output, refines }: Roles,
   { fields, typedef, resolve, shape, tagged, named, qType }: Types,
   { weights, fair }: { weights: Map<string, number>; fair: Map<string, Fairness> },
 ): { text: string; evals: Eval[]; uncompared: string[] } {
@@ -50,6 +50,8 @@ export function harness(
     }
     return TRIED[t.kind] ?? fail(`parameter ${p.name}: the simulator has no values to try for type ${t.kind}; define \`pure val ${p.name}Values = Set(...)\` in the spec`);
   };
+  /** What the simulator tries for a parameter of `of`: its `<param>Values`, or the default for its type. */
+  const tried = (p: Param, of: string) => given(p, of) ?? byType(p, p.type);
   /**
    * Picks for the parameters of `of`. `<param>Values` in the spec overrides the default for its type. A list parameter
    * is up to two independent picks, rather than one pick from the set of every such list, which Quint would build in
@@ -60,7 +62,7 @@ export function harness(
   const picks = (ps: Param[], of: string) => ps.map((p) => {
     const own = takesVia(of) && p.name === VIA ? viaValues : given(p, of);
     const t = resolve(p.type);
-    if (own || t.kind !== "list") return `nondet ${p.name} = ${own ?? byType(p, p.type)}.oneOf() `;
+    if (own || t.kind !== "list") return `nondet ${p.name} = ${own ?? tried(p, of)}.oneOf() `;
     const [x0, x1] = [`${p.name}__0`, `${p.name}__1`];
     const each = byType(p, t.elem);
     return `nondet ${x0} = ${each}.oneOf() nondet ${x1} = ${each}.oneOf() nondet ${p.name} = Set(List(), List(${x0}), List(${x0}, ${x1})).oneOf() `;
@@ -91,22 +93,47 @@ export function harness(
     }
   });
 
-  const declared: Record<string, unknown> = { state: stateType, prev: stateType, moved: stateType, last: stateType, lawsHold: true, outcome: evals.length, emitted: output, fairEnabled: fair.size };
-  const vars = VARS.filter((v) => declared[v]);
+  // An opaque function is simulated by a table, chosen for each trace from the values the simulator tries (its
+  // `<name>Values` for what it returns), and one of its results for anything else. The tables are variables of the
+  // module the harness imports (`simulated`, below). A trace starts once a `settle` step finds that the laws assumed of
+  // each hold on its table for every value tried; until then no rule is checked, and a trace whose tables break them
+  // ends there, and is dropped (simulate.ts, readTrace).
+  const keys = (o: Opaque) => (o.params.length === 1 ? tried(o.params[0], o.name) : `tuples(${o.params.map((p) => tried(p, o.name)).join(", ")})`);
+  const results = (o: Opaque) => tried({ name: o.name, type: o.result }, o.name);
+  const tables = opaques.flatMap((o) => [`M::opaque_${o.name}`, `M::opaque_${o.name}_else`]);
+  const assumed = opaques.flatMap((o) => o.laws.map((l) => l.params.reduceRight((body, p) => `${tried(p, l.name)}.forall(${p.name} => ${body})`, `M::${l.name}(${l.params.map((p) => p.name).join(", ")})`)));
+  const chosen = Object.fromEntries(opaques.flatMap((o) => [[`M::opaque_${o.name}`, `table_${o.name}`], [`M::opaque_${o.name}_else`, `else_${o.name}`]]));
+  const choose = (inner: string) => opaques.reduceRight((rest, o) =>
+    `{ nondet table_${o.name} = setOfMaps(${keys(o)}, ${results(o)}).oneOf() nondet else_${o.name} = table_${o.name}.keys().map(k => table_${o.name}.get(k)).oneOf() ${rest} }`, inner);
+  const settled = (action: string) => (opaques.length ? `if (settled) ${action} else settle` : action);
+
+  const declared: Record<string, unknown> = { state: stateType, prev: stateType, moved: stateType, last: stateType, lawsHold: true, outcome: evals.length, emitted: output, refined: refines, fairEnabled: fair.size, settled: opaques.length };
+  const vars = [...VARS.filter((v) => declared[v]), ...tables];
+  /** What the initial state starts, which may call an opaque function, and so waits for `settle` if there are any. */
+  const start = { refined: refines ? `M::${refines.fn}(M::initial) == D_${refines.of.module}::initial` : "", fairEnabled: "fairOn(M::initial)" };
   /** An action body: the given conditions and assignments, with every other variable left as it is. */
   const frame = (conditions: string[], set: Record<string, string>) =>
     `all { ${[...conditions, ...vars.map((v) => `${v}' = ${set[v] ?? v}`)].join(", ")} }`;
   const call = (fn: string, params: string[], from = "state") => `M::${fn}(${[from, ...params].join(", ")})`;
+  /** The step from `state` to `after` leaves the abstract state as it was, or is the abstract step of its name (AGENTS.md, "Refinement"; gen/typescript.ts). */
+  const refined = (t: Transition, after: string) => {
+    const A = `D_${refines!.of.module}`;
+    const [from, to] = ["state", after].map((s) => `M::${refines!.fn}(${s})`);
+    const u = refines!.of.transitions.find((u) => u.name === t.name);
+    const guard = u?.guard ? `${A}::${u.guard}(${[from, ...u.guardParams].join(", ")}) and ` : "";
+    return `(${to} == ${from}${u ? ` or (${guard}${to} == ${A}::${u.name}(${[from, ...u.params.map((p) => p.name)].join(", ")})${u.emits ? ".state" : ""})` : ""})`;
+  };
   const action = (t: Transition) => {
     const result = call(t.name, t.params.map((p) => p.name));
+    const after = t.emits ? `${result}.state` : result;
     return `  action ${t.name} = ${braces(t.params, t.name, frame(t.guard ? [call(t.guard, t.guardParams)] : [],
-      { state: t.emits ? `${result}.state` : result, emitted: t.emits ? `${result}.out` : "List()", prev: "state", moved: "true", last: JSON.stringify(t.name), fairEnabled: `fairOn(${t.emits ? `${result}.state` : result})` }))}`;
+      { state: after, emitted: t.emits ? `${result}.out` : "List()", refined: refines ? refined(t, after) : "", prev: "state", moved: "true", last: JSON.stringify(t.name), fairEnabled: `fairOn(${after})` }))}`;
   };
 
   /** Whether a fair event is possible in state `x0`: its guard allows it for some value the simulator tries. */
   const possible = (t: Transition) => t.guardParams.reduceRight((inner, name) => {
     const p = t.params.find((p) => p.name === name)!;
-    return `${given(p, t.name) ?? byType(p, p.type)}.exists(${name} => ${inner})`;
+    return `${tried(p, t.name)}.exists(${name} => ${inner})`;
   }, t.guard ? call(t.guard, t.guardParams, "x0") : "true");
   // A law is tried on values picked for each parameter. One that takes the state is also evaluated on the states the
   // simulator reaches (below); if the spec gives no `<param>Values` for that parameter, that is the only way it is tried.
@@ -131,24 +158,28 @@ export function harness(
   const text = [
     `// GENERATED from ${source}. Drives the spec's transitions, laws and definitions for simulation.`,
     `module ${module}_run {`,
-    `  import ${module} as M from "./${module}"`,
+    `  import ${module} as M from "./${module}${opaques.length ? ".sim" : ""}"`,
     ...imports.map((i) => `  import ${i} as D_${i} from "./${i}"`),
     ...(evals.length ? [`  type Out = Nothing | ${evals.map((v) => `Out_${v.name}(${qType(v.result)})`).join(" | ")}`, `  var outcome: Out`] : []),
     ...(stateType ? [`  var state: ${qType(stateType)}`, `  var prev: ${qType(stateType)}`, `  var moved: bool`, `  var last: str`] : []),
     ...(output ? [`  var emitted: ${qType(output.out)}`] : []),
+    ...(refines ? [`  var refined: bool`] : []),
     `  var lawsHold: bool`,
+    ...(opaques.length ? [`  var settled: bool`] : []),
     ...(fair.size ? [`  var fairEnabled: Set[str]`,
-      `  pure def fairOn(x0: ${qType(stateType)}): Set[str] = Set(${[...fair.keys()].map((e) => JSON.stringify(e)).join(", ")}).filter(x1 => or { ${transitions.filter((t) => fair.has(t.name)).map((t) => `x1 == ${JSON.stringify(t.name)} and ${possible(t)}`).join(", ")} })`] : []),
-    `  action init = ${frame([], { state: "M::initial", prev: "M::initial", moved: "false", last: '""', lawsHold: "true", outcome: "Nothing", emitted: "List()", fairEnabled: "fairOn(M::initial)" })}`,
+      `  def fairOn(x0: ${qType(stateType)}): Set[str] = Set(${[...fair.keys()].map((e) => JSON.stringify(e)).join(", ")}).filter(x1 => or { ${transitions.filter((t) => fair.has(t.name)).map((t) => `x1 == ${JSON.stringify(t.name)} and ${possible(t)}`).join(", ")} })`] : []),
+    `  action init = ${choose(frame([], { state: "M::initial", prev: "M::initial", moved: "false", last: '""', lawsHold: "true", outcome: "Nothing", emitted: "List()",
+      ...(opaques.length ? { refined: "true", fairEnabled: "Set()", settled: "false", ...chosen } : start) }))}`,
+    ...(opaques.length ? [`  action settle = ${frame(assumed, { ...start, settled: "true" })}`] : []),
     ...transitions.map(action),
     ...sampled.map(lawAction),
     ...evals.map(evalAction),
-    `  action step = ${any(events)}`,
+    `  action step = ${settled(any(events))}`,
     // Half events, half evaluations, so that definitions are evaluated on states well into a trace and not just near its start.
-    `  action probe = ${events.length && evals.length ? `any { step, ${any(evals.map((v) => `eval_${v.name}`))} }` : any([...events, ...evals.map((v) => `eval_${v.name}`)])}`,
-    `  val inv = and { lawsHold, ${[...always.map((a) => `M::${a}(state)`), ...steps.map((r) => `(not(moved) or M::${r.name}(prev, ${r.via ? "last, " : ""}state${r.out ? ", emitted" : ""}))`), "true"].join(", ")} }`,
+    `  action probe = ${settled(events.length && evals.length ? `any { ${any(events)}, ${any(evals.map((v) => `eval_${v.name}`))} }` : any([...events, ...evals.map((v) => `eval_${v.name}`)]))}`,
+    `  val inv = ${opaques.length ? "not(settled) or " : ""}and { lawsHold, ${[...(refines ? ["refined"] : []), ...always.map((a) => `M::${a}(state)`), ...steps.map((r) => `(not(moved) or M::${r.name}(prev, ${r.via ? "last, " : ""}state${r.out ? ", emitted" : ""}))`), "true"].join(", ")} }`,
     // A witness search also stops at a broken rule, so that no run can step over one unreported.
-    ...sometimes.map((w) => `  val never_${w} = inv and not(M::${w}(state))`),
+    ...sometimes.map((w) => `  val never_${w} = inv and not(${opaques.length ? "settled and " : ""}M::${w}(state))`),
     // A guard's witnesses, for the `probe` step: breaking `never_allows_X` shows a reachable state and values for
     // which X allows its event, breaking `never_refuses_X` one for which it refuses it. Each reads the result the
     // last evaluation recorded, so a state costs the same however many values a parameter could take.
@@ -160,8 +191,21 @@ export function harness(
     ``,
   ].join("\n");
   // A sample set no parameter is named for is never used: most likely a typo for the parameter it was meant for.
-  const forParams = new Set(funs.flatMap((d) => sig(d).params.map((p) => `${p.name}Values`)));
+  const forParams = new Set([...funs.flatMap((d) => sig(d).params.map((p) => `${p.name}Values`)), ...opaques.map((o) => `${o.name}Values`)]);
   for (const [set, { ref, line }] of samples)
     if (ref.startsWith("M::") && !forParams.has(set)) fail(`${set} (${source}${line ? `:${line}` : ""}): no parameter is named ${set.slice(0, -"Values".length)}, so the simulator never uses it; name it after the parameter it is for`);
   return { text, evals, uncompared };
 }
+
+/**
+ * The spec's module as the harness of a spec with opaque functions imports it: each `const f: (A, B) => R` becomes a
+ * table the harness chooses, and every definition may read it, so none is `pure`. Every line stays where it was.
+ */
+export const simulated = (qnt: string, opaques: Opaque[]): string => qnt.replace(/^(\s*)pure (def|val)\b/gm, "$1$2").replace(/^(\s*)const (\w+)\s*:\s*\((.*)\)\s*=>\s*(.*)$/gm, (line, indent, name, args, result) => {
+  const o = opaques.find((o) => o.name === name);
+  if (!o) return line;
+  const ps = o.params.map((p) => p.name);
+  const key = ps.length === 1 ? ps[0] : `(${ps.join(", ")})`;
+  return `${indent}var opaque_${name}: ${ps.length === 1 ? args : `(${args})`} -> ${result} var opaque_${name}_else: ${result} `
+    + `def ${name}(${ps.join(", ")}) = if (opaque_${name}.keys().contains(${key})) opaque_${name}.get(${key}) else opaque_${name}_else`;
+});

@@ -79,7 +79,7 @@ export function Markdown({ text, file, className }: { text: string; file: string
   );
 }
 
-const KEYWORDS = /^(pure|def|val|type|import|from|if|else|match|and|or|not|implies|iff|all|any|Set|List|Map|int|bool|str|true|false|module|as)$/;
+const KEYWORDS = /^(pure|def|val|const|type|import|from|if|else|match|and|or|not|implies|iff|all|any|Set|List|Map|int|bool|str|true|false|module|as)$/;
 const KIND = { com: "text-muted-foreground italic", str: "text-ok", num: "text-warn", kw: "text-primary", def: "font-semibold" };
 /** Quint, marked: keywords, the names a block defines, strings, numbers and comments. */
 export function Quint({ code }: { code: string }) {

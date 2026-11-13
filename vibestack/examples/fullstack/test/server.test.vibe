@@ -17,7 +17,7 @@ layer(Served, { excludeTestServices: true })((it) => {
   it.effect("Story: Change the list over HTTP", () => effect {
     const store = try Machine
 
-    // spec/server.md, "A new request whose edit makes sense is applied, raising the version by one"; spec/server.md, "A request is answered only once"
+    // spec/server.md, "A new request whose edit makes sense is applied, raising the version by one"; spec/server.md, "No request is answered twice"
     const create = { type: "create", client: "ann", seq: 1, id: "ann-1", title: "milk" }
     const first = try post(create)
     const again = try post(create)
@@ -28,11 +28,11 @@ layer(Served, { excludeTestServices: true })((it) => {
     const refusedAgain = try post(tick)
     const logged = (try store.get()).log.length
 
-    // spec/server.md, "A to-do is never taken out of the list; removing it leaves a tombstone"
+    // spec/server.md, "A to-do is never taken out of the list, and a removed one stays removed"; spec/server.md, "A to-do can be removed, leaving a tombstone"
     const removed = try post({ type: "remove", client: "ben", seq: 1, id: "ann-1" })
     const recreate = try post({ type: "create", client: "ben", seq: 2, id: "ann-1", title: "milk" })
 
-    // spec/server.md, "A request is answered only once"
+    // spec/server.md, "No request is answered twice"
     const forged = { type: "create", client: "dan", seq: 1, id: "dan-x", title: "forged" }
     const squatted = try post(forged)
     const real = try post({ type: "create", client: "dan", seq: 1, id: "dan-1", title: "milk" })

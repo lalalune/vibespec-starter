@@ -9,7 +9,7 @@ const BINARY: Record<string, [string, number]> = {
   eq: ["===", EQ], neq: ["!==", EQ],
 };
 /** Quint's set operations, as array expressions that keep the "no value twice" property. */
-type SetArgs = { a: string; b: string; el: string; out: string };
+type SetArgs = { a: string; b: string; el: string; out: string; not: () => string };
 const SET_OPS: Record<string, (x: SetArgs) => string> = {
   contains: ({ a, b }) => `${a}.includes(${b})`,
   in: ({ a, b }) => `${a}.includes(${b})`,
@@ -17,9 +17,9 @@ const SET_OPS: Record<string, (x: SetArgs) => string> = {
   union: ({ a, b, el }) => `[...${a}, ...${b}.filter((set_x: ${el}) => !${a}.includes(set_x))]`,
   intersect: ({ a, b, el }) => `${a}.filter((set_x: ${el}) => ${b}.includes(set_x))`,
   exclude: ({ a, b, el }) => `${a}.filter((set_x: ${el}) => !${b}.includes(set_x))`,
-  subseteq: ({ a, b, el }) => `${a}.every((set_x: ${el}) => ${b}.includes(set_x))`,
+  subseteq: ({ a, b, el }) => `!${a}.some((set_x: ${el}) => !${b}.includes(set_x))`,
   filter: ({ a, b }) => `${a}.filter(${b})`,
-  forall: ({ a, b }) => `${a}.every(${b})`,
+  forall: ({ a, not }) => `!${a}.some(${not()})`, // as `every` (LIST_HELPERS)
   exists: ({ a, b }) => `${a}.some(${b})`,
   map: ({ a, b, out }) => `${a}.map(${b}).reduce((set_acc: ${out}[], set_x: ${out}) => set_acc.includes(set_x) ? set_acc : [...set_acc, set_x], ([] as ${out}[]))`,
 };
@@ -37,7 +37,8 @@ export interface Scope {
   bind: (name: string) => string;
   variants: Set<string>;
   definitions: Set<string>;
-  sampleSets: Set<string>;
+  /** Sample sets and `weight_`, `fair_` and `within_` settings, which never reach TypeScript (gen.ts). */
+  simulatorOnly: Set<string>;
   /**
    * Whether the code is for the prover rather than for Node. Node's code checks at run time two things the proof takes
    * as given: that integer arithmetic is exact (a number past 2^53 is rounded, where Quint's and Dafny's integers are
@@ -52,9 +53,12 @@ export interface Scope {
  * (expandListHelpers in parse.ts), marking the accumulator `std_<helper>_<n>` so that `print` writes `method`, the
  * native array method, or `includes`. They cannot be Quint definitions that take a lambda, because Quint evaluates such
  * a definition wrongly when it is used inside its own argument, as in `tasks.some(t => t.parents.some(...))`.
+ * `every`, like a set's `forall` and `subseteq`, is printed as `!xs.some(x => !p)`: LemmaScript gives `some` and
+ * `includes` to Dafny as quantifiers over the members, and `every` as `Std.Collections.Seq.All`, a function over
+ * indexes that a proof has to unfold before it meets either.
  */
 export const LIST_HELPERS: Record<string, { init: string; step: (acc: string, body: string) => string; method?: string }> = {
-  every: { init: "true", step: (acc, body) => `${acc} and (${body})`, method: "every" },
+  every: { init: "true", step: (acc, body) => `${acc} and (${body})` },
   some: { init: "false", step: (acc, body) => `${acc} or (${body})`, method: "some" },
   listMap: { init: "List()", step: (acc, body) => `${acc}.append(${body})`, method: "map" },
   includes: { init: "false", step: (acc, body) => `${acc} or ${body}` },
@@ -79,9 +83,10 @@ const members = (op: string, a: Json[]): [Json, Json] => (op === "in" ? [a[1], a
 /** Puts a binding back as it was before an inner scope shadowed it. */
 const restore = <V>(m: Map<string, V>, k: string, v: V | undefined) => (v === undefined ? m.delete(k) : m.set(k, v));
 
-export function printer({ types, inferred, ref, helper, bind, variants, definitions, sampleSets, proof }: Scope) {
+export function printer({ types, inferred, ref, helper, bind, variants, definitions, simulatorOnly, proof }: Scope) {
   const { resolve, tagged, isScalar, setElem, keyOf, storedKey, holdsSet, named, ownerOf, typeName, tsType } = types;
   const typeOf = typeOfIn(inferred);
+  const forSimulator = (n: string): never => fail(`\`${n}\` is for the simulator only (a sample set or a weight_, fair_ or within_ setting) and cannot be used in a definition`);
   /** Which helpers the printed code needs (see typescript.ts), and the types of the maps it looks things up in. */
   const helpers = new Set<string>();
   const lookups: { map: string; key: string; of: string; stored: string }[] = [];
@@ -144,12 +149,12 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
     const args = rest.reduce<(string | string[])[]>((all, p) => (Array.isArray(p) && Array.isArray(all.at(-1)) ? [...all.slice(0, -1), [...all.at(-1)!, ...p]] : [...all, p]), []);
     return `${first}.concat(${args.map((p) => (Array.isArray(p) ? `[${p.join(", ")}]` : p)).join(", ")})`;
   };
-  /** A lambda. Its parameters carry their types, which LemmaScript cannot always infer. */
-  const arrow = (params: Json[], result: Json): string => {
+  /** A lambda, or with `not` its negation. Its parameters carry their types, which LemmaScript cannot always infer. */
+  const arrow = (params: Json[], result: Json, not = false): string => {
     // A parameter hides an enclosing match arm's binder of the same name: inside the lambda the name is the parameter.
     const hidden = params.map((p) => [p.name, renamed.get(p.name), matchedAs.get(p.name)] as const);
     for (const [n] of hidden) { renamed.delete(n); matchedAs.delete(n); }
-    const text = ex(result, TERNARY);
+    const text = not ? `!${ex(result, ATOM)}` : ex(result, TERNARY);
     for (const [n, r, m] of hidden) { restore(renamed, n, r); restore(matchedAs, n, m); }
     const param = (p: Json) => (inferred(p.id) ? `${bind(p.name)}: ${tsType(typeOf(p.id))}` : bind(p.name));
     return `(${params.map(param).join(", ")}) => ${text.startsWith("{") ? `(${text})` : text}`;
@@ -163,7 +168,7 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
       case "bool": return [String(e.value), ATOM];
       case "str": return [JSON.stringify(e.value), ATOM];
       case "name": {
-        if (sampleSets.has(e.name)) return fail(`${e.name} is a sample set for the simulator and cannot be used in a definition`);
+        if (simulatorOnly.has(e.name)) return forSimulator(e.name);
         if (renamed.has(e.name)) return fail(`\`${e.name}\` is what a match arm carries; use its fields (${e.name}.field), or rebuild the variant, rather than the value as a whole`);
         if (!variants.has(e.name)) return [ref(e.name), ATOM];
         const owner = ownerOf(e.name);
@@ -233,6 +238,7 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
         const which = acc?.name.match(LIST_HELPER)?.[1] ?? "";
         const method = LIST_HELPERS[which]?.method;
         const inner = a[2].expr?.args?.[1];
+        if (which === "every") return [`!${recv()}.some(${arrow([item], inner, true)})`, UNARY];
         if (method) return [`${recv()}.${method}(${arrow([item], inner)})`, ATOM];
         if (which === "includes") {
           const [v, t] = [inner.args[1], typeOf(inner.args[1].id)];
@@ -278,7 +284,9 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
       if (t.kind !== "set") return fail(`\`${op}\` is supported on sets only`);
       const el = tsType(setElem(t));
       // What `map` makes is a set too, so it is held to the same rule as what it maps.
-      return [SET_OPS[op]({ a: ex(x, ATOM), b: y && ex(y, y.kind === "lambda" ? ARROW : ATOM), el, out: op === "map" ? tsType(setElem(resolve(typeOf(e.id)))) : el }), ATOM];
+      const not = () => (y.kind === "lambda" ? arrow(y.params, y.expr, true) : `(set_x: ${el}) => !${ex(y, ATOM)}(set_x)`);
+      const text = SET_OPS[op]({ a: ex(x, ATOM), b: y && ex(y, y.kind === "lambda" ? ARROW : ATOM), el, out: op === "map" ? tsType(setElem(resolve(typeOf(e.id)))) : el, not });
+      return [text, text.startsWith("!") ? UNARY : ATOM];
     }
     if (op === "Set") {
       const t = resolve(typeOf(e.id));
@@ -289,7 +297,7 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
       return [distinct.length ? `[${distinct.join(", ")}]` : `([] as ${tsType(t.elem)}[])`, ATOM];
     }
     if (definitions.has(op)) return [`${ref(op)}(${a.map((x) => ex(x, TERNARY)).join(", ")})`, ATOM];
-    if (sampleSets.has(op)) return fail(`${op} is a sample set for the simulator and cannot be used in a definition`);
+    if (simulatorOnly.has(op)) return forSimulator(op);
     return fail(`\`${op}\` is not in the Quint a spec may use (AGENTS.md, "Supported Quint"); write it with the operators listed there`);
   };
 

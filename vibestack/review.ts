@@ -1,9 +1,16 @@
 import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
-import { readSpecs, bareQuint as bare, heading, type Import, type Spec, type Story, type Rule } from "./parse.ts";
+import { readSpecs, isStd, bareQuint as bare, heading, type Import, type Spec, type Story, type Rule } from "./parse.ts";
 import { short, readSrc, indent } from "./util.ts";
+import { DECLASSIFY } from "./gen/secrecy.ts";
 
+/**
+ * Obligations that hold in simulation but that Dafny cannot prove on its own,
+ * accepted by a person: per unit, the list, and a fingerprint of the unit's
+ * text and proof file when they were accepted. A list accepted for another
+ * text no longer counts.
+ */
 export interface Accepted { text: string; unproved: string[] }
 interface ReviewLock { version: 1; specs: Record<string, Lock>; contracts: Record<string, string>; unproved: Record<string, Accepted> }
 export const ledgerFile = (root: string) => path.join(root, "spec/lock.json");
@@ -182,6 +189,9 @@ export function pending(root: string, spec: Spec, specs: Spec[] = readSpecs(root
       note = changed.length ? ` through ${changed.map((d) => `${[...d.names].join(", ")} (${d.spec === spec ? "" : `${d.spec.file}: `}${d.rule.key})`).join("; ")}`
         : was[1] === code ? (was.length < 3 ? " (what it relies on was not recorded before)" : " through a definition it relies on") : undefined;
     }
+    // A way out for a secret is named whenever it is new or changed (gen/secrecy.ts).
+    const outlet = rule.defs.filter((d) => DECLASSIFY.test(d));
+    if (status && outlet.length) note = `${note ?? ""}, and declassifies a secret through ${outlet.join(", ")}`;
     if (status) out.push({ where: `${spec.file}:${rule.line}  ${rule.key}`, rule, status, note });
   }
   for (const key of Object.keys(lock))
@@ -215,10 +225,13 @@ export function pendingSpecs(root: string, specs: Spec[]): Pending[] {
     .map((file) => ({ where: file, status: "removed or renamed" }));
 }
 
-/** Atomically record the exact spec and source snapshot checked by accept. */
+/**
+ * Atomically record the exact spec and source snapshot checked by accept. Every spec, std/ libraries included, is what
+ * a rule's dependencies are fingerprinted against, as `pending` does; only the project's own specs are recorded.
+ */
 export function acceptAllReviews(root: string, specs: Spec[], src = readSrc(root)) {
   const lock = readReviewLock(root);
-  lock.specs = Object.fromEntries(specs.map((spec) => [spec.file, reviewed(spec, specs)]));
+  lock.specs = Object.fromEntries(specs.filter((spec) => !isStd(spec.file)).map((spec) => [spec.file, reviewed(spec, specs)]));
   lock.contracts = contractLedger(contracts(root, src));
   writeReviewLock(root, lock);
 }
@@ -317,8 +330,8 @@ export function migrateLocks(root: string): string[] {
   for (const file of files) {
     const data = JSON.parse(fs.readFileSync(path.join(dir, file), "utf8"));
     if (file === "src.lock.json") lock.contracts = data;
-    else if (file === "unproved.lock.json") lock.unproved = Object.fromEntries(Object.entries(data).map(([unit, value]) =>
-      [unit, Array.isArray(value) ? { text: "", unproved: value } : value as Accepted]));
+    // An exception in the old list form names no text it was accepted for, so it could never count again: it is dropped.
+    else if (file === "unproved.lock.json") lock.unproved = Object.fromEntries(Object.entries(data).filter(([, value]) => !Array.isArray(value)) as [string, Accepted][]);
     else lock.specs[`spec/${file.replace(/\.lock\.json$/, ".md").split(path.sep).join("/")}`] = data;
   }
   writeReviewLock(root, lock);

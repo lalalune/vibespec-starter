@@ -17,7 +17,7 @@ const OWN = [...FAILURES, "Machine", "machine", "apply", "decodeEvent", "decodeS
  * A state machine also gets typed failures for what `parseEvent`, `parseState` and `enabled` refuse, and a `Machine`
  * service that holds the state and applies one event at a time.
  */
-export function effectAdapter(name: string, source: string, text: string): string {
+export function effectAdapter(name: string, source: string, text: string, namespace: string): string {
   const file = ts.createSourceFile(`${name}.ts`, text, ts.ScriptTarget.Latest, true);
   const exported = (s: ts.Statement) => ts.canHaveModifiers(s) && !!ts.getModifiers(s)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
   const types = file.statements.filter((s): s is ts.TypeAliasDeclaration | ts.InterfaceDeclaration => (ts.isTypeAliasDeclaration(s) || ts.isInterfaceDeclaration(s)) && exported(s)).map((s) => s.name.text);
@@ -113,7 +113,8 @@ export function effectAdapter(name: string, source: string, text: string): strin
     `/** The state, and the one way to change it: an event the rules allow, applied before the next is looked at. */`,
     `export service Machine {`,
     // VibeLang derives a key from the nearest package.json's name, and gen/package.json has none (genDir in units.ts).
-    `  static readonly key = ${JSON.stringify(`${source}#Machine`)}`,
+    // The package and the spec together name a machine: two packages may each have spec/index.md.
+    `  static readonly key = ${JSON.stringify(`${namespace}/${source}#Machine`)}`,
     `  /** The current state, then every later one. */`,
     `  readonly changes: Stream.Stream<${state}>`,
     `  get(): ${state}!!`,

@@ -6,8 +6,9 @@ import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { trusted } from "vibelang-runtime";
-import { acceptable, parseSpec, pending, pendingKey, readSpecs, type Lock, type Result } from "../../spec.ts";
-import { specFiles, specName } from "../../parse.ts";
+import { acceptable, type Result } from "../../spec.ts";
+import { parseSpec, readSpecs, specFiles, specName } from "../../parse.ts";
+import { ledgerFile, pending, pendingKey, type Lock } from "../../review.ts";
 import { filesUnder, projectRoot, short } from "../../util.ts";
 import type { Session, Verdict } from "../gen/index.ts";
 import { manifestOf, nodesOf, type Ids, type Manifest } from "./doc.ts";
@@ -73,9 +74,10 @@ export function skillPath(root: string): string {
   }
 }
 
-/** The review ledgers and Studio state belong to the tools, not the sync agent. A trusted call. */
+/** The review ledger (../../review.ts, `ledgerFile`) and Studio's state belong to the tools, not the sync agent. A trusted call. */
 export const ownedFiles = trusted(function ownedFiles(root: string): Record<string, string> {
-  return Object.fromEntries([...filesUnder(root, "spec").filter((f) => f.endsWith("lock.json")), ...filesUnder(root, ".studio")]
+  const ledger = path.relative(root, ledgerFile(root));
+  return Object.fromEntries([...(fs.existsSync(path.join(root, ledger)) ? [ledger] : []), ...filesUnder(root, ".studio")]
     .map((f) => [f, short(fs.readFileSync(path.join(root, f), "utf8"))]));
 }, [Error]);
 
@@ -93,7 +95,7 @@ export const specsOf = trusted(function specsOf(root: string) {
   const specs = readSpecs(root);
   const locks = new Map<string, Lock>();
   const review = Object.fromEntries(specs.map((s) => [s.file, Object.fromEntries(pending(root, s, specs, locks).map((p) => [pendingKey(p), p.status + (p.note ?? "")]))]));
-  return Object.entries(texts).sort(([a], [b]) => specOrder(a).localeCompare(specOrder(b)))
+  return Object.entries(texts).sort(([a], [b]) => specOrder(a, b))
     .map(([file, text]) => ({ file, module: specName(file), hash: short(text), text, outline: outlineOf(file, text), review: review[file] ?? {} }));
 }, [Error]);
 
@@ -165,6 +167,9 @@ export type Plan =
  * Check a publish against the project, and work out the manifest it leaves: the baseline the agent last synced, and
  * where each story and rule came from. A trusted call. */
 export const planPublish = trusted(function planPublish(root: string, body: Publish): Plan {
+  // Nothing but a spec is written or deleted, whatever the page sends.
+  const outside = body.files.find((f) => typeof f.file !== "string" || !/^spec\/.+\.md$/.test(f.file));
+  if (outside) return { status: 400, body: { error: `${String(outside.file)}: a spec lives under spec/ and ends in .md` } };
   const disk = specTexts(root);
   const conflicts = body.force ? [] : body.files.filter((f) => (f.file in disk ? short(disk[f.file]) : null) !== f.base).map((f) => f.file);
   if (conflicts.length) return { status: 409, body: { error: "changed on disk since you loaded it", conflicts } };

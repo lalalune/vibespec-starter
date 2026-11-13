@@ -30,20 +30,12 @@ export interface Turn {
 effect function observe() {
   const machine = try Machine
   const world = try World
-  const seen = try machine.send({ type: "load", page: try world.page() }, "World")
+  const seen = (try machine.send({ type: "load", page: try world.page() }, "World")).state
   if (!seen.waiting) return seen
-  // spec/assistant.md, "A reply counts only for the request still waiting": no answer, or one refused, changes nothing.
+  // spec/assistant.md, "Only the world replies, and only to the request still waiting": no answer, or one refused, changes nothing.
   return effect {
-    return try machine.receive({ type: "reply", request: seen.request, amount: try world.bill(seen.request) }, "World")
+    return (try machine.receive({ type: "reply", request: seen.request, amount: try world.bill(seen.request) }, "World")).state
   } catch () => seen
-}
-
-// spec/assistant.md, "The program carries out the outbox, then empties it"
-effect function carryOut(outbox: ReadonlyArray<T.Effect>) {
-  const world = try World
-  for (const carried of outbox) try world.perform(carried)
-  // `drain` names no sender in the spec, so the one passed is not looked at.
-  try (try Machine).send({ type: "drain" }, "Agent")
 }
 
 /**
@@ -53,9 +45,10 @@ effect function carryOut(outbox: ReadonlyArray<T.Effect>) {
 export effect function hear(said: Said): Turn!Rejected!(Machine | Model | World) {
   const machine = try Machine
   const model = try Model
+  const world = try World
   const refused: Refusal[] = []
   try observe()
-  let state = try machine.send({ type: said }, "Person")
+  let state = (try machine.send({ type: said }, "Person")).state
   // spec/assistant.md, "Every choice spends the budget": each pass makes one choice, so there are at most `maxActions`.
   while (state.phase === "Planning") {
     // The model's answer can only become the Agent's choice. Any other answer finishes the turn, which
@@ -66,8 +59,8 @@ export effect function hear(said: Said): Turn!Rejected!(Machine | Model | World)
       refused.push(error)
       return try machine.send({ type: "choose", choice: "Finish" }, "Agent")
     }
-    // The outbox as this choice left it, so `drain` empties nothing that no pass was given to carry out.
-    try carryOut(chosen.outbox)
+    // spec/assistant.md, "What the program carries out": what this choice returned beside the state.
+    for (const carried of chosen.out) try world.perform(carried)
     state = try observe()
   }
   return { state, refused }
