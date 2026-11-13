@@ -13,36 +13,39 @@ import type * as T from "../gen/assistant.effect.vibe"
  * What a transition outputs is carried out by the caller after `send` has saved the state, so a crash between the
  * two leaves a payment recorded as charged but never submitted: each effect is delivered at most once.
  */
+export effect function opened(file: string) {
+  const fs = try FileSystem.FileSystem
+  effect function save(state: T.Assistant) {
+    try scoped(effect {
+      const temp = try fs.open(`${file}.tmp`, { flag: "w" })
+      try temp.writeAll(new TextEncoder().encode(JSON.stringify(state)))
+      try temp.sync
+    })
+    try fs.rename(`${file}.tmp`, file)
+  }
+  const text = (try fs.exists(file)) ? try fs.readFileString(file) : undefined
+  const saved = text === undefined
+    ? initial
+    : try decodeState(try Effect.try({ try: () => JSON.parse(text), catch: () => new NotAState({ input: text }) }))
+  const restarted = (try apply(saved, { type: "restart" }, "World")).state
+  try save(restarted)
+  const held = try SubscriptionRef.make(restarted)
+  effect function send(event: T.Event, by: T.Actor): T.Chosen!Rejected {
+    return try SubscriptionRef.modifyEffect(held, effect (current) => {
+      const next = try apply(current, event, by)
+      try orDie(save(next.state))
+      return [next, next.state] as const
+    })
+  }
+  return {
+    changes: SubscriptionRef.changes(held),
+    get: () => SubscriptionRef.get(held),
+    send,
+    effect receive(input: unknown, by: T.Actor) { return try send(try decodeEvent(input), by) }
+  }
+}
+
+/** `opened(file)` as the Machine service. */
 export function durable(file: string) {
-  return Layer.effect(Machine, effect {
-    const fs = try FileSystem.FileSystem
-    effect function save(state: T.Assistant) {
-      try scoped(effect {
-        const temp = try fs.open(`${file}.tmp`, { flag: "w" })
-        try temp.writeAll(new TextEncoder().encode(JSON.stringify(state)))
-        try temp.sync
-      })
-      try fs.rename(`${file}.tmp`, file)
-    }
-    const text = (try fs.exists(file)) ? try fs.readFileString(file) : undefined
-    const saved = text === undefined
-      ? initial
-      : try decodeState(try Effect.try({ try: () => JSON.parse(text), catch: () => new NotAState({ input: text }) }))
-    const restarted = (try apply(saved, { type: "restart" }, "World")).state
-    try save(restarted)
-    const held = try SubscriptionRef.make(restarted)
-    effect function send(event: T.Event, by: T.Actor): T.Chosen!Rejected {
-      return try SubscriptionRef.modifyEffect(held, effect (current) => {
-        const next = try apply(current, event, by)
-        try orDie(save(next.state))
-        return [next, next.state] as const
-      })
-    }
-    return {
-      changes: SubscriptionRef.changes(held),
-      get: () => SubscriptionRef.get(held),
-      send,
-      effect receive(input: unknown, by: T.Actor) { return try send(try decodeEvent(input), by) }
-    }
-  })
+  return Layer.effect(Machine, opened(file))
 }

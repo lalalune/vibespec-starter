@@ -6,7 +6,7 @@ An illustrative agent turn driving a bill payment, in one spec:
 ```sh
 pnpm install --ignore-workspace   # here, after the install at the repository root
 pnpm check   # model, proofs, types (vibelang --noEmit) and tests
-pnpm test    # the journeys alone: vitest run
+pnpm test    # the journey alone: vitest run
 pnpm build   # vibelang: JavaScript in dist/
 pnpm demo    # generates gen/, and a scripted model pays a bill, then tries what the rules refuse
 ```
@@ -50,16 +50,17 @@ An answer of the model that is no choice the rules allow, or no answer at all,
 finishes the turn, so a turn makes at most four passes whatever the model
 says.
 
-`src/durable.vibe` is `durable(file)`, a `Machine` kept in one JSON file
-through Effect's `FileSystem`: opening it reads the file (a missing one is
-`initial`, one that is no state fails with `NotAState`) and applies `restart`
-from the world; each accepted event is written to a temporary file, synced to
-the disk and renamed before `send` returns, one event at a time. The card is
-saved there too, since the spec says it survives a restart. It is for one
-process: nothing locks the file, so two processes would overwrite each other.
+`src/durable.vibe` is `opened(file)`, a `Machine` kept in one JSON file
+through Effect's `FileSystem`, and `durable(file)`, the same as a layer:
+opening it reads the file (a missing one is `initial`, one that is no state
+fails with `NotAState`) and applies `restart` from the world; each accepted
+event is written to a temporary file, synced to the disk and renamed before
+`send` returns, one event at a time. The card is saved there too, since the
+spec says it survives a restart. It is for one process: nothing locks the
+file, so two processes would overwrite each other.
 
 `src/scripted.vibe` is a `Model` and a `World` that follow a script. The demo
-and [the journeys](test/assistant.test.vibe) share it: a real model costs
+and [the journey](test/assistant.test.vibe) share it: a real model costs
 money, so it is faked at its service. `src/demo.vibe` prints one scripted
 bill payment.
 
@@ -70,10 +71,11 @@ The main journey runs on `durable` in a temporary directory. It crashes first
 while a lookup waits for the biller: after the restart nothing waits, the late
 reply is refused and the next lookup takes the next request number. It pays,
 crashes again and finds the payment kept and the turn restarted; a file that
-claims a second charge, or is cut short, is refused. A second test runs the
-generated conformance check through `durable` on a real file, the effects
-included, and makes each accepted restart a real one: the machine dropped and
-opened again.
+claims a second charge, or is cut short, is refused.
+[The driver](test/drivers/assistant.ts) lets `pnpm check`'s traces stage run
+the spec's journeys, malformed inputs and random walks through `opened(file)`
+on a real file, the effects included, and makes each accepted restart a real
+one: the machine dropped and opened again.
 
 What a transition outputs is carried out after the state that records it is
 saved, and nothing records that it was carried out: a crash between the two

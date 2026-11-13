@@ -1,5 +1,5 @@
 // spec/client.md, "Story: Edit the list in the browser"; spec/client.md, "Story: Hear back from the server"
-// AGENTS.md, "The React interface": the page's one Tab of sync.vibe, as what TodoPage takes.
+// .claude/skills/shell/SKILL.md, "The React interface": the page's one Tab of sync.vibe, as what TodoPage takes.
 import { Effect, ManagedRuntime, Stream } from "effect";
 import { useEffect, useState } from "react";
 import { type Client, initial } from "../../gen/client.ts";

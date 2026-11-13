@@ -119,11 +119,13 @@ means are in [docs/architecture.md](docs/architecture.md).
    ```
 
 3. In `spec/index.md`, say what the product is for. In `spec/app/index.md`,
-   the requirements of the application in `apps/app`, add its first story:
-   who it is for, what they need to do, and why. Write it in Studio or in
-   the Markdown file.
+   the requirements of the application in `apps/app`, replace the hello
+   world story ([apps/app](apps/app/README.md)) with your first: who it is
+   for, what they need to do, and why. Write it in Studio or in the Markdown
+   file.
 4. Ask your coding agent to sync. It writes the rules and Quint, builds the
-   code on them, runs the checks, and reports what needs your review.
+   code on them in place of the hello world, runs the checks, and reports
+   what needs your review.
 5. Read what it reports, run the app, and sign off with `pnpm accept`.
 
 ## Studio
@@ -205,7 +207,8 @@ on `apply` and passes what it loads through `decodeState`
 | HTTP, storage and other I/O | `src/*.vibe` | the [`shell` skill](.claude/skills/shell/SKILL.md) |
 | The interface: components that read the state and send events through hooks over `Machine` | `src/*.tsx`, on `@repo/ui` and the design tokens | the [`design` skill](.claude/skills/design/SKILL.md) |
 | Logic Quint cannot express, such as a loop | `src/*.ts` with `//@` contracts | the [`prove` skill](.claude/skills/prove/SKILL.md) |
-| Whole-journey tests | `test/*.test.vibe` | [AGENTS.md, "Tests"](AGENTS.md#tests) |
+| Whole-journey tests | `test/*.test.{vibe,tsx}` | [AGENTS.md, "Tests"](AGENTS.md#tests) |
+| A driver, when the shell keeps the machine's state itself, through which `check` compares the application with the spec | `test/drivers/<name>.ts` | [SPEC.md, "Conformance"](SPEC.md#conformance) |
 
 Keep pure logic in the spec wherever Quint can express it. When the spec
 changes, the `types` stage points at the code that must follow. Never edit
@@ -255,6 +258,9 @@ empty `spec/index.md`, `.gitignore` entries for what the tools own, and the
 `dev`, `check`, `gen`, `accept`, `build` and `test` scripts with the
 VibeLang and Effect packages at the versions the tools are tested with. Run
 it again after an upgrade to refresh the procedure.
+It writes no tests: `check` adds a `test` script on the one Vitest
+configuration when `test/` first appears, and a driver to fill in when
+`src/` first keeps a machine's state.
 
 ## Commands
 
@@ -265,9 +271,9 @@ current one. Installed as a package, use `pnpm exec spec <command> [<dir>]`.
 |---|---|
 | `pnpm dev` | Starts Studio on this project and every workspace package's `dev` script, together |
 | `pnpm studio [<dir>]` | Opens Studio alone, on one project |
-| `pnpm check [<dir>] [--json]` | Checks spec, source and tests; ends with a `next:` line |
+| `pnpm check [<dir>] [--json]` | Checks spec, source and tests; ends with a `next:` line ([JSON shape](CONTRIBUTING.md#changing-the-tools)) |
 | `pnpm quick` | Types, lint and tests of what changed |
-| `pnpm verify` | Build, types, tests, checks and lint for every workspace package |
+| `pnpm verify` | Everything CI runs: build, types, tests, browser tests, checks, lint, Knip, Madge and the selftest, for every workspace package |
 | `pnpm gen [<dir>]` | Generates `gen/` only |
 | `node vibestack/spec.ts watch [<dir>]` | Rechecks when a spec, source file or test changes |
 | `pnpm accept [<dir>]` | The user's sign-off: checks afresh and records what `review` lists, [all or nothing](SPEC.md#review) |
@@ -286,8 +292,8 @@ current one. Installed as a package, use `pnpm exec spec <command> [<dir>]`.
 | 1 | a `✗`, or an error |
 | 2 | bad arguments; prints the usage line |
 
-CI runs build, types, tests, every package's `check` and lint on each pull
-request and push, and `pnpm selftest` on what is headed for `main`
+CI runs `pnpm verify` on each pull request and push, with larger property
+budgets for what is headed for `main`, and a nightly run with a new seed
 ([CI](docs/architecture.md#ci)).
 
 ## Examples
@@ -307,7 +313,7 @@ workspace.
 | Path | Holds |
 |---|---|
 | `spec/` | The one spec tree: the product, and a directory per app or package |
-| `apps/app` | Your application, blank and ready |
+| `apps/app` | A hello world application with one of each thing the stack offers, to replace with yours |
 | `packages/design-system` | Design tokens, built into Tailwind's theme |
 | `packages/ui` | Shared React components, with generated stories |
 | `vibestack/` | The tools: generator, simulator, prover, Studio, testing and design helpers |

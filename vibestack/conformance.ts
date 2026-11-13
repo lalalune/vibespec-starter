@@ -1,5 +1,6 @@
-// Copied into gen/ by `spec gen`, beside each spec's <name>.conformance.ts: runs the real application against its
-// spec, with the generated module as the oracle (SPEC.md, "Conformance"). It needs no test runner: it throws.
+// Runs the real application against its spec, with the generated module as the oracle (SPEC.md, "Conformance"):
+// conform.ts runs it on each test/drivers/<name>.ts in the traces stage. Copied into gen/ as _conformance.ts for the
+// types a driver is written to, so it imports nothing.
 
 /** What the application did with an event. Anything else (a crash, a 500, a timeout) must throw. */
 export type Outcome = "accepted" | "refused";
@@ -17,6 +18,12 @@ export interface Driver<E, V> {
   observe(key: string): V | Promise<V>;
   /** Effects exposed by the application after its most recent dispatch, when it exposes them. */
   observeOutput?(key: string): unknown | Promise<unknown>;
+  /**
+   * Send an untrusted `raw` value for `key` as the network would, through the decoding `dispatch` skips. With it, the
+   * check sends each event malformed (refused, nothing changes) and with an extra field and fields that change on a
+   * second read (the same as the clean event).
+   */
+  receive?(key: string, raw: unknown, by?: unknown): Outcome | Promise<Outcome>;
 }
 
 export interface Options<S, V> {
@@ -24,7 +31,10 @@ export interface Options<S, V> {
   view?: (state: S) => V;
   /** Entities the walks interleave, so that one leaking into another shows; one key for an application of one. */
   keys?: string[];
-  /** Random walks after the journeys; 0 runs the journeys only, as a slow driver (a browser) should. */
+  /**
+   * At most this many random walks after the journeys, whatever `FUZZ_RUNS` asks (conform.ts); 0 runs the journeys
+   * only, as a slow driver (a browser) should.
+   */
   walks?: number;
   steps?: number;
   seed?: number;
@@ -74,13 +84,17 @@ export class ConformanceError<E = unknown> extends Error {
   }
 }
 
-/** Run the journeys, then seeded random walks; throw a ConformanceError at the first disagreement, shrunk to the fewest events that show it. */
+/**
+ * Run the journeys, the probes of a driver that can `receive`, then seeded random walks; throw a ConformanceError at
+ * the first disagreement, shrunk to the fewest events that show it, or an Error at the first probe that fails.
+ */
 export async function check<S, E, V>(oracle: Oracle<S, E>, found: Found<E>, driver: Driver<E, V>, options: Options<S, V> = {}) {
-  const { differ, fail, seen, outcomes, keys, walks, steps, seed } = runner(oracle, found, driver, options);
+  const { differ, run, fail, seen, outcomes, keys, walks, steps, seed } = runner(oracle, found, driver, options);
   for (const j of found.journeys) {
     const trace: Trace<E> = j.events.map((e) => [keys[0], e]);
     if (await differ(trace)) await fail(`journey "${j.story}" / "${j.rule}"`, trace);
   }
+  const probes = driver.receive ? await probe(oracle, found, driver, keys[0], run, options.view) : 0;
   // A walk mostly takes events the spec allows, so that it reaches deep states, and sometimes any event, so that refusals are tried.
   const random = rng(seed);
   for (let w = 0; w < walks; w++) {
@@ -101,28 +115,76 @@ export async function check<S, E, V>(oracle: Oracle<S, E>, found: Found<E>, driv
     if (await differ(trace)) await fail(`walk ${w + 1} of seed ${seed}`, trace);
   }
 
-  return { journeys: found.journeys.length, walks, observed: seen.size, outcomes: [...outcomes], effects: found.outputShape ? driver.observeOutput ? "checked" : "not observed" : "none" };
+  return { journeys: found.journeys.length, probes, walks, observed: seen.size, outcomes: [...outcomes], effects: found.outputShape ? driver.observeOutput ? "checked" : "not observed" : "none" };
 }
 
-/** Run exactly `trace`, such as one a ConformanceError carried, through the application; throw a ConformanceError if it still disagrees. */
-export async function replay<S, E, V>(oracle: Oracle<S, E>, found: Found<E>, driver: Driver<E, V>, trace: Trace<E>, options: Options<S, V> = {}) {
+/**
+ * Run exactly `trace`, saved as `from`, through the application; throw a ConformanceError if it still disagrees, and
+ * an Error if it holds an event the spec no longer has, which only a person can bring up to date or delete.
+ */
+export async function replay<S, E, V>(oracle: Oracle<S, E>, found: Found<E>, driver: Driver<E, V>, trace: Trace<E>, options: Options<S, V> = {}, from = "a saved trace") {
+  const gone = trace.find(([, { by, ...event }]) => oracle.parseEvent(event) === undefined || (found.sender ? oracle.parseSender?.(by) === undefined : by !== undefined));
+  if (gone) throw new Error(`the spec has outgrown ${from}: ${show(gone[1])} is not one of its events now; bring the trace up to date, or delete it`);
   const why = await runner(oracle, found, driver, options).differ(trace);
-  if (why) throw new ConformanceError(`conformance to ${found.source}: a replayed trace of ${trace.length} events:\n${lines(trace)}\n${why}`, trace, options.seed ?? 1, "replay");
+  if (why) throw new ConformanceError(`conformance to ${found.source}: ${from}, replayed, ${trace.length} events:\n${lines(trace)}\n${why}`, trace, options.seed ?? 1, "replay");
 }
+
+/**
+ * Each kind of event, after the shortest journey prefix that allows it: malformed, it must be refused and change
+ * nothing; with an extra field and fields that change on a second read, it must do what the clean event does, as
+ * the application copies what it decodes (SPEC.md, "Using the generated code"). Returns how many were sent.
+ */
+async function probe<S, E, V>(oracle: Oracle<S, E>, found: Found<E>, driver: Driver<E, V>, key: string,
+  run: (trace: Trace<E>) => Promise<Map<string, S> | string>, view?: (state: S) => V) {
+  const prefixes: Sent<E>[][] = [[], ...found.journeys.flatMap((j) => j.events.map((_, i) => j.events.slice(0, i + 1)))];
+  const after = (prefix: Sent<E>[]) => prefix.reduce<S>((s, { by, ...e }) => { const t = transition(oracle, found, s, e, by); return typeof t === "string" ? s : t.after; }, oracle.initial);
+  let sent = 0;
+  const typeOf = (e: unknown) => (e as { type: string }).type;
+  for (const type of new Set(found.events.map(typeOf))) {
+    const samples = found.events.filter((e) => typeOf(e) === type);
+    const [prefix, sample] = prefixes.flatMap((p) => samples.filter(({ by, ...e }) => oracle.enabled(after(p), e as E, by)).map((e) => [p, e] as const))[0] ?? [[], samples[0]] as const;
+    const { by, ...event } = sample as Sent<E> & Record<string, unknown>;
+    const model = await run(prefix.map((e) => [key, e]));
+    if (typeof model === "string") throw new Error(`conformance to ${found.source}: before probing ${type}: ${model}`);
+    let state: S = model.get(key)!;
+    const fields = Object.keys(event).filter((f) => f !== "type");
+    const malformed = [{ ...event, type: `${type}?` }, ...fields.flatMap((f) => [{ ...event, [f]: 1.5 }, { ...event, [f]: 2 ** 53 }, Object.fromEntries(Object.entries(event).filter(([g]) => g !== f))])];
+    const read = new Set<string>();
+    const sly = Object.defineProperties({ ...event, unexpected: "ignored" }, Object.fromEntries(fields.map((f) => [f, {
+      enumerable: true, get: () => read.has(f) ? changed(event[f]) : (read.add(f), event[f]),
+    }])));
+    for (const raw of [...malformed.filter((raw) => oracle.parseEvent(raw) === undefined), sly]) {
+      const at = `conformance to ${found.source}: probe ${raw === sly ? `${show(event)} with an extra field and fields that change when read again` : show(raw)}, after ${prefix.length} events of a journey`;
+      const expected = raw === sly ? transition(oracle, found, state, event, by) : { allowed: false, after: state };
+      if (typeof expected === "string") throw new Error(`${at}: ${expected}`);
+      let did: unknown;
+      try { did = await driver.receive!(key, raw, by); } catch (error) { throw new Error(`${at}: the application failed: ${error instanceof Error ? error.message : show(error)}`, { cause: error }); }
+      sent++;
+      if (did !== (expected.allowed ? "accepted" : "refused")) throw new Error(`${at}: the application ${show(did)} it, where the spec ${expected.allowed ? "accepts" : "refuses"} it`);
+      const problem = compareObservation(oracle, found, expected.after, await driver.observe(key), view);
+      if (problem) throw new Error(`${at}: ${key} ${problem}`);
+      state = expected.after;
+    }
+  }
+  return sent;
+}
+
+/** A value that is not `x`, as a field read a second time gives it. */
+const changed = (x: unknown) => typeof x === "number" ? x + 1_000_000 : typeof x === "string" ? `${x}?` : typeof x === "boolean" ? !x : undefined;
 
 const lines = <E>(trace: Trace<E>) => trace.map(([k, e]) => `  ${k} ${show(e)}`).join("\n");
 
 /** What `check` and `replay` share: running a trace through the driver beside the oracle, and shrinking one that disagrees. */
 function runner<S, E, V>(oracle: Oracle<S, E>, found: Found<E>, driver: Driver<E, V>, options: Options<S, V>) {
-  const { view, keys = ["a", "b"], walks = 200, steps = 20, seed = 1 } = options;
-  if (!found.events.length) throw new Error(`gen/${found.spec}.conformance.ts holds no events yet: \`pnpm check\` writes them`);
+  const { view, keys = ["a", "b"], walks = 1, steps = 20, seed = 1 } = options;
+  if (!found.events.length) throw new Error(`the simulator found no events of ${found.source}`);
   if (!keys.length || keys.some((key) => typeof key !== "string" || !key) || new Set(keys).size !== keys.length) throw new Error("conformance keys must be distinct nonempty strings");
   for (const [name, count] of Object.entries({ walks, steps, seed })) if (!Number.isSafeInteger(count) || count < 0) throw new Error(`conformance ${name} must be a nonnegative safe integer`);
   const seen = new Set<string>();
   const outcomes = new Set<Outcome>();
 
-  /** The first way the application differs from the spec along `trace`, or undefined. */
-  const differ = async (trace: Trace<E>): Promise<string | undefined> => {
+  /** The first way the application differs from the spec along `trace`, or else the spec's state of each key after it. */
+  const run = async (trace: Trace<E>): Promise<Map<string, S> | string> => {
     await driver.reset();
     const model = new Map<string, S>();
     for (const key of keys) {
@@ -154,7 +216,9 @@ function runner<S, E, V>(oracle: Oracle<S, E>, found: Found<E>, driver: Driver<E
         seen.add(canonical(raw, view ? "scalar" : found.shape));
       }
     }
+    return model;
   };
+  const differ = async (trace: Trace<E>) => { const r = await run(trace); return typeof r === "string" ? r : undefined; };
   /** Drop events while the disagreement stays: any subsequence is still a test, since the spec also says what is refused. */
   const fail = async (what: string, trace: Trace<E>) => {
     for (let i = trace.length - 1; i >= 0; i--) {
@@ -164,7 +228,7 @@ function runner<S, E, V>(oracle: Oracle<S, E>, found: Found<E>, driver: Driver<E
     throw new ConformanceError(`conformance to ${found.source}: ${what}, shrunk to ${trace.length} events:\n${lines(trace)}\n${await differ(trace)}`, trace, seed, what);
   };
 
-  return { differ, fail, seen, outcomes, keys, walks, steps, seed };
+  return { differ, run, fail, seen, outcomes, keys, walks, steps, seed };
 }
 
 /** The state type, resolved by the generator so sets are sorted only in the variant that owns them. */

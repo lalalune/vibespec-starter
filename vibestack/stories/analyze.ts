@@ -30,7 +30,8 @@ interface Meta {
   schema?: string[];
   decorator: boolean;
   play: string[];
-  snapshot: string[];
+  /** Fields `ComponentMeta` does not have, which nothing reads. */
+  extra: string[];
 }
 /** A hand-written `<Component>.stories.tsx`: its stories replace generated ones of the same name. */
 interface Manual { file: string; id?: string; title?: string; exports: string[] }
@@ -151,6 +152,9 @@ function literal(given: ts.Expression | undefined): unknown {
 const record = (value: unknown): Values => (value && typeof value === "object" && !Array.isArray(value) ? (value as Values) : {});
 const records = (value: unknown) => Object.fromEntries(Object.entries(record(value)).map(([name, v]) => [name, record(v)]));
 
+/** The fields of `ComponentMeta` (meta.ts). */
+const FIELDS = ["args", "examples", "states", "bounds", "schema", "decorator", "play"];
+
 function readMeta(checker: ts.TypeChecker, file: ts.SourceFile): Meta | undefined {
   const node = declared(file, "meta")?.initializer;
   const object = node && bare(node);
@@ -168,7 +172,7 @@ function readMeta(checker: ts.TypeChecker, file: ts.SourceFile): Meta | undefine
     schema: schema && (covered ? checker.getTypeOfSymbol(covered).getProperties().map((p) => p.name) : []),
     decorator: "decorator" in meta,
     play: Object.keys(record(meta.play)),
-    snapshot: Array.isArray(meta.snapshot) ? meta.snapshot : [],
+    extra: Object.keys(meta).filter((name) => !FIELDS.includes(name)),
   };
 }
 

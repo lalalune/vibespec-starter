@@ -3,125 +3,51 @@
   "globalDependencies": [
     ".nvmrc",
     "pnpm-workspace.yaml",
-    "tsconfig.base.json"
+    "tsconfig.base.json",
+    "vibestack/*.ts",
+    "vibestack/gen/**",
+    "vibestack/proof/**",
+    "vibestack/std/**",
+    "vibestack/testing/**",
+    "vibestack/stories/**",
+    "vibestack/design/**",
+    "!vibestack/**/{node_modules,.cache}/**"
   ],
-  "globalEnv": [
-    "CI",
-    "FUZZ_RUNS",
-    "FUZZ_SEED"
-  ],
+  "globalEnv": ["CI"],
   "tasks": {
     "gen": {
-      "inputs": [
-        "$TURBO_DEFAULT$",
-        "$TURBO_ROOT$/vibestack/*.ts",
-        "$TURBO_ROOT$/vibestack/{gen,proof,std,testing,stories,design}/**",
-        "!$TURBO_ROOT$/vibestack/**/node_modules/**",
-        "!$TURBO_ROOT$/vibestack/**/.cache/**"
-      ],
-      "outputs": [
-        "gen/**",
-        "generated/**"
-      ]
+      "outputs": ["gen/**", "generated/**"]
     },
     "build": {
-      "dependsOn": [
-        "gen",
-        "//#gen",
-        "^build"
-      ],
-      "inputs": [
-        "$TURBO_DEFAULT$",
-        "$TURBO_ROOT$/vibestack/*.ts",
-        "$TURBO_ROOT$/vibestack/{gen,proof,std,testing,stories,design}/**",
-        "!$TURBO_ROOT$/vibestack/**/node_modules/**",
-        "!$TURBO_ROOT$/vibestack/**/.cache/**"
-      ],
-      "outputs": [
-        "dist/**",
-        "generated/**",
-        "storybook-static/**"
-      ]
+      "dependsOn": ["gen", "//#gen", "^build"],
+      "outputs": ["dist/**", "generated/**"]
     },
     "typecheck": {
-      "dependsOn": [
-        "gen",
-        "//#gen",
-        "^build"
-      ],
-      "inputs": [
-        "$TURBO_DEFAULT$",
-        "$TURBO_ROOT$/vibestack/*.ts",
-        "$TURBO_ROOT$/vibestack/{gen,proof,std,testing,stories,design}/**",
-        "!$TURBO_ROOT$/vibestack/**/node_modules/**",
-        "!$TURBO_ROOT$/vibestack/**/.cache/**"
-      ],
+      "dependsOn": ["gen", "//#gen", "^build"],
       "outputs": []
     },
     "test": {
-      "dependsOn": [
-        "gen",
-        "//#gen",
-        "^build"
-      ],
-      "inputs": [
-        "$TURBO_DEFAULT$",
-        "$TURBO_ROOT$/vibestack/*.ts",
-        "$TURBO_ROOT$/vibestack/{gen,proof,std,testing,stories,design}/**",
-        "!$TURBO_ROOT$/vibestack/**/node_modules/**",
-        "!$TURBO_ROOT$/vibestack/**/.cache/**"
-      ],
+      "dependsOn": ["gen", "//#gen", "^build"],
+      "env": ["FUZZ_RUNS", "FUZZ_SEED"],
       "outputs": []
     },
     "test:browser": {
-      "dependsOn": [
-        "gen",
-        "//#gen",
-        "^build"
-      ],
-      "inputs": [
-        "$TURBO_DEFAULT$",
-        "$TURBO_ROOT$/vibestack/*.ts",
-        "$TURBO_ROOT$/vibestack/{gen,proof,std,testing,stories,design}/**",
-        "!$TURBO_ROOT$/vibestack/**/node_modules/**",
-        "!$TURBO_ROOT$/vibestack/**/.cache/**"
-      ],
+      "dependsOn": ["gen", "//#gen", "^build"],
       "outputs": []
     },
     "check": {
-      "dependsOn": [
-        "build",
-        "typecheck",
-        "test",
-        "test:browser"
-      ],
+      "dependsOn": ["build", "typecheck", "test", "test:browser"],
+      "passThroughEnv": ["FUZZ_RUNS", "FUZZ_SEED"],
       "cache": false
     },
     "vibestack-studio#check": {
-      "dependsOn": [
-        "build",
-        "typecheck",
-        "test",
-        "test:browser",
-        "//#build"
-      ],
+      "dependsOn": ["build", "typecheck", "test", "test:browser", "//#build"],
+      "passThroughEnv": ["FUZZ_RUNS", "FUZZ_SEED"],
       "cache": false
     },
     "//#gen": {
-      "inputs": [
-        "spec/**",
-        "apps/*/package.json",
-        "packages/*/package.json",
-        "vibestack/*.ts",
-        "vibestack/gen/**",
-        "vibestack/std/**",
-        "package.json"
-      ],
-      "outputs": [
-        "gen/**",
-        "apps/*/gen/**",
-        "packages/*/gen/**"
-      ]
+      "inputs": ["spec/**", "apps/*/package.json", "packages/*/package.json", "package.json"],
+      "outputs": ["gen/**", "apps/*/gen/**", "packages/*/gen/**"]
     },
     "//#build": {
       "dependsOn": [
@@ -133,45 +59,21 @@
       "inputs": [
         "vibestack/**",
         "!vibestack/examples/**",
-        "!**/node_modules/**",
-        "!**/dist/**",
-        "!**/.vibe/**",
-        "!**/.cache/**",
-        "!**/.spec-cache/**",
-        "!**/.turbo/**",
-        "!**/generated/**",
-        "!**/storybook-static/**",
-        "!apps/**/gen/**",
-        "!packages/**/gen/**",
-        "!vibestack/studio/gen/**",
-        "!vibestack/examples/*/gen/**",
+        "!**/{node_modules,dist,.vibe,.cache,.spec-cache,.turbo,generated,storybook-static}/**",
+        "!{apps,packages,vibestack/studio}/**/gen/**",
         "package.json",
         "tsconfig.json",
         "tsconfig.build.json"
       ],
-      "outputs": [
-        "dist/**"
-      ]
+      "outputs": ["dist/**"]
     },
     "//#typecheck": {
-      "dependsOn": [
-        "//#gen"
-      ],
+      "dependsOn": ["//#gen"],
       "inputs": [
         "vibestack/**",
         "!vibestack/examples/**",
-        "!**/node_modules/**",
-        "!**/dist/**",
-        "!**/.vibe/**",
-        "!**/.cache/**",
-        "!**/.spec-cache/**",
-        "!**/.turbo/**",
-        "!**/generated/**",
-        "!**/storybook-static/**",
-        "!apps/**/gen/**",
-        "!packages/**/gen/**",
-        "!vibestack/studio/gen/**",
-        "!vibestack/examples/*/gen/**",
+        "!**/{node_modules,dist,.vibe,.cache,.spec-cache,.turbo,generated,storybook-static}/**",
+        "!{apps,packages,vibestack/studio}/**/gen/**",
         "package.json",
         "tsconfig.json",
         "spec/**",
@@ -181,30 +83,39 @@
       "outputs": []
     },
     "//#test": {
-      "dependsOn": [
-        "//#gen"
-      ],
+      "dependsOn": ["//#gen"],
+      "env": ["FUZZ_RUNS", "FUZZ_SEED"],
       "inputs": [
         "vibestack/**",
         "!vibestack/examples/**",
-        "!**/node_modules/**",
-        "!**/dist/**",
-        "!**/.vibe/**",
-        "!**/.cache/**",
-        "!**/.spec-cache/**",
-        "!**/.turbo/**",
-        "!**/generated/**",
-        "!**/storybook-static/**",
-        "!apps/**/gen/**",
-        "!packages/**/gen/**",
-        "!vibestack/studio/gen/**",
-        "!vibestack/examples/*/gen/**",
+        "!**/{node_modules,dist,.vibe,.cache,.spec-cache,.turbo,generated,storybook-static}/**",
+        "!{apps,packages,vibestack/studio}/**/gen/**",
         "package.json",
         "tsconfig.json",
         "spec/**",
         "src/**",
         "test/**",
-        "vitest.config.ts"
+        "vitest.config.ts",
+        "packages/design-system/tokens.json",
+        "packages/design-system/design.md"
+      ],
+      "outputs": []
+    },
+    "//#selftest": {
+      "dependsOn": ["//#build"],
+      "inputs": [
+        "vibestack/**",
+        "!vibestack/examples/{assistant,dashboard,fullstack}/**",
+        "!**/{node_modules,dist,.vibe,.cache,.spec-cache,.turbo,generated,storybook-static}/**",
+        "!{apps,packages,vibestack/studio,vibestack/examples}/**/gen/**",
+        "packages/**",
+        ".claude/skills/**",
+        "AGENTS.md",
+        "SPEC.md",
+        "spec/**",
+        "package.json",
+        "tsconfig.json",
+        "tsconfig.build.json"
       ],
       "outputs": []
     },
@@ -218,30 +129,18 @@
         "@repo/app#test",
         "@repo/app#test:browser"
       ],
-      "cache": false
+      "cache": false,
+      "passThroughEnv": ["FUZZ_RUNS", "FUZZ_SEED"]
     },
     "//#lint:js": {
-      "dependsOn": [
-        "@repo/design-system#build",
-        "@repo/app#typecheck"
-      ],
+      "dependsOn": ["@repo/design-system#build", "@repo/app#typecheck"],
       "inputs": [
         "apps/**",
         "packages/**",
         "vibestack/**",
         "!vibestack/examples/**",
-        "!**/node_modules/**",
-        "!**/dist/**",
-        "!**/.vibe/**",
-        "!**/.cache/**",
-        "!**/.spec-cache/**",
-        "!**/.turbo/**",
-        "!**/generated/**",
-        "!**/storybook-static/**",
-        "!apps/**/gen/**",
-        "!packages/**/gen/**",
-        "!vibestack/studio/gen/**",
-        "!vibestack/examples/*/gen/**",
+        "!**/{node_modules,dist,.vibe,.cache,.spec-cache,.turbo,generated,storybook-static}/**",
+        "!{apps,packages,vibestack/studio}/**/gen/**",
         "package.json",
         "pnpm-workspace.yaml",
         "tsconfig.json",
@@ -256,18 +155,8 @@
         "packages/**",
         "vibestack/**",
         "!vibestack/examples/**",
-        "!**/node_modules/**",
-        "!**/dist/**",
-        "!**/.vibe/**",
-        "!**/.cache/**",
-        "!**/.spec-cache/**",
-        "!**/.turbo/**",
-        "!**/generated/**",
-        "!**/storybook-static/**",
-        "!apps/**/gen/**",
-        "!packages/**/gen/**",
-        "!vibestack/studio/gen/**",
-        "!vibestack/examples/*/gen/**",
+        "!**/{node_modules,dist,.vibe,.cache,.spec-cache,.turbo,generated,storybook-static}/**",
+        "!{apps,packages,vibestack/studio}/**/gen/**",
         "package.json",
         "pnpm-workspace.yaml",
         "tsconfig.json",
@@ -282,18 +171,8 @@
         "packages/**",
         "vibestack/**",
         "!vibestack/examples/**",
-        "!**/node_modules/**",
-        "!**/dist/**",
-        "!**/.vibe/**",
-        "!**/.cache/**",
-        "!**/.spec-cache/**",
-        "!**/.turbo/**",
-        "!**/generated/**",
-        "!**/storybook-static/**",
-        "!apps/**/gen/**",
-        "!packages/**/gen/**",
-        "!vibestack/studio/gen/**",
-        "!vibestack/examples/*/gen/**",
+        "!**/{node_modules,dist,.vibe,.cache,.spec-cache,.turbo,generated,storybook-static}/**",
+        "!{apps,packages,vibestack/studio}/**/gen/**",
         "package.json",
         "pnpm-workspace.yaml",
         "tsconfig.json",

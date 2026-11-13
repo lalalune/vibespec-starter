@@ -17,6 +17,4 @@ export interface ComponentMeta<Props = Record<string, unknown>> {
   decorator?: (story: () => any) => unknown;
   /** Interactions by story name, run after the story mounts; each receives the runner's story context. */
   play?: Record<string, (context: any) => unknown>;
-  /** The stories whose rendering is worth a visual snapshot, by name. */
-  snapshot?: string[];
 }

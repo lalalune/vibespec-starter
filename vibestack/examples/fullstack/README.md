@@ -24,7 +24,8 @@ Needs Node 26+ and Dafny on the path.
 | `spec/*.proof.dfy` | proofs | What Dafny could not prove alone |
 | `src/server.vibe`, `src/main.vibe` | backend shell | `POST /api/events`, `GET /api/snapshot`, `GET /api/stream`, the page's files, and the state saved in `todos.json` |
 | `src/protocol.vibe` | shared shell | Wire format |
-| `src/web/sync.vibe` | frontend shell | The `Tab` service: one client machine and its requests, shared with `test/e2e.test.vibe` |
+| `src/web/sync.vibe` | frontend shell | The `Tab` service: one client machine and its requests, shared with `test/app.test.vibe` |
+| `test/drivers/client.ts`, `test/drivers/server.ts` | conformance | How `check` reaches a tab and the HTTP server: every journey and random walks, compared with `spec/client.md` and `spec/server.md` |
 | `src/web/` | page | React: `useTab.ts` gives `components/TodoPage.tsx` the tab's `Client` and its effects |
 | `tokens.json`, `design.md` | design | The page's colors and shapes, as tokens |
 
@@ -85,8 +86,8 @@ its event (`canCreate`, `canSetDone`, `canRename`, `canRemove`, `canGoOffline`,
 | `pnpm stories` | `generated/stories/`: stories of each component in `src/web/components/`, from its props and its `<Name>.meta.tsx`, and a test that mounts each |
 | `pnpm storybook` | Storybook over those stories, regenerated as components change |
 
-`pnpm test` writes the theme and the stories, has Vitest build the page
-(`test/page.ts`), and runs the shell's journeys and the mount of every story.
+`pnpm test` writes the theme and the stories, builds the page, and runs the
+shell's journeys and the mount of every story.
 
 ## Proved, simulated, tested, trusted
 
@@ -96,9 +97,10 @@ its event (`canCreate`, `canSetDone`, `canRename`, `canRemove`, `canGoOffline`,
   their edits and agree with the server despite loss, duplication and reordering.
 - **Tested**: the HTTP shell and two tabs against the real server (`test/`),
   including a restart on the same state file and a start refused on a file
-  that holds no state; the real server against `spec/server.md`, through the
-  generated conformance walks, comparing the state it saved in its file with
-  the spec's and each answer's verdict with its log; that every story mounts. No test drives the page in a browser.
+  that holds no state; the real server against `spec/server.md`, through its
+  driver, comparing the state it saved in its file with the spec's and each
+  answer's verdict with its log; a tab against `spec/client.md` through its
+  driver; that every story mounts. No test drives the page in a browser.
 - **Trusted**: `src/`, React, Effect, the VibeLang compiler, the generator,
   Dafny and Quint. Convergence is a `sometimes` rule: the model shows it can
   happen, not that it always does.
@@ -111,7 +113,7 @@ work around their absence. Each is a good first exercise:
 - **Imported proofs.** The server and client restate "a request / queued
   edit / answer keeps the rules" as laws for the system proof file.
   It can call `server_<transition>_ensures` and `client_<transition>_ensures`
-  instead (AGENTS.md, "Proof files").
+  instead (.claude/skills/prove/SKILL.md, "Proof files").
 - **Equality.** `sameTodos` and its reflexivity law can become `==`, which
   compares lists and records by structure.
 - **List operations.** `dropAt`, and its induction, can become `removeAt`.

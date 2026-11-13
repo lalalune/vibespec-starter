@@ -1,4 +1,4 @@
-import { screen, userEvent } from "storybook/test";
+import { expect, screen, userEvent, waitFor } from "storybook/test";
 import type { ComponentMeta } from "vibestack/stories";
 import { Button } from "./Button.tsx";
 import { CardFooter } from "./Card.tsx";
@@ -24,12 +24,19 @@ const children = (
 export const meta: ComponentMeta<DialogProps> = {
   args: { children },
   examples: { Open: { defaultOpen: true } },
-  snapshot: ["Open"],
   play: {
-    // The panel the trigger opens is checked like any other story.
+    // Opened from the keyboard, it takes focus; Escape and the close button dismiss it, and focus goes back to the trigger.
     Default: async () => {
-      await userEvent.click(screen.getByRole("button", { name: "Delete" }));
-      await screen.findByRole("dialog", { name: "Delete the order?" });
+      // Focus goes back a moment after the dialog closes.
+      const trigger = screen.getByRole("button", { name: "Delete" });
+      trigger.focus();
+      await userEvent.keyboard("{Enter}");
+      await expect((await screen.findByRole("dialog", { name: "Delete the order?" })).contains(document.activeElement)).toBe(true);
+      await userEvent.keyboard("{Escape}");
+      await waitFor(() => expect([screen.queryByRole("dialog"), document.activeElement]).toEqual([null, trigger]));
+      await userEvent.click(trigger);
+      await userEvent.click(await screen.findByRole("button", { name: "Close" }));
+      await waitFor(() => expect([screen.queryByRole("dialog"), document.activeElement]).toEqual([null, trigger]));
     },
   },
 };
