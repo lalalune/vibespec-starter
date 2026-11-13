@@ -1,6 +1,6 @@
 // The TypeScript module for one spec: its types, its definitions with their proof obligations, and, for a state
 // machine, the event type and the functions that apply and admit events.
-import type { Param, Roles, Transition } from "./classify.ts";
+import { SENDER, type Param, type Roles, type Transition } from "./classify.ts";
 import type { Printer } from "./print.ts";
 import type { Json, Types } from "./types.ts";
 
@@ -20,14 +20,17 @@ export interface Source {
 
 export function typescript({ header, typedefs, vals, funs, sig, typeOf, doc, local: L }: Source, roles: Roles, types: Types, print: Printer, helper: (which: string) => string): string {
   const { tsType, declaration, wellFormed, copy } = types;
-  const { transitions, always, steps, laws } = roles;
+  const { transitions, always, steps, laws, sender } = roles;
   const state = roles.stateType && tsType(roles.stateType);
+  // Who sent an event is never part of it: the program passes it to `enabled` and `step` from what it trusts.
+  const carried = (t: Transition) => t.params.filter((p) => p.name !== SENDER);
+  const by = sender ? `, ${SENDER}: ${tsType(sender)}` : "";
   const out: string[] = [...header, ``, ...typedefs.map((d) => doc(d.name) + declaration(d))];
   if (state) out.push(
     ``,
-    `/** One variant per transition in the spec. */`,
+    `/** One variant per transition in the spec${sender ? `, without \`${SENDER}\`: who sent it is passed beside it` : ""}. */`,
     `export type ${L("Event")} =`,
-    ...transitions.map((t) => `  | { type: ${JSON.stringify(t.name)}${t.params.map((p) => `; ${p.name}: ${tsType(p.type)}`).join("")} }`).map((l, i, all) => (i === all.length - 1 ? l + ";" : l)),
+    ...transitions.map((t) => `  | { type: ${JSON.stringify(t.name)}${carried(t).map((p) => `; ${p.name}: ${tsType(p.type)}`).join("")} }`).map((l, i, all) => (i === all.length - 1 ? l + ";" : l)),
   );
   out.push(``, ...vals.map((d) => `${doc(d.name)}export const ${L(d.name)}: ${tsType(typeOf(d.id))} = ${print.ex(d.expr)};`));
   if (state) out.push(
@@ -41,13 +44,12 @@ export function typescript({ header, typedefs, vals, funs, sig, typeOf, doc, loc
   for (const d of funs) {
     const { params, result } = sig(d);
     const t = transitions.find((t) => t.name === d.name);
-    const args = params.map((p) => p.name).join(", ");
     // One `ensures` per rule, so a failed proof names the rule that the transition breaks. The transition has no
     // precondition: its guarantees are conditional instead, so that a guard may itself look at the transition's result.
-    const given = t && `(${L("inv")}(${params[0].name})${t.guard ? ` && ${L(t.guard)}(${args})` : ""}) ==> `;
+    const given = t && `(${L("inv")}(${params[0].name})${t.guard ? ` && ${L(t.guard)}(${[params[0].name, ...t.guardParams].join(", ")})` : ""}) ==> `;
     const contract = t ? [
       ...always.map((a) => `  //@ ensures ${given}${L(a)}(\\result)`),
-      ...steps.map((r) => `  //@ ensures ${given}${L(r)}(${params[0].name}, \\result)`),
+      ...steps.map((r) => `  //@ ensures ${given}${L(r.name)}(${[params[0].name, ...(r.via ? [JSON.stringify(t.name)] : []), "\\result"].join(", ")})`),
     ] : laws.some((l) => l.name === d.name) ? [`  //@ ensures \\result === true`] : [];
     out.push(
       ``,
@@ -58,24 +60,26 @@ export function typescript({ header, typedefs, vals, funs, sig, typeOf, doc, loc
       `}`,
     );
   }
-  const call = (t: Transition, fn: string) => `${L(fn)}(${["current", ...t.params.map((p) => `event.${p.name}`)].join(", ")})`;
+  const call = (fn: string, params: string[]) => `${L(fn)}(${["current", ...params.map((p) => (p === SENDER ? p : `event.${p}`))].join(", ")})`;
+  const admits = (t: Transition) => call(t.guard!, t.guardParams);
+  const applies = (t: Transition) => call(t.name, t.params.map((p) => p.name));
   const when = (t: Transition) => `event.type === ${JSON.stringify(t.name)}`;
-  const parsed = (t: Transition) => `{ ${[`type: ${JSON.stringify(t.name)}`, ...t.params.map((p) => `${p.name}: ${copy(`raw.${p.name}`, p.type)}`)].join(", ")} }`;
+  const parsed = (t: Transition) => `{ ${[`type: ${JSON.stringify(t.name)}`, ...carried(t).map((p) => `${p.name}: ${copy(`raw.${p.name}`, p.type)}`)].join(", ")} }`;
   if (state) out.push(
     ``,
-    `/** Do the rules allow this event in this state? */`,
+    `/** Do the rules allow this event${sender ? `, from this sender,` : ""} in this state? */`,
     `//@ pure`,
-    `export function ${L("enabled")}(current: ${state}, event: ${L("Event")}): boolean {`,
-    ...transitions.map((t) => `  if (${when(t)}) return ${t.guard ? call(t, t.guard) : "true"};`),
+    `export function ${L("enabled")}(current: ${state}, event: ${L("Event")}${by}): boolean {`,
+    ...transitions.map((t) => `  if (${when(t)}) return ${t.guard ? admits(t) : "true"};`),
     `  return false;`,
     `}`,
     ``,
-    `/** Apply an event. An event the rules do not allow leaves the state unchanged. */`,
+    `/** Apply an event${sender ? ` from \`${SENDER}\`, whom the program knows from what it trusts, never from the event` : ""}. An event the rules do not allow leaves the state unchanged. */`,
     `//@ pure`,
-    `export function ${L("step")}(current: ${state}, event: ${L("Event")}): ${state} {`,
+    `export function ${L("step")}(current: ${state}, event: ${L("Event")}${by}): ${state} {`,
     `  //@ requires ${L("inv")}(current)`,
     `  //@ ensures ${L("inv")}(\\result)`,
-    ...transitions.map((t) => `  if (${when(t)}${t.guard ? ` && ${call(t, t.guard)}` : ""}) return ${call(t, t.name)};`),
+    ...transitions.map((t) => `  if (${when(t)}${t.guard ? ` && ${admits(t)}` : ""}) return ${applies(t)};`),
     `  return current;`,
     `}`,
     ``,
@@ -93,7 +97,7 @@ export function typescript({ header, typedefs, vals, funs, sig, typeOf, doc, loc
     `    return undefined;`,
     `  }`,
     `  if (typeof raw !== "object" || raw === null) return undefined;`,
-    ...transitions.map((t) => `  if (raw.type === ${JSON.stringify(t.name)}${t.params.map((p) => ` && ${wellFormed(`raw.${p.name}`, p.type)}`).join("")}) return ${parsed(t)};`),
+    ...transitions.map((t) => `  if (raw.type === ${JSON.stringify(t.name)}${carried(t).map((p) => ` && ${wellFormed(`raw.${p.name}`, p.type)}`).join("")}) return ${parsed(t)};`),
     `  return undefined;`,
     `}`,
     ``,

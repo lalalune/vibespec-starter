@@ -50,9 +50,10 @@ is generated. The role of a definition comes from its name and signature:
 | `type Order = { … }`, `type Status = A \| B` | the vocabulary | `interface Order`, `type Status = "A" \| "B"` |
 | `pure val initial: Order = …` | the initial state; its type is *the state type*. A spec without one is a library | `initial`, and a proof that it satisfies every `always` rule |
 | `pure def pay(o: Order, amount: int): Order` | a transition: any `pure def` whose first parameter is the state and that returns the state | `pay(o, amount)`, an `Event` variant `{ type: "pay", amount }`, a case in `step`, `enabled` and `parseEvent`, and proofs that it preserves every rule |
-| `pure def canPay(o: Order, amount: int): bool` | the guard of `pay` (same parameters); optional | `canPay`, used by `enabled` and `step`. What is proved about `pay` is proved for the cases the guard allows. A guard may call its own transition to look at the result. `check` fails if it never allows `pay` in a reachable state, and lists it if it is never seen to refuse |
+| `pure def canPay(o: Order, amount: int): bool` | the guard of `pay`: the state, then any of `pay`'s parameters it uses, by the same names; optional | `canPay`, used by `enabled` and `step`. What is proved about `pay` is proved for the cases the guard allows. A guard may call its own transition to look at the result. `check` fails if it never allows `pay` in a reachable state, and lists it if it is never seen to refuse |
 | `pure def alwaysPaidWithinDue(o: Order): bool` | a rule that holds in every reachable state | a conjunct of `inv`; simulated and proved |
 | `pure def stepNeverGoesBack(before: Order, after: Order): bool` | a rule about every single step | a postcondition on every transition; simulated and proved |
+| `pure def stepPaidOnlyByPay(before: Order, via: str, after: Order): bool` | a step rule that also sees the name of the transition taken (`via == "pay"`), as in "the balance changes only when a payment arrives". The middle parameter must be called `via` | the same, with each transition's own name |
 | `pure def sometimesPaid(o: Order): bool` | a state that must be reachable | a reachability check with a witness trace |
 | `pure def lawTotalIsNotNegative(xs: List[int]): bool` | a law: true for every value of its parameters | a function proved to return `true`, and sampled by the simulator |
 | `pure val idValues = Set(1, 2, 3)` | what the simulator tries for a parameter named `id`. It must be a set; any Quint is allowed in it | nothing: it never reaches TypeScript |
@@ -64,10 +65,26 @@ smaller.
 
 Some names are refused, with a message saying why: the generated names
 (`init`, `step`, `inv`, `enabled`, `parseEvent`, `Event`, `current`, `event`,
-`state`, …) and `ProofLib`, JavaScript globals and keywords (`Number`, `delete`, …), Quint
+`state`, `last`, …) and `ProofLib`, JavaScript globals and keywords (`Number`, `delete`, …), Quint
 built-ins (`to`, `next`, `all`, `size`, …), a parameter named like a variant,
 a variant field called `tag`, and near-misses of the conventions above such as
 `alwayspaid` or `CanPay`.
+
+### Who sent an event
+
+A transition parameter named `by` is who sent the event: the person, an
+agent, a service. Give it a type of its own (`type Actor = Person | Agent |
+World`) and let guards decide who may do what (`by == Person`). Every
+transition that takes `by` takes the same type. The simulator sends every
+event from every sender, so a guard that lets the wrong one through breaks
+whatever rule its event can break; rules see states, so one about the sender
+itself needs it recorded in the state.
+
+The generated code keeps it out of the event: `Event` and `parseEvent` have
+no `by`, and `enabled(s, e, by)` and `step(s, e, by)` take it beside the
+event. The program passes who it knows sent the event, from the session it
+arrived on, so a message cannot claim to be from someone else.
+`examples/assistant` shows this.
 
 ### Using one spec from another
 
@@ -294,6 +311,9 @@ function step(s: Order, e: Event): Order             // apply e; unchanged if no
 function inv(s: Order): boolean                      // every always-rule at once
 ```
 
+When transitions take `by` ("Who sent an event"), `enabled` and `step` take
+it too, as a third argument.
+
 Every export carries a doc comment naming its rule and spec line, so hovering
 `pay` in an editor shows where it comes from.
 
@@ -382,7 +402,10 @@ a package. To hand the generated code to yet another package, compile
   what the spec means, everything it imports and the versions of the tools.
   Prose and the line numbers generated code cites are left out of the
   fingerprint, so editing prose re-runs neither simulation nor proofs.
-  Simulation runs overlap. `SPEC_QUICK=1` simulates a tenth as much while
+  Simulation runs overlap. A `sometimes` goal, or a guard's event, not found
+  in traces of 20 events is looked for again in traces of 40 and then 100, so
+  a goal deep in a long agent loop is still found; only a spec with such a
+  goal pays for the longer search. `SPEC_QUICK=1` simulates a tenth as much while
   iterating on a large spec; the result says so, and `accept` always
   simulates in full. Set
   `SPEC_NO_CACHE=1` to run everything afresh, which also gives the simulator

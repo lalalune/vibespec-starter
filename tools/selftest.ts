@@ -185,6 +185,23 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.ok(failed.includes("always"), failed.join());
   });
 
+  test("who sent an event travels beside it, a guard takes only what it uses, a step rule sees the event, and deep goals are found", async () => {
+    const vault = (edit: (s: string) => string = (s) => s) => fixtures(["vault"], (f) => { f["spec/vault.md"] = edit(f["spec/vault.md"]); });
+    const root = vault();
+    const ok = await run(root);
+    assert.deepEqual(ok.failed, ["review"], ok.text);
+    assert.ok(ok.said("sometimes", /sometimesLate is reachable/), ok.text); // thirty ticks: beyond a trace of 20 events
+    const gen = await import(path.join(root, "gen/vault.ts"));
+    assert.deepEqual(gen.parseEvent({ type: "open", by: "Owner" }), { type: "open" });
+    assert.equal(gen.enabled(gen.initial, { type: "open" }, "Guest"), false);
+    assert.equal(gen.step(gen.initial, { type: "relabel", label: "a" }, "Owner").label, "a");
+    // A counterexample shows each event with only what it changed.
+    const broken = await run(vault((s) => s.replace("{ ...v, open: false }", "{ ...v, open: true }")));
+    assert.ok(broken.said("always", /a step breaks[\s\S]*\n\s+close\s+-> open = true\n/), broken.text);
+    const stray = await run(vault((s) => s.replace("canRelabel(v: Vault, by: Actor): bool = by", "canRelabel(v: Vault, who: Actor): bool = who")));
+    assert.ok(stray.said("model", /canRelabel: `who` must be a parameter of relabel/), stray.text);
+  });
+
   test("a rule broken only on the way to a `sometimes` goal is still reported", async () => {
     // Only the witness search goes deep enough: the goal is three steps away and the break is on the way.
     const quint = "pure val initial: int = 0\npure def up(n: int): int = n + 1\npure def canUp(n: int): bool = n < 5\npure def alwaysBelowThree(n: int): bool = n < 3\npure def sometimesFour(n: int): bool = n == 4";

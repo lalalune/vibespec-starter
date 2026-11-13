@@ -67,6 +67,16 @@ ranked by value within each section.
 - `toolchainId` cached its string but still ran `dafny --version` and hashed
   every tool file on each call.
 
+**Agent systems** (from a review of Grace and elizaOS core; `examples/assistant`)
+
+- `by`, who sent an event, is a transition parameter the generated code keeps
+  out of the event: `step(s, e, by)`, so a message cannot claim a sender.
+- `stepX(before, via, after)`: step rules see which transition was taken.
+- A guard takes only the parameters it uses.
+- Witness searches that find nothing in 20 events try 40, then 100.
+- Counterexamples show each event with only what it changed.
+- Errors about unsupported Quint point to CONTRIBUTING.md, not the tools.
+
 **Agents**
 
 - Claude Code reads `AGENTS.md` only when there is no `CLAUDE.md`, and only
@@ -129,27 +139,27 @@ Cheap, in the existing code:
 1. **Reuse what imported machines proved** (about 80 lines): offer each
    imported transition's proved `_ensures` as an axiom, as laws already are,
    so a system spec need not re-prove its components' rules.
-2. **`step` rules that see the event**: `stepX(before, e, after)`, removing
-   ghost "last writer" fields from production state.
-3. **Translate `every` / `some` / `includes` to Dafny quantifiers**, not folds:
+2. **Translate `every` / `some` / `includes` to Dafny quantifiers**, not folds:
    most of the dashboard's 81 simulated-only obligations are this shape.
-4. Built-in `m.getOr(k, d)` and `xs.nthOr(i, d)` for guarded lookups.
-5. Per-spec `steps`, `samples` and `weight_<event>` values for the
-   simulator, so deep interleavings (lose, duplicate, reorder across two
-   clients) are reached.
-6. Structural `==` on records and lists (generated `eq_<Type>`). The
+3. Built-in `m.getOr(k, d)` and `xs.nthOr(i, d)` for guarded lookups.
+4. `weight_<event>` values for the simulator, so deep interleavings (lose,
+   duplicate, reorder across two clients) are reached more often.
+5. Structural `==` on records and lists (generated `eq_<Type>`). The
    fullstack example had to write list equality as a fold and prove it
    reflexive by induction.
-7. Remove the i-th element of a list (the fullstack example's network needed
+6. Remove the i-th element of a list (the fullstack example's network needed
    a fold with its own induction proof), and `<param>Values` honoured from an
    imported spec.
-8. `.listMap` on the result of another call (`xs.append(x).listMap(f)`)
+7. `.listMap` on the result of another call (`xs.append(x).listMap(f)`)
    fails at Dafny generation.
+8. **Integers past 2^53**: TypeScript loses precision where Quint and Dafny do
+   not. Refuse a step whose result outgrows a safe integer, or emit `bigint`.
 
 Larger:
 
 9. **Transitions that return output** (`{ state, out: List[Effect] }`) so a
-   server's reply is not faked as an outbox field; `replay` compares outputs.
+   server's reply is not faked as an outbox field; `replay` compares outputs,
+   and rules order effects (Grace persists an expectation before it acts).
 10. **Keyed tables** that can be iterated (`m.keys().forall`), emitted as Dafny
    `map` with native quantifiers: uniqueness becomes structural.
 11. **Refinement** (`refines`): a concrete server or client spec maps onto an
@@ -158,6 +168,16 @@ Larger:
     rules, proved by frame lemmas instead of again.
 13. **Environment library** (`std/net.md`): lossy, duplicating, reordering
     delivery, and bounded liveness (`eventually` within N steps).
-14. Context parameters (`ctx<Name>`) filled by the server, not the client, so
-    an actor cannot be spoofed; generated HTTP and React adapters outside the
-    trusted core.
+14. **Liveness under fairness**: `leadsTo` rules and fair events, found by
+    lasso search (Grace's TLA+ models and Eliza's task scheduler need them).
+15. **Opaque functions**: bodiless definitions with laws (a hash, `sameSite`,
+    a model's output), simulated as consistent random tables and bound to
+    proved `src/` code.
+16. **Secrecy as labels**: fields, parameters and effects marked secret, and
+    a flow check that none reaches speech, a log or a page; today a spec tags
+    effects by hand.
+17. **Traces from the running program** (JSONL) replayed against the spec, and
+    a JSON step driver so Android Java and `.mjs` code can be checked the same way.
+18. Exhaustive bounded checking from `check` (Apalache), with pinned state
+    counts as regression evidence. Generated HTTP and React adapters outside
+    the trusted core.

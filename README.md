@@ -44,6 +44,7 @@ npm run demo       # a scripted session against the verified core
 npm run selftest   # breaks things one at a time and checks each break is caught
 npm run check:dashboard   # the same pipeline on examples/dashboard
 npm run check:fullstack   # and on examples/fullstack, a React + Node app
+npm run check:assistant   # and on examples/assistant, an agent loop paying a bill
 ```
 
 ## The process
@@ -104,6 +105,7 @@ Keep `spec/`, `src/`, `test/` and `tools/` in git, lock files included.
 | `src/app.ts` | Unverified shell: storage, input parsing, error reporting |
 | `examples/dashboard/` | A larger, synthesized example modelled with the same tools, as a separate package |
 | `examples/fullstack/` | A React frontend and a Node backend modelled together, network faults included, as a separate package |
+| `examples/assistant/` | An agent loop paying a bill: who sent each event, late replies, restarts, secrets; and what such systems still need |
 | `docs/roadmap.md` | Review findings: what has been fixed, and what to do next for speed and for larger applications |
 
 ## A frontend and a backend together
