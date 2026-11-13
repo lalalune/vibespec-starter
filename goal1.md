@@ -3,6 +3,15 @@
 Companion: [goal2.md](goal2.md) (monorepo, testing, verification and CI). This goal builds on the
 package layout and testing infrastructure that goal 2 establishes.
 
+## Decided
+
+[goal2.md, "Decided"](goal2.md#decided) applies here too: VibeLang (the
+`vibelang` npm package, on Effect 4) is required, every interface including
+Studio and the examples is rebuilt in React, the workspace is pnpm without
+Turborepo unless a measured need remains, and Node 26 is required.
+"Vibelang models" below are this repository's specs (`spec/**/*.md`) and the
+code `gen/` derives from them, with the Effect adapter `gen/<name>.effect.vibe`.
+
 ## Mission
 
 Research, design, implement, test, and fully integrate a deterministic, automatically generated component development system across the entire repository.

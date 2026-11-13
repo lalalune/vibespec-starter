@@ -288,10 +288,10 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
     if (op === "Set") {
       const t = resolve(typeOf(e.id));
       setElem(t);
-      const members = [...new Set(a.map((x) => ex(x, TERNARY)))];
+      const distinct = [...new Set(a.map((x) => ex(x, TERNARY)))];
       const literal = (x: Json) => ["int", "str", "bool"].includes(x.kind) || (x.kind === "name" && variants.has(x.name));
       if (a.length > 1 && !a.every(literal)) fail("Set(…) with several members that are not literals could hold the same value twice; write Set(a).union(Set(b))");
-      return [members.length ? `[${members.join(", ")}]` : `([] as ${tsType(t.elem)}[])`, ATOM];
+      return [distinct.length ? `[${distinct.join(", ")}]` : `([] as ${tsType(t.elem)}[])`, ATOM];
     }
     if (definitions.has(op)) return [`${ref(op)}(${a.map((x) => ex(x, TERNARY)).join(", ")})`, ATOM];
     if (sampleSets.has(op)) return fail(`${op} is a sample set for the simulator and cannot be used in a definition`);

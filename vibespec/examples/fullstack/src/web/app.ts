@@ -1,15 +1,8 @@
-// spec/client.md, "Story: Edit the list in the browser"; spec/client.md, "Story: Hear back from the server"
-// The React page. Its state is a client of spec/client.md and its reducer is
-// the generated `step`: a click is an event, an answer from the server is an
-// event, and an event the rules do not allow changes nothing. React comes
-// from a CDN through the import map in index.html and is passed in, so this
-// file needs neither a bundler nor React's type declarations.
-import {
-  type Client, type Event, canCreate, canRemove, canRename, canSetDone, initial, step, visible,
-} from "../../gen/client.ts";
+// spec/client.md, "Story: Edit the list in the browser"; spec/client.md, "Story: Hear back from the server"; spec/system.md, "Only a tab's oldest queued edit can be on its way unanswered"
+// React comes from the import map in index.html.
+import { type Client, type Event, canCreate, canRemove, canRename, canSetDone, initial, step, visible } from "../../gen/client.ts";
 import type { Todo } from "../../gen/todo.ts";
-import { drain } from "../inbox.ts";
-import { fetchSnapshot, listen, newId, sendEdit } from "./sync.ts";
+import { RETRY_MS, fetchSnapshot, listen, newId, sendOldest } from "./sync.ts";
 
 /** The part of React this page uses. */
 export interface ReactLike {
@@ -21,86 +14,81 @@ export interface ReactLike {
 }
 export type CreateRoot = (el: Element) => { render(node: unknown): void };
 
-/** Several events at once, applied in order by the proved `drain`. */
-type Action = Event | Event[];
-const reducer = (c: Client, a: Action): Client => (Array.isArray(a) ? drain(c, a) : step(c, a));
-
-export function mount(React: ReactLike, createRoot: CreateRoot, el: Element, base = ""): void {
+export function mount(React: ReactLike, createRoot: CreateRoot, el: Element): void {
   const name = Math.random().toString(36).slice(2, 8);
-  createRoot(el).render(React.createElement(page(React, base, name)));
+  createRoot(el).render(React.createElement(page(React, name)));
 }
 
-function page(React: ReactLike, base: string, name: string) {
+function page(React: ReactLike, name: string) {
   const h = React.createElement;
   return function TodoPage() {
-    const [c, dispatch] = React.useReducer<Client, Action>(reducer, initial);
+    const [c, dispatch] = React.useReducer<Client, Event>(step, initial);
     const [draft, setDraft] = React.useState("");
     const [retry, setRetry] = React.useState(0);
-    const inFlight = React.useRef<number | undefined>(undefined);
+    const inFlight = React.useRef(false);
 
-    // Pushes from the server, for as long as the page is open.
     React.useEffect(() => {
       const stop = new AbortController();
-      void listen(base, (events) => dispatch(events), stop.signal);
+      void listen(dispatch, stop.signal);
       return () => stop.abort();
     }, []);
 
-    // Send the oldest queued edit, one request at a time (spec/system.md:
-    // "Only a tab's oldest queued edit can be on its way unanswered"). Its
-    // answer takes it out of the queue, and the next one goes out. Sending
-    // the whole queue at once would let the network reorder the user's own
-    // edits. Offline, nothing is sent; a failed request is tried again later.
     React.useEffect(() => {
-      const p = c.pending[0];
-      if (!c.online || !p || inFlight.current !== undefined) return;
-      inFlight.current = p.seq;
-      void sendEdit(base, name, p).then((answer) => {
-        inFlight.current = undefined;
-        if (answer) return dispatch(answer);
-        setTimeout(() => setRetry(Date.now()), 2000);
+      const sent = inFlight.current ? undefined : sendOldest(name, c);
+      if (!sent) return;
+      inFlight.current = true;
+      void sent.then((answer) => {
+        inFlight.current = false;
+        if (answer) dispatch(answer);
+        else setTimeout(() => setRetry(Date.now()), RETRY_MS);
       });
     }, [c, retry]);
 
     const goOnline = async () => {
       dispatch({ type: "goOnline" });
-      dispatch(await fetchSnapshot(base));
+      const snapshot = await fetchSnapshot();
+      if (snapshot) dispatch(snapshot);
     };
     const id = newId(name, c);
+    const title = draft.trim();
+    const unconfirmed = new Set(c.pending.map((p) => p.op.id));
     const row = (t: Todo) =>
-      h("li", { key: t.id, className: t.done ? "done" : "" },
+      h("li", { key: t.id, className: unconfirmed.has(t.id) ? "unconfirmed" : undefined },
         h("input", {
           type: "checkbox", checked: t.done, disabled: !canSetDone(c, t.id, !t.done),
-          "aria-label": `Mark ${t.title} ${t.done ? "incomplete" : "done"}`,
+          "aria-label": `Mark ${t.title} ${t.done ? "not done" : "done"}`,
           onChange: () => dispatch({ type: "setDone", id: t.id, done: !t.done }),
         }),
         h("button", {
           type: "button", className: "title", "aria-label": `Rename ${t.title}`,
           onClick: () => {
-            const title = window.prompt("Rename", t.title) ?? "";
-            if (canRename(c, t.id, title)) dispatch({ type: "rename", id: t.id, title });
+            const renamed = window.prompt("Rename", t.title)?.trim() ?? "";
+            if (canRename(c, t.id, renamed)) dispatch({ type: "rename", id: t.id, title: renamed });
           },
         }, t.title),
-        h("button", { "aria-label": `Remove ${t.title}`, disabled: !canRemove(c, t.id), onClick: () => dispatch({ type: "remove", id: t.id }) }, "remove"));
+        h("button", {
+          type: "button", className: "icon", "aria-label": `Remove ${t.title}`, disabled: !canRemove(c, t.id),
+          onClick: () => dispatch({ type: "remove", id: t.id }),
+        }, "×"));
 
     return h("main", null,
-      h("h1", null, "Shared to-do list"),
+      h("header", null,
+        h("h1", null, "To-do"),
+        c.refusals > 0 && h("span", { className: "refused", role: "status", "aria-label": `${c.refusals} edits refused` }, `⚠ ${c.refusals}`),
+        h("button", {
+          type: "button", className: "online", "aria-label": "Online", "aria-pressed": c.online,
+          onClick: () => (c.online ? dispatch({ type: "goOffline" }) : void goOnline()),
+        })),
       h("form", {
         onSubmit: (e: { preventDefault(): void }) => {
           e.preventDefault();
-          if (!canCreate(c, id, draft.trim())) return;
-          dispatch({ type: "create", id, title: draft.trim() });
+          if (!canCreate(c, id, title)) return;
+          dispatch({ type: "create", id, title });
           setDraft("");
         },
       },
-        h("input", { value: draft, "aria-label": "New to-do", placeholder: "What needs doing?", onChange: (e: { target: { value: string } }) => setDraft(e.target.value) }),
-        h("button", { disabled: !canCreate(c, id, draft.trim()) }, "add")),
-      h("ul", null, ...visible(c).map(row)),
-      h("p", { className: "status" },
-        `tab ${name} · version ${c.seen} · ${c.pending.length} waiting for the server`,
-        c.refusals ? ` · ${c.refusals} refused` : "",
-        " · ",
-        h("label", null,
-          h("input", { type: "checkbox", checked: c.online, onChange: () => (c.online ? dispatch({ type: "goOffline" }) : void goOnline()) }),
-          " online")));
+        h("input", { value: draft, "aria-label": "New to-do", onChange: (e: { target: { value: string } }) => setDraft(e.target.value) }),
+        h("button", { className: "icon", "aria-label": "Add", disabled: !canCreate(c, id, title) }, "+")),
+      h("ul", null, ...visible(c).map(row)));
   };
 }

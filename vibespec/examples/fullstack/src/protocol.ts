@@ -1,9 +1,5 @@
 // spec/server.md, "The log tells which requests were answered, and with which edit each was accepted"
-// The wire format shared by the backend (src/server.ts) and the frontend
-// (src/web/). A request is an event of the generated server machine other
-// than `refuse`, which is the server's own decision; an answer and a push
-// carry the list and its version, which the generated client machine takes as
-// `receiveAck`, `receiveRefusal` or `receiveSnapshot`.
+// Shared by src/server.ts and src/web/sync.ts.
 import type { Op, Todo } from "../gen/todo.ts";
 import type { Event } from "../gen/server.ts";
 

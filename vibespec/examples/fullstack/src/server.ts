@@ -1,28 +1,15 @@
-// spec/server.md, "The log tells which requests were answered, and with which edit each was accepted"; spec/server.md, "A new request can be refused, which is logged with its edit and changes nothing else"
-// The backend: the unverified shell around the generated server machine
-// (gen/server.ts). It parses requests, applies the ones the rules allow, logs
-// and refuses the rest, repeats the logged answer to a retried request (the
-// same number and the same edit), and
-// pushes every change to the open tabs. It also serves the frontend, turning
-// its TypeScript into JavaScript by removing the types, so there is no
-// bundler and no build step.
+// spec/server.md, "The log tells which requests were answered, and with which edit each was accepted"; spec/server.md, "A new request can be refused, which is logged with its edit and changes nothing else"; spec/client.md, "Story: Hear back from the server"
 import fs from "node:fs";
 import http from "node:http";
 import { stripTypeScriptTypes } from "node:module";
 import path from "node:path";
-import { type Server, acceptedAs, answered, enabled, initial, inv, parseEvent, step } from "../gen/server.ts";
+import { type Server, acceptedAs, answered, enabled, initial, parseEvent, step } from "../gen/server.ts";
 import { type Answer, type Snapshot, opOf } from "./protocol.ts";
 
 /** The server machine and the tabs listening for changes. */
 export class TodoStore {
   state: Server = initial;
   private listeners = new Set<(s: Snapshot) => void>();
-
-  constructor() {
-    // Every transition is proved to keep the rules, so they are checked once,
-    // of the state the server starts in, and not on every request.
-    if (!inv(this.state)) throw new Error("the server's initial state breaks its rules");
-  }
 
   snapshot(): Snapshot {
     return { version: this.state.version, todos: this.state.todos };
@@ -33,19 +20,12 @@ export class TodoStore {
     return () => this.listeners.delete(listener);
   }
 
-  /**
-   * Answer one request. `input` may come straight from the network; it is
-   * parsed into an event of the server machine first. Returns undefined for
-   * input that is not a request at all, and for `refuse`, which only the
-   * server decides.
-   */
+  /** The answer to `input` from the network, or undefined if it is not a request a client may send. */
   handle(input: unknown): Answer | undefined {
     const event = parseEvent(input);
     if (!event || event.type === "refuse") return undefined;
     const { client, seq } = event;
     const op = opOf(event);
-    // A number answered before: nothing is applied again. Only a retry of the
-    // accepted edit is told it was accepted; another edit under that number is refused.
     if (answered(this.state, client, seq)) return this.answer(acceptedAs(this.state, client, seq, op), seq);
     if (enabled(this.state, event)) {
       this.state = step(this.state, event);
@@ -87,6 +67,8 @@ export function createServer(store = new TodoStore()): http.Server {
     const url = new URL(req.url ?? "/", "http://localhost");
     try {
       if (req.method === "POST" && url.pathname === "/api/events") {
+        // src/web/sync.ts sends JSON; a cross-site page cannot without a CORS preflight, which is never granted.
+        if (!req.headers["content-type"]?.startsWith("application/json")) return sendJson(res, 415, { error: "send application/json" });
         const text = await readBody(req);
         let input: unknown;
         try { input = text === undefined ? undefined : JSON.parse(text); } catch { input = undefined; }

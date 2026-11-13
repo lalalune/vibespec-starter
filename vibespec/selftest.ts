@@ -62,6 +62,8 @@ function toolchain(root: string, ...tools: string[]): string {
 const ruleSpec = (quint: string, heading = "A rule", title = "T", story = "Story") => `# ${title}\n\n## ${story}\n\n### ${heading}\n\n${F}quint\n${quint}\n${F}\n`;
 /** A scratch project with one spec made of a single rule. */
 const oneRule = (name: string, heading: string, quint: string) => scratch({ [`spec/${name}.md`]: ruleSpec(quint, heading) });
+/** A scratch project with a spec `use` that imports a spec `lib`. */
+const libAndUse = (lib: string, use: string) => scratch({ "spec/lib.md": lib, "spec/use.md": use });
 /** Hand-written code with a one-line contract. */
 const ONE = "//@ pure\nexport function one(): number {\n  //@ ensures \\result === 1\n  return 1;\n}\n";
 /** Generated Dafny: one function and its obligation. */
@@ -170,7 +172,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const spec = parseSpec(root, "spec/counter.md");
     const model = await gen(root, spec);
     const domain = await import(path.join(root, "gen/counter.ts"));
-    const found = conformanceFound(domain, model, spec, [[{ state: 0 }, { event: { type: "inc" }, state: 1 }, { event: { type: "inc" }, state: 2 }]], []);
+    const found = conformanceFound(model, spec, [[{ state: 0 }, { event: { type: "inc" }, state: 1 }, { event: { type: "inc" }, state: 2 }]], []);
     writeConformance(root, model, found);
     const helper = await import(path.join(root, "gen/counter.conformance.ts"));
     const states = new Map<string, number>();
@@ -208,7 +210,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const quiet = oneRule("quiet", "Wait", "pure val initial: int = 0\npure def stay(n: int): int = n\npure def alwaysZero(n: int): bool = n == 0");
     const quietSpec = parseSpec(quiet, "spec/quiet.md"), quietModel = await gen(quiet, quietSpec);
     const quietDomain = await import(path.join(quiet, "gen/quiet.ts"));
-    writeConformance(quiet, quietModel, conformanceFound(quietDomain, quietModel, quietSpec, [[{ state: 0 }, { event: { type: "stay" }, state: 0 }]], []));
+    writeConformance(quiet, quietModel, conformanceFound(quietModel, quietSpec, [[{ state: 0 }, { event: { type: "stay" }, state: 0 }]], []));
     const quietHelper = await import(path.join(quiet, "gen/quiet.conformance.ts"));
     await quietHelper.conformance({ reset() {}, dispatch: () => "accepted", observe: () => 0 }, { walks: 1, steps: 2 });
   });
@@ -975,10 +977,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
 
   test("changing an imported definition invalidates model and simulation results", async () => {
     const wrap = (quint: string) => ruleSpec(quint, "Price", "Library", "Values");
-    const root = scratch({
-      "spec/lib.md": wrap("pure val price = 1"),
-      "spec/use.md": wrap('import lib.* from "./lib"\npure def lawPrice(k: int): bool = price == 1'),
-    });
+    const root = libAndUse(wrap("pure val price = 1"), wrap('import lib.* from "./lib"\npure def lawPrice(k: int): bool = price == 1'));
     const first = await run(root);
     assert.deepEqual(first.failed, ["review"], first.text);
     fs.writeFileSync(path.join(root, "spec/lib.md"), wrap("pure val price = 2"));
@@ -1027,12 +1026,23 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.ok(moved.includes("Story: Fill a draft / The amount due is always the price of the units: model changed through unitPrice (Domain / Unit price and order size)"), moved.join("\n"));
     assert.ok(!moved.some((m) => m.startsWith("Story: Check out / A payment never exceeds the balance")), "a rule that does not use the price is not flagged");
 
-    // Across specs: a change to a library definition flags the rules that use it.
-    const shop = fixtures(["lib", "shop"]);
-    for (const spec of readSpecs(shop)) acceptReviews(shop, spec);
-    fs.writeFileSync(path.join(shop, "spec/lib.md"), read("vibespec/fixtures/lib.md").replace("acc + x)", "x + acc)"));
-    const flagged = pendingItems(shop);
+    // Across specs: a change to a library definition flags the rules that use it,
+    // through a namespace beside a local namesake, and past a comment that hides a namesake.
+    const libChanged = (root: string, lib: string) => {
+      for (const spec of readSpecs(root)) acceptReviews(root, spec);
+      fs.writeFileSync(path.join(root, "spec/lib.md"), lib);
+      return pendingItems(root);
+    };
+    const flagged = libChanged(fixtures(["lib", "shop"]), read("vibespec/fixtures/lib.md").replace("acc + x)", "x + acc)"));
     assert.ok(flagged.includes("Story: Fill a cart / A cart holds lines: model changed through total (spec/lib.md: Sums / The total of a list)"), flagged.join("\n"));
+    const names = (quint: string) => ruleSpec(quint, "Identity", "Names", "Rules");
+    const namespaced = libChanged(libAndUse(names("pure def identity(n: int): int = n"), names('import lib as L from "./lib"\npure def identity(n: int): int = 0\npure def lawIdentity(n: int): bool = L::identity(n) == n')),
+      names("pure def identity(n: int): int = n + 0"));
+    assert.ok(namespaced.some((item) => item.includes("model changed through") && item.includes("identity")), namespaced.join("\n"));
+    const lib = ruleSpec("pure def value(n: int): int = n + 1", "Imported", "Names", "Rules");
+    const hidden = libChanged(libAndUse(lib, `# Use\n\n## Rules\n\n### Local\n\n${F}quint\nimport lib.* from "./lib"\n/*\npure def value(n: int): int = 0\n*/\npure def other(n: int): int = n\n${F}\n\n### Uses imported value\n\n${F}quint\npure def lawValue(n: int): bool = value(n) > n\n${F}\n`),
+      lib.replace("n + 1", "n + 2"));
+    assert.ok(hidden.some((item) => item.startsWith("Rules / Uses imported value: model changed through") && item.includes("value")), hidden.join("\n"));
 
     // The //@ lines of hand-written code: changed, new, and gone, whether the file loses them or is deleted.
     const contract = () => pendingContracts(root).map((p) => `${p.where}: ${p.status}`);
@@ -1044,26 +1054,6 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     edit("src/ledger.ts", (s) => s.replace(/^.*\/\/@.*\n/gm, ""));
     fs.rmSync(path.join(root, "src/extra.ts"));
     assert.deepEqual(contract(), ["src/extra.ts: contract removed", "src/ledger.ts: contract removed"]);
-  });
-
-  test("a namespaced dependency remains reviewed when a local definition has the same name", () => {
-    const wrap = (quint: string) => ruleSpec(quint, "Identity", "Names", "Rules");
-    const root = scratch({
-      "spec/lib.md": wrap("pure def identity(n: int): int = n"),
-      "spec/use.md": wrap('import lib as L from "./lib"\npure def identity(n: int): int = 0\npure def lawIdentity(n: int): bool = L::identity(n) == n'),
-    });
-    for (const spec of readSpecs(root)) acceptReviews(root, spec);
-    fs.writeFileSync(path.join(root, "spec/lib.md"), wrap("pure def identity(n: int): int = n + 0"));
-    assert.ok(pendingItems(root).some((item) => item.includes("model changed through") && item.includes("identity")), pendingItems(root).join("\n"));
-  });
-
-  test("a comment cannot hide an imported rule's dependency from review", () => {
-    const lib = ruleSpec("pure def value(n: int): int = n + 1", "Imported", "Names", "Rules");
-    const use = `# Use\n\n## Rules\n\n### Local\n\n${F}quint\nimport lib.* from "./lib"\n/*\npure def value(n: int): int = 0\n*/\npure def other(n: int): int = n\n${F}\n\n### Uses imported value\n\n${F}quint\npure def lawValue(n: int): bool = value(n) > n\n${F}\n`;
-    const root = scratch({ "spec/lib.md": lib, "spec/use.md": use });
-    for (const spec of readSpecs(root)) acceptReviews(root, spec);
-    fs.writeFileSync(path.join(root, "spec/lib.md"), lib.replace("n + 1", "n + 2"));
-    assert.ok(pendingItems(root).some((item) => item.startsWith("Rules / Uses imported value: model changed through") && item.includes("value")), pendingItems(root).join("\n"));
   });
 
   test("source edited by a test cannot be accepted with a proof of its earlier contents", async () => {

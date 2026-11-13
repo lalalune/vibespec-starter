@@ -17,15 +17,12 @@ uses to recognise a retry. `made` counts the edits the client has numbered.
 ```quint
 import todo.* from "./todo"
 
-type Pending = { seq: int, op: { kind: str, id: str, title: str, done: bool } }
+type Pending = { seq: int, op: Op }
 type Client = {
-  confirmed: List[{ id: str, title: str, done: bool, deleted: bool }],
+  confirmed: List[Todo],
   seen: int, pending: List[Pending], online: bool, made: int, refusals: int,
 }
 ```
-
-The inline to-do and edit records have the same fields and types as `Todo`
-and `Op`, so the client shares their data shape with the server and system.
 
 ### A new client is online, has seen version 0 and has nothing queued
 

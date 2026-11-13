@@ -18,16 +18,13 @@ request with the same number can be told apart from a retry.
 ```quint
 import todo.* from "./todo"
 
-type Answered = { client: str, seq: int, op: { kind: str, id: str, title: str, done: bool }, ok: bool }
+type Answered = { client: str, seq: int, op: Op, ok: bool }
 type Server = {
-  todos: List[{ id: str, title: str, done: bool, deleted: bool }],
+  todos: List[Todo],
   version: int,
   log: List[Answered],
 }
 ```
-
-The inline to-do and edit records have the same fields and types as `Todo`
-and `Op`, so the server shares their data shape with the client and system.
 
 ### A new server has an empty list at version 0
 

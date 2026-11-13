@@ -3,8 +3,8 @@
 Draft, instalments, take-back, hold, cancel and reopen.
 
 ```sh
-npm run check --workspace order-example
-npm run demo
+pnpm --filter order-example check
+pnpm demo
 ```
 
 | Path | Role |

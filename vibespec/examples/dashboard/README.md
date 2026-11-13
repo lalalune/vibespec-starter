@@ -3,7 +3,7 @@
 Tasks in a shared spreadsheet, edited by hand and through a chat dashboard.
 
 ```sh
-npm run check:dashboard
+pnpm check:dashboard
 ```
 
 | Path | Kind | Covers |
