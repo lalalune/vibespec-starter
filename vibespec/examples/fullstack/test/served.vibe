@@ -1,0 +1,5 @@
+// The backend as the tests meet it: the real server on a free port with the
+// frontend `bundle.ts` built, and an HttpClient that reaches it.
+import { server } from "../src/server.vibe"
+
+export const Served = Layer.provideMerge(Layer.provide(HttpServer.layerTestClient, FetchHttpClient.layer), server("dist/web", 0))

@@ -12,7 +12,7 @@ import { contracts, pending, pendingContracts, acceptAllReviews, pendingSpecs, m
 import { entry, remembered, collectGarbage, dafnyVersion, type Memory } from "./cache.ts";
 import { gen, generated, typecheckAll, proofUnits, strayProofFiles } from "./units.ts";
 import { SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, LASSO_TRACES, STEPS, DEPTHS, SEARCHED, simulate, search, firstBreak, lasso, showTrace, replay, type Step } from "./simulate.ts";
-import { sha, indent, tests, readSrc, projectRoot, usesVibelang, type SrcFile } from "./util.ts";
+import { sha, indent, tests, readSrc, projectRoot, usesVibelang, nodeRunsVibelang, type SrcFile } from "./util.ts";
 
 export { readSpecs, badSpecName, parseSpec, scanSpec, expandListHelpers, type Spec, type Rule, type Story } from "./parse.ts";
 export { pending, pendingContracts, acceptReviews, acceptContracts, fingerprint, dependencies, type Pending } from "./review.ts";
@@ -375,6 +375,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
     const proofsDone = provingAll();
     // A missing or unexecutable compiler must not release the project lock while proofs still write into gen/.
     const [typesResult, proofsResult] = await Promise.allSettled([typecheck, proofsDone]);
+    if (usesVibelang(root) && !nodeRunsVibelang()) report(false, "types", `VibeLang runs its sources on Node ^22.22.3 or >=24.11.1, and this is ${process.version}; update Node (.nvmrc names the version CI uses)`);
     if (typecheck) {
       if (typesResult.status === "rejected") report(false, "types", "the TypeScript checker could not run", indent(String(typesResult.reason)));
       else {
@@ -518,6 +519,7 @@ export function init(root: string, warn: (message: string) => void = (message) =
     const [runtime, tooling] = [lacking(VIBELANG.dependencies), lacking(VIBELANG.devDependencies)];
     const needs = Object.keys({ ...runtime, ...tooling });
     if (needs.length) {
+      json.engines = { node: "^22.22.3 || >=24.11.1", ...json.engines };
       json.dependencies = { ...json.dependencies, ...runtime };
       json.devDependencies = { ...json.devDependencies, ...tooling };
       // Effect's packages share one version; a transitive copy at another is refused when the runtime loads.

@@ -8,11 +8,37 @@ rules only the whole system can state.
 
 ```sh
 npm run check      # the whole pipeline (from this directory)
-npm start          # then open http://localhost:3000 in two windows
+npm test           # the tests alone: Vitest, against the real server on a free port
+npm run build      # the backend into dist/src, the page into dist/web
+npm start          # build, then serve: open http://localhost:3000 in two windows
 ```
 
-Needs Node 24+ (the server strips TypeScript types itself, so there is no
-build step) and Dafny on the path. The page loads React 18 from esm.sh.
+Needs Node 24+ and Dafny on the path. The page loads React 18 from esm.sh.
+
+## What is VibeLang and what stays TypeScript
+
+The shell is written in [VibeLang](https://github.com/smithersai/vibelang)
+(`.vibe`): TypeScript syntax for Effect, where a failure is a typed value
+and everything outside the program (HTTP, files, the clock) is a service a
+test can replace. It is built on `gen/<name>.effect.vibe`, which `npm run gen`
+writes beside each generated module: the machine's definitions as functions
+that throw nothing, `Rejected` and `NotAnEvent` for what `enabled` and
+`parseEvent` refuse, and for the server the `Machine` service that holds the
+state and applies one event at a time.
+
+| Stays TypeScript | Why |
+|---|---|
+| `gen/*.ts` | generated, and what the proofs are about |
+| `src/inbox.ts` | carries `//@` contracts, which LemmaScript proves from TypeScript |
+| `src/web/app.ts` | the DOM, which a `.vibe` file cannot touch; it runs the tab's effects through a `ManagedRuntime` |
+| `bundle.ts`, `vitest.config.ts` | configuration that esbuild and Vitest load themselves |
+
+`vibelang` checks both languages as one program and compiles them to
+`dist/`. A browser cannot load that output as it is (it imports `effect` by
+name), so `bundle.ts` has esbuild bundle `src/web/app.ts` and the `.vibe`
+files it imports into `dist/web/app.js`, which the server serves beside
+`index.html`. Vitest runs `bundle.ts` before the tests, so `npm test` needs
+no build.
 
 | Path | Kind | What it covers |
 |---|---|---|
@@ -21,35 +47,41 @@ build step) and Dafny on the path. The page loads React 18 from esm.sh.
 | `spec/client.md` | state machine, 9 transitions | One tab: confirmed copy + queue of unanswered edits, optimistic view, offline, answers and pushes |
 | `spec/system.md` | state machine, 9 transitions | Server + tabs `a` and `b` + a network that loses, repeats and reorders + anyone forging requests in a tab's name; a ghost history of every version |
 | `spec/*.proof.dfy` | proofs | Everything Dafny could not prove alone (uniqueness under append/filter/map, fold lemmas, the system rules) |
-| `src/server.ts`, `src/main.ts` | backend shell, tested | `node:http`: `POST /api/events`, `GET /api/snapshot`, `GET /api/stream` (server-sent pushes), and the frontend's files |
-| `src/protocol.ts` | shared shell | Wire format; a queued edit as a server event |
-| `src/web/app.ts`, `index.html` | frontend shell | React page; `useReducer` with the generated client `step` |
-| `src/web/sync.ts` | frontend shell, tested | fetch/stream code shared by the page and the end-to-end test |
+| `src/server.vibe`, `src/main.vibe` | backend shell, tested | Effect's `HttpRouter` over the server `Machine`: `POST /api/events`, `GET /api/snapshot`, `GET /api/stream` (server-sent pushes), and the frontend's files |
+| `src/protocol.vibe` | shared shell | Wire format; a queued edit as a server event |
+| `src/web/sync.vibe` | frontend shell, tested | the `Tab` service: a client of `spec/client.md` and the requests that keep it in step, over `HttpClient`; shared by the page and the end-to-end test |
+| `src/web/app.ts`, `index.html` | frontend shell | React page: renders every state the tab publishes, and runs the tab's effects on clicks |
 | `src/inbox.ts` | hand-written, proved | `drain`: a batch of pushes applied in a loop, proved to keep the client's rules |
 | `test/` | tests | server over HTTP, the reducer, two tabs converging against the real server |
 
 ## How the halves fit
 
-- **Backend.** `TodoStore.handle` passes the request body through
-  `parseEvent` of `gen/server.ts`, and answers 400 to `refuse`, which only
-  the server may decide. A request whose client and number the log already
-  holds is not applied again: it is told it was accepted only if the log
-  accepted that same edit (`acceptedAs`), so a request that reuses a number
-  for another edit is refused rather than taken for a retry. A new request is
-  applied with `step` if `enabled` says so, and otherwise refused with the
-  machine's `refuse` event, which is logged too. Every change is pushed to
-  the open tabs. The rules are checked once, of the initial state; every
-  transition is proved to keep them.
-- **Frontend.** The page's state is a `Client` and its reducer is `step` from
-  `gen/client.ts`. Clicks dispatch `create`/`setDone`/`rename`/`remove`;
-  answers dispatch `receiveAck`/`receiveRefusal`; pushes dispatch
-  `receiveSnapshot`. Buttons are enabled by the generated guards
-  (`canCreate`, …). The page keeps one request in flight: it sends the
-  oldest queued edit, and the next once that one is answered, also after
-  coming back online. Sending the whole queue at once would let the network
-  reorder a user's own edits, so that ticking off a to-do could arrive
-  before creating it and be refused; the system spec requires that a user
-  editing alone is never refused.
+- **Backend.** A request body goes through `decodeEvent` of
+  `gen/server.effect.vibe`; what is not an event is answered 400, and so is
+  `refuse`, which only the server may decide. The request is sent to the
+  `Machine`, which applies it if the rules allow. If they reject it, the
+  `Rejected` failure carries the state that did: a request whose client and
+  number the log already holds is not applied again, and is told it was
+  accepted only if the log accepted that same edit (`acceptedAs`), so a
+  request that reuses a number for another edit is refused rather than taken
+  for a retry; a new request is refused with the machine's `refuse` event,
+  which is logged too. The push stream is the machine's `changes`, one push
+  for each new version. The rules are checked once, of the initial state
+  (`decodeState`); every transition is proved to keep them.
+- **Frontend.** A `Tab` holds a `Client` and changes it only with `apply`
+  from `gen/client.effect.vibe`, where an event the rules do not allow
+  changes nothing, and with the proved `drain` for a batch of pushes (a
+  function of the whole state, which the generated `Machine`, taking one
+  event at a time, has no place for). Clicks
+  are `create`/`setDone`/`rename`/`remove`; answers are
+  `receiveAck`/`receiveRefusal`; pushes are `receiveSnapshot`. Buttons are
+  enabled by the generated guards (`canCreate`, …). The tab keeps one
+  request in flight: it sends the oldest queued edit, and the next once that
+  one is answered, also after coming back online, and tries again two
+  seconds after a request the server did not answer. Sending the whole queue
+  at once would let the network reorder a user's own edits, so that ticking
+  off a to-do could arrive before creating it and be refused; the system
+  spec requires that a user editing alone is never refused.
 - **Ids.** A tab names a new to-do `<tab>-<n>`, so it can create and edit
   to-dos offline. Removing leaves a tombstone, so an id is never reused.
 
@@ -67,8 +99,8 @@ build step) and Dafny on the path. The page loads React 18 from esm.sh.
   on the server's list despite loss, duplication and reordering.
 - **Tested**: the HTTP shell, the push stream, the page's network code and a
   two-tab run against the real server (`test/`).
-- **Trusted**: the shell (`src/server.ts`, `src/web/`), React, the
-  generator, LemmaScript, Dafny and Quint. Convergence is a `sometimes`
+- **Trusted**: the shell (`src/server.vibe`, `src/web/`), React, Effect,
+  the VibeLang compiler, the generator, LemmaScript, Dafny and Quint. Convergence is a `sometimes`
   rule: the model shows it can happen, not that it always does (liveness
   needs fairness, which the tools do not check).
 

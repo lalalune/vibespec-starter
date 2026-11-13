@@ -3,13 +3,15 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=24"
+    "node": ">=24.11.1"
   },
   "scripts": {
     "check": "node ../../spec.ts check",
     "gen": "node ../../spec.ts gen",
     "accept": "node ../../spec.ts accept",
-    "start": "node src/main.ts"
+    "build": "vibelang && node bundle.ts",
+    "test": "vitest run",
+    "start": "npm run -s build && node dist/src/main.js"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

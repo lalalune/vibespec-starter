@@ -8,3 +8,5 @@ dist/
 _apalache-out/
 !/vibespec/gen/
 .claude/worktrees/
+.vibe/
+build/
