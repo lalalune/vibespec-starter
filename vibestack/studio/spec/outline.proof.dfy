@@ -41,16 +41,25 @@ lemma FoldInsert<T>(f: (seq<T>, T) -> seq<T>, at: int, x: T, acc: seq<T>, ys: se
   ensures Std.Collections.Seq.FoldLeft(f, acc, ys) == acc + ys[..at - |acc|] + [x] + ys[at - |acc|..]
   decreases |ys|
 {
-  if |acc| == at {
-    FoldPast(f, at, x, acc + [x, ys[0]], ys[1..]);
+  var k := at - |acc|;
+  var t := ys[1..];
+  assert ys == [ys[0]] + t;
+  if k == 0 {
+    assert f(acc, ys[0]) == acc + [x, ys[0]];
+    FoldPast(f, at, x, acc + [x, ys[0]], t);
     assert ys[..0] == [];
-    assert acc + [x, ys[0]] + ys[1..] == acc + ys[..0] + [x] + ys[0..];
+    assert acc + ys[..0] == acc;
+    assert ys[0..] == ys;
+    assert acc + [x, ys[0]] == acc + [x] + [ys[0]];
+    assert acc + [x] + [ys[0]] + t == acc + [x] + ([ys[0]] + t);
   } else {
     var a := acc + [ys[0]];
-    FoldInsert(f, at, x, a, ys[1..]);
-    assert ys[..at - |acc|] == [ys[0]] + ys[1..][..at - |a|];
-    assert ys[at - |acc|..] == ys[1..][at - |a|..];
-    assert a + ys[1..][..at - |a|] + [x] + ys[1..][at - |a|..] == acc + ys[..at - |acc|] + [x] + ys[at - |acc|..];
+    assert f(acc, ys[0]) == a;
+    FoldInsert(f, at, x, a, t);
+    assert at - |a| == k - 1;
+    assert ys[..k] == [ys[0]] + t[..k - 1];
+    assert ys[k..] == t[k - 1..];
+    assert a + t[..k - 1] == acc + ys[..k];
   }
 }
 
