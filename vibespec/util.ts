@@ -40,11 +40,24 @@ export function plainText(file: string, text: string): string {
   return plain;
 }
 
+/** The declarations the VibeLang compiler writes for a `.vibe` module: its output, not the package's code. */
+const SIDECAR = /\.d\.vibex?\.ts$/;
+
+/**
+ * Is the shell VibeLang? A package that depends on the `vibelang` compiler is checked by it (`types`), and gets the
+ * Effect face of each generated module (gen/vibe.ts). Any other package is plain TypeScript.
+ */
+export function usesVibelang(root: string): boolean {
+  const manifest = path.join(root, "package.json");
+  const pkg = fs.existsSync(manifest) ? JSON.parse(fs.readFileSync(manifest, "utf8")) : {};
+  return "vibelang" in { ...pkg.dependencies, ...pkg.devDependencies };
+}
+
 export interface SrcFile { file: string; code: string; ts: boolean }
 /** Every such file, read once: a check proves and reviews the same text, even if a file changes while it runs. */
 export function readSrc(root: string): SrcFile[] {
   const src = path.join(root, "src");
-  const files = filesUnder(root, "src").map((f) => f.slice(4)).filter((f) => /\.(?:[mc]?ts|tsx|[mc]?jsx?)$/.test(f));
+  const files = filesUnder(root, "src").map((f) => f.slice(4)).filter((f) => /\.(?:[mc]?ts|tsx|[mc]?jsx?|vibex?)$/.test(f) && !SIDECAR.test(f));
   return files.map((f) => ({ file: f, code: fs.readFileSync(path.join(src, f), "utf8"), ts: /\.ts$/.test(f) })).filter((u) => u.code.includes("//@"));
 }
 /** Compatibility view of the verified or unsupported source files. */
@@ -96,7 +109,7 @@ export function danglingCitations(root: string, specs: Spec[]): string[] {
 export function packageCode(root: string, dir = ""): string[] {
   return fs.readdirSync(path.join(root, dir), { withFileTypes: true }).flatMap((e) => {
     const rel = path.join(dir, e.name);
-    if (e.isFile()) return /\.[cm]?[jt]sx?$/.test(e.name) ? [rel] : [];
+    if (e.isFile()) return /\.(?:[cm]?[jt]sx?|vibex?)$/.test(e.name) && !SIDECAR.test(e.name) ? [rel] : [];
     const skip = /^(node_modules|dist|build|out|coverage|\..*)$/.test(e.name) || rel === "gen" || fs.existsSync(path.join(root, rel, "package.json"));
     return e.isDirectory() && !skip ? packageCode(root, rel) : [];
   }).sort();

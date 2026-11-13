@@ -10,5 +10,18 @@
     "gen": "node ../../spec.ts gen",
     "accept": "node ../../spec.ts accept",
     "demo": "npm run -s gen && node src/demo.ts"
+  },
+  "dependencies": {
+    "@effect/platform-node": "4.1.1",
+    "effect": "4.1.1",
+    "vibelang-runtime": "0.0.12"
+  },
+  "devDependencies": {
+    "@effect/vitest": "4.1.1",
+    "@types/node": "^24.0.0",
+    "vibelang": "0.0.12",
+    "vibelang-vite": "0.0.12",
+    "vite": "8.3.5",
+    "vitest": "5.1.0"
   }
 }
