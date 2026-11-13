@@ -794,11 +794,11 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       for (const response of concurrent) assert.equal(response.status, 400, await response.text());
       assert.ok(!fs.existsSync(path.join(root, "spec/parallel.md")));
       let current = await (await fetch(`${url}/api/project`)).json();
-      while (current.job?.status === "running") {
+      while (current.jobs.check?.status === "running") {
         await new Promise((resolve) => setTimeout(resolve, 50));
         current = await (await fetch(`${url}/api/project`)).json();
       }
-      assert.equal(current.job?.status, "failed");
+      assert.equal(current.jobs.check?.status, "failed");
       assert.equal(current.check?.next.includes("npm run accept"), true);
     } finally {
       await studio.close();
@@ -824,6 +824,20 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
         assert.equal(projects.open, current.project.id);
         assert.equal(current.project.root, fs.realpathSync(expected));
         assert.equal(current.specs[0].text, fs.readFileSync(path.join(expected, "spec/index.md"), "utf8"));
+        if (target === external) {
+          const checked = await fetch(`${studio.url}/api/check`, {
+            method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+          });
+          assert.equal(checked.status, 200);
+          let state = await (await fetch(`${studio.url}/api/project`)).json();
+          while (state.jobs.check.status === "running") {
+            await new Promise((resolve) => setTimeout(resolve, 50));
+            state = await (await fetch(`${studio.url}/api/project`)).json();
+          }
+          assert.ok(state.check.results.every((r: Result) => r.ok || r.stage === "review"));
+          assert.ok(fs.existsSync(path.join(external, "gen/index.ts")));
+          assert.ok(!fs.existsSync(path.join(repo, "gen")));
+        }
       } finally { await studio.close(); }
     }
     await assert.rejects(serve(repo, ["missing", "--port", "0"]), /not an existing project directory/);
