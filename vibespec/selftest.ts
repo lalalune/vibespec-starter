@@ -407,19 +407,23 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.ok(said("proof", /^sys\.ts: all \d+ obligations proved/), text);
   });
 
-  test("event weights and fairness name real events and stay outside generated code; a weight repeats its event in the simulator's choice", async () => {
+  test("event weights, fairness and bounds name real events and rules and stay outside generated code; a weight repeats its event in the simulator's choice", async () => {
     const base = "type S = { n: int }\npure val initial: S = { n: 0 }\npure def add(s: S, k: int): S = { n: s.n + k }\npure def leadsToSome(s: S, later: S): bool = later.n >= s.n\n";
     const model = (quint: string) => { const root = oneRule("w", "Weights", base + quint); return gen(root, parseSpec(root, "spec/w.md")); };
     const cases: [string, RegExp][] = [
       ["pure val weight_nope = 2", /weight_nope .*no transition named nope/],
       ["pure val weight_add = 0", /weight_add .*a whole number from 1 to 100/],
       ['pure val fair_add = "always"', /fair_add .*"weak"/],
+      ["pure val within_nope = 2", /within_nope .*no leadsTo rule named nope/],
+      ["pure val within_leadsToSome = 0", /within_leadsToSome .*a whole number from 1 to 100/],
+      ["pure val within_leadsToSome = 101", /within_leadsToSome .*a whole number from 1 to 100/],
       ["pure def leadsToOne(s: S): bool = true", /leadsToOne: a `leadsTo` rule takes a state and a later state/],
     ];
     for (const [quint, message] of cases) await assert.rejects(model(quint), message, quint);
-    const weighted = await model('pure val weight_add = 3\npure val fair_add = "weak"');
+    const weighted = await model('pure val weight_add = 3\npure val fair_add = "weak"\npure val within_leadsToSome = 2');
     assert.match(weighted.harness, /action step = any \{ add, add, add \}/);
-    assert.doesNotMatch(weighted.ts, /weight_|fair_/);
+    assert.deepEqual(weighted.within, new Map([["leadsToSome", 2]]));
+    assert.doesNotMatch(weighted.ts + weighted.harness, /weight_|fair_|within_/);
     const lone = oneRule("f", "Fair", 'type S = { n: int }\npure val initial: S = { n: 0 }\npure def add(s: S): S = { n: s.n + 1 }\npure val fair_add = "weak"');
     await assert.rejects(gen(lone, parseSpec(lone, "spec/f.md")), /fairness matters only to `leadsTo` rules/);
   });
@@ -439,6 +443,30 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.ok(!ok.said("review", /^std\/net\.md:/), ok.text);
     assert.ok(weak.said("always", /a fair run breaks "Story: Ask until answered \/ A question asked is answered".*may repeat its loop for ever[\s\S]*the run goes round from here/), weak.text);
     assert.ok(unfair.said("always", /a fair run breaks .*may stop at the last state, since no fair event is possible there/), unfair.text);
+  });
+
+  test("a `leadsTo` rule with a bound is broken by a run that takes that many events without meeting it", async () => {
+    const serve = (tick: string) => oneRule("serve", "Served at once", [
+      "type S = { asked: bool, served: bool, n: int }",
+      "pure val initial: S = { asked: false, served: false, n: 0 }",
+      "pure def canAsk(s: S): bool = not(s.asked)",
+      "pure def ask(s: S): S = { ...s, asked: true }",
+      "pure def canServe(s: S): bool = s.asked and not(s.served)",
+      "pure def serve(s: S): S = { ...s, served: true }",
+      tick,
+      "pure def tick(s: S): S = { ...s, n: s.n + 1 }",
+      "pure def leadsToServed(s: S, later: S): bool = s.asked implies later.served",
+      'pure val fair_serve = "weak"',
+      "pure val within_leadsToServed = 1",
+    ].join("\n"));
+    // A clock that may tick between a question and its answer delays the answer past the bound.
+    const [ok, late] = await Promise.all([run(serve("pure def canTick(s: S): bool = s.served or not(s.asked)")), run(serve(""))]);
+    assert.equal(ok.said("always", /no rule broken/)?.ok, true, ok.text);
+    assert.ok(late.said("always", /a run breaks "Story \/ Served at once" \(spec\/serve\.md:5\) within its bound \(`within_leadsToServed = 1`\)[\s\S]*ask .*<- leadsToServed is owed from here\n.*tick .*<- the bound runs out here/), late.text);
+    const longer = (delay: number) => oneRule("longer", "A bounded wait", `pure val initial: int = 0\npure def tick(n: int): int = n + 1\npure def leadsToAhead(n: int, later: int): bool = later >= n + ${delay}\npure val fair_tick = "weak"\npure val within_leadsToAhead = 21`);
+    const [onTime, tooLate] = await Promise.all([run(longer(21)), run(longer(22))]);
+    assert.deepEqual(onTime.failed, ["review"], onTime.text);
+    assert.ok(tooLate.said("always", /within its bound \(`within_leadsToAhead = 21`\)/), tooLate.text);
   });
 
   test("nested set samples stay bounded and an inner lambda may shadow a match binder", async () => {

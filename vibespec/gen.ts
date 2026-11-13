@@ -30,6 +30,8 @@ export interface Model extends Roles {
   render: (prefix: string, docs?: boolean) => string;
   /** Events the spec declares fair (`fair_<event>`), each "weak" or "strong". */
   fair: Map<string, Fairness>;
+  /** `leadsTo` rules that must also be met within a number of events (`within_<rule>`). */
+  within: Map<string, number>;
   evals: Eval[];
   /** Definitions the simulator cannot evaluate on their own, because it has no values for a parameter. */
   uncompared: string[];
@@ -97,9 +99,10 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
   const isSampleSet = (d: Json) => d.qualifier === "pureval" && d.name.endsWith("Values") && inferred(d.id)?.kind === "set";
   const ownSamples = defs.filter(isSampleSet).map((d) => ({ name: d.name as string, elem: inferred(d.id)!.elem as Json }));
   const sampleSets = new Set([...ownSamples.map((s) => s.name), ...links.flatMap((l) => l.exports.samples.map((s) => qualify(l.alias, s.name)))]);
-  // `weight_<event>` and `fair_<event>` tell the simulator how often to try an event and which events a run cannot
-  // put off for ever (AGENTS.md, "What goes in the Quint blocks"); like sample sets, they never reach TypeScript.
-  const settings = defs.filter((d) => d.qualifier === "pureval" && /^(weight|fair)_/.test(d.name));
+  // `weight_<event>`, `fair_<event>` and `within_<rule>` tell the simulator how often to try an event, which events a run
+  // cannot put off for ever and how soon a `leadsTo` rule is met (AGENTS.md, "What goes in the Quint blocks"); like
+  // sample sets, they never reach TypeScript.
+  const settings = defs.filter((d) => d.qualifier === "pureval" && /^(weight|fair|within)_/.test(d.name));
   const code = defs.filter((d) => !isSampleSet(d) && !settings.includes(d));
   const localNames = new Set(code.map((d) => d.name as string));
   const beneath = (m: string): string[] => [m, ...deps.get(m)!.imports.flatMap(beneath)];
@@ -154,14 +157,17 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
   for (const v of vals) if (RULE_OR_GUARD.test(v.name) && typeOf(v.id).kind === "bool") fail(`${v.name}: a rule or guard is a \`pure def\` with parameters (AGENTS.md, "What goes in the Quint blocks"), not a \`pure val\`; if it is a constant, name it otherwise`);
   const initial = vals.find((d) => d.name === "initial");
   const roles = classify(funs, initial && typeOf(initial.id), sig, types);
-  const setting = (kind: string, ok: (e: Json) => boolean, want: string) => new Map(settings.filter((d) => d.name.startsWith(`${kind}_`)).map((d) => {
-    const event = d.name.slice(kind.length + 1);
+  const events = roles.transitions.map((t) => t.name);
+  const setting = (kind: string, targets: string[], what: string, ok: (e: Json) => boolean, want: string) => new Map(settings.filter((d) => d.name.startsWith(`${kind}_`)).map((d) => {
+    const target = d.name.slice(kind.length + 1);
     const at = `${d.name} (${source}${origin(d.name) ? `:${origin(d.name)!.line}` : ""})`;
-    if (!roles.transitions.some((t) => t.name === event)) fail(`${at}: there is no transition named ${event}; name it \`${kind}_<transition>\``);
-    return [event, ok(d.expr) ? d.expr.value : fail(`${at}: write ${want}`)];
+    if (!targets.includes(target)) fail(`${at}: there is no ${what} named ${target}; name it \`${kind}_<${what}>\``);
+    return [target, ok(d.expr) ? d.expr.value : fail(`${at}: write ${want}`)];
   }));
-  const weights = setting("weight", (e) => e.kind === "int" && e.value >= 1 && e.value <= 100, "a whole number from 1 to 100: how many times as often as an event of weight 1 the simulator tries it");
-  const fair = setting("fair", (e) => e.kind === "str" && ["weak", "strong"].includes(e.value), '"weak" (taken if it stays possible) or "strong" (taken if it keeps becoming possible)') as Map<string, Fairness>;
+  const count = (e: Json) => e.kind === "int" && e.value >= 1 && e.value <= 100;
+  const weights = setting("weight", events, "transition", count, "a whole number from 1 to 100: how many times as often as an event of weight 1 the simulator tries it");
+  const within = setting("within", roles.leadsTo, "leadsTo rule", count, "a whole number from 1 to 100: the most events a run may take before it meets the rule");
+  const fair = setting("fair", events, "transition", (e) => e.kind === "str" && ["weak", "strong"].includes(e.value), '"weak" (taken if it stays possible) or "strong" (taken if it keeps becoming possible)') as Map<string, Fairness>;
   if (fair.size && !roles.leadsTo.length) fail(`${[...fair.keys()].map((e) => `fair_${e}`).join(", ")}: fairness matters only to \`leadsTo\` rules, and the spec has none`);
 
   // --- TypeScript -------------------------------------------------------------------
@@ -191,7 +197,7 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
 
   const run = harness(name, source, [...imports, ...typeOnly], funs, sig, samples, roles, types, { weights, fair });
   return {
-    name, source, imports, ...roles, fair, evals: run.evals, uncompared: run.uncompared, harness: run.text,
+    name, source, imports, ...roles, fair, within, evals: run.evals, uncompared: run.uncompared, harness: run.text,
     ts, render, decode: types.decode, canon: types.canon,
     shape: roles.stateType ? types.comparison(roles.stateType) : undefined,
     outputShape: roles.output ? types.comparison(roles.output.out) : undefined,
