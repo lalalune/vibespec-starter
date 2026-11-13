@@ -3,7 +3,8 @@
 Tasks in a shared spreadsheet, edited by hand and through a chat dashboard.
 
 ```sh
-pnpm --filter dashboard-model check
+pnpm install
+pnpm check
 ```
 
 | Path | Kind | Covers |

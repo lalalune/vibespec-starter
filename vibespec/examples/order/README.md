@@ -3,7 +3,8 @@
 Draft, instalments, take-back, hold, cancel and reopen.
 
 ```sh
-pnpm --filter order-example check
+pnpm install
+pnpm check
 pnpm demo
 ```
 

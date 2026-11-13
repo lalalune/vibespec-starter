@@ -5,6 +5,7 @@ that may go offline. Both run the machines generated from `spec/`; a fourth
 spec puts the server, two tabs and an unreliable network together.
 
 ```sh
+pnpm install
 pnpm check      # the whole pipeline (from this directory)
 pnpm start          # then open http://localhost:3000 in two windows
 ```
