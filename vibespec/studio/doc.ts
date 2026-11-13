@@ -128,6 +128,11 @@ function moved(before: string[], after: string[]): Set<string> {
   return new Set(after.filter((id) => !kept.has(id)));
 }
 
+/** Files below a project directory, excluding directory entries and symlinks. */
+export const filesUnder = (root: string, dir: string) => !fs.existsSync(path.join(root, dir)) ? []
+  : fs.readdirSync(path.join(root, dir), { recursive: true, withFileTypes: true }).filter((e) => e.isFile())
+    .map((e) => path.relative(root, path.join(e.parentPath, e.name)).split(path.sep).join("/"));
+
 const specsOf = (root: string, texts: Record<string, string>): Spec[] => {
   try { return readSpecs(root, texts); } catch {
     return Object.entries(texts).flatMap(([file, text]) => { try { return [parseSpec(root, file, text)]; } catch { return []; } });
@@ -220,7 +225,7 @@ export function manifestOf(root: string, baseline: Record<string, string>, curre
   };
   for (const s of specs) if (edited.includes(s.file)) visit(s, "edited");
   const modules = new Set(regenerate.map((r) => r.gen.slice(4)).concat(Object.keys(baseline).filter((f) => !(f in current)).map((f) => `${specName(f)}.ts`)));
-  const code = ["src", "test"].flatMap((dir) => fs.existsSync(path.join(root, dir)) ? (fs.readdirSync(path.join(root, dir), { recursive: true }) as string[]).map((f) => path.join(dir, f)) : [])
+  const code = ["src", "test"].flatMap((dir) => filesUnder(root, dir))
     .filter((f) => /\.[cm]?tsx?$/.test(f) && [...modules].some((m) => fs.readFileSync(path.join(root, f), "utf8").includes(`gen/${m}`))).map((f) => f.split(path.sep).join("/")).sort();
   let citations: string[] = [];
   try { citations = danglingCitations(root, specs); } catch { /* no code to read */ }

@@ -101,15 +101,19 @@ async function drive(root: string, machine: Machine, command: string): Promise<s
       const resetProblem = compareObservation(domain, found, domain.initial, initial.state);
       if (resetProblem) return `trace ${n + 1}: reset ${resetProblem}`;
       let current = domain.initial;
+      const request = ({ by, ...event }: any): Line => model.sender ? { event, by } : { event };
+      const send = async (input: Line) => { lines.push({ ...input, ...await program.ask(input) }); };
+      // Before each event and after the last, up to two that the spec refuses in that state.
+      const refuse = async () => { for (const line of found.events.map(request).filter((line) => !domain.enabled(current, line.event, line.by)).slice(0, 2)) await send(line); };
       for (const sent of events) {
-        const request = ({ by, ...event }: any): Line => model.sender ? { event, by } : { event };
+        await refuse();
         const next = request(sent);
-        const refused = found.events.map(request).filter((line) => !domain.enabled(current, line.event, line.by)).slice(0, 2);
-        for (const input of [...refused, next]) lines.push({ ...input, ...await program.ask(input) });
+        await send(next);
         const applied = transition(domain, found, current, next.event, next.by);
         if (typeof applied === "string") return applied;
         current = applied.after;
       }
+      await refuse();
       const off = departure(domain, found, lines);
       if (off) return `trace ${n + 1}, line ${off.line}: ${off.why}\n${lines.map((line) => JSON.stringify(line)).join("\n")}`;
     }

@@ -175,13 +175,21 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.match(departure(domain, found, [{ event: { type: "inc" } }])?.why ?? "", /no observed state/);
     fs.mkdirSync(path.join(root, "test/traces"), { recursive: true });
     fs.writeFileSync(path.join(root, "test/traces/counter.jsonl"), '{"state":0}\n{"event":{"type":"inc"},"state":1}\n');
-    fs.writeFileSync(path.join(root, "offset.json"), "0");
-    fs.writeFileSync(path.join(root, "driver.mjs"), 'import fs from "node:fs"; import readline from "node:readline"; let n=0; for await (const line of readline.createInterface({input:process.stdin})) { const request=JSON.parse(line); if (!request.event) n=0; else if (n<2) n++; console.log(JSON.stringify({state:n+Number(fs.readFileSync("offset.json","utf8"))})); }');
+    fs.writeFileSync(path.join(root, "driver.json"), '{"offset":0,"limit":2}');
+    fs.writeFileSync(path.join(root, "driver.mjs"), 'import fs from "node:fs"; import readline from "node:readline"; let n=0; for await (const line of readline.createInterface({input:process.stdin})) { const request=JSON.parse(line), {offset,limit}=JSON.parse(fs.readFileSync("driver.json","utf8")); if (!request.event) n=0; else if (n<limit) n++; console.log(JSON.stringify({state:n+offset})); }');
     fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({type:"module",scripts:{"driver:counter":`${JSON.stringify(process.execPath)} driver.mjs`}}));
     const machines = new Map([["counter", { domain, model, found }]]);
-    assert.ok((await checkTraces(root, machines)).every(([ok]) => ok));
-    fs.writeFileSync(path.join(root, "offset.json"), "1");
-    assert.ok((await checkTraces(root, machines)).some(([ok, , summary]) => !ok && summary.startsWith("script driver:counter")));
+    const departs = async () => (await checkTraces(root, machines)).filter(([ok]) => !ok).map(([, , summary, detail]) => `${summary}\n${detail}`);
+    assert.deepEqual(await departs(), []);
+    // A driver that starts elsewhere, or takes the event the spec refuses in the last state of a trace, departs.
+    fs.writeFileSync(path.join(root, "driver.json"), '{"offset":1,"limit":2}');
+    assert.match((await departs()).join(), /^script driver:counter: the program departs[\s\S]*reset/);
+    fs.writeFileSync(path.join(root, "driver.json"), '{"offset":0,"limit":3}');
+    assert.match((await departs()).join(), /^script driver:counter: the program departs[\s\S]*line 4/);
+    // So does a trace the program wrote, at the first line that differs.
+    fs.writeFileSync(path.join(root, "driver.json"), '{"offset":0,"limit":2}');
+    fs.writeFileSync(path.join(root, "test/traces/counter.jsonl"), '{"state":0}\n{"event":{"type":"inc"},"state":2}\n');
+    assert.match((await departs()).join(), /^test\/traces\/counter\.jsonl: the program departs[\s\S]*line 2/);
 
     const quiet = oneRule("quiet", "Wait", "pure val initial: int = 0\npure def stay(n: int): int = n\npure def alwaysZero(n: int): bool = n == 0");
     const quietSpec = parseSpec(quiet, "spec/quiet.md"), quietModel = await gen(quiet, quietSpec);
@@ -433,6 +441,8 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       ["an initial state without a transition", "pure val initial: int = 0", /transition/],
       ["a set of records", "type A = { n: int }\npure def count(xs: Set[A]): int = xs.size()", /set|Set/],
       ["a map into records", "pure def records(xs: Set[int]): Set[{ n: int }] = xs.map(x => { n: x })", /set|Set|record/],
+      ["== on values that hold a set", "type A = { s: Set[int] }\npure def same(a: A, b: A): bool = a == b", /a set is a sequence/],
+      ["a map keyed by booleans", "pure def flags(k: bool): bool -> int = Map(k -> 1)", /keys must be/],
     ];
     const results = await Promise.all(cases.map(([, quint]) => run(oneRule("shape", "Shapes", quint))));
     cases.forEach(([what, , message], i) => assert.equal(results[i].said("model", message)?.ok, false, `${what}\n${results[i].text}`));
@@ -537,6 +547,27 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const { failed, said, text } = await run(fixtures(["account", "bank"]));
     assert.deepEqual(failed, ["review"], text);
     assert.ok(said("model", /^spec\/bank\.md: 2 transitions, 1 always, 1 step, 1 sometimes/), text);
+  });
+
+  test("a machine is simulated with the sample sets of the specs it imports", async () => {
+    // Every amount the account offers is more than the bank's current account holds, so nothing can ever be saved.
+    const { failed, said, text } = await run(fixtures(["account", "bank"], (f) => { f["spec/account.md"] = f["spec/account.md"].replace("type Account", "pure val amountValues = Set(7)\ntype Account"); }));
+    assert.ok(failed.includes("sometimes"), text);
+    assert.ok(said("sometimes", /\bsave in .* never happened/), text);
+  });
+
+  test("tables keyed by integers and variants, getOr, nthOr, removeAt, structural == and a mapped append are simulated, replayed and proved", async () => {
+    const root = fixtures(["hall"]);
+    const { failed, said, text } = await run(root);
+    assert.deepEqual(failed, ["review"], text);
+    assert.ok(said("proof", /^hall\.ts: all \d+ obligations proved/), text);
+    const hall = await import(path.join(root, "gen/hall.ts"));
+    // A seat equal to a booked one, though another object, is booked already.
+    const booked = hall.step(hall.initial, { type: "book", row: 1, kind: "Adult" });
+    assert.equal(hall.enabled(booked, { type: "book", row: 1, kind: "Adult" }), false);
+    assert.deepEqual(hall.parseState(booked), { booked: [{ row: 1, kind: "Adult" }], byRow: { 1: 1 }, byKind: { Adult: 1 } });
+    for (const x of [{ ...booked, byRow: { "01": 1 } }, { ...booked, byRow: { $1: 1 } }, { ...booked, byKind: { Senior: 1 } }])
+      assert.equal(hall.parseState(x), undefined, JSON.stringify(x));
   });
 
   test("one machine uses another under a name, keeps its rules, and adds rules about the pair", async () => {
@@ -863,7 +894,10 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
 
   test("the studio publishes a spec with its origins, checks it, and refuses remote or concurrent writes", async () => {
     const root = fixtures(["door"]);
-    const studio = await startStudio({ projects: [{ id: ".", name: "Door", root }], port: 0, agents: {} });
+    fs.mkdirSync(path.join(root, "src/components.ts"), { recursive: true });
+    const studio = await startStudio({ projects: [{ id: ".", name: "Door", root }], port: 0, agents: {
+      ledgerEdit: { label: "Ledger writer", command: () => [process.execPath, ["-e", "require('node:fs').appendFileSync('spec/lock.json', '\\n')"]] },
+    } });
     const url = studio.url.replace("localhost", "127.0.0.1");
     const post = (route: string, body: unknown, headers: Record<string, string> = {}) => fetch(`${url}/api/${route}`, {
       method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body),
@@ -946,6 +980,11 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       assert.equal(fs.readFileSync(path.join(root, "spec/lock.json"), "utf8"), ledger);
       const final = await waitForCheck();
       assert.ok(final.check.results.some((r: Result) => r.stage === "review" && /removed spec/.test(r.summary)));
+      assert.equal((await post("agent", { agent: "ledgerEdit" })).status, 200);
+      const editedLedger = await waitForCheck();
+      assert.equal(editedLedger.jobs.agent.status, "failed");
+      assert.match(editedLedger.jobs.agent.log.join("\n"), /spec\/lock.json: not marked synced/);
+      assert.ok(fs.existsSync(path.join(root, ".studio/manifest.json")));
     } finally {
       await studio.close();
     }
