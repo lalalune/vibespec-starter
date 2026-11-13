@@ -1,8 +1,7 @@
 // The spec studio's page. The working copy of every spec lives here until it is published; vibespec/studio/server.ts
 // writes it, keeps the manifest, and runs the check, the agents and the sign-off.
-import { diffOps, nodeId, ruleKey, specOrder, storyKey, writeDoc } from "./doc.js";
 
-// --- the document, as vibespec/studio/doc.ts reads it ----------------------------------------------------
+// --- the document, as vibespec/studio/doc.ts reads and writes it --------------------------------------
 
 const fenceFor = (code) => "`".repeat(Math.max(3, ...(code.match(/`{3,}/g) ?? []).map((m) => m.length + 1)));
 /** A rule's body from its items: one blank line around each, prose trimmed, empty items dropped. */
@@ -12,6 +11,21 @@ const writeBody = (items) => items.filter((i) => i.text.trim()).map((i) => {
   return `\n${f}quint\n${i.text.replace(/\s+$/, "")}\n${f}\n`;
 }).join("") + "\n";
 const writeText = (text) => (text.trim() ? `\n${text.trim()}\n\n` : "\n");
+/** The spec's text. `tidy` puts a blank line before every heading, for a spec that was edited: a story or rule moved
+ * to the end of another may have had nothing after it. */
+function writeDoc(doc, tidy = false) {
+  let text = (doc.title === null ? "" : `# ${doc.title}\n`) + doc.body;
+  const heading = (line) => { if (tidy && text && !text.endsWith("\n\n")) text += text.endsWith("\n") ? "\n" : "\n\n"; text += line; };
+  for (const s of doc.sections) {
+    if (s.title !== null) heading(`## ${s.title}\n`);
+    text += s.body;
+    for (const r of s.rules) { heading(`### ${r.title}\n`); text += r.body; }
+  }
+  return text;
+}
+const storyKey = (title) => (title === null ? "" : `## ${title.trim()}`);
+const ruleKey = (section, title) => `${section?.trim() ?? ""} / ${title.trim()}`;
+const nodeId = (file, key) => `${file}\0${key}`;
 
 // --- state ------------------------------------------------------------------------------------------
 
@@ -40,7 +54,7 @@ function working(spec) {
     section.rules = s.rules.map((r) => ({ uid: uid(), origin: nodeId(spec.file, ruleKey(s.title, r.title)), title: r.title, body: r.body, items: r.items }));
     return section;
   });
-  const doc = { title: spec.doc.title, body: spec.doc.body, sections, newline: spec.doc.newline };
+  const doc = { title: spec.doc.title, body: spec.doc.body, sections };
   const copy = { file: spec.file, name: spec.name, base: spec.hash, orig: spec.text, doc, deleted: false };
   remember(copy);
   return copy;
@@ -52,11 +66,11 @@ function remember(spec) {
     s.rules.forEach((r, j) => (r.was = { title: r.title, body: r.body, file: spec.file, section: s.origin, index: j }));
   });
 }
-/** The text a spec would be published as: as it was, or tidied once edited. */
+/** The text a spec would be published as; one that was edited ends in a single newline. */
 const textOf = (spec) => {
   if (spec.deleted) return null;
   const text = writeDoc(spec.doc);
-  return text === spec.orig ? text : writeDoc(spec.doc, true);
+  return text === spec.orig ? text : writeDoc(spec.doc, true).replace(/\n\n+$/, "\n");
 };
 const isDirty = (spec) => spec.deleted || spec.orig === null || textOf(spec) !== spec.orig;
 const dirtySpecs = () => S.specs.filter(isDirty);
@@ -74,8 +88,7 @@ function loadDraft() {
   try { return JSON.parse(localStorage.getItem(draftKey()) ?? "null"); } catch { return null; }
 }
 
-const editingIn = (spec) => (spec.file === S.sel && S.editing.has("head")) || spec.doc.sections.some((s) => S.editing.has(s.uid) || s.rules.some((r) => S.editing.has(r.uid)));
-/** The specs on disk, with the specs this page changed or has an editor open in kept, and any that changed on disk underneath them noted. */
+/** The specs on disk, with the specs this page changed kept and any that changed on disk underneath them noted. */
 function merge(snap, mine) {
   // A story or rule keeps its place on the page (open, being edited) across a reload, by what it is called now.
   const uids = new Map(mine.flatMap((d) => d.doc.sections.flatMap((s) => [[nodeId(d.file, storyKey(s.title)), s.uid], ...s.rules.map((r) => [nodeId(d.file, ruleKey(s.title, r.title)), r.uid])])));
@@ -84,12 +97,14 @@ function merge(snap, mine) {
   const out = [];
   S.conflicts = [];
   for (const d of mine) {
-    const same = (snap.specs.find((x) => x.file === d.file)?.hash ?? null) === d.base;
-    if (isDirty(d)) { if (!same) S.conflicts.push(d.file); out.push(d); }
-    else if (same && editingIn(d)) out.push(d);
+    if (!isDirty(d)) continue;
+    const f = snap.specs.find((x) => x.file === d.file);
+    if ((f?.hash ?? null) !== d.base) S.conflicts.push(d.file);
+    out.push(d);
   }
   for (const f of fresh) if (!out.some((o) => o.file === f.file)) out.push(f);
-  out.sort((a, b) => specOrder(a.file, b.file));
+  const order = (file) => file.replace(/(?:^spec\/|\/)index\.md$/, "/");
+  out.sort((a, b) => order(a.file).localeCompare(order(b.file)));
   for (const s of out) for (const sec of s.doc.sections) { sec.uid ??= uid(); for (const r of sec.rules) r.uid ??= uid(); }
   uidCount = Math.max(uidCount, ...out.flatMap((s) => s.doc.sections.flatMap((x) => [x.uid, ...x.rules.map((r) => r.uid)])).map((u) => Number(u.slice(1)) || 0));
   return out;
@@ -104,23 +119,17 @@ async function api(path, body) {
   return json;
 }
 
-const typing = () => document.getElementById("doc").contains(document.activeElement) && /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName);
-/** A snapshot arrived while the user typed: the working copies take it once typing stops. */
-let deferred = false;
 async function refresh(force = false) {
   if (S.publishing) return; // publishing refreshes once it is done
   const snap = await api("project");
   if (S.publishing) return;
   // Keep the working objects that the active editor's handlers close over until typing stops.
+  const typing = document.getElementById("doc").contains(document.activeElement) && /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName);
   const first = !S.snap;
   S.snap = snap;
-  if (typing() && !force && !first) { deferred = true; renderRail(); renderBuild(); return; }
-  apply(first);
-}
-function apply(first = false) {
-  deferred = false;
+  if (typing && !force && !first) { renderRail(); renderBuild(); return; }
   const draft = first ? loadDraft() : null;
-  S.specs = merge(S.snap, first ? draft?.specs ?? [] : S.specs);
+  S.specs = merge(snap, first ? draft?.specs ?? [] : S.specs);
   if (first && draft?.specs?.some(isDirty)) toast("Unpublished changes restored");
   if (!S.specs.some((s) => s.file === S.sel)) S.sel = draft?.sel && S.specs.some((s) => s.file === draft.sel) ? draft.sel : S.specs[0]?.file ?? null;
   render();
@@ -153,8 +162,9 @@ const ICONS = {
   stop: "M4.5 4.5h7v7h-7z",
   open: "M9 3h4v4M13 3L7.5 8.5M11 9.5V13H3V5h3.5",
   copy: "M5.5 5.5h7v7h-7zM3.5 10.5v-7h7",
+  move: "M8 2.5v11M5 5.5l3-3 3 3M5 10.5l3 3 3-3",
   up: "M8 12.5v-9M4.5 7L8 3.5 11.5 7",
-  dot: "M8 5.5a2.5 2.5 0 110 5 2.5 2.5 0 010-5z",
+  down: "M8 3.5v9M4.5 9L8 12.5 11.5 9",
   undo: "M5.5 4L3 6.5 5.5 9M3 6.5h6.5a3 3 0 010 6H7",
 };
 const icon = (name) => {
@@ -166,9 +176,6 @@ const icon = (name) => {
   return svg;
 };
 const iconButton = (name, label, onclick, cls = "") => h("button", { class: `icon ${cls}`, type: "button", title: label, "aria-label": label, onclick: (e) => { e.stopPropagation(); onclick(e); } }, icon(name));
-/** A status dot: its class and what it says. */
-const dot = ([cls, label]) => h("span", { class: `dot ${cls}`, role: "img", "aria-label": label || "in step", title: label || undefined });
-const list = (items) => h("ul", { class: "list" }, items.map((t) => h("li", {}, t)));
 const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
 let toastTimer;
@@ -205,32 +212,15 @@ function markdown(text, file) {
     return out + esc(s.slice(end));
   };
   const out = [];
-  for (const { code, text: block } of blocksOf(text)) {
-    if (code !== undefined) out.push(`<pre class="code">${esc(code)}</pre>`);
+  const blocks = text.trim().split(/\n\s*\n/);
+  for (const block of blocks) {
+    if (/^\s*(`{3,}|~{3,})/.test(block)) out.push(`<pre class="code">${esc(block.split("\n").slice(1, -1).join("\n"))}</pre>`);
     else if (/^>/.test(block)) out.push(`<blockquote>${inline(block.replace(/^>\s?/gm, ""))}</blockquote>`);
     else if (/^\s*[-*] /.test(block)) out.push(`<ul>${block.split(/\n(?=\s*[-*] )/).map((l) => `<li>${inline(l.replace(/^\s*[-*] /, ""))}</li>`).join("")}</ul>`);
     else if (/^\|/.test(block)) out.push(`<pre class="code">${esc(block)}</pre>`);
     else out.push(`<p>${inline(block)}</p>`);
   }
   return out.join("");
-}
-
-/** Prose split on blank lines, each fence whole, by the fence rule of parse.ts `scanSpec`. */
-function blocksOf(text) {
-  const blocks = [];
-  let lines = [], fence = null;
-  const flush = () => { if (lines.length) blocks.push({ text: lines.join("\n") }); lines = []; };
-  for (const line of text.trim().split("\n")) {
-    const marker = line.match(/^\s*(`{3,}|~{3,})(.*)$/);
-    if (fence && marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) { blocks.push({ code: lines.join("\n") }); lines = []; fence = null; }
-    else if (fence) lines.push(line);
-    else if (marker && (marker[1][0] === "~" || !marker[2].includes("`"))) { flush(); fence = marker[1]; }
-    else if (!line.trim()) flush();
-    else lines.push(line);
-  }
-  if (fence) blocks.push({ code: lines.join("\n") });
-  else flush();
-  return blocks;
 }
 
 const KEYWORDS = /^(pure|def|val|type|import|from|if|else|match|and|or|not|implies|iff|all|any|Set|List|Map|int|bool|str|true|false|module|as)$/;
@@ -324,8 +314,7 @@ function edited() {
     if (!f) return;
     el.classList.toggle("changed", f.rule ? ruleChanged(f.spec, f.section, f.rule, f.index) : sectionChanged(f.spec, f.section, f.index));
     const title = el.querySelector(":scope > .row .title");
-    const now = (f.rule ?? f.section).title;
-    if (title && now !== null) title.textContent = now.trim() || "Untitled";
+    if (title) title.textContent = (f.rule ?? f.section).title?.trim() || "Untitled";
   });
 }
 
@@ -407,11 +396,11 @@ function renderRail() {
       const status = isDirty(spec) ? ["dirty", "unpublished changes"] : fails.has(spec.file) ? ["bad", "failing checks"] : review ? ["review", `${review} to review`] : ["", ""];
       const li = h("li", { class: `spec${spec.deleted ? " deleted" : ""}`, "aria-current": spec.file === S.sel ? "true" : "false", tabindex: 0,
         onclick: () => { S.sel = spec.file; render(); }, onkeydown: (e) => e.key === "Enter" && (S.sel = spec.file, render()) },
-        dot(status),
+        h("span", { class: `dot ${status[0]}`, role: "img", "aria-label": status[1] || "in step", title: status[1] }),
         h("span", { class: "name" }, spec.name),
         h("span", { class: "count", title: "stories · rules" }, `${spec.doc.sections.length}·${spec.doc.sections.reduce((n, s) => n + s.rules.length, 0)}`),
         spec.deleted ? iconButton("undo", `Keep ${spec.name}`, () => change(() => (spec.deleted = false)))
-          : h("span", { class: "actions" }, iconButton("trash", `Delete ${spec.name}`, () => change(() => (spec.deleted = true), `${spec.file} will be deleted on publish`), "danger")));
+          : iconButton("trash", `Delete ${spec.name}`, () => change(() => (spec.deleted = true), `${spec.file} will be deleted on publish`), "danger"));
       // A story dropped on a spec moves to its end.
       li.addEventListener("dragover", (e) => { if (drag?.kind === "section" && find(drag.uid)?.spec.file !== spec.file) { e.preventDefault(); li.classList.add("drop"); } });
       li.addEventListener("dragleave", () => li.classList.remove("drop"));
@@ -488,55 +477,40 @@ function matches(text) {
   return !S.q || text.toLowerCase().includes(S.q.toLowerCase());
 }
 
-/** The toolbar stays across renders, so the search box keeps its caret. */
-const search = h("input", { class: "search", type: "search", placeholder: "Search  /", "aria-label": "Search stories and rules", oninput: (e) => { S.q = e.target.value; renderDoc(); } });
-const attention = iconButton("dot", "Only what changed or needs review", () => { S.attention = !S.attention; renderDoc(); }, "toggle");
-const anyOpen = (spec) => spec.doc.sections.some((s) => S.open.has(s.uid));
-const expand = iconButton("chev", "Expand all", () => {
-  const spec = current(), close = anyOpen(spec);
-  for (const s of spec.doc.sections) for (const id of [s.uid, ...s.rules.map((r) => r.uid)]) close ? S.open.delete(id) : S.open.add(id);
-  renderDoc();
-}, "expand");
-document.getElementById("toolbar").append(search, attention, expand);
-
 function renderDoc() {
   const doc = document.getElementById("doc");
-  const content = document.getElementById("content");
   const spec = current();
   const scroll = doc.scrollTop;
   const active = document.activeElement?.closest?.("[data-uid]")?.dataset.uid;
-  document.getElementById("toolbar").hidden = !spec;
   if (!spec) {
-    content.replaceChildren();
-    if (document.activeElement === document.body) document.querySelector(".newspec input")?.focus();
+    doc.replaceChildren(h("div", { class: "empty" }, "No specs yet: name one on the left."));
     return;
   }
   const { byKey, bySpec } = failures();
-  const issues = new Map(problems(spec).map((p) => [p.uid, p.text]));
-  attention.setAttribute("aria-pressed", String(S.attention));
-  const open = anyOpen(spec);
-  expand.classList.toggle("open", open);
-  expand.title = open ? "Collapse all" : "Expand all";
-  expand.setAttribute("aria-label", expand.title);
+  const search = h("input", { class: "search", type: "search", placeholder: "Search  /", value: S.q, "aria-label": "Search stories and rules", oninput: (e) => { S.q = e.target.value; renderDoc(); focusLater(".search"); } });
+  const anyOpen = spec.doc.sections.some((s) => S.open.has(s.uid));
+  const toolbar = h("div", { class: "toolbar" }, search,
+    h("button", { class: "btn toggle", type: "button", "aria-pressed": String(S.attention), title: "Only what changed or needs review", onclick: () => { S.attention = !S.attention; renderDoc(); } }, "Needs attention"),
+    h("button", { class: "btn", type: "button", onclick: () => { for (const s of spec.doc.sections) for (const id of [s.uid, ...s.rules.map((r) => r.uid)]) anyOpen ? S.open.delete(id) : S.open.add(id); renderDoc(); } }, anyOpen ? "Collapse" : "Expand"));
 
   const conflict = S.conflicts.includes(spec.file) && h("div", { class: "banner" }, h("span", {}, `${spec.file} changed on disk while you were editing it.`),
     h("button", { class: "btn", type: "button", onclick: () => keepMine(spec.file) }, "Keep mine"),
     h("button", { class: "btn", type: "button", onclick: () => takeTheirs(spec.file) }, "Take disk"));
   const problem = S.snap?.problem && h("pre", { class: "problem" }, S.snap.problem);
   const specFails = bySpec.get(spec.file)?.filter((r) => !/"[^"]+" \(spec\//.test(`${r.summary}\n${r.detail}`));
-  const review = reviewOf(spec, "@document");
 
-  const head = h("div", { class: "head", "data-uid": "head" }, S.editing.has("head")
+  const headEditing = S.editing.has("head");
+  const head = h("div", { class: "head", "data-uid": "head" }, headEditing
     ? h("div", { class: "edit" },
       headingInput(spec.doc.title ?? "", (v) => (spec.doc.title = v), "Title"),
       textBox(spec.doc.body.trim(), (v) => (spec.doc.body = writeText(v)), { label: "What the application is for" }),
       h("div", { class: "bar" }, h("span", { class: "spacer" }), h("button", { class: "btn", type: "button", onclick: () => { S.editing.delete("head"); renderDoc(); } }, icon("check"), "Done")))
-    : [h("h1", { ondblclick: () => editNode("head") }, spec.doc.title ?? spec.name, " ", review ? dot(["review", review]) : "", iconButton("edit", "Edit title and introduction", () => editNode("head"))),
+    : [h("h1", { ondblclick: () => editNode("head"), title: "Double-click to edit" }, spec.doc.title ?? spec.name, " ", iconButton("edit", "Edit title and introduction", () => editNode("head"))),
       spec.doc.body.trim() && h("div", { class: "intro prose", html: markdown(spec.doc.body, spec.file) })]);
 
-  const sections = spec.doc.sections.map((s, i) => renderSection(spec, s, i, byKey, issues)).filter(Boolean);
-  content.replaceChildren(conflict || "", problem || "",
-    specFails?.length ? h("div", { class: "banner bad" }, list(specFails.map((r) => `${r.stage}: ${r.summary}`))) : "",
+  const sections = spec.doc.sections.map((s, i) => renderSection(spec, s, i, byKey)).filter(Boolean);
+  doc.replaceChildren(toolbar, conflict || "", problem || "",
+    specFails?.length ? h("div", { class: "banner bad" }, h("span", {}, specFails.map((r) => `${r.stage}: ${r.summary}`).join("\n"))) : "",
     spec.deleted ? h("div", { class: "banner bad" }, h("span", {}, "Deleted on publish."), h("button", { class: "btn", type: "button", onclick: () => change(() => (spec.deleted = false)) }, "Keep")) : "",
     head, ...sections,
     !S.q && !S.attention ? h("div", { class: "add newstory" }, h("button", { class: "btn", type: "button", onclick: () => addStory(spec) }, icon("plus"), "Story")) : "",
@@ -557,22 +531,23 @@ function statusOf(changed, fails, review) {
   return fails?.length ? ["bad", fails.join("\n")] : review ? ["review", review] : changed ? ["dirty", "unpublished change"] : ["", ""];
 }
 
-function renderSection(spec, s, i, byKey, issues) {
+function renderSection(spec, s, i, byKey) {
   const key = storyKey(s.title);
   const review = reviewOf(spec, key);
   const changed = sectionChanged(spec, s, i);
-  const ruleViews = s.rules.map((r, j) => renderRule(spec, s, r, j, byKey, issues)).filter(Boolean);
+  const ruleViews = s.rules.map((r, j) => renderRule(spec, s, r, j, byKey)).filter(Boolean);
   const own = matches(`${s.title ?? ""}\n${s.body}`) && (!S.attention || changed || review);
   if (!own && !ruleViews.length) return null;
   const open = S.open.has(s.uid) || S.q || S.attention;
   const editing = S.editing.has(s.uid);
   const story = s.title?.startsWith("Story:");
+  const [cls, label] = statusOf(changed, undefined, review);
   const row = h("div", { class: `row${editing ? " editing" : ""}`, tabindex: 0, onkeydown: (e) => keys(e, s.uid) },
     h("span", { class: "grip", title: "Drag to reorder, or to another spec", "aria-hidden": "true" }, icon("grip")),
     h("span", { class: `chev${open ? " open" : ""}`, "aria-hidden": "true", onclick: () => toggle(s.uid) }, icon("chev")),
-    titleOf(s.uid, s.title === null ? "" : s.title.trim() || "Untitled", issues, () => editNode(s.uid)),
+    h("span", { class: "title", onclick: () => toggle(s.uid), ondblclick: () => editNode(s.uid) }, s.title === null ? "Before the first story" : s.title.trim() || "Untitled"),
     h("span", { class: "meta", title: "rules" }, s.rules.length),
-    dot(statusOf(changed, undefined, review)),
+    h("span", { class: `dot ${cls}`, role: "img", "aria-label": label || "in step", title: label }),
     h("span", { class: "actions" },
       s.title !== null && iconButton("edit", "Edit story", () => editNode(s.uid)),
       iconButton("plus", "Add rule", () => addRule(s)),
@@ -582,18 +557,17 @@ function renderSection(spec, s, i, byKey, issues) {
     open && editing && s.title !== null ? h("div", { class: "body edit" },
       headingInput(s.title, (v) => (s.title = v), "Story: As a … I want …"),
       textBox(s.body.trim(), (v) => (s.body = writeText(v)), { placeholder: "> As a …, I want …, so that …", label: "Story text" }),
+      review ? h("div", { class: "status review" }, review) : "",
       h("div", { class: "bar" }, h("span", { class: "spacer" }), h("button", { class: "btn", type: "button", onclick: () => { S.editing.delete(s.uid); renderDoc(); } }, icon("check"), "Done")))
       : open && s.body.trim() ? h("div", { class: "story prose", html: markdown(s.body, spec.file), ondblclick: () => s.title !== null && editNode(s.uid) }) : "",
+    open && review && !editing ? h("div", { class: "story status review" }, review) : "",
     open ? h("ul", { class: "rules" }, ruleViews, !S.q && !S.attention ? h("li", { class: "add" }, h("button", { class: "btn", type: "button", onclick: () => addRule(s) }, icon("plus"), "Rule")) : "") : "");
   draggable(card, s.uid, "section");
   dropTarget(card, s.uid, (k) => k === "section" || k === "rule");
   return card;
 }
 
-/** A row's title: toggles on click, edits on double-click, and is marked when the spec could not be published as it is. */
-const titleOf = (id, text, issues, edit) => h("span", { class: `title${issues.has(id) ? " dupe" : ""}`, title: issues.get(id), onclick: () => toggle(id), ondblclick: edit }, text);
-
-function renderRule(spec, s, r, j, byKey, issues) {
+function renderRule(spec, s, r, j, byKey) {
   const key = ruleKey(s.title, r.title);
   const review = reviewOf(spec, key);
   const fails = byKey.get(nodeId(spec.file, key));
@@ -601,17 +575,20 @@ function renderRule(spec, s, r, j, byKey, issues) {
   if (!matches(`${r.title}\n${r.body}`) || (S.attention && !changed && !review && !fails)) return null;
   const open = S.open.has(r.uid);
   const editing = S.editing.has(r.uid);
-  const quints = r.items.filter((i) => i.quint);
+  const [cls, label] = statusOf(changed, fails, review);
+  const dupe = s.rules.some((x) => x !== r && x.title.trim() === r.title.trim());
   const row = h("div", { class: `row${editing ? " editing" : ""}`, tabindex: 0, onkeydown: (e) => keys(e, r.uid) },
     h("span", { class: "grip", title: "Drag to reorder, or into another story", "aria-hidden": "true" }, icon("grip")),
     h("span", { class: `chev${open ? " open" : ""}`, "aria-hidden": "true", onclick: () => toggle(r.uid) }, icon("chev")),
-    titleOf(r.uid, r.title.trim() || "Untitled", issues, () => editNode(r.uid)),
-    h("span", { class: "kinds" }, quints.length ? kindsOf(r).map(([, , glyph, name]) => h("span", { title: name, role: "img", "aria-label": name }, glyph))
-      : h("span", { class: "none", title: "no Quint", role: "img", "aria-label": "no Quint" })),
-    dot(statusOf(changed, fails, review)),
+    h("span", { class: "title", onclick: () => toggle(r.uid), ondblclick: () => editNode(r.uid), style: dupe ? "color: var(--bad)" : undefined, title: dupe ? "Two rules of a story may not share a heading" : undefined }, r.title.trim() || "Untitled"),
+    h("span", { class: "kinds" }, kindsOf(r).map(([, , glyph, name]) => h("span", { title: name, role: "img", "aria-label": name }, glyph))),
+    h("span", { class: `dot ${cls}`, role: "img", "aria-label": label || "in step", title: label }),
     h("span", { class: "actions" }, iconButton("edit", "Edit rule", () => editNode(r.uid)), moveMenu(r.uid, "rule"), iconButton("trash", "Delete rule", () => removeNode(r.uid), "danger")));
+  const quints = r.items.filter((i) => i.quint);
   const body = !open ? "" : editing ? renderRuleEditor(r) : h("div", { class: "body" },
     r.items.map((i) => (i.quint ? h("pre", { class: "code", html: highlight(i.text) }) : h("div", { class: "prose", html: markdown(i.text, spec.file) }))),
+    !quints.length ? h("div", { class: "status review" }, "No Quint yet: the agent writes it on sync.") : "",
+    review ? h("div", { class: "status review" }, review) : "",
     fails ? fails.map((f) => h("div", { class: "status bad" }, f)) : "");
   const li = h("li", { class: `rule${open ? " open" : ""}${changed ? " changed" : ""}`, "data-uid": r.uid, ondblclick: (e) => { if (!editing && e.target.closest(".body")) editNode(r.uid); } }, row, body);
   draggable(li, r.uid, "rule");
@@ -622,7 +599,6 @@ function renderRule(spec, s, r, j, byKey, issues) {
 function renderRuleEditor(r) {
   const set = () => (r.body = writeBody(r.items));
   const items = h("div", { class: "edit" });
-  const add = (quint) => { r.items.push({ quint, text: "" }); draw(); [...items.querySelectorAll("textarea")].at(-1).focus(); };
   const draw = () => {
     items.replaceChildren(
       headingInput(r.title, (v) => (r.title = v), "One checkable sentence"),
@@ -632,8 +608,8 @@ function renderRuleEditor(r) {
           k > 0 && iconButton("up", "Move up", () => { r.items.splice(k - 1, 0, r.items.splice(k, 1)[0]); set(); draw(); edited(); }),
           iconButton("close", "Remove", () => { r.items.splice(k, 1); set(); draw(); edited(); }, "danger")))),
       h("div", { class: "bar" },
-        h("button", { class: "btn", type: "button", onclick: () => add(false) }, icon("plus"), "Prose"),
-        h("button", { class: "btn", type: "button", onclick: () => add(true) }, icon("plus"), "Quint"),
+        h("button", { class: "btn", type: "button", onclick: () => { r.items.push({ quint: false, text: "" }); draw(); } }, icon("plus"), "Prose"),
+        h("button", { class: "btn", type: "button", onclick: () => { r.items.push({ quint: true, text: "" }); draw(); focusLater(`[data-uid="${r.uid}"] textarea.code:last-of-type`); } }, icon("plus"), "Quint"),
         h("span", { class: "spacer" }),
         h("button", { class: "btn", type: "button", onclick: () => { S.editing.delete(r.uid); renderDoc(); } }, icon("check"), "Done")));
   };
@@ -642,24 +618,18 @@ function renderRuleEditor(r) {
   return h("div", { class: "body" }, items);
 }
 
-/** "Move to…": every story of every spec for a rule, every spec for a story. Keyboard users' drag and drop. Its options are
- * built when it is opened, not on every render. */
+/** "Move to…": every story of every spec for a rule, every spec for a story. Keyboard users' drag and drop. */
 function moveMenu(uidWanted, kind) {
-  const select = h("select", { class: "icon move", title: "Move to…", "aria-label": "Move to", onclick: (e) => e.stopPropagation(),
+  const select = h("select", { class: "icon", title: "Move to…", "aria-label": "Move to", style: "width: 26px; appearance: none; cursor: pointer", onclick: (e) => e.stopPropagation(),
     onchange: (e) => {
       const [type, value] = e.target.value.split(":");
       if (type === "spec") move(uidWanted, { spec: value });
       else move(uidWanted, { uid: value, where: "after" });
     } },
-  h("option", { value: "", selected: true, disabled: true }, "⇅"));
-  const fill = () => {
-    if (select.options.length > 1) return;
-    select.append(...(kind === "rule"
-      ? S.specs.filter((s) => !s.deleted).map((spec) => h("optgroup", { label: spec.name }, spec.doc.sections.map((s) => h("option", { value: `section:${s.uid}` }, s.title?.trim() || "(top)"))))
-      : S.specs.filter((s) => !s.deleted && s.file !== find(uidWanted)?.spec.file).map((spec) => h("option", { value: `spec:${spec.file}` }, `to ${spec.name}`))));
-  };
-  select.addEventListener("focus", fill);
-  select.addEventListener("mousedown", fill);
+  h("option", { value: "", selected: true, disabled: true }, "⇅"),
+  kind === "rule"
+    ? S.specs.filter((s) => !s.deleted).map((spec) => h("optgroup", { label: spec.name }, spec.doc.sections.map((s) => h("option", { value: `section:${s.uid}` }, s.title?.trim() || "(top)"))))
+    : S.specs.filter((s) => !s.deleted && s.file !== find(uidWanted)?.spec.file).map((spec) => h("option", { value: `spec:${spec.file}` }, `to ${spec.name}`)));
   return select;
 }
 
@@ -695,8 +665,7 @@ function takeTheirs(file) {
 
 // --- the build panel ------------------------------------------------------------------------------------
 
-/** Every review item, in the specs and outside them (removed specs, contracts): what a sign-off records. */
-const reviewTotal = (snap) => snap.specs.reduce((n, s) => n + Object.keys(s.review).length, 0) + snap.elsewhere.length;
+const STAGES = ["model", "always", "sometimes", "replay", "types", "proof", "tests", "review"];
 
 function renderBuild() {
   const build = document.getElementById("build");
@@ -714,57 +683,59 @@ function renderBuild() {
   const blocking = results.filter((r) => !r.ok && r.stage !== "review");
   const reviews = results.filter((r) => !r.ok && r.stage === "review");
   const unformal = reviews.some((r) => /story has no rules|not formalized/.test(r.detail));
-  const reviewCount = reviewTotal(snap);
+  const reviewCount = snap.specs.reduce((n, s) => n + Object.keys(s.review).length, 0);
   const canSignOff = check && !blocking.length && reviews.length && !unformal && !dirty.length && !manifest;
 
-  // One dot per stage the check ran, in the order it ran them.
-  const stages = check && h("div", { class: "dots" }, [...new Set(results.filter((r) => r.stage !== "skipped").map((r) => r.stage))].map((st) => {
-    const of = results.filter((r) => r.stage === st);
-    return dot([of.every((r) => r.ok) ? "ok" : st === "review" ? "review" : "bad", `${st}: ${of.map((r) => r.summary).join("; ")}`]);
-  }));
-  const stage = (name, state, mark, label, extra = "") => h("div", { class: `stage ${state}` }, h("div", { class: "node", role: "img", "aria-label": `${name}: ${label}`, title: label }, mark), name, extra);
+  const stage = (name, state, mark, label) => h("div", { class: `stage ${state}` }, h("div", { class: "node", role: "img", "aria-label": `${name}: ${label}`, title: label }, mark), name);
   const pipeline = h("div", { class: "pipeline", "aria-label": "Where the project stands" },
     stage("Edit", dirty.length ? "active" : "idle", dirty.length || "", dirty.length ? `${dirty.length} specs changed` : "nothing unpublished"),
     stage("Publish", dirty.length ? "todo" : manifest ? "ok" : "idle", "", dirty.length ? "waiting to publish" : manifest ? "published" : "nothing to publish"),
     stage("Sync", running === "agent" ? "running" : manifest ? "todo" : "ok", manifest ? manifest.changes.length : "", manifest ? `${manifest.changes.length} changes for the agent` : "in step"),
-    stage("Check", running === "check" ? "running" : !check ? "idle" : blocking.length ? "bad" : "ok", blocking.length || "", !check ? "not run yet" : blocking.length ? `${blocking.length} failing` : "passing", stages || ""),
+    stage("Check", running === "check" ? "running" : !check ? "idle" : blocking.length ? "bad" : "ok", blocking.length || "", !check ? "not run yet" : blocking.length ? `${blocking.length} failing` : "passing"),
     stage("Sign off", running === "accept" ? "running" : reviewCount ? "todo" : check?.ok ? "ok" : "idle", reviewCount || "", reviewCount ? `${reviewCount} to review` : "nothing to review"));
 
-  const publishBlock = h("div", { class: "buttons" },
-    h("button", { class: "btn primary", type: "button", disabled: running || !dirty.length, onclick: openPublish, title: "⌘S" }, icon("check"), dirty.length ? `Publish ${dirty.length}` : "Publish"),
-    dirty.length ? h("button", { class: "btn", type: "button", onclick: discard }, "Discard") : "");
+  const publishBlock = h("div", { class: "block" },
+    h("div", { class: "buttons" },
+      h("button", { class: "btn primary", type: "button", disabled: running || !dirty.length, onclick: openPublish, title: "⌘S" }, icon("check"), dirty.length ? `Publish ${dirty.length}` : "Publish"),
+      dirty.length ? h("button", { class: "btn", type: "button", onclick: discard }, "Discard") : ""));
 
   const sign = { added: "+", deleted: "−", changed: "~" };
   const manifestBlock = manifest && h("div", { class: "block" },
+    h("h2", {}, "To sync", h("span", { class: "spacer" }), h("button", { class: "btn", type: "button", title: "The agent has synced these; start a new manifest", onclick: markSynced }, "Mark synced")),
     h("ul", { class: "changes" }, manifest.changes.map((c) => h("li", {}, h("span", { class: `sign ${c.action}`, "aria-label": c.action }, sign[c.action]),
       h("span", {}, c.kind === "spec" ? c.key : c.key.replace(/^## /, "").replace(/^Story: /, ""), c.what.length ? h("div", { class: "what" }, c.what.join(" · ")) : "")))),
-    manifest.regenerate.length ? h("div", { class: "what" }, `↻ ${manifest.regenerate.map((r) => r.gen).join(", ")}`) : "",
-    h("div", { class: "buttons end" }, h("button", { class: "btn", type: "button", disabled: running, onclick: markSynced }, "Mark synced")));
+    manifest.regenerate.length ? h("div", { class: "what" }, `↻ ${manifest.regenerate.map((r) => r.gen).join(", ")}`) : "");
 
   const agents = h("div", { class: "block" },
+    h("h2", {}, "Agent", h("span", { class: "spacer" }), iconButton("copy", "Copy the sync prompt", copyPrompt)),
     snap.agents.map((a) => h("div", { class: "agent" },
       h("span", { class: "label" }, a.label),
-      h("button", { class: "btn", type: "button", disabled: running || !a.available || dirty.length > 0, title: a.available ? undefined : `${a.label} is not installed`, onclick: () => start("agent", { agent: a.id }) }, icon("play"), "Run"),
-      a.link ? h("a", { class: "btn", href: a.link }, icon("open"), "Open") : "")),
-    h("div", { class: "buttons end" }, iconButton("copy", "Copy the sync prompt", copyPrompt)));
+      h("button", { class: "btn", type: "button", disabled: running || !a.available || dirty.length > 0, title: !a.available ? `${a.label} is not installed` : dirty.length ? "Publish first" : `Run ${a.label} here on the sync prompt`, onclick: () => start("agent", { agent: a.id }) }, icon("play"), "Run"),
+      a.link ? h("a", { class: "btn", href: a.link, title: `Open ${a.label} on the sync prompt in a new chat` }, icon("open"), "Open") : "")));
 
   const jobBlock = job && h("div", { class: "job" },
     h("div", { class: "top" },
-      dot([job.status === "running" ? "dirty" : job.status === "passed" ? "ok" : "bad", job.status]),
+      h("span", { class: `dot ${job.status === "running" ? "dirty" : job.status === "passed" ? "ok" : "bad"}`, role: "img", "aria-label": job.status }),
       h("span", { class: "label" }, job.label),
       h("span", { class: "meta", "data-elapsed": job.label }, elapsed(job)),
       job.status === "running" ? iconButton("stop", "Stop", () => api("stop", {})) : ""),
     h("pre", { id: "log" }, job.log.join("\n") || "…"));
 
   const checkBlock = h("div", { class: "block" },
-    running === "check" ? h("div", { class: "buttons end" }, h("span", { class: "meta", "data-elapsed": "check" }, elapsed(jobs.check)), iconButton("stop", "Stop", () => api("stop", {})))
+    h("h2", {}, "Check", h("span", { class: "spacer" }), check ? h("span", { class: "meta" }, new Date(check.finished).toLocaleTimeString()) : ""),
+    check ? h("div", { class: "stages" }, STAGES.map((st) => {
+      const of = results.filter((r) => r.stage === st);
+      const skipped = results.some((r) => r.stage === "skipped" && r.summary.includes(st));
+      const state = of.some((r) => !r.ok) ? (st === "review" ? "review" : "bad") : of.length ? "ok" : skipped ? "" : "";
+      return h("span", { class: state, title: of.map((r) => r.summary).join("\n") || (skipped ? "skipped" : "") }, st);
+    })) : "",
+    running === "check" ? h("div", { class: "agent" }, h("span", { class: "label" }, "Checking…"), h("span", { class: "meta", "data-elapsed": "check" }, elapsed(jobs.check)), iconButton("stop", "Stop", () => api("stop", {})))
       : jobs.check?.status === "failed" && !check ? h("div", { class: "results" }, h("details", { open: true }, h("summary", {}, "The check did not finish"), h("pre", {}, jobs.check.log.join("\n")))) : "",
     check ? h("div", { class: "next" }, check.next) : "",
     blocking.length ? h("div", { class: "results" }, blocking.map((r) => h("details", {}, h("summary", {}, `${r.stage}: ${r.summary}`), r.detail ? h("pre", {}, r.detail) : ""))) : "",
     h("div", { class: "buttons" },
       h("button", { class: "btn", type: "button", disabled: running, onclick: () => start("check") }, icon("play"), "Run check"),
-      h("button", { class: "btn", type: "button", disabled: running || !canSignOff, onclick: signOff }, icon("check"), "Sign off"),
-      check ? h("span", { class: "meta at" }, new Date(check.finished).toLocaleTimeString()) : ""));
+      h("button", { class: "btn", type: "button", disabled: running || !canSignOff, title: canSignOff ? "Record the reviewed rules (npm run accept)" : "Only when every stage but review passes and nothing is unpublished or unsynced", onclick: signOff }, icon("check"), "Sign off")));
 
   build.replaceChildren(pipeline, publishBlock, manifestBlock || "", agents, jobBlock || "", checkBlock);
   const log = document.getElementById("log");
@@ -789,7 +760,8 @@ async function markSynced() {
   await refresh();
 }
 async function signOff() {
-  if (!confirm(`Sign off ${reviewTotal(S.snap)}?`)) return;
+  const count = S.snap.specs.reduce((n, s) => n + Object.keys(s.review).length, 0);
+  if (!confirm(`Sign off ${count} stories and rules? Do so only once you have read each one's prose and Quint and found they say the same thing.`)) return;
   start("accept");
 }
 function discard() {
@@ -799,47 +771,56 @@ function discard() {
 
 // --- publishing -------------------------------------------------------------------------------------------
 
-/** Line diff, with three lines of context around each change. */
+/** Line diff by longest common subsequence, with three lines of context around each change. */
 function diff(a, b) {
-  const ops = diffOps(a.split("\n"), b.split("\n"));
+  const x = a.split("\n"), y = b.split("\n");
+  const n = x.length, m = y.length;
+  const t = Array.from({ length: n + 1 }, () => new Int32Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) t[i][j] = x[i] === y[j] ? t[i + 1][j + 1] + 1 : Math.max(t[i + 1][j], t[i][j + 1]);
+  const ops = [];
+  let i = 0, j = 0;
+  while (i < n || j < m) {
+    if (i < n && j < m && x[i] === y[j]) { ops.push([" ", x[i]]); i++; j++; }
+    else if (j < m && (i >= n || t[i][j + 1] >= t[i + 1][j])) ops.push(["+", y[j++]]);
+    else ops.push(["-", x[i++]]);
+  }
   const near = ops.map((_, k) => ops.slice(Math.max(0, k - 3), k + 4).some(([op]) => op !== " "));
   const out = [];
   ops.forEach(([op, line], k) => {
-    if (near[k]) out.push(h("div", { class: `l ${op === "+" ? "plus" : op === "-" ? "minus" : ""}` }, `${op} ${line}`));
+    if (near[k]) out.push(h("div", { class: `l ${op === "+" ? "add" : op === "-" ? "del" : ""}` }, `${op} ${line}`));
     else if (near[k - 1] || k === 0) out.push(h("div", { class: "l gap" }, "…"));
   });
   return out;
 }
 
-/** What would make the published spec mean something other than what the page shows, by the story or rule it is about. */
+/** Problems that would make the published spec mean something other than what the page shows. */
 function problems(spec) {
   const out = [];
   if (spec.deleted) return out;
-  const rules = new Map();
-  const stories = new Set();
+  const keys = new Set();
   for (const s of spec.doc.sections) {
-    if (s.title !== null && !s.title.trim()) out.push({ uid: s.uid, text: "a story has no title" });
-    else if (s.title !== null && stories.has(storyKey(s.title))) out.push({ uid: s.uid, text: `two stories are called “${s.title.trim()}”` });
-    stories.add(storyKey(s.title));
+    if (s.title !== null && !s.title.trim()) out.push("a story has no title");
     for (const r of s.rules) {
+      if (!r.title.trim()) out.push(`a rule of “${s.title?.trim()}” has no heading`);
       const key = ruleKey(s.title, r.title);
-      if (!r.title.trim()) out.push({ uid: r.uid, text: `a rule of “${s.title?.trim()}” has no heading` });
-      else if (rules.has(key)) out.push(...[rules.get(key), r.uid].map((uid) => ({ uid, text: `two rules are called “${r.title.trim()}” in “${s.title?.trim()}”` })));
-      rules.set(key, r.uid);
+      if (keys.has(key)) out.push(`two rules are called “${r.title.trim()}” in “${s.title?.trim()}”`);
+      keys.add(key);
     }
   }
-  return out;
+  const stories = spec.doc.sections.map((s) => storyKey(s.title)).filter(Boolean);
+  if (new Set(stories).size !== stories.length) out.push("two stories share a title");
+  return out.map((p) => `${spec.file}: ${p}`);
 }
 
 function openPublish() {
   const dirty = dirtySpecs();
   if (S.publishing || !dirty.length || Object.values(S.snap?.jobs ?? {}).some((j) => j.status === "running")) return;
-  const bad = dirty.flatMap((spec) => problems(spec).map((p) => `${spec.file}: ${p.text}`));
+  const bad = dirty.flatMap(problems);
   const dialog = document.getElementById("dialog");
   dialog.replaceChildren(h("form", { method: "dialog" },
     h("header", {}, `Publish ${dirty.length === 1 ? dirty[0].file : `${dirty.length} specs`}`),
     h("div", { class: "content" },
-      bad.length ? h("div", { class: "banner bad" }, list([...new Set(bad)])) : "",
+      bad.length ? h("div", { class: "banner bad" }, h("span", {}, bad.join("\n"))) : "",
       dirty.map((spec) => h("div", { class: "diff" }, h("div", { class: "file" }, spec.deleted ? `${spec.file} (deleted)` : spec.orig === null ? `${spec.file} (new)` : spec.file),
         spec.deleted ? "" : diff(spec.orig ?? "", textOf(spec))))),
     h("footer", {},
@@ -878,16 +859,19 @@ async function publish(force = false) {
 // --- start -------------------------------------------------------------------------------------------------
 
 document.addEventListener("keydown", (e) => {
-  const inField = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName ?? "");
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName ?? "");
   if ((e.metaKey || e.ctrlKey) && e.key === "s") { e.preventDefault(); openPublish(); }
-  else if ((e.metaKey || e.ctrlKey) && e.key === "z" && !inField && S.history.length) { e.preventDefault(); undo(); }
-  else if (e.key === "/" && !inField) { e.preventDefault(); document.querySelector(".search")?.focus(); }
-  else if (e.key === "Escape" && inField && S.editing.size && !document.getElementById("dialog").open) {
+  else if ((e.metaKey || e.ctrlKey) && e.key === "z" && !typing && S.history.length) { e.preventDefault(); undo(); }
+  else if (e.key === "/" && !typing) { e.preventDefault(); document.querySelector(".search")?.focus(); }
+  else if (e.key === "Escape" && typing && S.editing.size && !document.getElementById("dialog").open) {
     const id = document.activeElement.closest("[data-uid]")?.dataset.uid;
     if (id && S.editing.delete(id)) { renderDoc(); focusLater(`[data-uid="${id}"] > .row`); }
   }
 });
-document.addEventListener("focusout", () => { if (deferred) setTimeout(() => { if (deferred && !typing()) apply(); }, 0); });
+document.addEventListener("focusout", (e) => {
+  if (document.getElementById("doc").contains(e.target) && /^(INPUT|TEXTAREA)$/.test(e.target.tagName))
+    setTimeout(() => refresh().catch((error) => toast(error.message)), 0);
+});
 document.addEventListener("click", (e) => {
   const link = e.target.closest?.("a[data-spec]");
   if (!link) return;
@@ -895,6 +879,7 @@ document.addEventListener("click", (e) => {
   S.sel = link.dataset.spec;
   render();
 });
+window.addEventListener("beforeunload", (e) => { if (dirtySpecs().length) saveDraft(); });
 
 const { projects, open } = await (await fetch("/api/projects")).json();
 S.projects = projects;

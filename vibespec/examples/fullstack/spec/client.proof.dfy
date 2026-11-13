@@ -1,3 +1,7 @@
+// Proofs that the queue keeps its numbering rules. A user edit appends an
+// edit numbered one above every number given before; an answer filters the
+// queue, which keeps what was true of each edit left in it.
+
 lemma DistinctBridge(c: Client)
   ensures alwaysQueuedEditsHaveDistinctNumbers(c) == Std.Collections.Seq.All(c.pending, (p: Pending) => (|ProofLib.Filter((q: Pending) => (q.seq_ == p.seq_), c.pending)| == 1))
 { }

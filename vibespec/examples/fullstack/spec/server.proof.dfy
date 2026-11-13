@@ -1,3 +1,7 @@
+// Proofs that every request the server answers keeps its rules. All five
+// transitions append one entry to the log; four of them also apply an edit
+// through `commit`, so the work is done once, in `CommitKeeps`.
+
 // The rules, with ProofLib.Filter in place of the opaque library filter.
 lemma VersionBridge(s: Server)
   ensures alwaysTheVersionCountsTheChanges(s) == (s.version == |ProofLib.Filter((h: Answered) => h.ok, s.log)|)

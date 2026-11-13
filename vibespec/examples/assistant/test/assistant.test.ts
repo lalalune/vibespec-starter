@@ -1,4 +1,5 @@
-// spec/assistant.md, "Who sends an event"
+// The program's side of the trust boundary: who sent an event comes from the
+// session it arrived on, never from the event (spec/assistant.md, "Who sends an event").
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { type Actor, type Assistant, type Event, enabled, initial, parseEvent, step } from "../gen/assistant.ts";

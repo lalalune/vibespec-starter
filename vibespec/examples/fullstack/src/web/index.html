@@ -5,34 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Shared to-do list</title>
   <style>
-    :root {
-      --bg: #fbfaf7; --fg: #1d1b16; --muted: #6b665c; --line: #e6e2d9; --accent: #d9480f; --ok: #2f9e44;
-      --s1: .25rem; --s2: .5rem; --s3: 1rem; --s4: 2.5rem;
-      --font: 16px/1.5 system-ui, sans-serif; --big: 600 1.75rem/1.2 system-ui, sans-serif;
-      color-scheme: light;
-    }
-    @media (prefers-color-scheme: dark) {
-      :root { --bg: #15140f; --fg: #ece8df; --muted: #a39d90; --line: #2c2a24; --accent: #ff7a45; --ok: #51cf66; color-scheme: dark; }
-    }
-    body { background: var(--bg); color: var(--fg); font: var(--font); max-width: 32rem; margin: var(--s4) auto; padding: 0 var(--s3); }
-    button, input { font: inherit; color: inherit; }
-    header { display: flex; align-items: center; gap: var(--s3); margin-bottom: var(--s3); }
-    h1 { font: var(--big); margin: 0; flex: 1; }
-    .refused { color: var(--accent); font-weight: 700; }
-    .net { width: 1rem; height: 1rem; border-radius: 50%; border: 2px solid var(--muted); background: none; padding: 0; cursor: pointer; }
-    .net[aria-pressed="true"] { background: var(--ok); border-color: var(--ok); }
-    form { display: flex; gap: var(--s2); }
-    form input { flex: 1; padding: var(--s2); background: none; border: 0; border-bottom: 2px solid var(--line); }
-    form input:focus { outline: none; border-color: var(--accent); }
-    ul { list-style: none; padding: 0; margin: var(--s3) 0 0; }
-    li { display: flex; gap: var(--s2); align-items: center; padding: var(--s1) 0; border-bottom: 1px solid var(--line); }
-    li[aria-busy="true"] { opacity: .55; }
-    li input[type="checkbox"] { accent-color: var(--accent); width: 1.1rem; height: 1.1rem; }
-    .title { flex: 1; text-align: left; background: none; border: 0; padding: var(--s1); cursor: text; }
-    li:has(:checked) .title { text-decoration: line-through; color: var(--muted); }
-    .icon { background: none; border: 0; font-size: 1.5rem; line-height: 1; padding: 0 var(--s2); color: var(--muted); cursor: pointer; }
-    .icon:hover:not(:disabled) { color: var(--accent); }
-    .icon:disabled { opacity: .3; cursor: default; }
+    body { font: 16px/1.5 system-ui, sans-serif; max-width: 32rem; margin: 2rem auto; padding: 0 1rem; }
+    ul { list-style: none; padding: 0; }
+    li { display: flex; gap: .5rem; align-items: center; padding: .25rem 0; }
+    li .title { flex: 1; text-align: left; background: none; border: 0; color: inherit; font: inherit; cursor: pointer; }
+    li.done .title { text-decoration: line-through; color: #666; }
+    form { display: flex; gap: .5rem; }
+    form input { flex: 1; }
+    .status { color: #666; font-size: .875rem; }
   </style>
   <script type="importmap">
     {

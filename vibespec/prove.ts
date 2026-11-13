@@ -16,6 +16,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { SENDER } from "./gen/classify.ts";
 import { bin, exec, run } from "./run.ts";
+export { exec, run } from "./run.ts";
 
 /** The library of general lemmas that proof files call as ProofLib.<Name>. */
 export const LIB_FILE = path.join(import.meta.dirname, "proof", "lib.dfy");
@@ -103,7 +104,7 @@ function tokenize(text: string, refuse?: (line: number, why: string) => never): 
     const ch = text[i];
     if (refuse && BREAK.test(ch)) refuse(line, "line breaks other than \\n are not allowed");
     if (ch === "\n") { line++; i++; continue; }
-    if (ch === " " || ch === "\t") { i++; continue; }
+    if (/\s/.test(ch)) { i++; continue; }
     if (text.startsWith("//", i)) {
       const e = text.indexOf("\n", i);
       const stop = e < 0 ? text.length : e;
@@ -229,18 +230,15 @@ function dottedNames(toks: Token[]): { name: string; first: Token; inner: boolea
  * tools only by the lemmas and functions it declares.
  */
 function checkNames(proof: { file: string; text: string }, gen: string, lib: string | undefined) {
-  const genToks = tokenize(gen);
-  // A binder or field named Std (gen.ts TAKEN) could otherwise put any library name on the list.
-  const stray = genToks.find((t, i) => t.t === "Std" && (genToks[i - 1]?.t === "." || genToks.slice(i + 1, i + 6).map((k) => k.t).join(" ") !== ". Collections . Seq ."));
-  if (stray) throw new Error(`the generated Dafny uses \`Std\` other than as Std.Collections.Seq.<name> (line ${stray.line}); rename that binder or field in the spec`);
-  const std = [...new Set(dottedNames(genToks).filter((d) => !d.inner && d.name.startsWith("Std.")).map((d) => d.name))];
+  const used = new Set(dottedNames(tokenize(gen)).map((d) => d.name));
+  const std = [...used].filter((n) => n.startsWith("Std."));
   const own = new Set([...(lib ?? "").matchAll(/^\s*(?:ghost\s+)?(?:lemma|function|predicate)\s+(\w+)/gm)].map((m) => m[1]));
   for (const d of dottedNames(tokenize(proof.text.replace(/\r\n/g, "\n")))) {
     const parts = d.name.split(".");
     const at = `${proof.file}:${d.first.line}`;
     const misplaced = parts.find((p, i) => (i > 0 || d.inner) && (p === "Std" || p === LIB_MODULE));
     if (misplaced) throw new Error(`${at}: \`${misplaced}\` may only begin a name`);
-    if (parts[0] === "Std" && !std.includes(d.name))
+    if (parts[0] === "Std" && !used.has(d.name))
       throw new Error(`${at}: \`${d.name}\` is not allowed: Dafny's standard library holds axioms, so a proof file may use only the names of it that the generated code uses${std.length ? ` (${std.join(", ")})` : ", and it uses none"}`);
     if (parts[0] === LIB_MODULE && !(parts.length === 2 && own.has(parts[1])))
       throw new Error(`${at}: \`${d.name}\` is not a lemma or function of vibespec/proof/lib.dfy; call those as ${LIB_MODULE}.<Name>`);
@@ -270,15 +268,13 @@ function emptyLemmas(gen: string): Map<string, { bodyAt: number; header: string;
   return found;
 }
 
-interface Axiom { name: string; text: string }
-
 interface Additions {
   /** The unit's proof file, if it has one: where it is, and its text. */
   proof?: { file: string; text: string };
   /** The body the tools give `step_ensures` when the proof file does not. */
   stepBody?: string;
   /** Lemmas the tools add: laws of dependencies proved in their own units. */
-  axioms: Axiom[];
+  axioms: string[];
   /** The library, added when there is a proof file. */
   lib?: string;
 }
@@ -295,20 +291,19 @@ export interface Spliced { dfy: string; regions: Region[] }
 /** A line of generated Dafny that starts a definition, and its name. */
 const DEFINITION = /^\s*(?:ghost\s+)?(?:lemma|method|function|predicate)\s+(?:\{:[^}]*\}\s*)*(\w+)/;
 
-/** The library declarations the proof names, with every library declaration they use; lib.dfy is tool-owned, so any other layout fails the unit. */
+/** The library declarations the proof names, with every library declaration they use. Unknown layouts stay whole. */
 function libraryFor(lib: string, proof: string): string | undefined {
   const wanted = dottedNames(tokenize(proof)).filter((name) => name.name.startsWith(`${LIB_MODULE}.`)).map((name) => name.name.split(".")[1]);
   if (!wanted.length) return undefined;
   const lines = lib.trimEnd().split("\n");
-  const close = lines.findLastIndex((line) => !/^\s*(\/\/.*)?$/.test(line));
   const starts = lines.flatMap((line, at) => {
     const match = line.match(/^  (?:ghost\s+)?(?:lemma|function|predicate)\s+(\w+)/);
     return match ? [{ at, name: match[1] }] : [];
   });
-  const chunks = new Map(starts.map(({ at, name }, i) => [name, lines.slice(at, starts[i + 1]?.at ?? close).join("\n")]));
-  if (!starts.length || lines[close] !== "}" || !/^module ProofLib \{$/m.test(lines.slice(0, starts[0].at).join("\n"))
-      || /^  (?:type|datatype|codatatype|newtype|const|class|trait|method|module)\b/m.test(lib) || wanted.some((name) => !chunks.has(name)))
-    throw new Error(`vibespec/proof/lib.dfy is not laid out as module ProofLib { <lemmas, functions and predicates> }`);
+  if (!starts.length || lines.at(-1) !== "}" || !/^module ProofLib \{$/m.test(lines.slice(0, starts[0].at).join("\n"))
+      || /^  (?:type|datatype|codatatype|newtype|const|class|trait|method|module)\b/m.test(lib)) return lib;
+  const chunks = new Map(starts.map(({ at, name }, i) => [name, lines.slice(at, starts[i + 1]?.at ?? lines.length - 1).join("\n")]));
+  if (wanted.some((name) => !chunks.has(name))) return lib;
   const keep = new Set<string>();
   for (const queue = [...wanted]; queue.length;) {
     const name = queue.pop()!;
@@ -316,7 +311,7 @@ function libraryFor(lib: string, proof: string): string | undefined {
     keep.add(name);
     for (const token of tokenize(chunks.get(name)!)) if (token.kind === "word" && chunks.has(token.t) && !keep.has(token.t)) queue.push(token.t);
   }
-  return [...lines.slice(0, starts[0].at), ...starts.filter(({ name }) => keep.has(name)).map(({ name }) => chunks.get(name)!), ...lines.slice(close), ""].join("\n");
+  return [...lines.slice(0, starts[0].at), ...starts.filter(({ name }) => keep.has(name)).map(({ name }) => chunks.get(name)!), "}", ""].join("\n");
 }
 
 /**
@@ -331,7 +326,7 @@ export function splice(gen: string, { proof, stepBody, axioms, lib }: Additions,
   const empty = emptyLemmas(gen);
   const bodies = new Map<string, string>();
   const helpers: Lemma[] = [];
-  const taken = declaredNames([gen, ...axioms.map((a) => a.text)].join("\n"));
+  const taken = declaredNames([gen, ...axioms].join("\n"));
   taken.add(LIB_MODULE);
   for (const l of lemmas) {
     const generated = empty.get(l.name);
@@ -360,7 +355,7 @@ export function splice(gen: string, { proof, stepBody, axioms, lib }: Additions,
     if (body) add(body, region);
   });
   const tail: [string, Region][] = [
-    ...axioms.map((a, i): [string, Region] => [`${i ? "" : "// ---- laws of the units this one imports, each proved in its own unit (added by the tools) ----\n\n"}${a.text}`, { def: a.name, generated: false }]),
+    ...axioms.map((a, i): [string, Region] => [`${i ? "" : "// ---- laws of the units this one imports, each proved in its own unit (added by the tools) ----\n\n"}${a}`, { def: a.match(/^lemma \{:axiom\} (\w+)/)![1], generated: false }]),
     ...helpers.map((h, i): [string, Region] => [`${i ? "" : `// ---- helpers from ${proof!.file} ----\n\n`}${h.text}`, { def: h.name, generated: false }]),
     ...(usedLibrary ? [[`// ---- vibespec/proof/lib.dfy ----\n\n${usedLibrary.trimEnd()}`, { def: LIB_MODULE, generated: false }] as [string, Region]] : []),
   ];
@@ -374,11 +369,11 @@ export function splice(gen: string, { proof, stepBody, axioms, lib }: Additions,
 }
 
 /** The lemma that makes a dependency's law usable here: `<fn>` is how this unit spells the law. */
-function lawAxiom(gen: string, fn: string): Axiom | undefined {
+function lawAxiom(gen: string, fn: string): string | undefined {
   const m = gen.match(new RegExp(`^function ${fn}\\(([^\\n]*)\\): bool\\n\\{`, "m"));
   if (!m) return undefined;
   const args = [...m[1].matchAll(/(?:^|,\s*)(\w+)\s*:/g)].map((a) => a[1]);
-  return { name: `${fn}_ensures`, text: `lemma {:axiom} ${fn}_ensures(${m[1]})\n  ensures ${fn}(${args.join(", ")}) == true` };
+  return `lemma {:axiom} ${fn}_ensures(${m[1]})\n  ensures ${fn}(${args.join(", ")}) == true`;
 }
 
 // --- reading what Dafny said -----------------------------------------------------
@@ -550,11 +545,15 @@ function restingOn({ dfy, regions }: Spliced, unproved: Map<string, string>): Ma
 
 /** Findings of `dafny audit` in the unit's own file, other than the lemmas the tools add on purpose. */
 async function audit(dir: string, dfy: string, file: string, allowed: Set<string>): Promise<{ findings: string[]; log: string }> {
-  const { ok, out } = await run("dafny", ["audit", ...dafnyFlags(dfy), file], dir);
+  // LemmaScript may regenerate the original while checking it, so audit a copy of the exact proof we supplied.
+  const copy = file.replace(/\.dfy$/, ".audit.dfy");
+  fs.writeFileSync(path.join(dir, copy), dfy);
+  const result = await run("dafny", ["audit", ...dafnyFlags(dfy), copy], dir);
+  const out = result.out.split(copy).join(file);
   const findings = out.split("\n").filter((l) => l.startsWith(`${file}(`) && /: (Warning|Error): /.test(l))
     .filter((l) => !/: Warning: (\w+): Declaration has explicit `\{:axiom\}` attribute/.test(l) || !allowed.has(l.match(/: Warning: (\w+):/)![1]));
   if (!/Dafny auditor completed/.test(out)) findings.push(`dafny audit gave no verdict: ${lastLines(out)}`);
-  else if (!ok && !findings.length) findings.push(`dafny audit failed: ${lastLines(out)}`);
+  else if (!result.ok && !findings.length) findings.push(`dafny audit failed: ${lastLines(out)}`);
   return { findings: findings.map((f) => `dafny audit: ${f}`), log: out };
 }
 
@@ -633,8 +632,8 @@ function helperNames(root: string): Promise<ReadonlySet<string>> {
 
 /** Prove one unit in a directory of its own, so that nothing left over from another run or project can vouch for it. */
 export async function prove(root: string, u: Unit, offered: { proof?: { file: string; text: string }; lib?: string; laws: string[] }): Promise<Proof> {
+  const dir = path.join(root, "gen/proof", u.unit.replace(/\.ts$/, ""));
   const base = u.unit.replace(/\.ts$/, "");
-  const dir = path.join(root, "gen/proof", base);
   const file = `${base}.dfy`;
   fs.rmSync(dir, { recursive: true, force: true });
   fs.mkdirSync(dir, { recursive: true });
@@ -661,7 +660,7 @@ export async function prove(root: string, u: Unit, offered: { proof?: { file: st
   }
   // Laws proved elsewhere, and the library, are only of use to a proof file.
   const axioms = offered.proof ? offered.laws.flatMap((fn) => lawAxiom(gen, fn) ?? []) : [];
-  const axiomNames = new Set(axioms.map((a) => a.name));
+  const axiomNames = new Set(axioms.map((a) => a.match(/^lemma \{:axiom\} (\w+)/)![1]));
   let spliced: Spliced;
   try {
     spliced = splice(gen, { proof: offered.proof, lib: offered.proof && offered.lib, axioms, stepBody: u.transitions && stepBody(gen, u.transitions) }, `gen/proof/${base}/${file}`, prelude);
@@ -680,13 +679,15 @@ export async function prove(root: string, u: Unit, offered: { proof?: { file: st
   const v = readVerdict(checked.out, dfy, file, spliced.regions);
   if (!integrity.ok) v.errors.add(`LemmaScript refused the final Dafny: ${lastLines(integrity.out)}`);
   // The verdict is Dafny's own summary; without it, or with anything left unexplained, the unit was not checked.
-  if (!v.errors.size && (!finished(checked.out) || (!checked.ok && !v.unproved.size))) v.errors.add(lastLines(checked.out) || "dafny gave no verdict");
+  if (!v.errors.size && (!finished(checked.out) || (!checked.ok && !v.unproved.size))) v.errors.add(lastLines(checked.out) || "lsc produced no verdict");
   if (!v.errors.size && v.failing.size) {
     const again = await recheck(dir, spliced, file, v.failing, selectedSolver.path);
-    log += `\n---- each postcondition of a definition with a failure, checked on its own ----\n${again.log}`;
-    for (const [k, def] of again.verdict.unproved) v.unproved.set(k, def);
-    for (const k of again.verdict.exhausted) v.exhausted.add(k);
-    for (const e of again.verdict.errors) v.errors.add(e);
+    if (again) {
+      log += `\n---- each postcondition of a definition with a failure, checked on its own ----\n${again.log}`;
+      for (const [k, def] of again.verdict.unproved) v.unproved.set(k, def);
+      for (const k of again.verdict.exhausted) v.exhausted.add(k);
+      for (const e of again.verdict.errors) v.errors.add(e);
+    }
   }
   // Every obligation of a generated definition that rests on one not proved is not proved either.
   const resting: Record<string, string> = {};

@@ -1,15 +1,15 @@
 import fs from "node:fs";
 import path from "node:path";
+import type * as TS from "typescript";
 import ts from "typescript";
 import { generate, type Model, type Origin } from "./gen.ts";
 import { writeConformance } from "./conform.ts";
 import { fail } from "./gen/types.ts";
-import { type Unit } from "./prove.ts";
-import { run } from "./run.ts";
-import { importedMeanings, originalColumn, type Spec } from "./parse.ts";
+import { run, type Unit } from "./prove.ts";
+import { originalColumn, readSpecs, type Spec } from "./parse.ts";
 import { defines } from "./review.ts";
 import { entry, recall, store, type Memory } from "./cache.ts";
-import { plainText, readSrc, type SrcFile } from "./util.ts";
+import { filesUnder, plainText, readSrc, type SrcFile } from "./util.ts";
 
 const ANNOTATIONS = ["backend", "pure", "requires", "ensures", "invariant", "decreases", "type", "ghost", "assert"];
 
@@ -25,11 +25,11 @@ function genDir(root: string): string {
   return dir;
 }
 
-/** Quint's errors, at their places in the Markdown: tangling keeps line numbers. `fileOf` names the spec of a module. */
-function typeErrors(spec: Spec, ir: any, out: string, fileOf: (module: string) => string | undefined): Error {
+/** Quint's errors, at their places in the Markdown: tangling keeps line numbers. */
+function typeErrors(spec: Spec, ir: any, out: string, specs: Spec[]): Error {
   const errors = (ir?.errors ?? []).map((e: any) => {
     const at = e.locs?.[0];
-    const file = fileOf(path.basename(at?.source ?? "", ".qnt")) ?? spec.file;
+    const file = specs.find((s) => s.name === path.basename(at?.source ?? "", ".qnt"))?.file ?? spec.file;
     const col = !at ? undefined : file === spec.file ? originalColumn(spec.tangled, spec.qnt, at.start.line, at.start.col) : at.start.col;
     return at ? `${file}:${at.start.line + 1}${col === undefined ? "" : `:${col + 1}`}  ${e.explanation}` : e.explanation;
   });
@@ -42,7 +42,7 @@ export function generated(root: string, spec: Spec, ir: any, models: Map<string,
   const top = new Set<string>((ir.modules?.find((m: any) => m.name === spec.name)?.declarations ?? [])
     .filter((d: any) => d.kind === "def" || d.kind === "typedef").map((d: any) => d.name));
   const assigned = new Set(spec.rules.flatMap(defines));
-  const untracked = [...top].find((name) => !assigned.has(name) && !spec.builtins.includes(name));
+  const untracked = [...top].find((name) => !assigned.has(name) && !spec.builtins?.includes(name));
   if (untracked) {
     const rule = spec.rules.find((r) => r.locals.includes(untracked));
     throw new Error(`${spec.file}:${rule?.line ?? 1}: \`${untracked}\` is a top-level definition with no rule assignment; start it on its own line in the same column as the definition above it`);
@@ -57,26 +57,25 @@ export function generated(root: string, spec: Spec, ir: any, models: Map<string,
   return model;
 }
 
-/** Quint's typed IR of gen/<name>.qnt, already written; throws with Quint's errors at their places in the specs. */
-async function typecheck(root: string, spec: Spec, fileOf: (module: string) => string | undefined): Promise<any> {
-  const out = path.join(genDir(root), `${spec.name}.ir.json`);
-  const typed = await run("quint", ["typecheck", "--out", out, `gen/${spec.name}.qnt`], root);
-  let ir: any;
-  try { ir = JSON.parse(fs.readFileSync(out, "utf8")); } catch { ir = undefined; }
-  fs.rmSync(out, { force: true });
-  if (!typed.ok || !ir || ir.errors?.length) throw typeErrors(spec, ir, typed.out, fileOf);
-  return ir;
-}
-
 /**
  * Tangle, typecheck and generate one spec. `models` holds the specs it imports,
  * already generated, and receives this one. Throws with a message that points
  * into the spec.
  */
 export async function gen(root: string, spec: Spec, models = new Map<string, Model>()): Promise<Model> {
-  fs.writeFileSync(path.join(genDir(root), `${spec.name}.qnt`), spec.qnt);
-  return generated(root, spec, await typecheck(root, spec, (m) => models.get(m)?.source), models);
+  const dir = genDir(root);
+  const out = path.join(dir, `${spec.name}.ir.json`);
+  fs.writeFileSync(path.join(dir, `${spec.name}.qnt`), spec.qnt);
+  const typed = await run("quint", ["typecheck", "--out", out, `gen/${spec.name}.qnt`], root);
+  const ir = fs.existsSync(out) ? JSON.parse(fs.readFileSync(out, "utf8")) : { errors: [] };
+  fs.rmSync(out, { force: true });
+  if (!typed.ok) throw typeErrors(spec, ir, typed.out, readSpecs(root));
+  return generated(root, spec, ir, models);
 }
+
+/** The Quint of a spec's imports, theirs first, as far as a cache key may depend on it. */
+const importedMeaning = (spec: Spec, specs: Spec[]): string =>
+  spec.imports.map((n) => { const dep = specs.find((x) => x.name === n)!; return importedMeaning(dep, specs) + dep.meaning; }).join("");
 
 /**
  * Quint's typed IR of every spec, typechecked all at once and without blocking, or remembered: it depends only on the
@@ -88,10 +87,15 @@ export function typecheckAll(memory: Memory, specs: Spec[]): Map<string, Promise
   for (const spec of specs) fs.writeFileSync(path.join(dir, `${spec.name}.qnt`), spec.qnt);
   return new Map(specs.map((spec) => {
     const ir = (async () => {
-      const at = await entry(memory.root, "model", [...importedMeanings(spec, specs), spec.meaning]);
+      const at = await entry(memory.root, "model", [importedMeaning(spec, specs), spec.meaning]);
       const known = recall<any>(memory, at);
       if (known !== undefined) return known;
-      const ir = await typecheck(memory.root, spec, (m) => specs.find((s) => s.name === m)?.file);
+      const out = path.join(dir, `${spec.name}.ir.json`);
+      const typed = await run("quint", ["typecheck", "--out", out, `gen/${spec.name}.qnt`], memory.root);
+      let ir: any;
+      try { ir = JSON.parse(fs.readFileSync(out, "utf8")); } catch { ir = undefined; }
+      fs.rmSync(out, { force: true });
+      if (!typed.ok || !ir || ir.errors?.length) throw typeErrors(spec, ir, typed.out, specs);
       store(memory, at, ir);
       return ir;
     })();
@@ -99,6 +103,7 @@ export function typecheckAll(memory: Memory, specs: Spec[]): Map<string, Promise
     return [spec.name, ir] as const;
   }));
 }
+
 
 /**
  * LemmaScript verifies one file at a time and does not carry definitions across
@@ -117,9 +122,9 @@ export async function proofUnits(root: string, models: Model[], srcFiles: SrcFil
   const withoutImports = (text: string) => {
     const file = ts.createSourceFile("unit.ts", text, ts.ScriptTarget.Latest, true);
     // `export … from` loads a module as surely as `import` does.
-    const imports = file.statements.filter((d): d is ts.ImportDeclaration | ts.ExportDeclaration => ts.isImportDeclaration(d) || (ts.isExportDeclaration(d) && !!d.moduleSpecifier));
+    const imports = file.statements.filter((d): d is TS.ImportDeclaration | TS.ExportDeclaration => ts.isImportDeclaration(d) || (ts.isExportDeclaration(d) && !!d.moduleSpecifier));
     const kept = imports.reduceRight((rest, d) => rest.slice(0, d.getFullStart()) + rest.slice(d.getEnd()), text);
-    return { kept, from: imports.map((d) => (d.moduleSpecifier as ts.StringLiteral).text) };
+    return { kept, from: imports.map((d) => (d.moduleSpecifier as TS.StringLiteral).text) };
   };
   const withoutObligations = (text: string) => text.replace(/^\s*\/\/@ ensures .*\n/gm, "");
   /** The modules a module needs beside it, dependencies first. */
@@ -202,12 +207,11 @@ export function checkVerifiedSource(file: string, code: string) {
       || (ts.isVariableStatement(s) && (s.declarationList.flags & ts.NodeFlags.BlockScoped) === ts.NodeFlags.Const);
     if (!allowed) refuse(s.getStart(), "verified code may hold only imports, functions with a body, interfaces, type aliases and const declarations, each exported in its own declaration or not at all");
   }
-  // Every comment is trivia before a token or after one on its line; JSDoc is skipped, since its parts lie inside a comment.
+  // Every comment is the leading trivia of a token; JSDoc is skipped, since its parts lie inside a comment.
   const lineComments: [number, number][] = [];
-  const visit = (n: ts.Node) => {
+  const visit = (n: TS.Node) => {
     if (n.kind >= ts.SyntaxKind.FirstJSDocNode && n.kind <= ts.SyntaxKind.LastJSDocNode) return;
-    for (const c of [...ts.getLeadingCommentRanges(code, n.pos) ?? [], ...ts.getTrailingCommentRanges(code, n.end) ?? []])
-      if (c.kind === ts.SyntaxKind.SingleLineCommentTrivia) lineComments.push([c.pos, c.end]);
+    for (const c of ts.getLeadingCommentRanges(code, n.pos) ?? []) if (c.kind === ts.SyntaxKind.SingleLineCommentTrivia) lineComments.push([c.pos, c.end]);
     n.getChildren(sf).forEach(visit);
   };
   visit(sf);
@@ -217,7 +221,13 @@ export function checkVerifiedSource(file: string, code: string) {
 
 /** Proof files that belong to no unit: a typo, or a source file that is no longer proved. */
 export function strayProofFiles(root: string, units: Unit[]): string[] {
-  const found = ["spec", "src"].flatMap((dir) => fs.existsSync(path.join(root, dir))
-    ? (fs.readdirSync(path.join(root, dir), { recursive: true }) as string[]).filter((f) => f.endsWith(".proof.dfy")).map((f) => path.join(dir, f).split(path.sep).join("/")) : []);
+  const found = ["spec", "src"].flatMap((dir) => filesUnder(root, dir)).filter((f) => f.endsWith(".proof.dfy"));
   return found.filter((f) => !units.some((u) => u.proofFile === f));
 }
+
+/**
+ * Obligations that hold in simulation but that Dafny cannot prove on its own,
+ * accepted by a person: per unit, the list, and a fingerprint of the unit's
+ * text and proof file when they were accepted. A list accepted for another
+ * text no longer counts.
+ */

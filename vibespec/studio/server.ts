@@ -2,15 +2,14 @@
 // them with a manifest of what changed, and run the check, an agent's sync, and the user's sign-off.
 // README, "The studio".
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
-import { newSpec, parseSpec, pending, pendingContracts, readSpecs, type Pending, type Result } from "../spec.ts";
-import { pendingSpecs, reviews } from "../review.ts";
+import { newSpec, parseSpec, pending, readSpecs, type Result } from "../spec.ts";
 import { specFiles, specName } from "../parse.ts";
-import { digest, projectRoot } from "../util.ts";
-import { filesUnder, manifestOf, nodesOf, parseDoc, promptFor, type Ids, type Manifest } from "./doc.ts";
-import { specOrder } from "./public/doc.js";
+import { filesUnder, projectRoot } from "../util.ts";
+import { manifestOf, nodesOf, parseDoc, promptFor, type Ids, type Manifest } from "./doc.ts";
 
 /** The `spec` command beside this file, as source or as built. */
 const SPEC = path.join(import.meta.dirname, "..", `spec${path.extname(import.meta.filename)}`);
@@ -31,7 +30,7 @@ export const AGENTS: Record<string, Agent> = {
     label: "Claude Code",
     command: ({ check }) => ["claude", ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits",
       "--allowedTools", "Read", "Edit", "Write", "Glob", "Grep", `Bash(${check}:*)`, "Bash(npm run -s check:*)", "Bash(npx quint:*)",
-      "--disallowedTools", "Bash(npm run accept:*)", "Bash(spec accept:*)", ...["gen/**", "spec/**/*.lock.json", "spec/lock.json", ".studio/**"].flatMap((p) => [`Edit(${p})`, `Write(${p})`])]],
+      "--disallowedTools", "Bash(npm run accept:*)", "Bash(spec accept:*)"]],
     link: ({ root, prompt }) => `claude-cli://open?cwd=${encodeURIComponent(root)}&q=${encodeURIComponent(prompt)}`,
   },
   codex: {
@@ -53,7 +52,7 @@ interface Live {
   jobTimer?: NodeJS.Timeout;
 }
 
-const hash = (text: string) => digest(text).slice(0, 16);
+const hash = (text: string) => createHash("sha256").update(text).digest("hex").slice(0, 16);
 const studioDir = (root: string) => path.join(root, ".studio");
 const readJson = <T>(file: string): T | undefined => (fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : undefined);
 const projectName = (root: string) => readJson<{ name?: string }>(path.join(root, "package.json"))?.name ?? path.basename(root);
@@ -72,7 +71,8 @@ function specTexts(root: string): Record<string, string> {
 /** The command a person or agent runs in a project to check it: its own script if it can, else the tools of this repository. */
 function checkCommand(root: string): string {
   const scripts = readJson<{ scripts?: Record<string, string> }>(path.join(root, "package.json"))?.scripts ?? {};
-  return scripts.check && (fs.existsSync(path.join(root, "node_modules/.bin/spec")) || !scripts.check.startsWith("spec ")) ? "npm run check" : `node ${path.relative(root, SPEC)} check`;
+  const installed = fs.existsSync(path.join(root, "node_modules/.bin/spec")) || !scripts.check?.startsWith("spec ");
+  return scripts.check && installed ? "npm run check" : `node ${path.relative(root, SPEC)} check`;
 }
 
 /** The sync skill, as a path from the project root: its own copy, or the nearest one above it. */
@@ -84,7 +84,7 @@ function skillPath(root: string): string {
   }
 }
 
-/** The review ledgers and the studio's own files, by their hash: what an agent may not write. */
+/** The review ledgers and Studio state belong to the tools, not the sync agent. */
 function ownedFiles(root: string): Record<string, string> {
   return Object.fromEntries([...filesUnder(root, "spec").filter((f) => f.endsWith("lock.json")), ...filesUnder(root, ".studio")]
     .map((f) => [f, hash(fs.readFileSync(path.join(root, f), "utf8"))]));
@@ -96,22 +96,17 @@ const onPath = (program: string) => {
   return installed.get(program)!;
 };
 
-/** The key the page shows a review status under: a node's key (public/doc.js), or "@document" for the title and introduction. */
-const pendingKey = (p: Pending) => p.rule?.key ?? (p.story ? `## ${p.story.title}` : p.where.includes("  ") ? p.where.slice(p.where.indexOf("  ") + 2) : "@document");
-
 /** Everything the page shows for a project. */
 function snapshot(live: Live, agents: Record<string, Agent>) {
   const { root } = live.project;
   const texts = specTexts(root);
-  // What the review ledger says of each story and rule, and of removed specs and contracts; nothing if the specs do not parse.
+  // What the review ledger says of each story and rule; nothing if the specs do not parse.
   let review: Record<string, Record<string, string>> = {};
-  let elsewhere: string[] = [];
   let problem: string | undefined;
   try {
-    const specs = readSpecs(root, texts);
-    const ledger = reviews(root);
-    review = Object.fromEntries(specs.map((s) => [s.file, Object.fromEntries(pending(root, s, specs, ledger).map((p) => [pendingKey(p), p.status + (p.note ?? "")]))]));
-    elsewhere = [...pendingSpecs(root, specs), ...pendingContracts(root)].map((p) => `${p.where}: ${p.status}`);
+    const specs = readSpecs(root);
+    review = Object.fromEntries(specs.map((s) => [s.file, Object.fromEntries(pending(root, s, specs).map((p) => [
+      p.story ? `## ${p.story.title}` : p.rule?.key ?? p.where.split("  ")[1], p.status + (p.note ?? "")]))]));
   } catch (e) {
     problem = (e as Error).message;
   }
@@ -121,8 +116,8 @@ function snapshot(live: Live, agents: Record<string, Agent>) {
   const short = promptFor(manifest, context, DEEPLINK_LIMIT);
   return {
     project: live.project,
-    specs: Object.entries(texts).sort(([a], [b]) => specOrder(a, b)).map(([file, text]) => ({ file, name: file.slice(5, -3), module: specName(file), hash: hash(text), text, doc: parseDoc(text), review: review[file] ?? {} })),
-    elsewhere,
+    specs: Object.entries(texts).sort(([a], [b]) => a.replace(/(?:^spec\/|\/)index\.md$/, "/").localeCompare(b.replace(/(?:^spec\/|\/)index\.md$/, "/")))
+      .map(([file, text]) => ({ file, name: file.slice(5, -3), module: specName(file), hash: hash(text), text, doc: parseDoc(text), review: review[file] ?? {} })),
     problem,
     manifest,
     prompt,
@@ -186,10 +181,9 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
     if (input !== undefined) child.stdin!.end(input);
     const lines = (stream: NodeJS.ReadableStream, keep: boolean) => {
       let rest = "";
-      stream.setEncoding("utf8");
-      stream.on("data", (chunk: string) => {
-        const text = rest + chunk;
-        if (keep) out += chunk;
+      stream.on("data", (chunk: Buffer) => {
+        const text = rest + chunk.toString();
+        if (keep) out += chunk.toString();
         const parts = text.split("\n");
         rest = parts.pop()!;
         for (const l of parts) { const r = read(l); if (r !== undefined && r.trim()) job.log.push(r); }
@@ -204,7 +198,10 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
       job.finished = Date.now();
       if (job.status === "running") job.status = code === 0 ? "passed" : "failed";
       job.child = undefined;
-      try { done(job, out); } catch (e) { job.log.push(`✗ ${(e as Error).message}`); }
+      try { done(job, out); } catch (e) {
+        if (job.status !== "stopped") job.status = "failed";
+        job.log.push(`✗ ${(e as Error).message}`);
+      }
       jobChanged(live);
     });
     jobChanged(live);
@@ -221,8 +218,6 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
       job.log.push(out.trim() || "the check did not finish");
     }
   });
-
-  const checkAfter = (live: Live) => setImmediate(() => { if (!running(live)) runCheck(live); });
 
   /** The agent synced what was published: the specs as they are now are the new baseline. */
   const markSynced = (root: string) => {
@@ -291,7 +286,7 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
   const TYPES: Record<string, string> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml" };
 
   const server = http.createServer(async (req, res) => {
-    res.setHeader("content-security-policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; base-uri 'none'; object-src 'none'; frame-ancestors 'none'");
+    res.setHeader("content-security-policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; object-src 'none'; frame-ancestors 'none'");
     res.setHeader("x-content-type-options", "nosniff");
     try {
       const port = (server.address() as { port: number }).port;
@@ -347,25 +342,24 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
           const check = checkCommand(root);
           const owned = ownedFiles(root);
           startJob(live, "agent", agent.label, agent.command({ root, check }), promptFor(readJson<Manifest>(manifestFile(root)), { skill: skillPath(root), check }), readable, (job) => {
-            // What the agent did is the new baseline, unless it touched what only the tools and the user write (AGENTS.md, "Hard rules"); the check then shows what is left.
             const now = ownedFiles(root);
             const touched = [...new Set([...Object.keys(owned), ...Object.keys(now)])].filter((f) => owned[f] !== now[f]);
             if (touched.length) { job.status = "failed"; job.log.push(`✗ the agent changed ${touched.join(", ")}: not marked synced`); }
+            // What the agent did is the new baseline; the check then shows what is left.
             if (job.status !== "passed") return;
             markSynced(root);
-            checkAfter(live);
+            setImmediate(() => { try { runCheck(live); } catch { /* another job started */ } });
           });
           return send(res, 200, {});
         }
         case "/api/accept":
-          startJob(live, "accept", "sign-off", [process.execPath, [SPEC, "accept"]], undefined, (l) => l, () => checkAfter(live));
+          startJob(live, "accept", "sign-off", [process.execPath, [SPEC, "accept"]], undefined, (l) => l, () => setImmediate(() => { try { runCheck(live); } catch { /* another job started */ } }));
           return send(res, 200, {});
         case "/api/stop":
           const job = running(live);
           if (job) { job.status = "stopped"; job.child!.kill("SIGTERM"); }
           return send(res, 200, {});
         case "/api/synced":
-          idle(live);
           markSynced(root);
           broadcast(live, "files", {});
           return send(res, 200, {});

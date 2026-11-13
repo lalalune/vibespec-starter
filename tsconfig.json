@@ -12,10 +12,8 @@
     ]
   },
   "include": [
-    "src",
-    "test",
-    "gen/*.ts",
-    "vibespec"
+    "vibespec",
+    "gen/*.ts"
   ],
   "exclude": [
     "vibespec/examples",

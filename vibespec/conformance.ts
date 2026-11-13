@@ -52,6 +52,7 @@ export interface Found<E> {
   journeys: { story: string; rule: string; events: Sent<E>[] }[];
   shape: ComparisonShape;
   outputShape?: ComparisonShape;
+  traces?: Sent<E>[][];
 }
 export type Sent<E> = E & { by?: unknown };
 
@@ -79,7 +80,7 @@ export async function check<S, E, V>(oracle: Oracle<S, E>, found: Found<E>, driv
     for (const [i, [key, sent]] of trace.entries()) {
       const at = `event ${i + 1}, ${key} ${show(sent)}`;
       const { by, ...rawEvent } = sent as Sent<E> & Record<string, unknown>;
-      const before = model.get(key)!;
+      const before = model.get(key) ?? oracle.initial;
       const applied = transition(oracle, found, before, rawEvent, by);
       if (typeof applied === "string") return `${at}: ${applied}`;
       const { event, allowed, after, out } = applied;
@@ -101,20 +102,18 @@ export async function check<S, E, V>(oracle: Oracle<S, E>, found: Found<E>, driv
     }
   };
   /** Drop events while the disagreement stays: any subsequence is still a test, since the spec also says what is refused. */
-  const fail = async (what: string, trace: Trace<E>, why: string): Promise<never> => {
+  const fail = async (what: string, trace: Trace<E>) => {
     for (let i = trace.length - 1; i >= 0; i--) {
       const shorter = trace.toSpliced(i, 1);
-      const problem = await differ(shorter);
-      if (problem) [trace, why] = [shorter, problem];
+      if (await differ(shorter)) trace = shorter;
     }
     const lines = trace.map(([k, e]) => `  ${k} ${show(e)}`).join("\n");
-    throw new Error(`conformance to ${found.source}: ${what}, shrunk to ${trace.length} events:\n${lines}\n${why}`);
+    throw new Error(`conformance to ${found.source}: ${what}, shrunk to ${trace.length} events:\n${lines}\n${await differ(trace)}`);
   };
 
   for (const j of found.journeys) {
     const trace: Trace<E> = j.events.map((e) => [keys[0], e]);
-    const why = await differ(trace);
-    if (why) await fail(`journey "${j.story}" / "${j.rule}"`, trace, why);
+    if (await differ(trace)) await fail(`journey "${j.story}" / "${j.rule}"`, trace);
   }
   // A walk mostly takes events the spec allows, so that it reaches deep states, and sometimes any event, so that refusals are tried.
   const random = rng(seed);
@@ -133,8 +132,7 @@ export async function check<S, E, V>(oracle: Oracle<S, E>, found: Found<E>, driv
       if (typeof after === "string") throw new Error(after);
       model.set(key, after.after);
     }
-    const why = await differ(trace);
-    if (why) await fail(`walk ${w + 1} of seed ${seed}`, trace, why);
+    if (await differ(trace)) await fail(`walk ${w + 1} of seed ${seed}`, trace);
   }
 
   return { journeys: found.journeys.length, walks, observed: seen.size, outcomes: [...outcomes], effects: found.outputShape ? driver.observeOutput ? "checked" : "not observed" : "none" };
@@ -164,7 +162,7 @@ const show = (x: unknown) => JSON.stringify(x) ?? String(x);
 
 /** A small seeded generator, so that a walk repeats exactly. */
 function rng(seed: number) {
-  let s = (seed ^ 0x9e3779b9) >>> 0;
+  let s = seed >>> 0 || 1;
   return () => ((s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 2 ** 32);
 }
 
@@ -175,10 +173,10 @@ export interface Line { event?: unknown; by?: unknown; state?: unknown; out?: un
 export function transition<S, E>(oracle: Oracle<S, E>, found: Found<E>, before: S, raw: unknown, by: unknown): { event: E; allowed: boolean; after: S; out?: unknown } | string {
   const event = oracle.parseEvent(raw);
   if (event === undefined) return `${show(raw)} is not an event of the spec`;
-  const sender = found.sender ? oracle.parseSender?.(by) : undefined;
-  if (found.sender ? sender === undefined : by !== undefined) return found.sender ? "the event needs a valid sender" : "the spec's events have no sender";
-  const result = oracle.step(before, event, sender);
-  return { event, allowed: oracle.enabled(before, event, sender), after: found.outputShape ? (result as { state: S }).state : result as S, ...(found.outputShape ? { out: (result as { out: unknown }).out } : {}) };
+  if (found.sender ? by === undefined || !oracle.parseSender || oracle.parseSender(by) === undefined : by !== undefined)
+    return found.sender ? "the event needs a valid sender" : "the spec's events have no sender";
+  const result = oracle.step(before, event, by);
+  return { event, allowed: oracle.enabled(before, event, by), after: found.outputShape ? (result as { state: S }).state : result as S, ...(found.outputShape ? { out: (result as { out: unknown }).out } : {}) };
 }
 
 /** Compare what the real application exposed, keeping sets independent of their iteration order. */
@@ -190,7 +188,7 @@ export function compareObservation<S, E, V>(oracle: Oracle<S, E>, found: Found<E
   return want === have ? undefined : `should be ${want}, but the application has ${have}`;
 }
 
-/** The first disagreement in a recorded trace. At least one state reached by an event must have been observed. */
+/** The first disagreement in a recorded trace. At least one real state must have been observed. */
 export function departure<S, E>(oracle: Oracle<S, E>, found: Found<E>, lines: unknown[]): { line: number; why: string } | undefined {
   let current = oracle.initial;
   let observed = 0;
@@ -205,6 +203,7 @@ export function departure<S, E>(oracle: Oracle<S, E>, found: Found<E>, lines: un
         const state = oracle.parseState(line.state);
         if (state === undefined) return fail(`the program starts from an invalid state ${show(line.state)}`);
         current = state;
+        observed++;
       } else current = oracle.initial;
       continue;
     }

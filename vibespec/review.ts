@@ -13,8 +13,7 @@ const emptyLock = (): ReviewLock => ({ version: 1, specs: {}, contracts: {}, unp
 function readReviewLock(root: string): ReviewLock {
   const file = ledgerFile(root);
   if (!fs.existsSync(file)) return emptyLock();
-  let data: unknown;
-  try { data = JSON.parse(fs.readFileSync(file, "utf8")); } catch { data = undefined; }
+  const data = JSON.parse(fs.readFileSync(file, "utf8"));
   const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
   const strings = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === "string");
   if (!object(data) || data.version !== 1 || !object(data.specs) || !object(data.contracts) || !object(data.unproved)
@@ -138,15 +137,23 @@ const ASKS = {
 export const showPending = (p: Pending) => `${p.where}\n      ${p.status}${p.note ?? ""}: ${ASKS[p.status]}`;
 
 type Lock = Record<string, string[]>;
-/** What `accept` recorded of every spec, under its file: read once for many calls of `pending`. */
-export const reviews = (root: string): Record<string, Lock> => readReviewLock(root).specs;
+/** A spec's ledger. `locks` remembers the ones read, for a caller that reads many in a row while none of them changes. */
+const readLock = (root: string, spec: Spec, locks?: Map<string, Lock>): Lock => {
+  const known = locks?.get(spec.file);
+  if (known) return known;
+  const all = readReviewLock(root).specs;
+  for (const [file, value] of Object.entries(all)) locks?.set(file, value);
+  const lock = all[spec.file] ?? {};
+  locks?.set(spec.file, lock);
+  return lock;
+};
 
 /**
  * Stories and rules to reconcile since `accept`. A rule's model is its own Quint and that of every rule it relies
  * on (see `dependencies`), so a change to a helper, a type or an imported definition flags every rule that uses it.
  */
-export function pending(root: string, spec: Spec, specs: Spec[] = readSpecs(root), ledger = reviews(root)): Pending[] {
-  const lock = ledger[spec.file] ?? {};
+export function pending(root: string, spec: Spec, specs: Spec[] = readSpecs(root), locks = new Map<string, Lock>()): Pending[] {
+  const lock = readLock(root, spec, locks);
   const out: Pending[] = [];
   const document = proseFingerprint(spec.preamble);
   if (lock["@document"]?.[0] !== document && (spec.preamble.trim() || lock["@document"]))
@@ -168,9 +175,9 @@ export function pending(root: string, spec: Spec, specs: Spec[] = readSpecs(root
     let note: string | undefined;
     if (status && relied) {
       // Name the rules it relies on whose own Quint is not what was recorded for them.
-      const changed = deps.filter((d) => ledger[d.spec.file]?.[d.rule.key]?.[1] !== fingerprint(d.rule)[1]);
+      const changed = deps.filter((d) => readLock(root, d.spec, locks)[d.rule.key]?.[1] !== fingerprint(d.rule)[1]);
       note = changed.length ? ` through ${changed.map((d) => `${[...d.names].join(", ")} (${d.spec === spec ? "" : `${d.spec.file}: `}${d.rule.key})`).join("; ")}`
-        : was[1] === code ? " through a definition it relies on" : undefined;
+        : was[1] === code ? (was.length < 3 ? " (what it relies on was not recorded before)" : " through a definition it relies on") : undefined;
     }
     if (status) out.push({ where: `${spec.file}:${rule.line}  ${rule.key}`, rule, status, note });
   }
@@ -192,6 +199,8 @@ function reviewed(spec: Spec, specs: Spec[]): Lock {
   return { "@document": [proseFingerprint(spec.preamble)], ...Object.fromEntries(entries.map((e) => [e.key, e.value])) };
 }
 
+// --- the contracts of hand-written verified code ------------------------------------
+
 /** Record one spec while preserving the rest of the central ledger. */
 export function acceptReviews(root: string, spec: Spec, specs: Spec[] = readSpecs(root)) {
   const lock = readReviewLock(root);
@@ -201,7 +210,7 @@ export function acceptReviews(root: string, spec: Spec, specs: Spec[] = readSpec
 
 /** Deleted specs remain reviewable until the whole snapshot is accepted. */
 export function pendingSpecs(root: string, specs: Spec[]): Pending[] {
-  return Object.keys(reviews(root)).filter((file) => !specs.some((s) => s.file === file))
+  return Object.keys(readReviewLock(root).specs).filter((file) => !specs.some((s) => s.file === file))
     .map((file) => ({ where: file, status: "removed or renamed" }));
 }
 
@@ -212,9 +221,6 @@ export function acceptAllReviews(root: string, specs: Spec[], src = readSrc(root
   lock.contracts = Object.fromEntries([...contracts(root, src)].map(([file, lines]) => [file, short(lines.join("\n"))]));
   writeReviewLock(root, lock);
 }
-
-// --- the contracts of hand-written verified code ------------------------------------
-
 /**
  * The contract of a file: every `//@` comment line, under the declarations it sits in (`f: //@ requires …`), so that
  * moving an annotation from one function to another changes it. Keep every line containing `//@`, including an
@@ -283,11 +289,8 @@ export const moved = (todo: Pending[]): string[] => todo.flatMap(({ where, rule,
   : !story && lines ? [`    ${where} (${status})\n      ${status === "document changed" ? "its document" : "its //@ lines"}:\n${indent(lines.join("\n"), 8)}`]
   : []);
 
-/**
- * Obligations that hold in simulation but that Dafny cannot prove on its own, accepted by a person: per unit, the
- * list, and a fingerprint of the unit's text and proof file when they were accepted. A list accepted for another
- * text no longer counts.
- */
+
+
 export function readLedger(root: string): Record<string, Accepted | undefined> {
   return readReviewLock(root).unproved;
 }

@@ -5,7 +5,7 @@ model, with links to child specs wherever an area needs its own directory.
 `gen/` is derived from it. Keep the spec true to what the user wants and
 `npm run check` green.
 
-**Read this file in full before doing any work.**
+**Read this file and [README.md](README.md) in full before doing any work.**
 The spec format, naming rules and everything the tools accept are in
 [Spec reference](#spec-reference) below.
 
@@ -130,8 +130,8 @@ How `npm run check` runs them:
 # Spec reference
 
 The spec format, the generated code and the code built on it. The agent's
-loop is the [`sync` skill](.claude/skills/sync/SKILL.md); the stages of
-`npm run check` are in [What `npm run check` checks](#what-npm-run-check-checks).
+loop is the [`sync` skill](.claude/skills/sync/SKILL.md); setup and the stages
+of `npm run check` are in [README.md](README.md).
 
 In the vibespec-starter repository, "the order example" is
 `vibespec/examples/order/spec/index.md` and "the tracker example" is
@@ -211,29 +211,19 @@ is generated. The role of a definition comes from its name and signature:
 | `pure def leadsToPaid(o: Order, later: Order): bool` | a liveness rule: from every reachable state `o`, every fair run reaches a state `later` that it relates to `o` (`o` itself counts) | a search of simulated traces for a fair run that breaks it ("Liveness", below) |
 | `pure def lawTotalIsNotNegative(xs: List[int]): bool` | a law: true for every value of its parameters | a function proved to return `true`, and sampled by the simulator |
 | `pure val idValues = Set(1, 2, 3)` | what the simulator tries for a parameter named `id`. It must be a set whose elements match the parameter type; any supported Quint is allowed in it | nothing: it never reaches TypeScript |
+
 | `pure val weight_pay = 5` | how often the simulator tries `pay`: a whole number from 1 to 100, times as often as an event of weight 1 (the default). For deep interleavings, such as a message lost, repeated and reordered | nothing |
 | `pure val fair_pay = "weak"` or `"strong"` | an assumption for `leadsTo` rules: a fair run does not put `pay` off for ever while its guard keeps allowing it (`"weak"`), or while it allows it again and again (`"strong"`) | nothing |
 | any other `pure val` or `pure def` | a constant or helper | the same constant or function |
-
-A helper that takes the state first and returns the state would be taken for
-a transition. Give it the state as its second parameter, or return something
-smaller.
-
-Refused, each with a message saying why: the generated and harness names
-(`init`, `step`, `inv`, `enabled`, `parseEvent`, `parseState`, `Event`,
-`current`, `event`, `state`, …) and `ProofLib`; JavaScript globals and
-keywords (`Number`, `delete`, …); Quint built-ins (`to`, `next`, `all`,
-`size`, …); a parameter named like a variant; a variant field called `tag`;
-and near-misses of the conventions above such as `alwayspaid` or `CanPay`.
-
-#### Who sent an event
 
 A transition parameter named `by` identifies its sender. All such parameters
 use the same type. It is supplied separately as `enabled(current, event, by)`
 and `step(current, event, by)`; it never comes from `parseEvent`. The shell
 must validate the authenticated sender before supplying it.
 
-#### Transitions with output
+A helper that takes the state first and returns the state would be taken for
+a transition. Give it the state as its second parameter, or return something
+smaller.
 
 A transition may return a named record `{ state: State, out: List[Effect] }`.
 All transitions that return effects use the same record type. In that module,
@@ -241,6 +231,13 @@ All transitions that return effects use the same record type. In that module,
 an empty `out`. A step rule may take a final parameter named `out` to inspect
 the effects, after the resulting state. The simulator compares those effects
 with the generated TypeScript, and the proof checks each such step rule.
+
+Refused, each with a message saying why: the generated and harness names
+(`init`, `step`, `inv`, `enabled`, `parseEvent`, `parseState`, `Event`,
+`current`, `event`, `state`, …) and `ProofLib`; JavaScript globals and
+keywords (`Number`, `delete`, …); Quint built-ins (`to`, `next`, `all`,
+`size`, …); a parameter named like a variant; a variant field called `tag`;
+and near-misses of the conventions above such as `alwayspaid` or `CanPay`.
 
 ### Using one spec from another
 
@@ -255,18 +252,18 @@ with the generated TypeScript, and the proof checks each such step rule.
   `L::alwaysFlipsAreCounted` of each, and add rules about the pair that
   neither lamp could state (`vibespec/fixtures/room.md` in the vibespec-starter
   repository).
-- **`import net as N from "./net"`** takes a spec that ships with the tools,
-  from their `std/` directory, when `spec/` has none of that name. It is
-  simulated and proved with the specs that import it, never reviewed.
-  `std/net.md` is a network that loses, repeats and reorders: the numbers of
-  the messages in flight, with `N::send`, `N::take` (to deliver or lose one),
-  `N::repeat`, and laws for an `always` rule that only messages sent are in
-  flight. `vibespec/fixtures/ping.md` uses it.
 
 Import paths resolve relative to the spec that contains them. For example,
 `import currency.* from "../shared/currency"` uses a sibling area's library,
 and `import payments as P from "./payments"` uses `payments/index.md`.
 Generated code uses the imported spec's full module path.
+- **`import net as N from "./net"`** takes a spec that ships with the tools,
+  from their `std/` directory, when `spec/` has none of that name. It is
+  simulated and proved with the specs that import it, never reviewed.
+  [`vibespec/std/net.md`](vibespec/std/net.md) is a network that loses, repeats and reorders:
+  the numbers of the messages in flight, with `N::send`, `N::take` (to
+  deliver or lose one), `N::repeat`, and laws for an `always` rule that only
+  messages sent are in flight. `vibespec/fixtures/ping.md` uses it.
 
 A spec is imported once, one way or the other, and imports cannot form a
 circle. Navigation links may point back to a parent. In the generated
@@ -281,7 +278,7 @@ TypeScript a name from another module is spelled
 | records | interfaces | Nest as deep as you like |
 | `type Status = Draft \| Paid` | `"Draft" \| "Paid"` | |
 | `type Parcel = Packed({ weight: int }) \| Lost` | `{ tag: "Packed"; weight: number } \| { tag: "Lost" }` | Read with `match p { \| Packed(x) => … \| _ => … }` |
-| `List[T]` | `T[]` | `List(…)`, `append`, `concat`, `length`, `nth`, `head`, `tail`, `select`, `foldl`, and `every`, `some`, `includes`, `listMap`, `nthOr`, `removeAt` |
+| `List[T]` | `T[]` | `List(…)`, `append`, `concat`, `length`, `nth`, `head`, `tail`, `select`, `foldl`, and `every`, `some`, `includes`, `listMap` |
 | `Set[T]` of simple values | `T[]` that never holds a value twice | `Set(…)`, `union`, `intersect`, `exclude`, `filter`, `map`, `forall`, `exists`, `contains`, `in`, `subseteq`, `size` |
 | `K -> T` | `Record<K, T>` | Keys are integers, strings or plain variants; `Map()`, `put`, `get`, `getOr`, `m.keys().contains(k)` |
 
@@ -295,11 +292,14 @@ stage with the name of the construct.
   `subseteq` in both directions.
 - **Generated arithmetic refuses an integer result outside the safe range.**
   It throws `RangeError` rather than returning a rounded JavaScript number.
+- **`xs.nthOr(i, fallback)` and `m.getOr(k, fallback)` are total lookups.**
+  `xs.removeAt(i)` removes one position, or leaves the list unchanged when
+  the position is outside it.
 - **Guard every partial operation in the definition that uses it.** An index
   outside a list, a missing map key and a zero divisor stop the simulator and
-  cannot be proved safe. Use `m.getOr(k, d)` and `xs.nthOr(i, d)`, which
-  give `d` for a missing key or index; `xs.removeAt(i)` leaves the list
-  unchanged for an index outside it.
+  cannot be proved safe. Test first and give a default, as `problemAt` does
+  in the tracker example. For a map the form is exactly
+  `if (m.keys().contains(k)) m.get(k) else 0`.
 - **`/` and `%` go towards zero**, as in Quint: `-7 / 2` is `-3` and `-7 % 2`
   is `-1`. The generated TypeScript and the proofs agree.
 - **There are no loops and no recursion.** To repeat something until done,
@@ -317,11 +317,10 @@ stage with the name of the construct.
 - **In a `match` arm, use the fields of what the variant carries**
   (`x.weight`), or rebuild the variant (`Packed({ ...x, weight: 2 })`). The
   carried value cannot be passed on whole. `match` must be on a name.
-- **`every`, `some`, `includes`, `listMap`, `getOr`, `nthOr` and `removeAt`
-  are not Quint.** They are rewritten before Quint reads the spec: the first
-  four into `foldl`, because Quint evaluates a definition that takes a lambda
-  wrongly when it is used inside its own argument; the last three into
-  definitions of the module (`BUILTINS` in `vibespec/gen/print.ts`).
+- **`every`, `some`, `includes` and `listMap` are not Quint.** They are
+  rewritten into `foldl` before Quint reads the spec, because Quint evaluates
+  a definition that takes a lambda wrongly when it is used inside its own
+  argument.
 - **The simulator tries small values**: integers −1…6, both booleans, three
   strings, every variant of a plain sum type, and short lists and sets of
   those. Define `<param>Values` to choose, which a record or a variant that
@@ -522,7 +521,7 @@ supply one to replace it.
   State facts about `ProofLib.Filter`, and connect them to the rule with a
   helper whose `ensures` is the rule's body with `ProofLib.Filter` in place of
   `Std.Collections.Seq.Filter`; it proves with an empty body:
-  `lemma KeysFilter(r: Registry) ensures alwaysAKeyNamesOneProject(r) == Std.Collections.Seq.All(r.entries, (a: Entry) => (|ProofLib.Filter((b: Entry) => (b.key == a.key), r.entries)| == 1)) { }`.
+  `lemma KeysBridge(r: Registry) ensures alwaysAKeyNamesOneProject(r) == Std.Collections.Seq.All(r.entries, (a: Entry) => (|ProofLib.Filter((b: Entry) => (b.key == a.key), r.entries)| == 1)) { }`.
 - A lambda is the same term only if it is the same text: pass the lambda the
   generated code uses, copied verbatim from the `.dfy`.
 
@@ -582,28 +581,6 @@ line.
 - `gen/` is rebuilt by `npm run gen` and `npm run check`, and by
   `npm install` when every spec is valid.
 
-### Conformance
-
-The `traces` stage runs the real program against the spec, with the
-generated module as the oracle:
-
-- **Recorded traces.** Each line of `test/traces/<name>.jsonl` is
-  `{ "state": … }` for a start, or `{ "event": …, "by": …, "state": …, "out": … }`
-  (all but `event` optional) for an event the program took or refused. Every
-  line must follow `gen/<name>.ts`.
-- **A driver program.** A package script `driver:<name>` reads one JSON
-  request per line, `{}` to start afresh or `{ "event": …, "by": … }`, and
-  answers each within 10 seconds with `{ "state": …, "out": … }`. The check
-  sends it every journey to a `sometimes` goal and simulated traces, with
-  refused events between their steps.
-- **In a test.** `gen/<name>.conformance.ts`, written by `npm run check`,
-  exports `conformance(driver, options)`. It runs the same journeys, then
-  seeded random walks, through a `Driver` you write: `reset()` starts an empty
-  application, `dispatch(key, event, by)` sends an event through its own entry
-  point and answers `"accepted"` or `"refused"`, and `observe(key)` reads back
-  what it holds (`options.view` maps the spec's state to that). It throws at
-  the first disagreement, shrunk to the fewest events.
-
 ## Hand-written verified logic
 
 Put logic in the spec when you can: it is then simulated, proved and
@@ -660,60 +637,13 @@ npm run check
 | `.agents/skills/` | links to the same skills in `.claude/skills/` |
 | `CLAUDE.md` | imports `AGENTS.md`, preserving any existing instructions |
 | `tsconfig.json`, an empty `spec/index.md` | |
-| `.gitignore` | `gen/`, `.spec-cache/`, `.studio/` |
-| `package.json` | scripts `dev`, `check`, `gen`, `accept`, and `"type": "module"` if unset |
+| `.gitignore` | `gen/`, `.spec-cache/` |
+| `package.json` scripts | `check`, `gen`, `accept` |
 
 `spec` works on `spec/**/*.md`, and optionally `src/`, the package's
-[tests](#tests) and a `tsconfig.json`, in the directory it is run from. To
-hand the generated code to another package, compile `gen/*.ts` with `tsc`; it
-has no dependencies.
-
-## What `npm run check` checks
-
-Stages run cheapest first: `✓` passed, `✗` failed, `-` skipped because of a
-`✗` above. Without a `tsconfig.json`, `types` passes as skipped when there is
-no `src/` or `test/`, and fails when there is.
-
-| Stage | Question | Strength |
-|---|---|---|
-| `model` | Is the spec well-typed and inside the supported subset? | exact; anything unsupported is refused by name |
-| `always` | Does a reachable state break an `always` rule, a step break a `step` rule, a sampled argument break a law, or a fair run that stops or loops break a [`leadsTo` rule](#liveness)? | random traces; a failure comes with the shortest trace and its seed |
-| `sometimes` | Can each `sometimes` goal be reached? Does each guard allow its event in some reachable state? | a witness trace is a proof; a failure means searches of increasing depth found none. [Guards never seen to refuse](#writing-good-rules) are listed, not failed |
-| `replay` | Does the generated TypeScript mean what the Quint means? | sampled traces and every witness: every state, every law, and every definition the simulator can evaluate. The rest are listed |
-| `types` | Does the application fit the generated contract? | exact |
-| `proof` | Does every transition preserve every `always` and `step` rule, does every law hold, and does hand-written logic meet its `//@` contract? | all states, all inputs, per obligation under a fixed resource limit; what Dafny cannot prove alone is proved in a [proof file](#proof-files), or listed |
-| `tests` | Does the shell work with the real services around it? | whole user journeys ([Tests](#tests)) |
-| `traces` | Do recorded `test/traces/*.jsonl` and `driver:<name>` programs follow the spec? | every recorded line, and every simulated trace and refused event ([Conformance](#conformance)) |
-| `review` | Does every story have rules and every rule Quint? Has every new or changed story, rule and `//@` contract been reconciled? | exact |
-
-## What is and is not guaranteed
-
-Proved for all states and inputs: the initial state satisfies every `always`
-rule, every transition preserves every `always` and `step` rule, every law
-holds, and hand-written `//@ ensures` hold, except for obligations listed in
-`spec/lock.json` under `unproved` (spec units only) and those resting on
-them, which every proof line lists. Proof files add only lemmas, and those
-are proved too.
-
-Trusted, not proved:
-
-- **The prose.** Whether the Quint under a rule means what the sentence above
-  it says is a judgement. The `review` stage makes sure someone made it.
-- **The generator** (`gen.ts`, `gen/` in the tools). Simulation checks the
-  Quint model; the proof checks the TypeScript. `replay` ties the two together
-  on sampled traces only.
-- **The shell** (`src/` without `//@`), LemmaScript, Dafny and Quint. `tests`
-  and `traces` sample it.
-- **Built-ins.** The proofs assume that built-ins such as `Math` and
-  `Array.prototype` are not modified at run time, anywhere in the process.
-- **Preconditions.** A `//@ requires` that can never hold makes a contract
-  vacuous: everything after it is proved. That is why contracts are reviewed,
-  through `spec/lock.json` under `contracts`.
-- **Numbers.** The proofs treat `number` as an unbounded integer. Generated
-  arithmetic throws `RangeError` outside the safe integers rather than round.
-- **The working directory.** Anyone who can edit `gen/`, `.spec-cache/` or the
-  tools can make `check` say what they like. `accept` ignores the cache, and
-  continuous integration starts without `.spec-cache/`, which is not in git.
+[tests](#tests) and a `tsconfig.json`, in the directory it is run from. Without a `tsconfig.json`, a package containing `src/` or `test/` fails the
+types stage; a spec-only package reports that there is no code to typecheck. To hand the generated code to another package, compile `gen/*.ts`
+with `tsc`; it has no dependencies.
 
 ## Large applications
 
@@ -754,10 +684,6 @@ In the vibespec-starter repository:
 | `vibespec/cache.ts`, `vibespec/run.ts` | stage caches and bounded tool execution |
 | `vibespec/units.ts`, `vibespec/simulate.ts` | generation, proof units, simulation and replay |
 | `vibespec/util.ts` | source discovery, test execution and citations |
-| `vibespec/conform.ts`, `vibespec/conformance.ts` | the `traces` stage, and the conformance check copied into `gen/` |
-| `vibespec/studio/` | the Studio server and page |
-| `vibespec/std/` | specs shipped with the tools |
-| `vibespec/selftest.ts`, `vibespec/fixtures/` | tests of the pipeline, and the small specs they use |
 | `vibespec/prove.ts` | proves one unit: checks and splices the proof file, runs LemmaScript and `dafny audit`, and rechecks alone every postcondition a failing one could hide |
 | `vibespec/proof/lib.dfy` | the library proof files call |
 | `vibespec/gen.ts` | the translator: reads what a module imports and defines |

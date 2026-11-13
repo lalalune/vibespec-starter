@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { conformance } from "../gen/index.conformance.ts";
 import { OrderBook, Rejected } from "../src/app.ts";
 
+/** A book whose order A1 has been sent `events`, in order. */
 function book(...events: object[]): OrderBook {
   const b = new OrderBook();
   for (const e of events) b.dispatch("A1", e);
@@ -12,14 +13,8 @@ const submitted = (qty: number) => book({ type: "addItem", qty }, { type: "submi
 
 // spec/index.md, "Story: Check out"
 test("an order is filled, submitted and paid off in instalments", () => {
-  const b = book({ type: "addItem", qty: 2 });
-  assert.throws(() => b.dispatch("A1", { type: "addItem", qty: 1.5 }), Rejected);
-  assert.throws(() => b.dispatch("A1", { type: "refund" }), Rejected);
-  b.dispatch("A1", { type: "submit" });
-  let reads = 0;
-  const sly = { type: "pay", get amount() { return reads++ === 0 ? 1 : 1_000_000; }, extra: "ignored" };
-  assert.deepEqual(b.dispatch("A1", sly), { status: "Pending", units: 2, due: 10, paid: 1 });
-  assert.equal(b.dispatch("A1", { type: "pay", amount: 3 }).status, "Pending");
+  const b = submitted(2);
+  assert.equal(b.dispatch("A1", { type: "pay", amount: 4 }).status, "Pending");
   assert.equal(b.balance("A1"), 6);
   assert.equal(b.dispatch("A1", { type: "pay", amount: 6 }).status, "Paid");
   assert.equal(b.balance("A1"), 0);
@@ -40,6 +35,13 @@ test("cancelling refunds what was paid", () => {
   assert.deepEqual(b.dispatch("A1", { type: "cancel" }), { status: "Cancelled", units: 1, due: 5, paid: 0 });
 });
 
+test("malformed input never reaches the verified core", () => {
+  const b = book();
+  assert.throws(() => b.dispatch("A1", { type: "addItem", qty: 1.5 }), Rejected);
+  assert.throws(() => b.dispatch("A1", { type: "refund" }), Rejected);
+  assert.deepEqual(b.get("A1"), { status: "Draft", units: 0, due: 0, paid: 0 });
+});
+
 // spec/index.md, "No more can be removed than the order holds"
 test("items can be taken back out of a draft, but never more than it holds", () => {
   const b = book({ type: "addItem", qty: 3 });
@@ -57,8 +59,14 @@ test("a cancelled order can be reopened, and a payment partly taken back", () =>
   assert.deepEqual(b.dispatch("A1", { type: "reopen" }), { status: "Draft", units: 2, due: 10, paid: 0 });
 });
 
-// spec/index.md, "Story: Fill a draft"; spec/index.md, "Story: Check out"; spec/index.md, "Story: Cancel"; spec/index.md, "Story: Change my mind"; spec/index.md, "Story: Reopen a cancelled order"; spec/index.md, "Story: Take back a payment"; spec/index.md, "Story: Start over"; spec/index.md, "Story: Put an order on hold"
-// vibespec/conformance.ts, conformance
+test("an event is copied on the way in, so nothing the caller keeps can change it", () => {
+  let reads = 0;
+  const sly = { type: "pay", get amount() { return reads++ === 0 ? 1 : 1_000_000; }, extra: "ignored" };
+  assert.deepEqual(submitted(2).dispatch("A1", sly), { status: "Pending", units: 2, due: 10, paid: 1 });
+});
+
+// Every story of spec/index.md through the real order book: a journey per `sometimes` rule, then random walks over
+// two orders at once (AGENTS.md, "Conformance").
 test("the order book does what spec/index.md says", async () => {
   let book = new OrderBook();
   await conformance({

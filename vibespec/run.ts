@@ -1,7 +1,10 @@
+// Shared bounded execution for the Quint, TypeScript, test and proof stages.
 import { execFile } from "node:child_process";
 import fs from "node:fs";
 import { availableParallelism } from "node:os";
 import path from "node:path";
+
+// --- running tools -------------------------------------------------------------
 
 const WINDOWS = process.platform === "win32";
 /** The most output a tool may write before it is stopped. */
@@ -56,26 +59,11 @@ export async function exec(exe: string, args: string[], cwd: string, env?: NodeJ
   }
 }
 
-const NEEDS_DAFNY = "the proof stage needs Dafny 4.11 on the PATH";
-
 /** Run a tool from the toolchain, or Dafny, and return whether it succeeded and all it wrote. */
 export async function run(cmd: string, args: string[], cwd: string): Promise<{ ok: boolean; out: string }> {
   const exe = cmd === "dafny" ? cmd : bin(cmd, cwd);
   const r = await exec(exe, args, cwd).catch((e: Error) => {
-    throw new Error(`${cmd} could not be run (${exe}): ${e.message}; ${cmd === "dafny" ? NEEDS_DAFNY : "run npm install"}`);
+    throw new Error(`${cmd} could not be run (${exe}): ${e.message}${cmd === "dafny" ? "; the proof stage needs Dafny 4.11 on the PATH" : "; run npm install"}`);
   });
   return { ok: r.status === 0 && !r.stopped, out: `${r.stdout}${r.stderr}${r.stopped ? `\n${r.stopped}\n` : ""}` };
-}
-
-/** The version of Dafny on the PATH, read once, or why the proof stage cannot use it. */
-let dafny: Promise<{ version?: string; problem?: string }> | undefined;
-export function dafnyVersion(): Promise<{ version?: string; problem?: string }> {
-  return (dafny ??= exec("dafny", ["--version"], process.cwd()).then(
-    ({ status, stdout, stderr, stopped }) => {
-      const version = status === 0 ? stdout.match(/\d+\.\d+\.\d+/)?.[0] : undefined;
-      if (version?.startsWith("4.11.")) return { version };
-      const why = version ? `this is Dafny ${version}` : `Dafny could not be run (${(stdout + stderr).trim().split("\n")[0] || stopped || "no version printed"})`;
-      return { version, problem: `${why}: ${NEEDS_DAFNY}` };
-    },
-    (e: Error) => ({ problem: `Dafny could not be run (${e.message}): ${NEEDS_DAFNY}` })));
 }

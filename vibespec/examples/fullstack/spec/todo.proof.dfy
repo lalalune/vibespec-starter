@@ -1,3 +1,7 @@
+// sameTodos walks the first list with a counter and compares each element
+// with the element of the second list at that position. Comparing a list with
+// itself, the walk stays true from any position to the end.
+
 lemma SameFrom(rest: seq<Todo>, xs: seq<Todo>, k: int)
   requires 0 <= k <= |xs| && rest == xs[k..]
   ensures Std.Collections.Seq.FoldLeft((acc: Walk, t: Todo) => Walk((acc.ok && sameAt(xs, acc.i, t)), (acc.i + 1)), Walk(true, k), rest).ok

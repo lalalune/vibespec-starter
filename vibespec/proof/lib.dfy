@@ -1,5 +1,21 @@
-// General lemmas proof files call as ProofLib.<Name>(...): see AGENTS.md,
-// "Proof files", and vibespec/prove.ts (checkNames, libraryFor).
+// General lemmas for proof files (spec/<name>.proof.dfy, src/<path>.proof.dfy).
+// The tools add this module to every proof unit that has a proof file and
+// verify it there; call its lemmas as ProofLib.<Name>(...).
+//
+// Two facts about Dafny 4.11 shape it:
+// - Std.Collections.Seq.Filter is opaque and reads the heap. Inside a `->`
+//   lambda (such as the body of an All in a generated rule) it is evaluated in
+//   a different heap than in a lemma, so a fact proved about it in a lemma never
+//   meets the term in the rule. ProofLib.Filter has no reads clause: state facts
+//   about it, and bridge to the generated term with an `assert` that unfolds
+//   the generated function (see AGENTS.md, "Proof files").
+// - Dafny has no function extensionality. A lambda copied verbatim from
+//   gen/proof/<unit>/<unit>.dfy is the same term as the generated one; a lambda
+//   that says the same thing in other words, or captures other variables, is not.
+//
+// Dafny makes the module's import visible as ProofLib.Seq; proof files may not
+// use it (vibespec/prove.ts refuses any ProofLib.<name> this file does not declare),
+// since the standard library holds axioms.
 module ProofLib {
   import Std.Collections.Seq
 
@@ -243,6 +259,30 @@ module ProofLib {
     if |xs| > 0 {
       assert (xs + [last])[1..] == xs[1..] + [last];
       FoldLeftAppend(f, f(init, xs[0]), xs[1..], last);
+    }
+  }
+
+  /** A fold whose step never lowers the accumulator ends at or above where it started. */
+  lemma FoldLeftInflationary<T>(f: (int, T) -> int, init: int, xs: seq<T>)
+    requires forall a, x :: f(a, x) >= a
+    ensures Seq.FoldLeft(f, init, xs) >= init
+    decreases |xs|
+  {
+    if |xs| > 0 {
+      FoldLeftInflationary(f, f(init, xs[0]), xs[1..]);
+    }
+  }
+
+  /** A fold whose step never lowers the accumulator and never ends below key(x) ends at or above every key. */
+  lemma FoldLeftAboveEach<T>(f: (int, T) -> int, key: T -> int, init: int, xs: seq<T>)
+    requires forall a, x :: f(a, x) >= a && f(a, x) >= key(x)
+    ensures forall i :: 0 <= i < |xs| ==> Seq.FoldLeft(f, init, xs) >= key(xs[i])
+    decreases |xs|
+  {
+    if |xs| > 0 {
+      FoldLeftAboveEach(f, key, f(init, xs[0]), xs[1..]);
+      FoldLeftInflationary(f, f(init, xs[0]), xs[1..]);
+      assert forall i :: 1 <= i < |xs| ==> xs[i] == xs[1..][i - 1];
     }
   }
 

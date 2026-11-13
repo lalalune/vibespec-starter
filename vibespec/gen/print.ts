@@ -47,19 +47,8 @@ export interface Scope {
   proof: boolean;
 }
 
-/**
- * `every`, `some`, `includes` and `listMap` are not Quint: the tangler expands them into Quint's built-in `foldl`
- * (expandListHelpers in parse.ts), marking the accumulator `std_<helper>_<n>` so that `print` writes `method`, the
- * native array method, or `includes`. They cannot be Quint definitions that take a lambda, because Quint evaluates such
- * a definition wrongly when it is used inside its own argument, as in `tasks.some(t => t.parents.some(...))`.
- */
-export const LIST_HELPERS: Record<string, { init: string; step: (acc: string, body: string) => string; method?: string }> = {
-  every: { init: "true", step: (acc, body) => `${acc} and (${body})`, method: "every" },
-  some: { init: "false", step: (acc, body) => `${acc} or (${body})`, method: "some" },
-  listMap: { init: "List()", step: (acc, body) => `${acc}.append(${body})`, method: "map" },
-  includes: { init: "false", step: (acc, body) => `${acc} or ${body}` },
-};
-const LIST_HELPER = new RegExp(`^std_(${Object.keys(LIST_HELPERS).join("|")})_`);
+/** Native array methods for the list helpers the tangler marks (LIST_HELPERS in vibespec/gen.ts). */
+const LIST_METHODS: Record<string, string> = { every: "every", some: "some", listMap: "map" };
 
 /**
  * `m.getOr(k, d)`, `xs.nthOr(i, d)` and `xs.removeAt(i)` are not Quint either. The tangler renames each call to
@@ -219,6 +208,7 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
         const { base, updates } = unroll(e);
         return [typed(`{ ...${ex(base, ATOM)}, ${updates.join(", ")} }`, e), ATOM];
       }
+      // Lists are arrays.
       // An empty list carries its type, which TypeScript cannot infer where it is a fold's starting value.
       case "List": return [a.length ? `[${a.map((x) => ex(x, TERNARY)).join(", ")}]` : `([] as ${tsType(typeOf(e.id))})`, ATOM];
       case "append": case "concat": return [joined(e), ATOM];
@@ -230,10 +220,9 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
       case "foldl": {
         // A fold whose accumulator is marked is one of the list helpers, expanded by the tangler.
         const [acc, item] = a[2].kind === "lambda" ? a[2].params : [];
-        const which = acc?.name.match(LIST_HELPER)?.[1] ?? "";
-        const method = LIST_HELPERS[which]?.method;
+        const which = acc?.name.match(/^std_(every|some|listMap|includes)_/)?.[1];
         const inner = a[2].expr?.args?.[1];
-        if (method) return [`${recv()}.${method}(${arrow([item], inner)})`, ATOM];
+        if (LIST_METHODS[which]) return [`${recv()}.${LIST_METHODS[which]}(${arrow([item], inner)})`, ATOM];
         if (which === "includes") {
           const [v, t] = [inner.args[1], typeOf(inner.args[1].id)];
           return [isScalar(t) || (comparable(v) && proof) ? `${recv()}.includes(${ex(v, TERNARY)})` : `${recv()}.some((x0: ${tsType(t)}) => ${equal("x0", ex(v, TERNARY))})`, ATOM];
@@ -270,13 +259,16 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
       const last = arms.pop()!;
       return [arms.reduceRight((rest, arm) => `${arm.test} ? ${arm.result} : ${rest}`, last.result), arms.length ? TERNARY : OR];
     }
-    const [x, y] = members(op, a);
-    if ((op === "contains" || op === "in") && x.opcode === "keys") return [`(${mapKey(x.args[0], y)}) in ${ex(x.args[0], COMPARE + 1)}`, COMPARE];
+    if ((op === "contains" || op === "in") && (op === "in" ? a[1] : a[0]).opcode === "keys") {
+      const [keys, key] = op === "in" ? [a[1], a[0]] : [a[0], a[1]];
+      return [`(${mapKey(keys.args[0], key)}) in ${ex(keys.args[0], COMPARE + 1)}`, COMPARE];
+    }
     if (SET_OPS[op]) {
       // A set is an array that never holds the same value twice. Only simple values can be in one.
-      const t = resolve(typeOf(x.id));
+      const t = resolve(typeOf(op === "in" ? a[1].id : a[0].id));
       if (t.kind !== "set") return fail(`\`${op}\` is supported on sets only`);
       const el = tsType(setElem(t));
+      const [x, y] = op === "in" ? [a[1], a[0]] : [a[0], a[1]];
       // What `map` makes is a set too, so it is held to the same rule as what it maps.
       return [SET_OPS[op]({ a: ex(x, ATOM), b: y && ex(y, y.kind === "lambda" ? ARROW : ATOM), el, out: op === "map" ? tsType(setElem(resolve(typeOf(e.id)))) : el }), ATOM];
     }
