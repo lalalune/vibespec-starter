@@ -3,6 +3,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import { profile, type TestProfile } from "./testing/profile.ts";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
@@ -121,13 +122,6 @@ async function drive(root: string, machine: Machine, command: string): Promise<s
   } finally { await program.end(); }
 }
 
-/** `FUZZ_RUNS` or `FUZZ_SEED`, a whole number of at least `least`, or `fallback` where it is not set. */
-function budget(name: string, fallback: number, least: number) {
-  const text = process.env[name] || String(fallback), n = Number(text);
-  if (!/^\d+$/.test(text) || !Number.isSafeInteger(n) || n < least) throw new Error(`${name} must be a whole number, ${least} or more, but is ${JSON.stringify(text)}`);
-  return n;
-}
-
 /**
  * The machines whose Effect adapter `apply` the package's `src/` imports: a shell that keeps the machine's state
  * itself, which only a driver compares with the spec. The generated `machine()` needs none: it is the spec's own.
@@ -162,10 +156,10 @@ export const driver: Driver = {
  * Run `test/drivers/<name>.ts` of the package `root` in a Node of its own that runs VibeLang (`main` below), and say
  * what it found: every saved counterexample, then the journeys, the probes and the walks.
  */
-async function driven(root: string, name: string, machine: Machine): Promise<{ problem?: string; summary?: string }> {
+async function driven(root: string, name: string, machine: Machine, mode: TestProfile): Promise<{ problem?: string; summary?: string }> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "spec-driver-")), found = path.join(dir, "found.json");
   fs.writeFileSync(found, JSON.stringify(machine.found));
-  const r = await exec(process.execPath, ["--import", "vibelang/register", import.meta.filename, name, found], root).finally(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const r = await exec(process.execPath, ["--import", "vibelang/register", import.meta.filename, name, found, mode], root).finally(() => fs.rmSync(dir, { recursive: true, force: true }));
   const said = r.stdout.trimEnd().split("\n").at(-1) ?? "";
   let verdict: { problem?: string; summary?: string } | undefined;
   try { verdict = JSON.parse(said); } catch { /* not the last line it writes, so the driver never finished */ }
@@ -173,13 +167,13 @@ async function driven(root: string, name: string, machine: Machine): Promise<{ p
 }
 
 /** In the driver's own Node, in its package: replay what was saved, then check; a new disagreement is saved. */
-async function main(name: string, foundFile: string) {
+async function main(name: string, foundFile: string, mode: TestProfile) {
   const root = process.cwd(), saved = `${COUNTEREXAMPLES}/${name}`;
   const found: Found<any> = JSON.parse(fs.readFileSync(foundFile, "utf8"));
   const oracle: Oracle<any, any> = await import(pathToFileURL(path.join(root, "gen", `${name}.ts`)).href);
   const { driver, options = {} } = await import(pathToFileURL(path.join(root, DRIVERS, `${name}.ts`)).href);
   if (!driver) throw new Error(`${DRIVERS}/${name}.ts exports no \`driver\``);
-  const seed = budget("FUZZ_SEED", 1, 0), walks = Math.min(options.walks ?? Infinity, budget("FUZZ_RUNS", 1, 1));
+  const { seed, runs } = profile(mode), walks = Math.min(options.walks ?? Infinity, runs);
   try {
     const files = fs.existsSync(path.join(root, saved)) ? fs.readdirSync(path.join(root, saved)).filter((f) => f.endsWith(".json")).sort() : [];
     for (const file of files) await replay(oracle, found, driver, JSON.parse(fs.readFileSync(path.join(root, saved, file), "utf8")).trace, options, `${saved}/${file}`);
@@ -198,7 +192,7 @@ async function main(name: string, foundFile: string) {
 }
 
 if (import.meta.main) {
-  const verdict = await main(process.argv[2], process.argv[3]).then((summary) => ({ summary }), (error) => ({ problem: error instanceof Error ? error.message : String(error) }));
+  const verdict = await main(process.argv[2], process.argv[3], process.argv[4] === "nightly" ? "nightly" : "normal").then((summary) => ({ summary }), (error) => ({ problem: error instanceof Error ? error.message : String(error) }));
   // The last line is the verdict, whatever the driver wrote; a driver may leave a server or a timer running.
   process.stdout.write(`\n${JSON.stringify(verdict)}\n`, () => process.exit());
 }
@@ -207,7 +201,7 @@ if (import.meta.main) {
  * Every driver, configured program and recorded trace of the package `root`, run afresh: outside service state is not
  * part of a source-code cache key. A shell with no driver gets one to fill in.
  */
-export async function conformance(root: string, machines: Map<string, Machine>, scripts: Record<string, string>): Promise<Reported<"traces">[]> {
+export async function conformance(root: string, machines: Map<string, Machine>, scripts: Record<string, string>, mode: TestProfile = "normal"): Promise<Reported<"traces">[]> {
   const results: Reported<"traces">[] = [];
   const add = (where: string, machine: Machine | undefined, problem: string | undefined, subject: string) => results.push([!problem, "traces",
     `${where}: ${problem ? /^(?:conformance to|trace|line) /.test(problem) ? "the program departs from the spec" : "the run did not get as far as comparing" : `${subject} agree with ${machine!.model.source}${machine!.found.outputShape ? "; effects checked where out is reported" : ""}`}`,
@@ -221,7 +215,7 @@ export async function conformance(root: string, machines: Map<string, Machine>, 
   }
   for (const file of filesUnder(root, DRIVERS).filter((f) => /^test\/drivers\/\w+\.ts$/.test(f))) {
     const name = path.basename(file, ".ts"), machine = machines.get(name);
-    const { problem, summary } = machine ? await driven(root, name, machine) : { problem: "no state-machine spec has this name" };
+    const { problem, summary } = machine ? await driven(root, name, machine, mode) : { problem: "no state-machine spec has this name" };
     add(file, machine, problem, summary!);
   }
   const dir = path.join(root, TRACES);

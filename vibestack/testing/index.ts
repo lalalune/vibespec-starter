@@ -3,3 +3,4 @@
 // `Random.withSeed(seed)` for fixed randomness, and the TestClock that `it.effect` provides.
 export * from "./conformance.ts";
 export * from "./properties.ts";
+export * from "./profile.ts";

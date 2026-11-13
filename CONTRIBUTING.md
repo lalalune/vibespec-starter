@@ -125,28 +125,41 @@ LemmaScript, Node and tool versions. It also remembers a package's passing
 test run under a hash of what its tests read.
 
 Turborepo caches `gen`, `build`, `typecheck`, tests, selftest and lint according
-to `turbo.json`. `FUZZ_RUNS` and `FUZZ_SEED` are cache inputs for test tasks;
-changing a budget does not invalidate unrelated tasks. `check` is never
-skipped whole: it runs the real application in `traces`. A check that follows
-Turborepo's test task does not run that test script twice. Standalone examples
-install and check separately, outside the workspace cache.
+to `turbo.json`. The task entry point fingerprints Node, VibeLang, Dafny, Z3
+and their runtime files before Turbo hashes its inputs. Generated stories,
+browser build artifacts, compiler declarations and successful test receipts
+are restored with their owning task. `check` is never skipped whole: it runs
+the real application in `traces`. Standalone examples install and check
+separately, outside the workspace cache.
+
+A complete passing Vitest run records its input fingerprint. `check` reuses
+that result only while its source, generated core, transitive workspace
+inputs, lockfile and fixed profile match. Filtered, exclusive, interrupted
+and failed runs record no complete result. Acceptance and nightly checks
+bypass these receipts and the inner verification cache.
+
+The spec cache retains recent branch and profile results for 30 days within
+256 MiB, evicting the oldest unused results first. A check's own entries are
+preserved. Proof identity covers the verifier and solver contents, so moving
+an identical installation does not invalidate it and replacing an executable
+with the same version does.
 
 ### Seeds and budgets
 
-Simulation is seeded from the model, so it repeats exactly. When supplied,
-`FUZZ_SEED` is mixed into the simulation seed. Property tests and driver walks
-use these budgets:
+`vibestack/testing/profile.ts` is the one source of the fixed profiles:
 
-| Run | `FUZZ_RUNS` | `FUZZ_SEED` |
-|---|---|---|
-| Property test by default | 100 values per property | 1 |
-| Driver by default | 1 random walk after its journeys, capped by `options.walks` | 1 |
-| Pull request into `develop` | 100 | unset |
-| Pull request into `main`; push to `develop` or `main` | 1000 | unset |
-| Nightly (`fuzz.yml`) | 20000 | workflow run id, or the supplied seed |
+| Invocation | Values per property and maximum driver walks | Seed |
+|---|---:|---:|
+| normal local checks and every pull request or push | 1,000 | 1 |
+| `pnpm all check -- --nightly` | 20,000 | 2 |
 
-Failures print their seed and shrunk counterexample. Driver counterexamples
-are saved for replay; see [SPEC.md, "Conformance"](SPEC.md#conformance).
+A driver's `options.walks` can impose a smaller maximum for an expensive
+journey. Quint mixes the selected profile's seed into its model-derived
+seeds. The nightly command always performs fresh verification; it does not
+reuse an earlier nightly pass. `FUZZ_RUNS` and `FUZZ_SEED` do not configure
+these checks. A failing property prints its fixed-profile replay command;
+a driver's shrunk counterexample is saved and replayed on every later run
+([SPEC.md, "Conformance"](SPEC.md#conformance)).
 
 ### Which test, for what
 
@@ -192,11 +205,20 @@ scopes are in `knip.config.js`, `.madgerc` and `eslint.config.js`.
 | When | Runs |
 |---|---|
 | Pull request or push to `develop` or `main` | `pnpm verify --continue`: build, types, tests, browser tests, all checks, ESLint, Stylelint, Knip, Madge and selftest |
-| Pull request into `main`; push to `develop` or `main` | The same work with the larger budgets above |
-| Nightly | Every check with a new seed; saved counterexamples become a pull request into `develop` |
+| Nightly | Every check fresh under the fixed nightly profile; saved counterexamples become a pull request into `develop` |
 
-CI restores pnpm's store, Turborepo's cache and `.spec-cache/` from previous
-runs. Superseded pull-request runs are cancelled; each push is checked to the
-end. Proof outputs are uploaded, and failing CI runs retain counterexamples
-and browser traces. There is no remote cache beyond the restored local cache.
+Each row's budget is in [Seeds and budgets](#seeds-and-budgets). A failing
+run keeps `test/counterexamples/` and `test/__traces__/` as an artifact.
+
+Each run restores pnpm's store, every `.spec-cache/`, and Quint's evaluator.
+Turborepo shares task results through the private Cloudflare/R2 cache.
+The task entry point disables Turbo telemetry. Selftest waits for the root and
+Studio test tasks so those integration journeys do not compete with it.
+Pull requests read shared results; only branch pushes receive the publishing
+credential, protected by the `turbo-cache-publish` environment's branch
+policy. Newer runs replace older runs for the same branch or pull request.
+Local `pnpm` task commands read the operator's cache credential from
+`~/.config/vibestack/turbo-cache.json`, outside the repository. Credentials
+are never part of a task fingerprint.
+
 Standalone examples run manually with `pnpm examples`, outside CI.

@@ -2,8 +2,8 @@ name: ci
 
 # Every run is `pnpm verify`, the tools' own self-test included; Turborepo and
 # spec skip what the change does not reach, from the cache of the last run.
-# What is headed for main, and every push to develop or main, also gets larger
-# property budgets. Standalone examples are checked manually.
+# The fixed normal profile is the same locally and in CI. Standalone examples
+# are checked manually.
 on:
   pull_request:
     branches: [develop, main]
@@ -11,23 +11,26 @@ on:
     branches: [develop, main]
 
 concurrency:
-  # A newer commit on a pull request replaces its run; every push to develop or main is checked to the end.
-  group: ci-${{ github.event.pull_request.number || github.sha }}
+  group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 env:
   TURBO_TELEMETRY_DISABLED: "1"
-  FULL: ${{ github.event_name == 'push' || github.base_ref == 'main' }}
+
+permissions:
+  contents: read
 
 jobs:
   verify:
     runs-on: ubuntu-latest
+    environment: ${{ github.event_name == 'push' && 'turbo-cache-publish' || 'turbo-cache-read' }}
+    env:
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+      TURBO_CACHE: ${{ github.event_name == 'push' && 'local:rw,remote:rw' || 'local:rw,remote:r' }}
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
       - run: pnpm verify --continue
-        env:
-          FUZZ_RUNS: ${{ env.FULL == 'true' && '1000' || '100' }}
       - if: always()
         uses: actions/upload-artifact@v7
         with:

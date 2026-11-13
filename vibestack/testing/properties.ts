@@ -3,15 +3,13 @@
 import { expect, it } from "@effect/vitest";
 import { Arbitrary, Effect, Equal, Schema } from "effect";
 import { Base64 } from "effect/encoding";
+import { profile, type TestProfile } from "./profile.ts";
 
-function budget(name: string, fallback: number, least: number) {
-  const text = globalThis.process?.env[name] ?? String(fallback), n = Number(text);
-  if (!/^\d+$/.test(text) || !Number.isSafeInteger(n) || n < least) throw new Error(`${name} must be a whole number, ${least} or more, but is ${JSON.stringify(text)}`);
-  return n;
-}
+// Vite supplies MODE in a test worker; the generator also imports this module directly in Node.
+const mode: TestProfile = (import.meta as ImportMeta & { env?: { MODE?: string } }).env?.MODE === "nightly" ? "nightly" : "normal";
 
-/** How many values a property sees and the seed they come from: `FUZZ_RUNS` and `FUZZ_SEED`. */
-export const fuzz = { runs: budget("FUZZ_RUNS", 100, 1), seed: budget("FUZZ_SEED", 1, 0) };
+/** The fixed profile selected by `vitest run`, or by `vitest run --mode nightly`. */
+export const fuzz = profile(mode);
 
 /** Where a property's values come from. */
 export type Source<A> = Schema.Schema<A> | Arbitrary.Arbitrary<A>;
@@ -31,7 +29,7 @@ export const holds = <A>(source: Source<A>, property: (value: A) => boolean, opt
     const failure = Arbitrary.formatCheckFailure(result);
     if (failure === undefined) return Effect.void;
     const file = expect.getState().testPath;
-    const replay = `const path = require("node:path"); const cli = path.join(path.dirname(require.resolve("vitest/package.json")), "vitest.mjs"); const run = require("node:child_process").spawnSync(process.execPath, [cli, ...${JSON.stringify(["run", ...file ? [file] : []])}], { stdio: "inherit", env: { ...process.env, FUZZ_SEED: ${JSON.stringify(String(used.seed))}, FUZZ_RUNS: ${JSON.stringify(String(used.runs))} } }); if (run.error) throw run.error; process.exit(run.status ?? 1);`;
+    const replay = `const path = require("node:path"); const cli = path.join(path.dirname(require.resolve("vitest/package.json")), "vitest.mjs"); const run = require("node:child_process").spawnSync(process.execPath, [cli, ...${JSON.stringify(["run", ...file ? [file] : [], "--mode", mode === "nightly" ? "nightly" : "test"])}], { stdio: "inherit" }); if (run.error) throw run.error; process.exit(run.status ?? 1);`;
     const command = `node -e "eval(Buffer.from('${Base64.encode(replay)}','base64').toString())"`;
     return Effect.die(new Error(`${failure}\nSeed: ${used.seed}\nRerun: ${command}`));
   }));

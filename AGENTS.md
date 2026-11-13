@@ -162,8 +162,9 @@ How `pnpm check` runs them, in its `tests` stage:
   with the package manager `packageManager` or the nearest lock file names.
   The exit code decides; a failure shows the runner's list of failures, at
   most 200 lines of it. A pass is remembered until something the tests read
-  changes, and a `check` that Turborepo runs straight after the package's
-  `test` task does not run the script again.
+  changes, and a complete passing Vitest run records a receipt that lets `check`
+  reuse the same result. Filtered or failed runs supply no receipt; acceptance
+  and nightly checks always run afresh.
 - **One configuration.** The `test` script is `vitest run`, on
   `project({ root: import.meta.dirname })` from `vibestack/testing/vitest`, as
   `spec init` writes it; a package with `test/` and no `test` script gets

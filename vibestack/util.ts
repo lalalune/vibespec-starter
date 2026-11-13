@@ -5,6 +5,7 @@ import { exec } from "./run.ts";
 import { heading, isStd, type Spec } from "./parse.ts";
 import type { Result } from "./spec.ts";
 import ts from "typescript";
+import { profile, type TestProfile } from "./testing/profile.ts";
 
 export const digest = (text: string) => createHash("sha256").update(text).digest("hex");
 /** A hash of several texts, in which no two lists of texts give the same input. */
@@ -96,7 +97,7 @@ export type Remember = <T>(fingerprint: string, run: () => Promise<T>, keep: (re
  * directory. A pass is remembered until something the tests read changes; in a `check` that Turborepo runs, which
  * waits for the package's `test`, the script has just run and is not run again.
  */
-export async function tests(checking: string, dir: string, specs: Spec[], remember: Remember): Promise<Reported<"tests">[]> {
+export async function tests(checking: string, dir: string, specs: Spec[], remember: Remember, mode: TestProfile = "normal", fresh = false): Promise<Reported<"tests">[]> {
   const said: Reported<"tests">[] = [];
   const root = path.join(checking, dir);
   try {
@@ -114,15 +115,20 @@ export async function tests(checking: string, dir: string, specs: Spec[], rememb
       script = "vitest run";
     }
     if (!script) return said;
-    if (process.env.TURBO_HASH && process.env.npm_lifecycle_event === "check") {
-      said.push([true, "tests", "pass: Turborepo ran the test script just before this check"]);
-      return said;
-    }
     const manager = packageManager(root);
-    said.push(await remember(testInputs(checking, dir, manager.lock), async (): Promise<Reported<"tests">> => {
+    const fingerprint = testInputs(root, mode);
+    if (!fresh) {
+      try {
+        if (JSON.parse(fs.readFileSync(testReceipt(root, mode), "utf8")).fingerprint === fingerprint) {
+          said.push([true, "tests", "pass: the test runner recorded success for these inputs"]);
+          return said;
+        }
+      } catch { /* no matching successful test run */ }
+    }
+    said.push(await remember(fingerprint, async (): Promise<Reported<"tests">> => {
       const { NODE_TEST_CONTEXT: _, ...env } = process.env;
       // The root that is checking: spec.ts refuses a check of it, or of a package below it, started from these tests.
-      const t = await exec(manager.name, ["run", "test"], root, { ...env, SPEC_TESTS: fs.realpathSync(checking) });
+      const t = await exec(manager.name, ["run", "test", ...(mode === "nightly" ? ["--mode", "nightly"] : [])], root, { ...env, SPEC_TESTS: fs.realpathSync(checking) });
       const ok = t.status === 0 && !t.stopped;
       // From the runner's list of failures, Vitest's or Node's, at most 200 lines of it; else the end of what it said.
       const lines = `${t.stdout}${t.stderr}`.split("\n");
@@ -150,21 +156,32 @@ function addVitest(root: string): string {
  * A fingerprint of what a package's tests read: its files and the top of its gen/ (an owner's is mirrored from the
  * root's), the workspace packages it depends on, the lock file and the fuzzing budget.
  */
-function testInputs(checking: string, dir: string, lock?: string): string {
-  const root = path.join(checking, dir);
-  const pkg = manifest(root);
-  const linked = Object.entries({ ...pkg.dependencies, ...pkg.devDependencies }).filter(([, v]) => String(v).startsWith("workspace:"))
-    .map(([name]) => path.join(root, "node_modules", name)).filter((d) => fs.existsSync(d)).map((d) => fs.realpathSync(d));
-  const hash = createHash("sha256").update(`${process.env.FUZZ_RUNS}\0${process.env.FUZZ_SEED}\0`);
-  for (const from of [root, ...linked]) {
+export function testInputs(root: string, mode: TestProfile = "normal"): string {
+  const hash = createHash("sha256").update(JSON.stringify(["tests-v2", process.versions.node, process.platform, process.arch, profile(mode)]));
+  const pending = [{ directory: root, name: "." }];
+  const seen = new Set<string>();
+  for (const { directory, name } of pending) {
+    const from = fs.realpathSync(directory);
+    if (seen.has(from)) continue;
+    seen.add(from);
+    hash.update(JSON.stringify(name));
+    const pkg = manifest(from);
+    for (const [dependency, version] of Object.entries({ ...pkg.dependencies, ...pkg.devDependencies }).sort(([a], [b]) => a.localeCompare(b))) {
+      const directory = path.join(from, "node_modules", dependency);
+      if (String(version).startsWith("workspace:") && fs.existsSync(directory)) pending.push({ directory, name: dependency });
+    }
     const gen = path.join(from, "gen");
     const top = fs.existsSync(gen) ? fs.readdirSync(gen, { withFileTypes: true }).filter((e) => e.isFile()).map((e) => `gen/${e.name}`) : [];
-    for (const file of [...packageFiles(from, () => true), ...top].map((f) => path.join(from, f)))
-      hash.update(`${path.relative(checking, file)}\0`).update(fs.readFileSync(file));
+    for (const file of [...packageFiles(from, () => true, "", true), ...top].map((f) => path.join(from, f)))
+      hash.update(`${path.relative(from, file)}\0`).update(fs.readFileSync(file));
   }
+  const { lock } = packageManager(root);
   if (lock) hash.update(fs.readFileSync(lock));
   return hash.digest("hex");
 }
+
+/** A successful complete Node test run, also restored by the Turbo test task. */
+export const testReceipt = (root: string, mode: TestProfile = "normal") => path.join(root, ".cache", `test-result-${mode}.json`);
 
 /** Where code cites a story or rule (AGENTS.md, "Tests"). */
 const CITATION = /(?<![\w/.-])(spec\/(?:[A-Za-z0-9]+\/)*[A-Za-z0-9]+\.md), "([^"]+)"/g;
@@ -184,12 +201,14 @@ export function danglingCitations(root: string, specs: Spec[], dir = ""): string
  * A package's files that `keep` accepts, as paths from it: not gen/, build output, dependencies or hidden
  * directories (such as `.cache/`), nor the packages nested in it, which are checked on their own.
  */
-function packageFiles(root: string, keep: (name: string) => boolean, dir = ""): string[] {
+function packageFiles(root: string, keep: (name: string) => boolean, dir = "", nested = false): string[] {
   return fs.readdirSync(path.join(root, dir), { withFileTypes: true }).flatMap((e) => {
     const rel = dir ? `${dir}/${e.name}` : e.name;
+    if (e.name === ".git") return [];
     if (e.isFile()) return keep(e.name) ? [rel] : [];
-    const skip = /^(node_modules|dist|build|out|coverage|\..*)$/.test(e.name) || rel === "gen" || fs.existsSync(path.join(root, rel, "package.json"));
-    return e.isDirectory() && !skip ? packageFiles(root, keep, rel) : [];
+    const skip = /^(node_modules|dist|build|out|coverage|storybook-static|__traces__|__screenshots__|\..*)$/.test(e.name)
+      || (e.name === "gen" && fs.existsSync(path.join(root, rel, "package.json"))) || (!nested && fs.existsSync(path.join(root, rel, "package.json")));
+    return e.isDirectory() && !skip ? packageFiles(root, keep, rel, nested) : [];
   }).sort();
 }
 const packageCode = (root: string) => packageFiles(root, (name) => /\.(?:[cm]?[jt]sx?|vibex?)$/.test(name) && !SIDECAR.test(name));

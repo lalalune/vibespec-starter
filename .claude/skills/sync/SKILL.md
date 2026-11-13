@@ -45,7 +45,7 @@ Give up and report after five rounds on the same failure.
 | `review` … **contract removed** | A `src/` file lost its last `//@` or was deleted. Check that nothing still relies on what it proved. |
 | `model` | Fix at the reported `spec/…:line:col`. AGENTS.md lists what Quint is supported and which names are refused. |
 | `always` with a trace | Model → rule. The trace reaches a state that breaks the named rule; its last lines name the event and its guard. Decide whether the user would want that trace forbidden. If so, write the **reason** as a new rule and guard, such as "a payment may not exceed the balance". Only if you cannot find the reason, use the fallback the report offers: refuse the event when its result would break the rule. If the trace is fine and the `always` rule is wrong, fix the rule and say so. |
-| `always` … `(FUZZ_SEED=…)` | A nightly run's seed found it. Treat it as any other trace; the printed command repeats it. |
+| `always` in a nightly check | The fixed nightly profile found it. Treat it as any other trace; the printed command repeats it. |
 | `always` … "the law … is false for" | The law or the function is wrong for those arguments. Fix whichever does not say what the prose says. |
 | `always` … "the simulator could not run" | A definition failed while being evaluated: usually a list index out of range, a missing map key or a division by zero. Guard it in the definition that uses it. |
 | `sometimes` not reached | A guard is too strict, a transition is missing, or the goal needs values the simulator does not try (define `<param>Values`). |
@@ -73,7 +73,7 @@ Give up and report after five rounds on the same failure.
 | `traces` … **saved the counterexample** `test/counterexamples/…` | A journey or walk disagreed, and its shrunk trace is now replayed first on every run. Decide which side is wrong: the application, if the spec says what the user wants; else the rule, and say so. Keep the file and list it in your report: it is a regression test. |
 | `traces` … **the run did not get as far as comparing** … "fill in reset, dispatch and observe" | `check` wrote this driver because `src/` keeps the machine's state. Write `reset`, `dispatch` and `observe` on the application's own entry point (SPEC.md, "Conformance"), and `receive` if the shell decodes untrusted input. |
 | `traces` … **the run did not get as far as comparing** … "the spec has outgrown" | A saved counterexample sends an event the spec no longer has. Rewrite its events to what the spec now calls them, or delete the file if what it caught is gone, and say which in your report. |
-| `traces` … **the run did not get as far as comparing**, otherwise | The driver could not run: it threw, exports no `driver`, did not finish, or is named after no state machine, or `FUZZ_RUNS` or `FUZZ_SEED` is not a whole number. The lines under it say which; fix that. |
+| `traces` … **the run did not get as far as comparing**, otherwise | The driver could not run: it threw, exports no `driver`, did not finish, or is named after no state machine. The lines under it say which; fix that. |
 | "another check or accept is running" | Wait for that process and run again. If it no longer exists, delete the lock file the message names. |
 
 ## Rules for what you write

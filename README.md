@@ -300,8 +300,8 @@ current one. Installed as a package, use `pnpm exec spec <command> [<dir>]`.
 | 1 | a `✗`, or an error |
 | 2 | bad arguments; prints the usage line |
 
-CI runs `pnpm verify` on each pull request and push, with larger property
-budgets for what is headed for `main`, and a nightly run with a new seed
+CI runs `pnpm verify` on each pull request and push with the same fixed
+profile as local checks, and a fresh nightly run with a larger fixed profile
 ([CI](CONTRIBUTING.md#ci)).
 
 ## Examples

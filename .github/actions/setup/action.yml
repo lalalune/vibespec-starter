@@ -17,13 +17,12 @@ runs:
     - uses: actions/cache@v6
       with:
         path: |
-          .turbo
           **/.spec-cache
           ~/.quint
           !**/node_modules/**
-        key: tasks-${{ runner.os }}-${{ github.job }}-${{ github.sha }}
+        key: spec-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', 'pnpm-lock.yaml') }}-${{ github.sha }}
         restore-keys: |
-          tasks-${{ runner.os }}-${{ github.job }}-
+          spec-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', 'pnpm-lock.yaml') }}-
     - run: pnpm install --frozen-lockfile
       shell: bash
     # Quint's first-run downloader uses the unauthenticated GitHub API.

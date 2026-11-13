@@ -2,19 +2,21 @@
 // The spec pipeline and command line. Parsing, review, generation, simulation and proof each have one implementation.
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Model } from "./gen.ts";
 import { conformance, conformanceFound, type Machine, type Simulated } from "./conform.ts";
 import { ensuresOf, LIB_FILE, dafnyVersion, proofPaths, prove, type Offered, type Proof } from "./prove.ts";
-import { run } from "./run.ts";
+import { bin, run } from "./run.ts";
 import { readSpecs, badSpecName, specFiles, specName, importedMeanings, isStd, located, type Spec } from "./parse.ts";
 import { contracts, pending, pendingKey, pendingContracts, acceptAllReviews, pendingSpecs, migrateLocks, moved, showPending, ledgerFile, readLedger, writeLedger, type Pending, type Accepted, type Lock } from "./review.ts";
-import { entry, remembered, collectGarbage, type Memory } from "./cache.ts";
+import { cacheCredentials, entry, remembered, collectGarbage, toolchainFingerprint, type Memory } from "./cache.ts";
 import { generated, mirrorGen, typecheckAll, proofUnits, proofFiles, strayProofFiles } from "./units.ts";
 import { SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, LASSO_TRACES, STEPS, DEPTHS, SEARCHED, simulate, search, firstBreak, lasso, showTrace, replay, standIn } from "./simulate.ts";
 import { sha, indent, packageScripts, tests, VITEST_CONFIG, readSrc, codeDirs, codeDirOf, projectRoot, allDone, nodeRunsVibelang, type Reported, type SrcFile } from "./util.ts";
+import { profile, type TestProfile } from "./testing/profile.ts";
 
 export { readSpecs, parseSpec, expandListHelpers, type Spec, type Rule, type Story } from "./parse.ts";
 export { pending, pendingKey, pendingContracts, acceptReviews, acceptContracts, dependencies, type Lock, type Pending } from "./review.ts";
@@ -93,7 +95,7 @@ function lockProject(root: string): () => void {
  * proved; either way nothing remembered from an earlier run is used. Only one
  * check or accept runs in a project at a time; another is refused.
  */
-export async function check(root: string, accept: false | "reviews" | "unproved" = false, log: (result: Result) => void = () => {}): Promise<{ ok: boolean; results: Result[]; next: string }> {
+export async function check(root: string, accept: false | "reviews" | "unproved" = false, log: (result: Result) => void = () => {}, mode: TestProfile = "normal"): Promise<{ ok: boolean; results: Result[]; next: string }> {
   // The tests stage names the project that is checking: checking it again from its tests, or from an owner's, which are
   // below it, would wait on its lock or rewrite the gen/ those tests read.
   const fromTests = process.env.SPEC_TESTS ? path.relative(process.env.SPEC_TESTS, fs.realpathSync(root)) : undefined;
@@ -101,22 +103,23 @@ export async function check(root: string, accept: false | "reviews" | "unproved"
   const release = lockProject(root);
   try {
     const results: Result[] = [];
-    const ok = await checkLocked(root, accept, (r) => { results.push(r); log(r); });
+    const ok = await checkLocked(root, accept, (r) => { results.push(r); log(r); }, mode);
     return { ok, results, next: nextStep(results) };
   } finally {
     release();
   }
 }
 
-async function checkLocked(root: string, accept: false | "reviews" | "unproved", log: (result: Result) => void): Promise<boolean> {
+async function checkLocked(root: string, accept: false | "reviews" | "unproved", log: (result: Result) => void, mode: TestProfile): Promise<boolean> {
+  const { seed } = profile(mode);
   let allOk = true;
   const report = (ok: boolean, stage: Result["stage"], summary: string, detail = "", where?: string, keepDetail = false) => {
     allOk &&= ok;
     log({ ok, stage, summary, detail: ok && !keepDetail ? "" : detail, ...(where ? { where } : {}) });
   };
   const skip = (stages: string, why: string) => report(true, "skipped", `${stages}: ${why}`);
-  /** The cache entries this run read or wrote; after a run in which every stage ran, the others are deleted. */
-  const memory: Memory = { root, fresh: !!accept, used: new Set() };
+  /** The cache entries this run uses stay; recent entries of other branches and profiles survive pruning. */
+  const memory: Memory = { root, fresh: !!accept || mode === "nightly", used: new Set() };
   let specs: Spec[];
   let srcFiles: SrcFile[];
   const proofInputs = () => proofFiles(root).map((file) => [file, fs.readFileSync(path.join(root, file), "utf8")]);
@@ -168,7 +171,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
     // A spec whose model and harness are unchanged is not simulated again: the seed is part of what is simulated, so a
     // failure comes back the same. Only a simulator that could not run is tried again.
     const simulationSteps = STEPS + Math.max(0, ...model.within.values());
-    const simulated = remembered<{ said: Result[]; tested?: Simulated }>(memory, entry(root, "simulate", [importedMeanings(spec, specs), spec.meaning, spec.rules.map((r) => r.key).join("\n"), model.harness, String([SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, LASSO_TRACES, simulationSteps, ...DEPTHS, ...process.env.FUZZ_SEED ? [`FUZZ_SEED=${process.env.FUZZ_SEED}`] : []])]), async () => {
+    const simulated = remembered<{ said: Result[]; tested?: Simulated }>(memory, entry(root, "simulate", [importedMeanings(spec, specs), spec.meaning, spec.rules.map((r) => r.key).join("\n"), model.harness, String([SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, LASSO_TRACES, simulationSteps, ...DEPTHS, seed])]), async () => {
       const said: Result[] = [];
       let tested: Simulated | undefined;
       const say = (ok: boolean, stage: Result["stage"], summary: string, detail = "") => said.push({ ok, stage, summary, detail });
@@ -196,10 +199,11 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
         // can, supplies more traces to replay. Each witness search stops at its goal or at a broken rule, whichever
         // comes first (see the harness). All of them finish before anything is reported, failures included.
         // The usual starting states each get a whole bounded interval after them.
-        const sim = await simulate(root, model, "inv", model.leadsTo.length ? LASSO_TRACES : REPLAYED, SAMPLES, "step", true, simulationSteps);
+        const sim = await simulate(root, model, "inv", model.leadsTo.length ? LASSO_TRACES : REPLAYED, SAMPLES, "step", true, simulationSteps, seed);
+        if (broke([sim])) return { said, tested };
         const [probe, ...searches] = await allDone([
-          simulate(root, model, "inv", REPLAYED, COMPARED_SAMPLES, "probe", true),
-          ...model.sometimes.map((w) => search(root, model, `never_${w}`)),
+          simulate(root, model, "inv", REPLAYED, COMPARED_SAMPLES, "probe", true, STEPS, seed),
+          ...model.sometimes.map((w) => search(root, model, `never_${w}`, "step", DEPTHS, WITNESS_SAMPLES, seed)),
         ]);
         const witnesses = model.sometimes.map((w, i) => ({ w, run: searches[i] }));
         const runs = [sim, probe, ...searches.filter((run) => run.broken)];
@@ -230,7 +234,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
         // only that search goes deeper and gets the witness budget; one that never refuses it is only reported.
         const missing = guarded.flatMap((t) => (["allows", "refuses"] as const).filter((side) => !seen.get(t.guard!)![side]).map((side) => ({ t, side })));
         const searched = await allDone(missing.map(({ t, side }) => model.evals.some((v) => v.name === t.guard)
-          ? search(root, model, `never_${side}_${t.guard}`, "probe", side === "allows" ? DEPTHS : [STEPS], side === "allows" ? WITNESS_SAMPLES : SAMPLES)
+          ? search(root, model, `never_${side}_${t.guard}`, "probe", side === "allows" ? DEPTHS : [STEPS], side === "allows" ? WITNESS_SAMPLES : SAMPLES, seed)
           : Promise.resolve(undefined)));
         for (const [i, { t, side }] of missing.entries()) {
           const found = searched[i];
@@ -421,8 +425,8 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
       }
     }
     for (const r of await proofsDone) report(...r);
-    for (const dir of dirs) for (const r of await tests(root, dir, specs, (key, ran, keep) => remembered(memory, entry(root, "tests", [dir, key]), ran, keep))) report(...within(dir, r));
-    for (const dir of dirs) for (const r of await conformance(path.join(root, dir), machines, packageScripts(path.join(root, dir)))) report(...within(dir, r));
+    for (const dir of dirs) for (const r of await tests(root, dir, specs, (key, ran, keep) => remembered(memory, entry(root, "tests", [dir, key]), ran, keep), mode, memory.fresh)) report(...within(dir, r));
+    for (const dir of dirs) for (const r of await conformance(path.join(root, dir), machines, packageScripts(path.join(root, dir)), mode)) report(...within(dir, r));
     if (proofsRan) collectGarbage(memory);
   }
   fs.rmSync(loaded, { recursive: true, force: true });
@@ -659,7 +663,7 @@ const isMain = (): boolean => {
   }
 };
 
-const USAGE = "usage: spec check [<directory>] [--json] | watch [<directory>] | gen [<directory>] [--if-valid] | accept [<directory>] [unproved] | new [<path>] | init [<directory>] | migrate [<directory>] | studio [<directory>] [--port <n>] | tests [<directory>] | stories gen [--watch] [--check] | tokens build|check|apply";
+const USAGE = "usage: spec check [<directory>] [--json] [--nightly] | watch [<directory>] | gen [<directory>] [--if-valid] | accept [<directory>] [unproved] | new [<path>] | init [<directory>] | migrate [<directory>] | studio [<directory>] [--port <n>] | tests [<directory>] | stories gen [--watch] [--check] | tokens build|check|apply | tasks [<task>…]";
 
 /**
  * Check, then check again whenever spec/, package.json, tsconfig.json, or src/ or test/ of the root or of an owner changes. One process stays warm between runs
@@ -732,7 +736,7 @@ if (isMain()) {
   const takes = (...allowed: string[][]) => allowed.some((a) => a.length === args.length && a.every((x, i) => x === "*" || x === args[i]));
   try {
     if (Number(process.versions.node.split(".")[0]) < 26) throw new Error(`spec needs Node 26 or later; this is Node ${process.versions.node}`);
-    const options: Record<string, string[]> = { check: ["--json"], gen: ["--if-valid"], accept: ["unproved"], watch: [], init: [], migrate: [] };
+    const options: Record<string, string[]> = { check: ["--json", "--nightly"], gen: ["--if-valid"], accept: ["unproved"], watch: [], init: [], migrate: [] };
     if (Object.hasOwn(options, command)) {
       const directories = args.filter((arg) => !options[command].includes(arg));
       if (directories.length === 1 && !directories[0].startsWith("-")) {
@@ -740,7 +744,21 @@ if (isMain()) {
         args.splice(args.indexOf(directories[0]), 1);
       }
     }
-    if (command === "gen" && takes([], ["--if-valid"])) {
+    if (command === "tasks") {
+      const fingerprint = path.join(root, ".cache", "toolchain.json");
+      const text = JSON.stringify(await toolchainFingerprint()) + "\n";
+      fs.mkdirSync(path.dirname(fingerprint), { recursive: true });
+      if (!fs.existsSync(fingerprint) || fs.readFileSync(fingerprint, "utf8") !== text) fs.writeFileSync(fingerprint, text);
+      let env: NodeJS.ProcessEnv = { ...process.env, TURBO_TELEMETRY_DISABLED: "1" };
+      const credentials = path.join(os.homedir(), ".config", "vibestack", "turbo-cache.json");
+      if (env.TURBO_TOKEN === undefined && fs.existsSync(credentials)) {
+        const cache = JSON.parse(fs.readFileSync(credentials, "utf8"));
+        const declared = JSON.parse(fs.readFileSync(path.join(root, "turbo.json"), "utf8")).remoteCache?.apiUrl;
+        env = cacheCredentials(env, args, declared, cache);
+      }
+      const child = spawn(bin("turbo", root), ["run", ...args], { cwd: root, env, stdio: "inherit" });
+      child.on("exit", (code, signal) => { process.exitCode = code ?? (signal ? 1 : 0); });
+    } else if (command === "gen" && takes([], ["--if-valid"])) {
       // --if-valid is for `pnpm install`: a spec in the middle of an edit must not make installing fail.
       const release = lockProject(root);
       try {
@@ -761,10 +779,10 @@ if (isMain()) {
       } finally {
         release();
       }
-    } else if ((command === "check" && takes([], ["--json"])) || (command === "accept" && takes([], ["unproved"]))) {
-      const json = args[0] === "--json";
+    } else if ((command === "check" && takes([], ["--json"], ["--nightly"], ["--json", "--nightly"], ["--nightly", "--json"])) || (command === "accept" && takes([], ["unproved"]))) {
+      const json = args.includes("--json");
       const accept = command === "check" ? false : args[0] === "unproved" ? "unproved" : "reviews";
-      const { ok, results, next } = await check(root, accept, json ? undefined : (r) => console.log(show(r)));
+      const { ok, results, next } = await check(root, accept, json ? undefined : (r) => console.log(show(r)), args.includes("--nightly") ? "nightly" : "normal");
       console.log(json ? JSON.stringify({ ok, results, next }, null, 2) : `\nnext: ${next}`);
       process.exitCode = ok ? 0 : 1;
     } else if (command === "init" && takes([])) {

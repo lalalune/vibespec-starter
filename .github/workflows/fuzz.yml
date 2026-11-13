@@ -1,16 +1,12 @@
 name: fuzz
 
-# Larger property-test budgets and a fresh seed each night; a failure prints
-# the seed, and `FUZZ_SEED=<seed> pnpm all check` repeats it. The shrunk
+# The fixed nightly profile checks 20,000 values with seed 2; repeat it with
+# `pnpm all check -- --nightly`. The shrunk
 # counterexamples a failing run saves come back as a pull request into develop.
 on:
   schedule:
     - cron: "17 4 * * *"
   workflow_dispatch:
-    inputs:
-      seed:
-        description: Seed to repeat
-        required: false
 
 jobs:
   fuzz:
@@ -19,15 +15,15 @@ jobs:
       contents: write
       pull-requests: write
     env:
-      FUZZ_RUNS: "20000"
-      FUZZ_SEED: ${{ inputs.seed || github.run_id }}
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+      TURBO_CACHE: local:rw,remote:r
     steps:
       - uses: actions/checkout@v7
         with:
           ref: develop
       - uses: ./.github/actions/setup
-      # check runs each package's tests; --force, because the same inputs with a new seed are a new run.
-      - run: pnpm exec turbo run check --force --continue
+      # --nightly bypasses the inner verification cache and always exercises the real application.
+      - run: pnpm all check --continue -- --nightly
       - if: failure()
         env:
           GH_TOKEN: ${{ github.token }}
@@ -38,7 +34,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$BRANCH"
-          git commit -m "Counterexamples from fuzz run $GITHUB_RUN_ID (FUZZ_SEED=$FUZZ_SEED)"
+          git commit -m "Counterexamples from nightly profile run $GITHUB_RUN_ID"
           git push origin "$BRANCH"
-          gh pr create --base develop --head "$BRANCH" --title "Fuzz counterexamples, seed $FUZZ_SEED" \
+          gh pr create --base develop --head "$BRANCH" --title "Fuzz counterexamples, nightly profile" \
             --body "The nightly fuzz run $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID failed and saved these shrunk traces. Each is a regression test: decide whether the application or the spec is wrong, fix that, and keep the trace."

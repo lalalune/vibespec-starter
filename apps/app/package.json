@@ -29,8 +29,8 @@
     "playwright": "catalog:",
     "tailwindcss": "catalog:",
     "typescript": "catalog:",
-    "vibelang": "0.0.12",
-    "vibelang-vite": "0.0.12",
+    "vibelang": "0.0.13",
+    "vibelang-vite": "0.0.13",
     "vibestack": "workspace:*",
     "vite": "catalog:",
     "vitest": "catalog:"
