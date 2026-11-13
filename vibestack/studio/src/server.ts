@@ -7,6 +7,7 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import ts from "typescript";
+import { scanCatalog, type ComponentIndex } from "../../stories/catalog.ts";
 import { acceptable, parseSpec, pending, pendingKey, readSpecs, type Lock, type Result } from "../../spec.ts";
 import { specFiles, specName } from "../../parse.ts";
 import { filesUnder, projectRoot, short } from "../../util.ts";
@@ -24,6 +25,26 @@ const PUBLIC = path.join(import.meta.dirname, "public");
 const MODULES = /^(scan|studio\/src\/(page|markdown)|studio\/gen\/(index|outline))$/;
 const DEEPLINK_LIMIT = 5000; // characters of a prompt a claude-cli:// link carries
 
+/** The component registries of this project and its workspace packages, with paths relative to the project. */
+function componentCatalog(root: string): ComponentIndex {
+  const parents = ["apps", "packages", "vibestack/examples"];
+  const roots = [root, path.join(root, "vibestack/studio"), ...parents.flatMap((parent) => {
+    const directory = path.join(root, parent);
+    return fs.existsSync(directory) ? fs.readdirSync(directory, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => path.join(directory, entry.name)) : [];
+  })].filter((directory) => fs.existsSync(path.join(directory, "package.json")) && fs.existsSync(path.join(directory, "src")));
+  const components = [...new Set(roots)].flatMap((directory) => {
+    const prefix = path.relative(root, directory);
+    const relative = (file: string) => path.join(prefix, file).split(path.sep).join("/");
+    return scanCatalog(directory).components.map((component) => ({
+      ...component,
+      source: { ...component.source, file: relative(component.source.file) },
+      ...(component.model ? { model: { ...component.model, spec: relative(component.model.spec) } } : {}),
+      ...(component.design ? { design: component.design.map(relative) } : {}),
+    }));
+  });
+  return { version: 1, storybook: {}, components };
+}
+
 export interface Project { id: string; name: string; root: string }
 
 /** An agent the studio can start on the sync prompt, and the link that opens its app on the same prompt. */
@@ -37,8 +58,8 @@ export const AGENTS: Record<string, Agent> = {
   claude: {
     label: "Claude Code",
     command: ({ check }) => ["claude", ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits",
-      "--allowedTools", "Read", "Edit", "Write", "Glob", "Grep", `Bash(${check}:*)`, "Bash(npm run -s check:*)", "Bash(npx quint:*)",
-      "--disallowedTools", "Bash(npm run accept:*)", "Bash(spec accept:*)"]],
+      "--allowedTools", "Read", "Edit", "Write", "Glob", "Grep", `Bash(${check}:*)`, "Bash(pnpm -s check:*)", "Bash(pnpm exec quint:*)",
+      "--disallowedTools", "Bash(npm run accept:*)", "Bash(pnpm accept:*)", "Bash(pnpm run accept:*)", "Bash(spec accept:*)"]],
     link: ({ root, prompt }) => `claude-cli://open?cwd=${encodeURIComponent(root)}&q=${encodeURIComponent(prompt)}`,
   },
   codex: {
@@ -84,7 +105,7 @@ function specTexts(root: string): Record<string, string> {
 function checkCommand(root: string): string {
   const scripts = readJson<{ scripts?: Record<string, string> }>(path.join(root, "package.json"))?.scripts ?? {};
   const hasSpecBin = fs.existsSync(path.join(root, "node_modules/.bin/spec")) || !scripts.check?.startsWith("spec ");
-  return scripts.check && hasSpecBin ? "npm run check" : `node ${path.relative(root, SPEC)} check`;
+  return scripts.check && hasSpecBin ? "pnpm check" : `node ${path.relative(root, SPEC)} check`;
 }
 
 /** The sync skill, as a path from the project root: its own copy, or the nearest one above it. */
@@ -329,7 +350,7 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
     res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
     res.end(JSON.stringify(body));
   };
-  const TYPES: Record<string, string> = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml" };
+  const TYPES: Record<string, string> = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".js": "text/javascript; charset=utf-8" };
 
   const server = http.createServer(async (req, res) => {
     res.setHeader("content-security-policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; object-src 'none'; frame-ancestors 'none'");
@@ -350,7 +371,8 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
         return res.end(pageModule(file));
       }
       if (req.method === "GET" && !url.pathname.startsWith("/api/")) {
-        const file = path.join(PUBLIC, url.pathname === "/" ? "index.html" : path.normalize(url.pathname).replace(/^([/\\])+/, ""));
+        const page = url.pathname === "/" ? "index.html" : /^\/components\/?$/.test(url.pathname) ? "components/index.html" : path.normalize(url.pathname).replace(/^([/\\])+/, "");
+        const file = path.join(PUBLIC, page);
         if (!file.startsWith(PUBLIC) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) return send(res, 404, { error: "not found" });
         res.writeHead(200, { "content-type": TYPES[path.extname(file)] ?? "application/octet-stream", "cache-control": "no-store" });
         return res.end(fs.readFileSync(file));
@@ -359,6 +381,16 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
       const live = lives.get(url.searchParams.get("project") ?? open);
       if (!live) return send(res, 404, { error: "no such project" });
       const { root } = live.project;
+      if (req.method === "GET" && url.pathname === "/api/components") return send(res, 200, componentCatalog(root));
+      if (req.method === "GET" && url.pathname === "/api/component-source") {
+        const file = url.searchParams.get("file") ?? "";
+        const catalog = componentCatalog(root);
+        const allowed = catalog.components.some((component) => component.source.file === file || component.model?.spec === file || component.design?.includes(file));
+        const absolute = path.resolve(root, file);
+        if (!allowed || !fs.existsSync(absolute) || !fs.realpathSync(absolute).startsWith(fs.realpathSync(root) + path.sep)) return send(res, 404, { error: "not found" });
+        res.writeHead(200, { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" });
+        return res.end(fs.readFileSync(absolute));
+      }
       if (url.pathname === "/api/events") {
         res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive" });
         res.write(": studio\n\n");

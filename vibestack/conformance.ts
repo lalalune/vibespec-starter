@@ -41,7 +41,7 @@ export interface Oracle<S, E> {
 }
 
 /**
- * What `npm run check` found for one spec: the events the simulator took or tried a guard with, a shortest journey to
+ * What `pnpm check` found for one spec: the events the simulator took or tried a guard with, a shortest journey to
  * each `sometimes` rule, and where the state holds sets. An event that came from someone carries them as `by`.
  */
 export interface Found<E> {
@@ -115,7 +115,7 @@ const lines = <E>(trace: Trace<E>) => trace.map(([k, e]) => `  ${k} ${show(e)}`)
 /** What `check` and `replay` share: running a trace through the driver beside the oracle, and shrinking one that disagrees. */
 function runner<S, E, V>(oracle: Oracle<S, E>, found: Found<E>, driver: Driver<E, V>, options: Options<S, V>) {
   const { view, keys = ["a", "b"], walks = 200, steps = 20, seed = 1 } = options;
-  if (!found.events.length) throw new Error(`gen/${found.spec}.conformance.ts holds no events yet: \`npm run check\` writes them`);
+  if (!found.events.length) throw new Error(`gen/${found.spec}.conformance.ts holds no events yet: \`pnpm check\` writes them`);
   if (!keys.length || keys.some((key) => typeof key !== "string" || !key) || new Set(keys).size !== keys.length) throw new Error("conformance keys must be distinct nonempty strings");
   for (const [name, count] of Object.entries({ walks, steps, seed })) if (!Number.isSafeInteger(count) || count < 0) throw new Error(`conformance ${name} must be a nonnegative safe integer`);
   const seen = new Set<string>();

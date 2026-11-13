@@ -4,6 +4,45 @@ import { Machine } from "../gen/server.effect.vibe"
 import type { Answer } from "../src/protocol.vibe"
 import { Served } from "./served.vibe"
 
+module node {
+  import assert from "node:assert/strict"
+  import { chromium } from "playwright"
+
+  export async function browserJourney(base: string) {
+    const browser = await chromium.launch()
+    try {
+      const page = await browser.newPage()
+      const errors: string[] = []
+      page.on("pageerror", (error) => errors.push(error.message))
+      const local = new URL(base)
+      local.hostname = "127.0.0.1"
+      await page.goto(local.href, { waitUntil: "domcontentloaded" })
+      const input = page.getByRole("textbox", { name: "New to-do" })
+      await input.fill("browser task")
+      await page.getByRole("button", { name: "Add", exact: true }).click()
+      await page.getByRole("checkbox", { name: "Mark browser task done" }).check()
+      await page.getByRole("checkbox", { name: "Mark browser task incomplete" }).waitFor()
+      page.once("dialog", (dialog) => dialog.accept("renamed browser task"))
+      await page.getByRole("button", { name: "Rename browser task", exact: true }).click()
+      await page.getByRole("button", { name: "Rename renamed browser task", exact: true }).waitFor()
+      await page.getByRole("button", { name: "Online", exact: true }).click()
+      await input.fill("offline browser task")
+      await page.getByRole("button", { name: "Add", exact: true }).click()
+      const queued = page.getByRole("listitem", { name: "offline browser task, waiting for server" })
+      await queued.waitFor()
+      await page.getByRole("button", { name: "Online", exact: true }).click()
+      await queued.waitFor({ state: "detached" })
+      for (const title of ["renamed browser task", "offline browser task"]) {
+        const remove = page.getByRole("button", { name: `Remove ${title}`, exact: true })
+        await remove.click()
+        await remove.waitFor({ state: "detached" })
+      }
+      assert.deepEqual(errors, [])
+    } finally { await browser.close() }
+  }
+}
+import { browserJourney } from node
+
 effect function post(body: unknown) {
   const response = try HttpClient.execute(try HttpClientRequest.bodyJson(HttpClientRequest.post("/api/events"), body))
   return { status: response.status, body: (try response.json) as unknown as Answer }
@@ -96,19 +135,11 @@ layer(Served, { excludeTestServices: true })((it) => {
     })
   })
 
-  it.effect("the frontend is served as JavaScript that runs", () => effect {
-    const response = try HttpClient.get("/app.js")
-    const js = try response.text
-    const page = try promise(() => import(`data:text/javascript,${encodeURIComponent(js)}`))
+  // spec/client.md, "Story: Edit the list in the browser"; spec/client.md, "Story: Hear back from the server"
+  it.effect("the served browser queues edits, catches up and changes the list", () => effect {
+    const base = HttpServer.formatAddress((try HttpServer.HttpServer).address)
+    try tryPromise(() => browserJourney(base))
     const outside = try HttpClient.get("/src/../package.json")
-    const index = try (try HttpClient.get("/")).text
-    try Effect.try(() => {
-      assert.strictEqual(response.status, 200)
-      assert.match(response.headers["content-type"] ?? "", /javascript/)
-      assert.notMatch(js, /interface ReactLike/)
-      assert.isFunction(page.mount)
-      assert.strictEqual(outside.status, 404)
-      assert.match(index, /importmap/)
-    })
+    try Effect.try(() => assert.strictEqual(outside.status, 404))
   })
 })

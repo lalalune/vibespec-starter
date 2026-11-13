@@ -19,7 +19,7 @@ const S = {
   project: new URLSearchParams(location.search).get("project") ?? "",
   snap: undefined as Snapshot | undefined,
   specs: [] as Working[],
-  sel: "",
+  sel: new URLSearchParams(location.search).get("spec") ?? "",
   /** Which stories and rules are open, or being edited, as `<file>#<number>`; `<file>#head` is the title. */
   open: new Set<string>(),
   editing: new Set<string>(),
@@ -385,6 +385,7 @@ function renderRail() {
   rail.replaceChildren(
     h("select", { class: "project", "aria-label": "Project", onchange: (e: any) => { location.search = `?project=${encodeURIComponent(e.target.value)}`; } },
       S.projects.map((p) => h("option", { value: p.id, selected: p.id === S.project }, p.name))),
+    h("a", { href: `/components?project=${encodeURIComponent(S.project)}` }, "Components"),
     h("ul", { class: "specs" }, S.specs.map((spec) => {
       const review = reviewCount(spec.file);
       const status = isDirty(spec) ? ["dirty", "unpublished changes"] : fails.has(spec.file) ? ["bad", "failing checks"] : review ? ["review", `${review} to review`] : ["", ""];

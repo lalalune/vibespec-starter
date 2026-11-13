@@ -24,7 +24,7 @@ export function bin(cmd: string, root: string): string {
       dir = path.dirname(dir);
     }
   }
-  throw new Error(`${cmd} is not installed; run npm install`);
+  throw new Error(`${cmd} is not installed; run pnpm install`);
 }
 
 /** How many programs run at once; the others wait for one to end. */
@@ -68,7 +68,7 @@ export const NEEDS_DAFNY = "the proof stage needs Dafny 4.11 on the PATH";
 export async function run(cmd: string, args: string[], cwd: string): Promise<{ ok: boolean; out: string }> {
   const exe = cmd === "dafny" ? cmd : bin(cmd, cwd);
   const r = await exec(exe, args, cwd).catch((e: Error) => {
-    throw new Error(`${cmd} could not be run (${exe}): ${e.message}${cmd === "dafny" ? `; ${NEEDS_DAFNY}` : "; run npm install"}`);
+    throw new Error(`${cmd} could not be run (${exe}): ${e.message}${cmd === "dafny" ? `; ${NEEDS_DAFNY}` : "; run pnpm install"}`);
   });
   return { ok: r.status === 0 && !r.stopped, out: `${r.stdout}${r.stderr}${r.stopped ? `\n${r.stopped}\n` : ""}` };
 }

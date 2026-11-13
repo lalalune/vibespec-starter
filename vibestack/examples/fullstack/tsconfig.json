@@ -4,13 +4,28 @@
     "module": "nodenext",
     "strict": true,
     "skipLibCheck": true,
-    "types": ["node"],
+    "types": [
+      "node",
+      "vite/client"
+    ],
     "rootDir": ".",
-    "rootDirs": [".", ".vibe/declarations"],
+    "rootDirs": [
+      ".",
+      ".vibe/declarations"
+    ],
     "outDir": "dist",
     "noEmitOnError": true,
-    "rewriteRelativeImportExtensions": true
+    "rewriteRelativeImportExtensions": true,
+    "jsx": "react-jsx",
+    "allowArbitraryExtensions": true
   },
-  "include": ["src", "test", "gen/*.ts", "gen/*.vibe"],
-  "vibe": { "sidecarDir": ".vibe/declarations" }
+  "include": [
+    "src",
+    "test",
+    "gen/*.ts",
+    "gen/*.vibe"
+  ],
+  "vibe": {
+    "sidecarDir": ".vibe/declarations"
+  }
 }

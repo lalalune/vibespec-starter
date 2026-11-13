@@ -39,7 +39,7 @@ export function effectAdapter(name: string, source: string, text: string, namesp
   };
   const names = [...consts.map((c) => c.name), ...funs.map((f) => f.name!.text)];
   const out = [
-    `// GENERATED from ${source} by vibestack/spec.ts. Do not edit: change the spec and run \`npm run gen\`.`,
+    `// GENERATED from ${source} by vibestack/spec.ts. Do not edit: change the spec and run \`pnpm gen\`.`,
     `// gen/${name}.ts for Effect code: its definitions as functions that throw nothing${funs.some((f) => f.name!.text === "step") ? ", and its state machine as typed failures and a service" : ""}.`,
     `export type * from "./${name}.ts"`,
     ``,

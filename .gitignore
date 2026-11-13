@@ -10,3 +10,5 @@ _apalache-out/
 .claude/worktrees/
 .vibe/
 build/
+
+**/.storybook/generated/

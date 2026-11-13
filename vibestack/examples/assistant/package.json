@@ -15,7 +15,7 @@
     "demo": "pnpm -s gen && node --import vibelang/register src/demo.vibe"
   },
   "devDependencies": {
-    "@types/node": "^24.0.0",
+    "@types/node": "catalog:",
     "@effect/vitest": "4.1.1",
     "vibelang": "0.0.12",
     "vibelang-vite": "0.0.12",

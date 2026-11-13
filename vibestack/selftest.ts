@@ -26,7 +26,7 @@ const VIBELANG = Object.fromEntries(["package.json", "tsconfig.json", "vitest.co
 const roots: string[] = [];
 const nodeModules = (function find(dir: string): string {
   const here = path.join(dir, "node_modules");
-  return fs.existsSync(here) ? here : dir === path.dirname(dir) ? assert.fail("no node_modules: run npm install") : find(path.dirname(dir));
+  return fs.existsSync(here) ? here : dir === path.dirname(dir) ? assert.fail("no node_modules: run pnpm install") : find(path.dirname(dir));
 })(project);
 after(() => roots.forEach((root) => fs.rmSync(root, { recursive: true, force: true })));
 
@@ -126,7 +126,7 @@ async function run(root: string, accept: false | "reviews" | "unproved" = false)
 const failedStages = async (file: string, edit: (text: string) => string) => (await run(copyOfProject(file, edit))).failed;
 const pendingItems = (root: string) => readSpecs(root).flatMap((spec) => pending(root, spec).map((p) => `${p.where.split("  ")[1]}: ${p.status}${p.note ?? ""}`));
 /** gen/ for one spec, as `check` and `spec gen` generate it. */
-const gen = async (root: string, spec: Spec, models: Map<string, any> = new Map()) => generated(root, spec, await typecheckAll({ root, fresh: true, used: new Set() }, [spec]).get(spec.name)!, models);
+const gen = async (root: string, spec: Spec) => generated(root, spec, await typecheckAll({ root, fresh: true, used: new Set() }, readSpecs(root)).get(spec.name)!, new Map());
 /** Run a fresh CLI process so toolchain fingerprints cannot carry over from another invocation. */
 const runCli = (script: string, root: string, ...args: string[]) => exec(process.execPath, [script, ...args], root);
 const unguarded = (s: string) => s.replace("o.status == Draft and o.units > 0", "o.status == Draft");
@@ -251,7 +251,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const [again, remembered] = [await run(root), await run(root)];
     const trace = first.said("always", /./);
     assert.equal(trace?.ok, false, first.text);
-    assert.match(trace!.detail, /seed \d+; to simulate again: npx quint run gen\/index\.run\.qnt .* --seed \d+/);
+    assert.match(trace!.detail, /seed \d+; to simulate again: pnpm exec quint run gen\/index\.run\.qnt .* --seed \d+/);
     assert.equal(again.said("always", /./)?.detail, trace!.detail, "the same harness gives the same trace");
     assert.equal(remembered.said("always", /./)?.detail, trace!.detail);
     assert.ok(!fs.existsSync(path.join(root, "gen/traces")), "a failing simulation is not run again for the same harness");
@@ -426,8 +426,9 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const names = ["lamp", "lib", "mailer", "room", "shop", "vault"];
     const specs = Object.fromEntries(names.map((n) => [`spec/${n}.md`, read(`vibestack/fixtures/${n}.md`)]));
     const generate = async (root: string) => {
-      const models = new Map();
-      for (const spec of readSpecs(root)) await gen(root, spec, models);
+      const specs = readSpecs(root), models = new Map();
+      const typed = typecheckAll({ root, fresh: true, used: new Set() }, specs);
+      for (const spec of specs) generated(root, spec, await typed.get(spec.name)!, models);
       return fs.readdirSync(path.join(root, "gen")).sort();
     };
     const plain = await generate(scratch(specs));
@@ -946,7 +947,7 @@ export effect function independent() {
     assert.equal(fs.readFileSync(path.join(root, "CLAUDE.md"), "utf8"), "My existing instructions.\n\n@AGENTS.md\n");
     assert.equal(fs.readFileSync(agents, "utf8"), expected);
     assert.deepEqual(init(root), []);
-    for (const marker of ["onespec", "vibestack"]) {
+    for (const marker of ["onespec", "vibespec", "vibestack"]) {
       fs.writeFileSync(agents, `before\r\n<!-- ${marker}:start -->\r\nold instructions\r\n<!-- ${marker}:end -->\r\nafter\r\n`);
       init(root);
       assert.equal(fs.readFileSync(agents, "utf8"), `before\r\n<!-- vibestack:start -->\r\n${read("AGENTS.md").trim().replace(/\r?\n/g, "\r\n")}\r\n<!-- vibestack:end -->\r\nafter\r\n`);
@@ -969,32 +970,41 @@ export effect function independent() {
     const text = (root: string, file: string) => fs.readFileSync(path.join(root, file), "utf8");
     const scripts = { dev: "spec studio", check: "spec check", gen: "spec gen", accept: "spec accept" };
     const example = JSON.parse(VIBELANG["package.json"]);
+    const pins = JSON.parse(read("package.json")).devDependencies;
+    const pinned = (deps: Record<string, string>) => Object.fromEntries(Object.keys(deps).map((name) => [name, pins[name]]));
 
     const fresh = scratch({ "package.json": '{"name":"fresh"}' });
     assert.deepEqual(init(fresh), [...common, "tsconfig.json", "vitest.config.ts", "spec/index.md", ".gitignore",
       "package.json scripts: dev, check, gen, accept, build, test",
       "package.json VibeLang toolchain: effect, @effect/platform-node, vibelang-runtime, vibelang, vibelang-vite, vite, vitest, @effect/vitest, @types/node (run your package manager's install)",
-      'package.json "type": "module"']);
+      'package.json packageManager: pnpm@10.24.0', 'package.json engines.node: >=26', 'package.json "type": "module"']);
     assert.deepEqual(json(fresh, "tsconfig.json"), JSON.parse(VIBELANG["tsconfig.json"]));
     assert.match(text(fresh, "vitest.config.ts"), /^import vibelang from "vibelang-vite";\n[\s\S]*plugins: \[vibelang\(\)\], test: \{ include: \["test\/\*\*\/\*\.test\.vibe"\]/);
     assert.equal(text(fresh, ".gitignore"), "gen/\n.spec-cache/\n.studio/\ndist/\n.vibe/\n");
     assert.deepEqual(json(fresh, "package.json"), {
-      name: "fresh", type: "module", scripts: { ...scripts, build: "vibelang", test: "vitest run" }, engines: { node: "^22.22.3 || >=24.11.1" },
-      dependencies: example.dependencies, devDependencies: example.devDependencies, overrides: JSON.parse(read("package.json")).overrides,
+      name: "fresh", type: "module", packageManager: "pnpm@10.24.0", scripts: { ...scripts, build: "vibelang", test: "vitest run" }, engines: { node: ">=26" },
+      dependencies: pinned(example.dependencies), devDependencies: pinned(example.devDependencies), pnpm: { overrides: { "@effect/platform-node-shared": pins["@effect/platform-node"] } },
     });
+    assert.ok(Object.values({ ...json(fresh, "package.json").dependencies, ...json(fresh, "package.json").devDependencies }).every((version) => typeof version === "string" && !/^(catalog|workspace):/.test(version)));
     assert.deepEqual(init(fresh), []);
 
     const coded = scratch({ "package.json": '{"name":"coded"}' });
     fs.mkdirSync(path.join(coded, "src"));
     const configured = scratch({ "package.json": '{"name":"configured"}', "tsconfig.json": "{}\n" });
     for (const [root, name, config, added] of [[coded, "coded", TSCONFIG, ["tsconfig.json"]], [configured, "configured", "{}\n", []]] as const) {
-      assert.deepEqual(init(root), [...common, ...added, "spec/index.md", ".gitignore", "package.json scripts: dev, check, gen, accept", 'package.json "type": "module"']);
+      assert.deepEqual(init(root), [...common, ...added, "spec/index.md", ".gitignore", "package.json scripts: dev, check, gen, accept", 'package.json packageManager: pnpm@10.24.0', 'package.json engines.node: >=26', 'package.json "type": "module"']);
       assert.deepEqual(json(root, "tsconfig.json"), JSON.parse(config));
       assert.ok(!fs.existsSync(path.join(root, "vitest.config.ts")));
       assert.equal(text(root, ".gitignore"), "gen/\n.spec-cache/\n.studio/\n");
-      assert.deepEqual(json(root, "package.json"), { name, type: "module", scripts });
+      assert.deepEqual(json(root, "package.json"), { name, type: "module", packageManager: "pnpm@10.24.0", engines: { node: ">=26" }, scripts });
       assert.deepEqual(init(root), []);
     }
+    const explicit = scratch({ "package.json": JSON.stringify({ name: "existing", packageManager: "npm@10.9.0", engines: { node: ">=28" }, pnpm: { overrides: { "@effect/platform-node-shared": "4.2.0" } } }), "tsconfig.json": "{}" });
+    init(explicit);
+    const preserved = json(explicit, "package.json");
+    assert.equal(preserved.packageManager, "npm@10.9.0");
+    assert.deepEqual(preserved.engines, { node: ">=28" });
+    assert.deepEqual(preserved.pnpm, { overrides: { "@effect/platform-node-shared": "4.2.0" } });
   });
 
   test("nested specs link to children and reuse a machine through its directory index", async () => {
@@ -1261,7 +1271,7 @@ export effect function independent() {
     const before = await run(root);
     assert.deepEqual(before.failed, ["review"], before.text);
     assert.ok(before.said("review", /story changed/) && before.said("review", /src\/ledger\.ts\n\s+contract changed/), before.text);
-    assert.match(before.next, /npm run accept/);
+    assert.match(before.next, /pnpm accept/);
     await check(root, "reviews");
     const after = await run(root);
     assert.deepEqual(after.failed, [], after.text);
@@ -1329,7 +1339,7 @@ export effect function independent() {
     const checked = JSON.parse((await cli(parent, "check", "a project", "--json")).stdout);
     assert.deepEqual([...new Set(checked.results.filter((r: Result) => !r.ok).map((r: Result) => r.stage))], ["review"], JSON.stringify(checked, null, 2));
     for (const stage of ["model", "always", "sometimes", "replay", "proof"]) assert.ok(checked.results.some((r: Result) => r.stage === stage && r.ok), stage);
-    assert.match(checked.next, /npm run accept/);
+    assert.match(checked.next, /pnpm accept/);
     assert.ok(fs.existsSync(path.join(root, "gen/tally.ts")));
     assert.ok(!fs.existsSync(path.join(parent, "gen")));
     const accepted = await cli(parent, "accept", root);

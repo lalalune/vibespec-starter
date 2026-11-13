@@ -1,7 +1,7 @@
 // General lemmas for proof files (spec/<name>.proof.dfy, src/<path>.proof.dfy).
 // The tools add this module to every proof unit that has a proof file, with
 // only the declarations the proof file calls and those they use (`libraryFor`
-// in vibespec/prove.ts), and verify it there; call its lemmas as ProofLib.<Name>(...).
+// in vibestack/prove.ts), and verify it there; call its lemmas as ProofLib.<Name>(...).
 //
 // How proof files use it: AGENTS.md, "Proof files".
 //

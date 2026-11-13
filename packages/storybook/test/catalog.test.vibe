@@ -5,7 +5,7 @@ module node {
   import fs from "node:fs"
   import os from "node:os"
   import path from "node:path"
-  import { generateCatalog } from "../src/catalog.ts"
+  import { generateCatalog, scanCatalog } from "../src/catalog.ts"
 
   export function journey() {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "component-catalog-"))
@@ -17,9 +17,14 @@ module node {
 export function Save({ title, disabled = false }: { title: string; disabled?: boolean; tone?: "quiet" | "loud"; children?: ReactNode }) { return <button disabled={disabled}>{title}</button>; }
 `)
       fs.writeFileSync(path.join(root, "src/Save.meta.tsx"), `export const meta = { args: { title: "Save" }, examples: { Waiting: { disabled: true } }, model: { spec: "spec/order.md", module: "order", state: "Order", events: ["save"] } };`)
+      const scanned = scanCatalog(root)
+      assert.equal(fs.existsSync(path.join(root, ".storybook")), false)
       const catalog = generateCatalog(root)
+      assert.deepEqual(catalog, scanned)
       const save = catalog.components[0]!
       assert.equal(save.name, "Save")
+      assert.equal(save.props.find((prop) => prop.name === "children")?.kind, "node")
+      assert.equal(save.props.find((prop) => prop.name === "children")?.options, undefined)
       assert.deepEqual(save.props.find((prop) => prop.name === "tone")?.options, ["quiet", "loud"])
       assert.deepEqual(save.stories.find((story) => story.name === "Waiting")?.args, { title: "Save", disabled: true })
       assert.equal(save.model?.spec, "spec/order.md")

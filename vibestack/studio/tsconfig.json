@@ -14,7 +14,8 @@
     "erasableSyntaxOnly": true,
     "skipLibCheck": true,
     "types": [
-      "node"
+      "node",
+      "vite/client"
     ],
     "jsx": "react-jsx"
   },

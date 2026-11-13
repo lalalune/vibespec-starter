@@ -14,7 +14,7 @@
     "test": "vitest run"
   },
   "devDependencies": {
-    "@types/node": "^24.0.0",
+    "@types/node": "catalog:",
     "@effect/vitest": "4.1.1",
     "vibelang": "0.0.12",
     "vibelang-vite": "0.0.12",

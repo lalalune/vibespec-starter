@@ -108,7 +108,7 @@ export async function simulate(root: string, model: Model, invariant: string, tr
     const broken = r.out.includes("[violation]");
     // In the order Quint wrote them, so that the same simulation always gives the traces in the same order.
     const files = fs.readdirSync(out).filter((f) => f.endsWith(".itf.json")).sort((x, y) => parseInt(x, 10) - parseInt(y, 10) || x.localeCompare(y));
-    const again = `seed ${seed}; to simulate again: npx quint ${args.join(" ")}`;
+    const again = `seed ${seed}; to simulate again: pnpm exec quint ${args.join(" ")}`;
     // Anything other than "held" or "violated", each with a trace, is Quint failing to run.
     if ((!r.ok && !broken) || !files.length) throw new Error(`quint run did not complete (${again}):\n${r.out.trim()}`);
     return { broken, traces: files.map((f) => readTrace(path.join(out, f), model)), again };
