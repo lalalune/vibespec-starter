@@ -843,7 +843,9 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       f["package.json"] = '{"type":"module"}';
       f["spec/highest.proof.dfy"] = "lemma lawTheHighestIsAtLeastTheStart_ensures(xs: seq<int>, start: int)\n  ensures (lawTheHighestIsAtLeastTheStart(xs, start) == true)\n{\n  ProofLib.FoldLeftMax((top: int, x: int) => (if (x > top) then x else top), start, xs);\n}\n";
     });
-    fs.cpSync(path.join(project, "tools"), path.join(root, "tools"), { recursive: true });
+    fs.cpSync(path.join(project, "vibespec"), path.join(root, "vibespec"), {
+      recursive: true, filter: (from) => from !== path.join(project, "vibespec/examples"),
+    });
     const modules = path.join(root, "node_modules");
     fs.mkdirSync(path.join(modules, ".bin"), { recursive: true });
     for (const entry of fs.readdirSync(nodeModules).filter((f) => f !== ".bin"))
