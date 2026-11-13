@@ -12,6 +12,7 @@
 import { classify, type Law, type Param, type StepRule, type Transition } from "./gen/classify.ts";
 import { harness, type Eval } from "./gen/harness.ts";
 import { printer } from "./gen/print.ts";
+import { checkSecrets } from "./gen/secrecy.ts";
 import { typescript } from "./gen/typescript.ts";
 import { fail, typeOfIn, typeWalks, type Json } from "./gen/types.ts";
 
@@ -148,6 +149,8 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
   for (const v of vals) if (/^(always|sometimes|step|law|can)[A-Z]/.test(v.name) && typeOf(v.id).kind === "bool") fail(`${v.name}: a rule or guard is a \`pure def\` with parameters (AGENTS.md, "What goes in the Quint blocks"), not a \`pure val\`; if it is a constant, name it otherwise`);
   const initial = vals.find((d) => d.name === "initial");
   const roles = classify(funs, initial && typeOf(initial.id), sig, types);
+  const where = (d: string) => `${d} (${source}${origin(d) ? `:${origin(d)!.line}` : ""})`;
+  checkSecrets({ funs, vals, sig, inferred, where, variants }, roles, types);
 
   // --- TypeScript -------------------------------------------------------------------
   // A heading is prose from the spec; it must not be able to end the comment it is quoted in.
