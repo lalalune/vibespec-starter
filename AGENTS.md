@@ -18,13 +18,16 @@ needs no other program or account.
 **Whenever `spec/` or `src/` has changed, follow
 [.claude/skills/sync/SKILL.md](.claude/skills/sync/SKILL.md)**: the loop, what
 each failure asks of you, and what to report. Claude Code loads it as the
-`sync` skill; other agents read the file.
+`sync` skill; Codex discovers the same file through `.agents/skills/sync`.
+Edit skills only in `.claude/skills/`; `.agents/skills/` contains links to them.
+Other agents read the file directly.
 
 The user signs off with `npm run accept`.
 
 ## Hard rules
 
-- Never edit `gen/`, `.spec-cache/` or `spec/lock.json`, and never add a
+- Never edit `gen/`, `.spec-cache/`, `.studio/`, `spec/lock.json` or legacy
+  `spec/*.lock.json`, and never add a
   `lemmascript.json`. The tools own them; a change there could make a check
   pass that should not.
 - Never run `npm run accept -- unproved` unless the user asks. It lowers the
@@ -137,7 +140,7 @@ package's first test, and the one that makes most others unnecessary.
 The driver is the only hand-written part (`test/app.test.ts`):
 
 ```ts
-test("the order book does what spec/order.md says", async () => {
+test("the order book does what spec/index.md says", async () => {
   let book = new OrderBook();
   await conformance({
     reset: () => { book = new OrderBook(); },  // a fresh application: empty storage, nothing created
@@ -176,7 +179,7 @@ test("the order book does what spec/order.md says", async () => {
 
 - `npm run check` is where step 3 of the sync skill's loop stops: what is
   left waits on the user.
-- In the vibespec-starter repository, if you changed `tools/`, `npm run selftest`
+- In the vibespec-starter repository, if you changed `vibespec/`, `npm run selftest`
   passes, with a new case for each new kind of mistake the change catches.
 - What you wrote has had its passes under "Writing code".
 - Your summary follows "When you stop" in the sync skill.
@@ -189,8 +192,8 @@ of `npm run check` are in [README.md](README.md).
 
 In the vibespec-starter repository, "the order example" is
 `examples/order/spec/index.md` and "the tracker example" is
-`examples/dashboard/spec/tracker.md`. The root `spec/index.md` is blank, ready
-for a new application.
+`vibespec/examples/dashboard/spec/tracker.md`. The root `spec/index.md` is blank,
+ready for a new application.
 
 ## Writing a spec
 
@@ -289,13 +292,13 @@ must validate the authenticated sender before supplying it.
 - **`import kernel.* from "./kernel"`** takes a library's names as they are.
   A library is a spec with no `initial`: definitions and laws, or a
   *component* such as an account with `canWithdraw` and `withdraw` and no
-  state of its own (`tools/fixtures/account.md` in the vibespec-starter repository,
+  state of its own (`vibespec/fixtures/account.md` in the vibespec-starter repository,
   used by `bank.md`).
 - **`import lamp as L from "./lamp"`** takes any spec under a name, a state
   machine included. A room can then hold two `L::Lamp`s in its state, start
   them from `L::initial`, move them with `L::toggle`, require
   `L::alwaysFlipsAreCounted` of each, and add rules about the pair that
-  neither lamp could state (`tools/fixtures/room.md` in the vibespec-starter
+  neither lamp could state (`vibespec/fixtures/room.md` in the vibespec-starter
   repository).
 
 Import paths resolve relative to the spec that contains them. For example,
@@ -441,7 +444,7 @@ for each one, in this order:
 
 Counting is per obligation. Dafny checks every `ensures` on its own, a
 failing one is never assumed while another is checked, and the prover works
-to a fixed resource limit (`RESOURCE_LIMIT` in `tools/prove.ts`) rather than a
+to a fixed resource limit (`RESOURCE_LIMIT` in `vibespec/prove.ts`) rather than a
 time limit, so the answer does not depend on the machine. An obligation it
 could not finish is marked `[the prover ran out of resources]`. A lemma
 assumes what every lemma it calls ensures, so an obligation whose proof calls,
@@ -485,13 +488,13 @@ a body.
 - Names from Dafny's standard library (`Std.…`) only as the generated code
   writes them, such as `Std.Collections.Seq.All`: the library holds axioms,
   and `dafny audit` does not report them in the unit. `ProofLib.<Name>` only
-  for what `tools/proof/lib.dfy` declares.
+  for what `vibespec/proof/lib.dfy` declares.
 - Refused: block comments, `@`, any other attribute, character literals, NUL,
   anything but ASCII outside comments and strings, and the words that
   declare or trust something: `assume`, `expect`, `function`, `predicate`,
   `method`, `ghost`, `const`, `type`, `datatype`, `include`, `import`,
   `module`, `reads`, `modifies`, `opaque`, `axiom`, `verify` and the rest of
-  `FORBIDDEN` in `tools/prove.ts`.
+  `FORBIDDEN` in `vibespec/prove.ts`.
 - After that, LemmaScript refuses the `.dfy` unless it is its own output plus
   added lines, and `dafny audit` refuses anything assumed rather than proved.
   A failure anywhere but in a generated definition (a helper, the library, a
@@ -502,7 +505,7 @@ a body.
 
 **What a proof can call:**
 
-- `ProofLib.<Name>(...)` from `tools/proof/lib.dfy`, added to every unit that
+- `ProofLib.<Name>(...)` from `vibespec/proof/lib.dfy`, added to every unit that
   has a proof file: `Filter` (a heap-free view of `Std.Collections.Seq.Filter`,
   see below), `Distinct`, `DistinctBy`, and lemmas about filters
   (`FilterNil`, `FilterCons`, `FilterAppend`, `FilterMember`, `FilterSubset`,
@@ -530,7 +533,7 @@ supply one to replace it.
   State facts about `ProofLib.Filter`, and connect them to the rule with a
   helper whose `ensures` is the rule's body with `ProofLib.Filter` in place of
   `Std.Collections.Seq.Filter`; it proves with an empty body:
-  `lemma KeysBridge(r: Registry) ensures alwaysAKeyNamesOneProject(r) == Std.Collections.Seq.All(r.entries, (a: Entry) => (|ProofLib.Filter((b: Entry) => (b.key == a.key), r.entries)| == 1)) { }`.
+  `lemma KeysFilter(r: Registry) ensures alwaysAKeyNamesOneProject(r) == Std.Collections.Seq.All(r.entries, (a: Entry) => (|ProofLib.Filter((b: Entry) => (b.key == a.key), r.entries)| == 1)) { }`.
 - A lambda is the same term only if it is the same text: pass the lambda the
   generated code uses, copied verbatim from the `.dfy`.
 
@@ -544,7 +547,7 @@ supply one to replace it.
 3. Run `npm run check`. Dafny's messages point into the `.dfy`; the log has
    them all.
 
-`tools/fixtures/highest.md` is the smallest example: its law needs induction
+`vibespec/fixtures/highest.md` is the smallest example: its law needs induction
 over a fold, and this proof file proves it (the selftest runs it):
 
 ```dafny
@@ -644,9 +647,10 @@ npm run check
 |---|---|
 | `.claude/skills/sync/`, `.claude/skills/design/`, `AGENTS.md`, `CONTRIBUTING.md` | the agent's procedure and this reference; existing AGENTS content is kept around a marked Vibespec section |
 | `CLAUDE.md` | imports `AGENTS.md`, preserving any existing instructions |
+| `.agents/skills/sync`, `.agents/skills/design` | links to the Claude skill folders, for agents that look there, with one source to edit |
 | `tsconfig.json`, an empty `spec/index.md` | |
-| `.gitignore` | `gen/`, `.spec-cache/` |
-| `package.json` scripts | `check`, `gen`, `accept` |
+| `.gitignore` | `gen/`, `.spec-cache/`, `.studio/` |
+| `package.json` scripts | `dev` (the studio, `spec studio`), `check`, `gen`, `accept` |
 
 `spec` works on `spec/**/*.md`, and optionally `src/`, the package's
 [tests](#tests) and a `tsconfig.json`, in the directory it is run from. Without a `tsconfig.json`, a package containing `src/` or `test/` fails the
@@ -665,7 +669,7 @@ with `tsc`; it has no dependencies.
   result is kept in `.spec-cache/` under a fingerprint of the spec, everything it
   imports and the versions of the tools.
 - **The spec covers the rules, not the plumbing.** Chat, HTTP and storage stay
-  hand-written around the generated core, as `examples/dashboard/src/notify.ts`
+  hand-written around the generated core, as `vibespec/examples/dashboard/src/notify.ts`
   does for sending messages.
 
 ## Checking harder
@@ -687,18 +691,18 @@ In the vibespec-starter repository:
 
 | File | Role |
 |---|---|
-| `tools/spec.ts` | the pipeline and the `spec` command |
-| `tools/parse.ts`, `tools/review.ts` | literate specs and the review ledgers |
-| `tools/cache.ts`, `tools/run.ts` | stage caches and bounded tool execution |
-| `tools/units.ts`, `tools/simulate.ts` | generation, proof units, simulation and replay |
-| `tools/util.ts` | source discovery, test execution and citations |
-| `tools/prove.ts` | proves one unit: checks and splices the proof file, runs LemmaScript and `dafny audit`, and rechecks alone every postcondition a failing one could hide |
-| `tools/proof/lib.dfy` | the library proof files call |
-| `tools/gen.ts` | the translator: reads what a module imports and defines |
-| `tools/gen/types.ts` | everything decided by a type |
-| `tools/gen/print.ts` | expressions |
-| `tools/gen/classify.ts` | which definition is a transition, a guard or a rule |
-| `tools/gen/typescript.ts`, `tools/gen/harness.ts` | the two outputs |
+| `vibespec/spec.ts` | the pipeline and the `spec` command |
+| `vibespec/parse.ts`, `vibespec/review.ts` | literate specs and the review ledgers |
+| `vibespec/cache.ts`, `vibespec/run.ts` | stage caches and bounded tool execution |
+| `vibespec/units.ts`, `vibespec/simulate.ts` | generation, proof units, simulation and replay |
+| `vibespec/util.ts` | source discovery, test execution and citations |
+| `vibespec/prove.ts` | proves one unit: checks and splices the proof file, runs LemmaScript and `dafny audit`, and rechecks alone every postcondition a failing one could hide |
+| `vibespec/proof/lib.dfy` | the library proof files call |
+| `vibespec/gen.ts` | the translator: reads what a module imports and defines |
+| `vibespec/gen/types.ts` | everything decided by a type |
+| `vibespec/gen/print.ts` | expressions |
+| `vibespec/gen/classify.ts` | which definition is a transition, a guard or a rule |
+| `vibespec/gen/typescript.ts`, `vibespec/gen/harness.ts` | the two outputs |
 
 Node runs all of it directly; `npm run build` compiles it for the packaged
 `spec` command.
@@ -707,6 +711,6 @@ Node runs all of it directly; `npm run build` compiles it for the packaged
 that object. Each result has `ok`, `stage` (a stage, or `skipped`),
 `summary`, `detail` and, when it concerns one, `where`; `next` is the line
 the command line ends with. `npm run selftest` builds scratch projects from
-this project's spec or from `tools/fixtures/`, breaks one thing at a time and
+this project's spec or from `vibespec/fixtures/`, breaks one thing at a time and
 asserts which stage catches each. Add a case for every new kind of mistake a
 change is meant to catch.

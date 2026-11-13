@@ -1,0 +1,270 @@
+{
+  "version": 1,
+  "specs": {
+    "spec/kernel.md": {
+      "Story: An ID is never issued twice / A new number is above the stored counter and above every number seen": [
+        "e42137e8bc97",
+        "e7375e5d575b"
+      ],
+      "Story: Owners hear about an edit once it has settled / An edit is due when it is unannounced and has been quiet for the whole debounce period": [
+        "e3b0c44298fc",
+        "90382cf004d9"
+      ],
+      "Story: A due date is reminded about once / At most one reminder is due for a task at a time": [
+        "fbb28c7429f4",
+        "2266550f1a7c"
+      ],
+      "Story: A list page never comes up empty / A page starts inside the list": [
+        "13baa73dcb01",
+        "424b565d4dd6"
+      ],
+      "Story: Only recent requests are accepted / A request is fresh within the window, either way": [
+        "e3b0c44298fc",
+        "4dc93efef816"
+      ]
+    },
+    "spec/projects.md": {
+      "Domain / A project entry": [
+        "e3b0c44298fc",
+        "3b828fee5632"
+      ],
+      "Domain / What the simulator tries": [
+        "5f9b034276f5",
+        "9ef0b2a4248b"
+      ],
+      "Story: Connect a sheet as a project / A sheet is connected as at most one project": [
+        "eb5dd7efb26f",
+        "17aa7f06468d"
+      ],
+      "Story: Connect a sheet as a project / A project can be disconnected": [
+        "e3b0c44298fc",
+        "cb7eeff9534b"
+      ],
+      "Story: Know which project a channel means / The admin screen never gives two projects the same channel": [
+        "e3b0c44298fc",
+        "4cd05c8c1ee2"
+      ],
+      "Story: Know which project a channel means / A channel typed into a sheet by hand is accepted, even if another project has it": [
+        "e4ff15fea71a",
+        "f676e2708b9f"
+      ],
+      "Story: Know which project a channel means / The app never guesses which project a shared channel means": [
+        "d55551b82803",
+        "d6cfce922a34"
+      ]
+    },
+    "spec/tracker.md": {
+      "Domain / Tasks, owners and notes": [
+        "2cdfdaab7d3d",
+        "7e28ca9a2909"
+      ],
+      "Domain / A new project has its people and no tasks": [
+        "e3b0c44298fc",
+        "a37ffe9f4ba1"
+      ],
+      "Domain / Timing": [
+        "a4a6c7f160fb",
+        "3735f1a0e20d"
+      ],
+      "Domain / What the simulator tries": [
+        "5c0e3e29c9a5",
+        "b70c262fa79a"
+      ],
+      "Domain / Small helpers": [
+        "e3b0c44298fc",
+        "aa43c455f3d6"
+      ],
+      "Story: See what is wrong with the data / Everything a task depends on, however far back": [
+        "edce7f2eaf6a",
+        "5075c488013a"
+      ],
+      "Story: See what is wrong with the data / The problems of one task": [
+        "60fa2e73a217",
+        "85d0322c503a"
+      ],
+      "Story: See what is wrong with the data / The warning list is empty exactly when the data is well formed": [
+        "f9cfa7a82820",
+        "f0578b5577a8"
+      ],
+      "Story: Edit through the app / Only a hand edit can make the data worse": [
+        "c905b537aec4",
+        "0c5266b98950"
+      ],
+      "Story: Edit through the app / A new task gets a number that was never issued and that nothing points at": [
+        "9b95ee307367",
+        "2b70e6c84ae1"
+      ],
+      "Story: Edit through the app / Task numbers are unique and never above the counter": [
+        "e3b0c44298fc",
+        "4daa9d24dab7"
+      ],
+      "Story: Edit through the app / The counter never goes back, and a number is never reissued": [
+        "e3b0c44298fc",
+        "3d93ff535c4c"
+      ],
+      "Story: Edit through the app / Status and due date can be changed on any task that exists": [
+        "e3b0c44298fc",
+        "d889676b8d99"
+      ],
+      "Story: Edit through the app / An owner added through the app must be a person in the sheet": [
+        "72fab3802390",
+        "507f4ab78107"
+      ],
+      "Story: Edit through the app / A parent must exist and must not already depend on the task": [
+        "e3b0c44298fc",
+        "44dcd512e0a5"
+      ],
+      "Story: Edit through the app / Related is written on both tasks at once": [
+        "e3b0c44298fc",
+        "6364c608f6a3"
+      ],
+      "Story: Edit through the app / Deleting a task through the app removes every link to it": [
+        "e3b0c44298fc",
+        "dce038fe7926"
+      ],
+      "Story: Edit through the app / Renaming or removing a person through the app rewrites every cell that names them": [
+        "658598a95d13",
+        "83e1899bf82a"
+      ],
+      "Story: Edit the sheet by hand / A hand edit is accepted whatever it says": [
+        "82b455adfa0c",
+        "869911c9b8e7"
+      ],
+      "Story: Edit the sheet by hand / A hand edit can leave a problem behind": [
+        "e3b0c44298fc",
+        "bdb442052062"
+      ],
+      "Story: Edit the sheet by hand / A one-click fix removes its problem and adds none": [
+        "d11c91721cf3",
+        "87433039542a"
+      ],
+      "Story: Be told what changed and what is due / Time passes": [
+        "e3b0c44298fc",
+        "d3573e0ece53"
+      ],
+      "Story: Be told what changed and what is due / One pass of the notifier sends everything that is due and records that it was sent": [
+        "b2988c89ce9f",
+        "2c5037dc5a17"
+      ],
+      "Story: Be told what changed and what is due / A person named twice in a cell is told once": [
+        "ca21e676838d",
+        "56b2f783ae20"
+      ],
+      "Story: Be told what changed and what is due / Owners hear about an edit only after the quiet period": [
+        "e3b0c44298fc",
+        "9572e6b963b6"
+      ],
+      "Story: Be told what changed and what is due / Nothing is sent twice": [
+        "7c3233612757",
+        "ed1f07301b1d"
+      ],
+      "Story: Be told what changed and what is due / Reminders go out at the right distance from the due date": [
+        "e3b0c44298fc",
+        "e8866fddd3e2"
+      ],
+      "Story: Be told what changed and what is due / The bookkeeping never runs ahead of the clock": [
+        "e3b0c44298fc",
+        "df98491dc94d"
+      ]
+    }
+  },
+  "contracts": {},
+  "unproved": {
+    "kernel.ts": {
+      "text": "",
+      "unproved": [
+        "lawNextIsAboveTheCounter: (lawNextIsAboveTheCounter(seen, stored) == true)",
+        "lawNextIsAboveEverythingSeen: (lawNextIsAboveEverythingSeen(seen, stored) == true)"
+      ]
+    },
+    "projects.ts": {
+      "text": "",
+      "unproved": [
+        "connect: (inv(r) ==> canConnect(r, key, sheet, channel) ==> alwaysASheetHasOneProject(connect(r, key, sheet, channel)))",
+        "connect: (inv(r) ==> canConnect(r, key, sheet, channel) ==> alwaysAKeyNamesOneProject(connect(r, key, sheet, channel)))",
+        "connect: (inv(r) ==> canConnect(r, key, sheet, channel) ==> stepTheAdminScreenNeverSharesAChannel(r, connect(r, key, sheet, channel)))",
+        "disconnect: (inv(r) ==> canDisconnect(r, key) ==> alwaysASheetHasOneProject(disconnect(r, key)))",
+        "disconnect: (inv(r) ==> canDisconnect(r, key) ==> alwaysAKeyNamesOneProject(disconnect(r, key)))",
+        "disconnect: (inv(r) ==> canDisconnect(r, key) ==> stepTheAdminScreenNeverSharesAChannel(r, disconnect(r, key)))",
+        "setChannel: (inv(r) ==> canSetChannel(r, key, channel) ==> alwaysASheetHasOneProject(setChannel(r, key, channel)))",
+        "setChannel: (inv(r) ==> canSetChannel(r, key, channel) ==> alwaysAKeyNamesOneProject(setChannel(r, key, channel)))",
+        "setChannel: (inv(r) ==> canSetChannel(r, key, channel) ==> stepTheAdminScreenNeverSharesAChannel(r, setChannel(r, key, channel)))",
+        "handSetChannel: (inv(r) ==> canHandSetChannel(r, key, channel) ==> alwaysASheetHasOneProject(handSetChannel(r, key, channel)))",
+        "handSetChannel: (inv(r) ==> canHandSetChannel(r, key, channel) ==> alwaysAKeyNamesOneProject(handSetChannel(r, key, channel)))",
+        "step: inv(step(current, event))"
+      ]
+    },
+    "tracker.ts": {
+      "text": "",
+      "unproved": [
+        "create: (inv(s) ==> canCreate(s, actor) ==> alwaysTaskNumbersAreUnique(create(s, actor)))",
+        "create: (inv(s) ==> canCreate(s, actor) ==> alwaysTheCounterCoversEveryTask(create(s, actor)))",
+        "create: (inv(s) ==> canCreate(s, actor) ==> alwaysTheBookkeepingIsSane(create(s, actor)))",
+        "create: (inv(s) ==> canCreate(s, actor) ==> stepOnlyAHandEditCorrupts(s, create(s, actor)))",
+        "setStatus: (inv(s) ==> canSetStatus(s, id, status, actor) ==> alwaysTheWarningListIsTheTruth(setStatus(s, id, status, actor)))",
+        "setStatus: (inv(s) ==> canSetStatus(s, id, status, actor) ==> alwaysTaskNumbersAreUnique(setStatus(s, id, status, actor)))",
+        "setStatus: (inv(s) ==> canSetStatus(s, id, status, actor) ==> stepOnlyAHandEditCorrupts(s, setStatus(s, id, status, actor)))",
+        "setDue: (inv(s) ==> canSetDue(s, id, due, actor) ==> alwaysTheWarningListIsTheTruth(setDue(s, id, due, actor)))",
+        "setDue: (inv(s) ==> canSetDue(s, id, due, actor) ==> alwaysTaskNumbersAreUnique(setDue(s, id, due, actor)))",
+        "setDue: (inv(s) ==> canSetDue(s, id, due, actor) ==> stepOnlyAHandEditCorrupts(s, setDue(s, id, due, actor)))",
+        "addOwner: (inv(s) ==> canAddOwner(s, id, owner, actor) ==> alwaysTheWarningListIsTheTruth(addOwner(s, id, owner, actor)))",
+        "addOwner: (inv(s) ==> canAddOwner(s, id, owner, actor) ==> alwaysTaskNumbersAreUnique(addOwner(s, id, owner, actor)))",
+        "addOwner: (inv(s) ==> canAddOwner(s, id, owner, actor) ==> alwaysNoOneIsToldTwiceInOnePass(addOwner(s, id, owner, actor)))",
+        "addOwner: (inv(s) ==> canAddOwner(s, id, owner, actor) ==> stepOnlyAHandEditCorrupts(s, addOwner(s, id, owner, actor)))",
+        "removeOwner: (inv(s) ==> canRemoveOwner(s, id, owner, actor) ==> alwaysTheWarningListIsTheTruth(removeOwner(s, id, owner, actor)))",
+        "removeOwner: (inv(s) ==> canRemoveOwner(s, id, owner, actor) ==> alwaysTaskNumbersAreUnique(removeOwner(s, id, owner, actor)))",
+        "removeOwner: (inv(s) ==> canRemoveOwner(s, id, owner, actor) ==> alwaysNoOneIsToldTwiceInOnePass(removeOwner(s, id, owner, actor)))",
+        "removeOwner: (inv(s) ==> canRemoveOwner(s, id, owner, actor) ==> stepOnlyAHandEditCorrupts(s, removeOwner(s, id, owner, actor)))",
+        "addParent: (inv(s) ==> canAddParent(s, id, other, actor) ==> alwaysTheWarningListIsTheTruth(addParent(s, id, other, actor)))",
+        "addParent: (inv(s) ==> canAddParent(s, id, other, actor) ==> alwaysTaskNumbersAreUnique(addParent(s, id, other, actor)))",
+        "addParent: (inv(s) ==> canAddParent(s, id, other, actor) ==> stepOnlyAHandEditCorrupts(s, addParent(s, id, other, actor)))",
+        "removeParent: (inv(s) ==> canRemoveParent(s, id, other, actor) ==> alwaysTheWarningListIsTheTruth(removeParent(s, id, other, actor)))",
+        "removeParent: (inv(s) ==> canRemoveParent(s, id, other, actor) ==> alwaysTaskNumbersAreUnique(removeParent(s, id, other, actor)))",
+        "removeParent: (inv(s) ==> canRemoveParent(s, id, other, actor) ==> stepOnlyAHandEditCorrupts(s, removeParent(s, id, other, actor)))",
+        "relate: (inv(s) ==> canRelate(s, id, other, actor) ==> alwaysTheWarningListIsTheTruth(relate(s, id, other, actor)))",
+        "relate: (inv(s) ==> canRelate(s, id, other, actor) ==> alwaysTaskNumbersAreUnique(relate(s, id, other, actor)))",
+        "relate: (inv(s) ==> canRelate(s, id, other, actor) ==> stepOnlyAHandEditCorrupts(s, relate(s, id, other, actor)))",
+        "unrelate: (inv(s) ==> canUnrelate(s, id, other, actor) ==> alwaysTheWarningListIsTheTruth(unrelate(s, id, other, actor)))",
+        "unrelate: (inv(s) ==> canUnrelate(s, id, other, actor) ==> alwaysTaskNumbersAreUnique(unrelate(s, id, other, actor)))",
+        "unrelate: (inv(s) ==> canUnrelate(s, id, other, actor) ==> stepOnlyAHandEditCorrupts(s, unrelate(s, id, other, actor)))",
+        "deleteTask: (inv(s) ==> canDeleteTask(s, id) ==> alwaysTheCounterCoversEveryTask(deleteTask(s, id)))",
+        "deleteTask: (inv(s) ==> canDeleteTask(s, id) ==> alwaysNoOneIsToldTwiceInOnePass(deleteTask(s, id)))",
+        "deleteTask: (inv(s) ==> canDeleteTask(s, id) ==> alwaysTheBookkeepingIsSane(deleteTask(s, id)))",
+        "deleteTask: (inv(s) ==> canDeleteTask(s, id) ==> stepOnlyAHandEditCorrupts(s, deleteTask(s, id)))",
+        "deleteTask: (inv(s) ==> canDeleteTask(s, id) ==> stepANumberIsNeverReissued(s, deleteTask(s, id)))",
+        "renameOwner: (inv(s) ==> canRenameOwner(s, owner, name) ==> alwaysTheWarningListIsTheTruth(renameOwner(s, owner, name)))",
+        "renameOwner: (inv(s) ==> canRenameOwner(s, owner, name) ==> alwaysTaskNumbersAreUnique(renameOwner(s, owner, name)))",
+        "renameOwner: (inv(s) ==> canRenameOwner(s, owner, name) ==> alwaysNoOneIsToldTwiceInOnePass(renameOwner(s, owner, name)))",
+        "renameOwner: (inv(s) ==> canRenameOwner(s, owner, name) ==> stepOnlyAHandEditCorrupts(s, renameOwner(s, owner, name)))",
+        "deleteOwner: (inv(s) ==> canDeleteOwner(s, owner) ==> alwaysTheWarningListIsTheTruth(deleteOwner(s, owner)))",
+        "deleteOwner: (inv(s) ==> canDeleteOwner(s, owner) ==> alwaysTaskNumbersAreUnique(deleteOwner(s, owner)))",
+        "deleteOwner: (inv(s) ==> canDeleteOwner(s, owner) ==> alwaysNoOneIsToldTwiceInOnePass(deleteOwner(s, owner)))",
+        "deleteOwner: (inv(s) ==> canDeleteOwner(s, owner) ==> stepOnlyAHandEditCorrupts(s, deleteOwner(s, owner)))",
+        "handAddOwner: the prover ran out of time",
+        "handAddParent: the prover ran out of time",
+        "handAddRelated: (inv(s) ==> canHandAddRelated(s, id, other) ==> alwaysTheWarningListIsTheTruth(handAddRelated(s, id, other)))",
+        "handAddRelated: (inv(s) ==> canHandAddRelated(s, id, other) ==> alwaysTaskNumbersAreUnique(handAddRelated(s, id, other)))",
+        "handDeleteTask: (inv(s) ==> canHandDeleteTask(s, id) ==> alwaysTaskNumbersAreUnique(handDeleteTask(s, id)))",
+        "handDeleteTask: (inv(s) ==> canHandDeleteTask(s, id) ==> alwaysTheCounterCoversEveryTask(handDeleteTask(s, id)))",
+        "handDeleteTask: (inv(s) ==> canHandDeleteTask(s, id) ==> alwaysNoOneIsToldTwiceInOnePass(handDeleteTask(s, id)))",
+        "handDeleteTask: (inv(s) ==> canHandDeleteTask(s, id) ==> alwaysTheBookkeepingIsSane(handDeleteTask(s, id)))",
+        "handDeleteTask: (inv(s) ==> canHandDeleteTask(s, id) ==> stepANumberIsNeverReissued(s, handDeleteTask(s, id)))",
+        "handDeleteOwner: (inv(s) ==> canHandDeleteOwner(s, owner) ==> alwaysTheWarningListIsTheTruth(handDeleteOwner(s, owner)))",
+        "handDeleteOwner: (inv(s) ==> canHandDeleteOwner(s, owner) ==> alwaysNoOneIsToldTwiceInOnePass(handDeleteOwner(s, owner)))",
+        "fix: (inv(s) ==> canFix(s, index) ==> alwaysTheWarningListIsTheTruth(fix(s, index)))",
+        "fix: (inv(s) ==> canFix(s, index) ==> alwaysTaskNumbersAreUnique(fix(s, index)))",
+        "fix: (inv(s) ==> canFix(s, index) ==> alwaysNoOneIsToldTwiceInOnePass(fix(s, index)))",
+        "fix: (inv(s) ==> canFix(s, index) ==> stepOnlyAHandEditCorrupts(s, fix(s, index)))",
+        "fix: (inv(s) ==> canFix(s, index) ==> stepAFixRemovesAProblem(s, fix(s, index)))",
+        "tick: (inv(s) ==> alwaysTheWarningListIsTheTruth(tick(s)))",
+        "tick: (inv(s) ==> stepOnlyAHandEditCorrupts(s, tick(s)))",
+        "notify: (inv(s) ==> alwaysTaskNumbersAreUnique(notify(s)))",
+        "notify: (inv(s) ==> alwaysAnEditIsAnnouncedAfterTheQuietPeriod(notify(s)))",
+        "notify: (inv(s) ==> alwaysNothingIsSentTwice(notify(s)))",
+        "notify: (inv(s) ==> alwaysRemindersAreTimely(notify(s)))",
+        "notify: (inv(s) ==> stepOnlyAHandEditCorrupts(s, notify(s)))",
+        "step: inv(step(current, event))"
+      ]
+    }
+  }
+}

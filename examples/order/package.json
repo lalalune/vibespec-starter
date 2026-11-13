@@ -6,9 +6,9 @@
     "node": ">=24"
   },
   "scripts": {
-    "check": "node ../../tools/spec.ts check",
-    "gen": "node ../../tools/spec.ts gen",
-    "accept": "node ../../tools/spec.ts accept",
+    "check": "node ../../vibespec/spec.ts check",
+    "gen": "node ../../vibespec/spec.ts gen",
+    "accept": "node ../../vibespec/spec.ts accept",
     "demo": "npm run -s gen && node src/demo.ts"
   }
 }

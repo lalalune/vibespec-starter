@@ -11,22 +11,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        project: [".", "examples/order", "examples/dashboard", "examples/assistant", "examples/fullstack"]
+        project: [".", "examples/order", "vibespec/examples/dashboard", "vibespec/examples/assistant", "vibespec/examples/fullstack"]
     steps:
-      - uses: actions/checkout@v4
-      # Dafny's action installs Node 16 for itself, so Node 24 must come after it.
+      - uses: actions/checkout@v7
+      # The project runtime is installed after Dafny's action selects its own Node.
       - uses: dafny-lang/setup-dafny-action@v1
         with:
           dafny-version: "4.11.0"
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 26
           cache: npm
       - run: npm ci
-      - run: node "$GITHUB_WORKSPACE/tools/spec.ts" check
+      - run: node "$GITHUB_WORKSPACE/vibespec/spec.ts" check
         working-directory: ${{ matrix.project }}
       - if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: proof-${{ strategy.job-index }}
           path: ${{ matrix.project }}/gen/proof/
@@ -35,24 +35,29 @@ jobs:
   selftest:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v4
         id: changed
         with:
           filters: |
-            tools:
-              - "tools/**"
+            vibespec:
+              - "vibespec/**"
+              - ".claude/skills/**"
+              - ".agents/skills/**"
+              - "AGENTS.md"
+              - "CONTRIBUTING.md"
               - "package*.json"
-      - if: steps.changed.outputs.tools == 'true'
+              - "tsconfig*.json"
+      - if: steps.changed.outputs.vibespec == 'true'
         uses: dafny-lang/setup-dafny-action@v1
         with:
           dafny-version: "4.11.0"
-      - if: steps.changed.outputs.tools == 'true'
-        uses: actions/setup-node@v4
+      - if: steps.changed.outputs.vibespec == 'true'
+        uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 26
           cache: npm
-      - if: steps.changed.outputs.tools == 'true'
+      - if: steps.changed.outputs.vibespec == 'true'
         run: npm ci
-      - if: steps.changed.outputs.tools == 'true'
+      - if: steps.changed.outputs.vibespec == 'true'
         run: npm run selftest
