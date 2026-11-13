@@ -10,11 +10,32 @@ export const sha = (...parts: string[]) => digest(JSON.stringify(parts));
 export const short = (text: string) => digest(text).slice(0, 12);
 export const indent = (s: string, by = 6) => s.split("\n").map((l) => " ".repeat(by) + l).join("\n");
 
-export function srcUnits(root: string, other = false): { file: string; code: string }[] {
+/**
+ * `text` with `\r\n` read as `\n`, or a refusal naming the file and line if it holds NUL or a line break other than
+ * `\n`. Quint, TypeScript, Dafny and these tools do not all agree on where a line ends at `\r`, `\v`, `\f`, U+0085,
+ * U+2028 or U+2029, so a reviewer could see lines that differ from what a compiler reads, and prose could end a
+ * comment early. No source needs NUL.
+ */
+export function plainText(file: string, text: string): string {
+  const plain = text.replace(/\r\n/g, "\n");
+  const lineOf = (at: number) => plain.slice(0, at).split("\n").length;
+  const nul = plain.indexOf("\0");
+  if (nul >= 0) throw new Error(`${file}:${lineOf(nul)}: NUL characters are not allowed`);
+  const odd = plain.search(/[\r\v\f\u0085\u2028\u2029]/);
+  if (odd >= 0) throw new Error(`${file}:${lineOf(odd)}: a line break other than \\n; save the file with plain line endings`);
+  return plain;
+}
+
+export interface SrcFile { file: string; code: string; ts: boolean }
+/** Every such file, read once: a check proves and reviews the same text, even if a file changes while it runs. */
+export function readSrc(root: string): SrcFile[] {
   const src = path.join(root, "src");
-  const kind = other ? /\.(?:[mc]ts|tsx|[mc]?jsx?)$/ : /\.ts$/;
-  const files = fs.existsSync(src) ? (fs.readdirSync(src, { recursive: true }) as string[]).filter((f) => kind.test(f)).sort() : [];
-  return files.map((f) => ({ file: f, code: fs.readFileSync(path.join(src, f), "utf8") })).filter((u) => u.code.includes("//@"));
+  const files = fs.existsSync(src) ? (fs.readdirSync(src, { recursive: true }) as string[]).filter((f) => /\.(?:[mc]?ts|tsx|[mc]?jsx?)$/.test(f)).sort() : [];
+  return files.map((f) => ({ file: f, code: fs.readFileSync(path.join(src, f), "utf8"), ts: /\.ts$/.test(f) })).filter((u) => u.code.includes("//@"));
+}
+/** Compatibility view of the verified or unsupported source files. */
+export function srcUnits(root: string, other = false): { file: string; code: string }[] {
+  return readSrc(root).filter((u) => other ? !u.ts : u.ts).map(({ file, code }) => ({ file, code }));
 }
 
 /** The tests stage: citations that name nothing, then the package's own tests; each result as `report` takes it. */

@@ -10,7 +10,7 @@ import { contracts, pending, pendingContracts, acceptReviews, acceptContracts, m
 import { entry, remembered, collectGarbage, dafnyVersion, type Memory } from "./cache.ts";
 import { gen, generated, typecheckAll, proofUnits, strayProofFiles } from "./units.ts";
 import { SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, STEPS, DEPTHS, SEARCHED, simulate, search, firstBreak, showTrace, replay, type Step } from "./simulate.ts";
-import { sha, indent, tests } from "./util.ts";
+import { sha, indent, tests, readSrc, type SrcFile } from "./util.ts";
 
 export { readSpecs, badSpecName, parseSpec, scanSpec, expandListHelpers, type Spec, type Rule, type Story } from "./parse.ts";
 export { pending, pendingContracts, acceptReviews, acceptContracts, fingerprint, dependencies, type Pending } from "./review.ts";
@@ -101,7 +101,13 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
   /** The cache entries this run read or wrote; after a run in which every stage ran, the others are deleted. */
   const memory: Memory = { root, fresh: !!accept, used: new Set() };
   let specs: Spec[];
+  let srcFiles: SrcFile[];
+  const proofInputs = () => strayProofFiles(root, []).sort().map((file) => [file, fs.readFileSync(path.join(root, file), "utf8")]);
+  let proofFiles: string[][];
+  let pendingLedger: { ledger: Record<string, Accepted>; accepted: Record<string, Accepted | undefined> } | undefined;
   try {
+    srcFiles = readSrc(root);
+    proofFiles = proofInputs();
     specs = readSpecs(root);
   } catch (e) {
     report(false, "model", (e as Error).message);
@@ -256,7 +262,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
       const ledger: Record<string, Accepted> = {};
       let recordable = true;
       fs.rmSync(path.join(root, "gen/proof"), { recursive: true, force: true });
-      const units = await proofUnits(root, [...models.values()]);
+      const units = await proofUnits(root, [...models.values()], srcFiles);
       for (const f of strayProofFiles(root, units))
         said(false, "proof", `${f} belongs to no proof unit: spec/<name>.proof.dfy belongs to spec/<name>.md, and src/<path>.proof.dfy to src/<path>.ts if that file contains //@`, "", f);
       const lib = fs.readFileSync(LIB_FILE, "utf8");
@@ -320,17 +326,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
             + (stale.length && accept !== "unproved" ? `; ${stale.length} accepted earlier now prove, run \`npm run accept -- unproved\` to tighten the ledger` : ""), "", u.unit);
         }
       }
-      if (accept === "unproved" && recordable) {
-        writeLedger(root, ledger);
-        // What was recorded, against what was there: an entry recorded for another text of its unit is replaced.
-        const entries = (l: Record<string, Accepted | undefined>) => Object.entries(l).flatMap(([unit, a]) => (a?.unproved ?? []).map((x) => `${unit}: ${x}  [${a!.text}]`));
-        const [before, after] = [entries(accepted), entries(ledger)];
-        const added = after.filter((x) => !before.includes(x));
-        const removed = before.filter((x) => !after.includes(x));
-        const line = (sign: string) => (x: string) => `    ${sign} ${x.replace(/  \[[^\]]*\]$/, "")}`;
-        report(true, "proof", `${path.relative(root, ledgerFile(root))}: ${added.length} added, ${removed.length} removed`,
-          [...added.map(line("+")), ...removed.map(line("-"))].join("\n"), undefined, true);
-      }
+      if (accept === "unproved" && recordable) pendingLedger = { ledger, accepted };
       proofsRan = true;
     } catch (e) {
       said(false, "proof", (e as Error).message);
@@ -355,7 +351,27 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
 
   // A spec that is not a valid model has nothing to reconcile yet. Everything is recorded at once, or nothing is.
   const todos = valid.map((spec) => ({ spec, todo: pending(root, spec, specs) }));
-  const contractsToDo = pendingContracts(root);
+  const contractsToDo = pendingContracts(root, srcFiles);
+  if (accept) {
+    try {
+      if (JSON.stringify(readSpecs(root)) !== JSON.stringify(specs) || JSON.stringify(readSrc(root)) !== JSON.stringify(srcFiles)
+        || JSON.stringify(proofInputs()) !== JSON.stringify(proofFiles))
+        report(false, "review", "sources changed while the check ran; nothing was accepted", "      Run `npm run check` again on the files now on disk.");
+    } catch (e) {
+      report(false, "review", "sources changed while the check ran; nothing was accepted", indent((e as Error).message));
+    }
+  }
+  if (accept === "unproved" && allOk && pendingLedger) {
+    const { ledger, accepted } = pendingLedger;
+    writeLedger(root, ledger);
+    const entries = (l: Record<string, Accepted | undefined>) => Object.entries(l).flatMap(([unit, a]) => (a?.unproved ?? []).map((x) => `${unit}: ${x}  [${a!.text}]`));
+    const [before, after] = [entries(accepted), entries(ledger)];
+    const added = after.filter((x) => !before.includes(x));
+    const removed = before.filter((x) => !after.includes(x));
+    const line = (sign: string) => (x: string) => `    ${sign} ${x.replace(/  \[[^\]]*\]$/, "")}`;
+    report(true, "proof", `${path.relative(root, ledgerFile(root))}: ${added.length} added, ${removed.length} removed`,
+      [...added.map(line("+")), ...removed.map(line("-"))].join("\n"), undefined, true);
+  }
   const formal = todos.every(({ todo }) => !todo.some((t) => t.status === "story has no rules" || t.status === "not formalized"));
   const record = accept === "reviews" && allOk && formal;
   const why = accept !== "reviews" ? "then run `npm run accept`" : !allOk ? "nothing was accepted: fix the stages above first" : "every story needs rules and every rule a quint block before anything can be accepted";
@@ -370,9 +386,9 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
     } else report(!todo.length, "review", todo.length ? `${spec.file}: ${todo.length} item(s) to reconcile, ${why}` : `${spec.file}: prose and model reconciled for all ${spec.rules.length} rules and ${spec.stories.length} stories`,
       items(todo, "What moved, in full"), spec.file);
   }
-  const proved = contracts(root).size;
+  const proved = contracts(root, srcFiles).size;
   if (record && contractsToDo.length) {
-    acceptContracts(root);
+    acceptContracts(root, srcFiles);
     report(true, "review", `src/: recorded as reconciled: ${contractsToDo.map((t) => t.where).join("; ")}`, "", "src/");
   } else if (contractsToDo.length) report(false, "review", `src/: ${contractsToDo.length} contract(s) to reconcile, ${why}`, items(contractsToDo, "The contracts, in full"), "src/");
   else if (proved) report(true, "review", `src/: the //@ contracts of all ${proved} proved files reconciled`, "", "src/");

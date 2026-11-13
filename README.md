@@ -69,7 +69,8 @@ draft, submit, pay in instalments, hold, cancel, reopen.
 ## Quick start
 
 **Needs** Node 24+ and [Dafny](https://github.com/dafny-lang/dafny/releases)
-4.11 on the `PATH`.
+4.11 on the `PATH`. Packages with `src/` or `test/` also need a
+`tsconfig.json` so the generated contract is checked against the application.
 
 1. Click **[Use this template](https://github.com/lalalune/vibespec-starter/generate)**
    to create your own repository, then clone it.
@@ -102,6 +103,15 @@ through a scripted session; every `✗` is a rule refusing an event:
 ✗ {"type":"cancel"}              cancel is not allowed for a Paid order
 balance 0
 ```
+
+## Studio
+
+Run `npm run dev` to open the local Studio. Select the order, dashboard,
+assistant or full-stack example, edit its stories and rules, then publish.
+The Studio records the changes, runs checks, and can hand the sync work to
+Claude Code or Codex. Sign-off uses the same `accept` command as the terminal.
+
+`npx spec watch` reruns checks when a spec, source file or test changes.
 
 ## Tutorial
 
@@ -317,6 +327,7 @@ npm run accept
 
 | Command | Does |
 |---|---|
+| `npm run dev` | Opens the local Studio for editing, checking and reviewing specs |
 | `npm run check` | Every stage below; ends with one `next:` line. `rm -rf .spec-cache` runs it afresh |
 | `npm run -s check -- --json` | The same, as one JSON object ([shape](AGENTS.md#changing-the-tools)) |
 | `npm run gen` | Generates `gen/` only |
@@ -338,13 +349,13 @@ npm run accept
 ## What `npm run check` checks
 
 Stages run cheapest first. `✓` passed, `✗` failed, `-` skipped: blocked by a
-`✗` above, or (`types`) there is no `tsconfig.json`.
+`✗` above, or (`types`) there is no `tsconfig.json` and no source or tests to typecheck.
 
 | Stage | Question | Strength |
 |---|---|---|
 | `model` | Is the spec well-typed and inside the supported subset? | exact; anything unsupported is refused by name |
 | `always` | Does a reachable state break an `always` rule, a step break a `step` rule, or a sampled argument break a law? | 10,000 random traces; a failure comes with the shortest trace and its seed |
-| `sometimes` | Can each `sometimes` goal be reached? Does each guard allow its event in some reachable state? | a witness trace is a proof; a failure means 200,000 traces found none. [Guards never seen to refuse](AGENTS.md#writing-good-rules) are listed, not failed |
+| `sometimes` | Can each `sometimes` goal be reached? Does each guard allow its event in some reachable state? | a witness trace is a proof; a failure means searches of 20, 40 and 100 events found none (200,000 traces at depth 20, with proportionally fewer at larger depths). [Guards never seen to refuse](AGENTS.md#writing-good-rules) are listed, not failed |
 | `replay` | Does the generated TypeScript mean what the Quint means? | 400 sampled traces and every witness: every state, every law, and every definition the simulator can evaluate. The rest are listed |
 | `types` | Does the application fit the generated contract? | exact |
 | `proof` | Does every transition preserve every `always` and `step` rule, does every law hold, and does hand-written logic meet its `//@` contract? | all states, all inputs, counted per obligation under a fixed resource limit. What Dafny cannot prove alone is proved in a proof file (`spec/<name>.proof.dfy`: lemmas only, checked to add nothing but proof), or listed; a listed obligation passes only once the user records it in `spec/unproved.lock.json`, for that text of the unit |
@@ -366,7 +377,10 @@ Keep `spec/`, `src/`, `test/` and `tools/` in git, lock files included.
 | `.spec-cache/` | Remembered results, and `lock`: one check or accept per project at a time |
 | `.claude/skills/sync/SKILL.md` | How the agent in your session keeps stories, rules and model in step |
 | `.claude/skills/design/SKILL.md` | How the agent designs what a person sees: only what the spec asks, visual first, few words |
-| `tools/spec.ts` | The pipeline: tangle, simulate, compare, prove, review |
+| `tools/spec.ts` | The pipeline and command line |
+| `tools/parse.ts`, `tools/review.ts` | Literate specs and review ledgers |
+| `tools/cache.ts`, `tools/run.ts` | Stage caches and bounded tool execution |
+| `tools/units.ts`, `tools/simulate.ts`, `tools/util.ts` | Generation, proof units, simulation, replay and shell tests |
 | `tools/prove.ts`, `tools/proof/lib.dfy` | The proof stage for one unit, with the checks on proof files, and the library of general lemmas proof files call |
 | `tools/gen.ts`, `tools/gen/` | Quint → TypeScript and the simulation harness |
 | `tools/selftest.ts`, `tools/fixtures/` | Tests of the pipeline itself, and the small specs they use |
