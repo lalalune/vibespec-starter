@@ -71,9 +71,8 @@ directly.
 | [`shell` skill](.claude/skills/shell/SKILL.md) | writing `src/` or a test: VibeLang, the Effect adapter, the React interface, building and running |
 | [`prove` skill](.claude/skills/prove/SKILL.md) | a `proof` stage `✗`, writing a `.proof.dfy`, or a `//@` file |
 | [`design` skill](.claude/skills/design/SKILL.md) | anything a person looks at: layout, components, stories and tokens |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | adding a package or task to the monorepo, or changing the tools under `vibestack/` |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | generated files, tests, caching and CI; adding a package or task, or changing the tools under `vibestack/` |
 | [README.md](README.md#commands) | the commands, Studio, and [using the tools from another package](README.md#using-it-from-another-package) |
-| [docs/architecture.md](docs/architecture.md) | what is generated from what, which test is for what, caching and CI |
 
 ## Hard rules
 
@@ -172,7 +171,7 @@ How `pnpm check` runs them, in its `tests` stage:
   that needs a DOM says `// @vitest-environment happy-dom`), and
   `*.browser.test.*` in Chromium, by `vitest run --project browser` (the
   `test:browser` script). Before each run it writes the
-  [generated property tests](docs/architecture.md#which-test-for-what) of
+  [generated property tests](CONTRIBUTING.md#which-test-for-what) of
   every `src/**/*.schema.*` and `src/**/*.contract.*`; a module that yields
   none fails the run, with why. A package with no tests passes.
 - **Citations.** A test, or a shell file in `src/`, in VibeLang or

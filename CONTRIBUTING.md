@@ -14,7 +14,7 @@ Everything is built on [the stack](AGENTS.md#the-stack): Node 26, pnpm, VibeLang
 | `vibestack/examples/` | standalone projects, each with its own install; never part of the workspace |
 
 The specs of every package are in the one tree at the root ([SPEC.md, "One spec tree"](SPEC.md#one-spec-tree));
-[docs/architecture.md](docs/architecture.md) maps what is generated from what, which test is for what, and the
+[Architecture](#architecture) maps what is generated from what, which test is for what, and the
 budgets and CI.
 
 A package states what it offers in `exports`; import a package by name, never by a path into its `src/`. Domain code
@@ -34,7 +34,7 @@ does not import React, and a UI package holds no business rules. A shared type l
 | `pnpm check`, `pnpm gen`, `pnpm build`, `pnpm typecheck`, `pnpm test` | this package's own, here as in every package: at the root, the root project and the tools |
 
 Turborepo (`turbo.json`) orders these and skips a task whose inputs it has seen
-([docs/architecture.md](docs/architecture.md#what-is-generated-and-where-it-goes)), so every command above runs only
+([Caching](#caching)), so every command above runs only
 what a change reaches. `check` is never skipped whole: `spec` keeps its own finer cache in `.spec-cache/`, and runs the
 application again each time.
 
@@ -45,7 +45,7 @@ as `@repo/app`'s are. `pnpm lint:js` on its own needs what `gen` and `typecheck`
 `pnpm lint` runs them first.
 
 Pull requests go to `develop`, and `develop` to `main`; what CI runs on each is in
-[docs/architecture.md, "CI"](docs/architecture.md#ci).
+[CI](#ci).
 
 ## Changing the tools
 
@@ -81,3 +81,122 @@ Node runs all of it directly; `pnpm build` compiles it for the packaged `spec` c
 line ends with. `pnpm selftest` builds scratch projects from this project's spec or from `vibestack/fixtures/`, breaks
 one thing at a time and asserts which stage catches each; it is a cached task of `pnpm verify`. What a change to the
 tools owes it, and the sync skill, is in [AGENTS.md, "Definition of done"](AGENTS.md#definition-of-done).
+
+## Architecture
+
+The spec owns the rules and state; generated code is its runtime contract.
+Pure logic Quint cannot express lives in `src/**/*.ts` with proved `//@`
+contracts. VibeLang owns effects and I/O; React reads the generated `Machine`
+service through hooks. Persisted data enters through `decodeState` or a
+schema, never by trusting stored JSON. Controls follow `enabled`, and the
+shell applies events through `Machine` or the generated Effect adapter.
+
+### Sources and generated files
+
+Every root spec module is generated into the root's `gen/`. Modules owned by
+`apps/<name>` or `packages/<name>`, and the modules they import, are also
+written into that owner's `gen/`; packages import their own generated files.
+See [SPEC.md, "One spec tree"](SPEC.md#one-spec-tree).
+
+| Source | Output | Written by; kept in Git |
+|---|---|---|
+| `spec/**/*.md` | TypeScript core, Quint harness and Dafny under `gen/` | `spec gen`, `spec check`; no |
+| Generated TypeScript | `gen/<name>.effect.vibe`, and driver types in `gen/<name>.conformance.ts` over `gen/_conformance.ts` | `spec gen`; no |
+| A shell importing `apply`, with no driver | `test/drivers/<name>.ts`, a stub to fill in | `spec check`; yes, once filled in |
+| `src/**/*.schema.{ts,vibe}`, `src/**/*.contract.{ts,vibe}` | `.cache/generated/tests/` | `vibestack/testing/generate.ts`, before each package test run on `project()`; no |
+| Component props and `*.meta.tsx` | Stories, catalog and interaction/accessibility tests in `generated/stories/` | `vibestack/stories`; no |
+| `packages/design-system/tokens.json` | Theme CSS in `packages/design-system/generated/` | `vibestack/design`; no |
+| `vibestack/` | Packaged `spec` command in `dist/` | `pnpm build`; no, included in the package |
+| A person's review | `spec/lock.json` | `pnpm accept`; yes |
+| A journey or walk that disagrees with the application | `test/counterexamples/<name>/` | `traces`; yes, replayed before later walks |
+
+The adapter and driver types read the generated model; `traces` uses events
+found by the simulator; property tests read schemas and contracts. Generated
+outputs are never edited by hand. A driver reaches the real application and
+imports `gen/` only as types, so it does not compare the model with itself.
+
+### Caching
+
+Core generation produces deterministic code and rebuilds `gen/` to remove
+stale modules. Story and property-test generators write files only when their
+bytes change and remove outputs whose sources have gone. `.spec-cache/`
+fingerprints a spec and its imports together with Quint, Dafny, Z3,
+LemmaScript, Node and tool versions. It also remembers a package's passing
+test run under a hash of what its tests read.
+
+Turborepo caches `gen`, `build`, `typecheck`, tests, selftest and lint according
+to `turbo.json`. `FUZZ_RUNS` and `FUZZ_SEED` are cache inputs for test tasks;
+changing a budget does not invalidate unrelated tasks. `check` is never
+skipped whole: it runs the real application in `traces`. A check that follows
+Turborepo's test task does not run that test script twice. Standalone examples
+install and check separately, outside the workspace cache.
+
+### Seeds and budgets
+
+Simulation is seeded from the model, so it repeats exactly. When supplied,
+`FUZZ_SEED` is mixed into the simulation seed. Property tests and driver walks
+use these budgets:
+
+| Run | `FUZZ_RUNS` | `FUZZ_SEED` |
+|---|---|---|
+| Property test by default | 100 values per property | 1 |
+| Driver by default | 1 random walk after its journeys, capped by `options.walks` | 1 |
+| Pull request into `develop` | 100 | unset |
+| Pull request into `main`; push to `develop` or `main` | 1000 | unset |
+| Nightly (`fuzz.yml`) | 20000 | workflow run id, or the supplied seed |
+
+Failures print their seed and shrunk counterexample. Driver counterexamples
+are saved for replay; see [SPEC.md, "Conformance"](SPEC.md#conformance).
+
+### Which test, for what
+
+[AGENTS.md, "Tests"](AGENTS.md#tests) defines what earns a test and the rules
+`check` enforces. The hello world in `apps/app` demonstrates each kind.
+
+| Kind | Checks | Source or example |
+|---|---|---|
+| Formal | Rules and laws for every state and input | `spec/app/index.md`; `.proof.dfy` where Dafny needs help, such as `src/greeting.proof.dfy` |
+| Model-based | Real shell against the spec: journeys, malformed input, walks and saved counterexamples | `test/drivers/app.ts`, run by `traces` |
+| Journey/integration | A story through real services, including what a driver cannot see | `@effect/vitest` in `test/app.test.vibe`: reload from storage |
+| Component/browser | Story interactions and accessibility; browser-only behavior such as focus and storage | Component metadata `play`; `test/app.browser.test.tsx` in Chromium |
+| Property | What a schema or declared contract promises for generated values | Generated from `src/greeter.schema.ts` and other `*.schema.*` or `*.contract.*` files |
+
+A generated test asserts its schema or contract, never a recorded result of
+its implementation. A schema without a derivable generator is reported; a
+module yielding no tests fails its package's test run with the reason.
+Effect's `Arbitrary` produces valid values: a driver's `receive` checks
+malformed events, and journeys cover other invalid inputs that matter.
+Disabled/loading stories test refusal of clicks and keys. Tests do not
+compare screenshots.
+
+### What a green check means
+
+| Result | Establishes | Does not establish |
+|---|---|---|
+| Proved | Dafny proved the obligation for every state and input | Code outside the spec and `//@` files |
+| Simulated only | No sampled trace broke an obligation accepted with `pnpm accept unproved` | A proof |
+| Model checked within bounds | No violation in the traces and depth checked | Behavior beyond those bounds |
+| Runtime tested | The journeys, properties and conformance walks that ran passed | Untested inputs |
+| Not verified | Effects, timing or third parties outside test coverage | An assurance about those behaviors |
+
+Asynchronous Effect programs are tested, not proved. Each `proof` line says
+how many obligations are proved and how many are simulated only.
+
+ESLint enforces package exports and the stack boundaries. Knip finds unused
+files, exports and dependencies, reading `.vibe` and `.vibex` through VibeLang's
+compiler. Madge checks cycles in `.ts` and `.tsx` imports. Their configured
+scopes are in `knip.config.js`, `.madgerc` and `eslint.config.js`.
+
+### CI
+
+| When | Runs |
+|---|---|
+| Pull request or push to `develop` or `main` | `pnpm verify --continue`: build, types, tests, browser tests, all checks, ESLint, Stylelint, Knip, Madge and selftest |
+| Pull request into `main`; push to `develop` or `main` | The same work with the larger budgets above |
+| Nightly | Every check with a new seed; saved counterexamples become a pull request into `develop` |
+
+CI restores pnpm's store, Turborepo's cache and `.spec-cache/` from previous
+runs. Superseded pull-request runs are cancelled; each push is checked to the
+end. Proof outputs are uploaded, and failing CI runs retain counterexamples
+and browser traces. There is no remote cache beyond the restored local cache.
+Standalone examples run manually with `pnpm examples`, outside CI.
