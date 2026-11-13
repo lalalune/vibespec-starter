@@ -9,7 +9,7 @@
 // name is spelled. The rest is in gen/: types.ts (everything decided by a type),
 // print.ts (expressions), classify.ts (which definition is a transition, a guard
 // or a rule), typescript.ts and harness.ts (the two outputs).
-import { classify, type Law, type Param, type StepRule, type Transition } from "./gen/classify.ts";
+import { classify, type Law, type Param, type Refinement, type StepRule, type Transition } from "./gen/classify.ts";
 import { harness, type Eval } from "./gen/harness.ts";
 import { printer } from "./gen/print.ts";
 import { typescript } from "./gen/typescript.ts";
@@ -28,6 +28,10 @@ export interface Model {
   laws: Law[];
   /** The type of who sends events (the transitions' `by`), if they say. */
   sender: Json | undefined;
+  /** What transitions with output return, `{ state, out }`, and the type of `out`. */
+  output: { type: Json; out: Json } | undefined;
+  /** The machine this spec refines, and the definition that maps its state onto that machine's. */
+  refines: Refinement | undefined;
   evals: Eval[];
   /** Definitions the simulator cannot evaluate on their own, because it has no values for a parameter. */
   uncompared: string[];
@@ -61,7 +65,7 @@ export const LIST_HELPERS: Record<string, { init: string; step: (acc: string, bo
 
 /** Names a spec may not bind: the generated code, the harness or the proof library (ProofLib) use them, or TypeScript reserves them. */
 const TAKEN = new Set(`
-  init step probe inv enabled parseEvent parseState initialHolds Event current event raw state prev moved last out lawsHold Out Nothing ProofLib
+  init step probe inv enabled parseEvent parseState initialHolds Event current event raw state prev moved last outcome emitted refined lawsHold Out Nothing ProofLib
   Number Math Object Array JSON Record Set Map String Boolean Symbol Error undefined NaN Infinity globalThis
   break case catch class const continue debugger default delete do else enum export extends false finally for function
   if import in instanceof new null return super switch this throw true try typeof var void while with yield let static await
@@ -147,7 +151,12 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
   // A rule must be a definition: as a `pure val` it would be generated as a constant and never checked.
   for (const v of vals) if (/^(always|sometimes|step|law|can)[A-Z]/.test(v.name) && typeOf(v.id).kind === "bool") fail(`${v.name}: a rule or guard is a \`pure def\` with parameters (AGENTS.md, "What goes in the Quint blocks"), not a \`pure val\`; if it is a constant, name it otherwise`);
   const initial = vals.find((d) => d.name === "initial");
-  const roles = classify(funs, initial && typeOf(initial.id), sig, types);
+  const machines = links.flatMap((l) => {
+    const dep = deps.get(l.module)!;
+    const spelled = (t: Json) => requalify(t, l.alias);
+    return l.alias && dep.stateType ? [{ alias: l.alias, module: l.module, stateType: spelled(dep.stateType), transitions: dep.transitions.map((t) => ({ ...t, params: t.params.map((p) => ({ ...p, type: spelled(p.type) })) })) }] : [];
+  });
+  const roles = classify(funs, initial && typeOf(initial.id), sig, types, machines);
 
   // --- TypeScript -------------------------------------------------------------------
   // A heading is prose from the spec; it must not be able to end the comment it is quoted in.

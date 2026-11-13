@@ -187,7 +187,9 @@ is generated. The role of a definition comes from its name and signature:
 | `pure def pay(o: Order, amount: int): Order` | a transition: any `pure def` whose first parameter is the state and that returns the state | `pay(o, amount)`, an `Event` variant `{ type: "pay", amount }`, a case in `step`, `enabled` and `parseEvent`, and proofs that it preserves every rule |
 | `pure def canPay(o: Order, amount: int): bool` | the guard of `pay` (same parameters); optional | `canPay`, used by `enabled` and `step`. What is proved about `pay` is proved for the cases the guard allows. A guard may call its own transition to look at the result |
 | `pure def alwaysPaidWithinDue(o: Order): bool` | a rule that holds in every reachable state | a conjunct of `inv`; simulated and proved |
-| `pure def stepNeverGoesBack(before: Order, after: Order): bool` | a rule about every single step | a postcondition on every transition; simulated and proved |
+| `pure def stepNeverGoesBack(before: Order, after: Order): bool` | a rule about every single step; it may also take `via: str` (the transition taken) before `after`, and `out` (what it output) last | a postcondition on every transition; simulated and proved |
+| `pure def send(m: Mailer, n: int): Did`, where `type Did = { state: Mailer, out: List[Effect] }` | a transition [with output](#transitions-with-output) | as any transition, and `step` returns the state and the output |
+| `pure def refinesL(s: Switch): L::Lamp` | the spec [refines](#refinement) the machine imported as `L` | an obligation on every transition and on `initial` |
 | `pure def sometimesPaid(o: Order): bool` | a state that must be reachable | a reachability check with a witness trace |
 | `pure def lawTotalIsNotNegative(xs: List[int]): bool` | a law: true for every value of its parameters | a function proved to return `true`, and sampled by the simulator |
 | `pure val idValues = Set(1, 2, 3)` | what the simulator tries for a parameter named `id`. It must be a set; any Quint is allowed in it | nothing: it never reaches TypeScript |
@@ -221,6 +223,53 @@ and near-misses of the conventions above such as `alwayspaid` or `CanPay`.
 A spec is imported once, one way or the other, and imports cannot form a
 circle. In the generated TypeScript a name from another module is spelled
 `<module>_<name>`, for example `lamp_toggle`.
+
+### Transitions with output
+
+A transition may return what the program must do beside the new state, in
+order, instead of keeping an outbox in the state: a record of exactly `state`
+and `out`, where `out` is a list (`tools/fixtures/mailer.md` in the
+vibespec-starter repository).
+
+```quint
+type Did = { state: Mailer, out: List[Effect] }
+pure def send(m: Mailer, n: int): Did = { state: { sent: m.sent + 1 }, out: List(Saved({ n: n }), Sent({ n: n })) }
+pure def stepSavedBeforeSent(before: Mailer, after: Mailer, out: List[Effect]): bool = …
+```
+
+- Every transition with output returns the same type. One without output
+  outputs nothing.
+- `step` then returns that type, `{ state, out }`, for every event; an event
+  the rules do not allow outputs nothing.
+- A `step` rule whose last parameter is `out` sees what the transition output,
+  so it can require effects in an order, or an effect only beside a change of
+  state. `always` and `sometimes` rules see the state only.
+- `replay` compares what TypeScript outputs with what Quint outputs on every
+  step, and a counterexample shows each event's output.
+
+### Refinement
+
+A spec refines a machine it imports under a name by defining
+`refines<Alias>`, which maps its state onto that machine's
+(`tools/fixtures/switch.md` refines `lamp.md` in the vibespec-starter
+repository):
+
+```quint
+import lamp as L from "./lamp"
+pure def refinesL(s: Switch): L::Lamp = { mode: if (s.lit) L::On else L::Off, flips: s.presses }
+```
+
+- `refinesL(initial)` must be `L::initial`.
+- Every transition must either leave `refinesL` of the state unchanged, or be
+  the transition of `L` with the same name, allowed by its guard, on
+  `refinesL` of the state before. That transition's parameters are taken from
+  this one's by name, as a guard's are. A transition that `L` has no
+  namesake for must leave `refinesL` unchanged.
+- Simulation checks both on every step, and each is an obligation of the
+  proof. Every reachable state then maps onto a reachable state of `L`, so
+  every rule of `L` holds of `refinesL` of it, as far as `L`'s own unit
+  proved it: the proof line lists what of `L` is simulated only.
+- A spec refines at most one machine.
 
 ### Supported Quint
 
@@ -470,7 +519,7 @@ type Event = { type: "addItem"; qty: number } | { type: "submit" } | …
 function parseEvent(x: unknown): Event | undefined   // an untrusted value as an event, or not
 function parseState(x: unknown): Order | undefined   // an untrusted value as a state that satisfies inv, or not
 function enabled(current: Order, event: Event): boolean  // do the rules allow event now?
-function step(current: Order, event: Event): Order       // apply event; unchanged if not allowed
+function step(current: Order, event: Event): Order       // apply event; unchanged if not allowed; { state, out } with output
 function inv(current: Order): boolean                    // every always-rule at once
 ```
 

@@ -40,9 +40,9 @@ type Bill = { amount: int, reviewed: bool, paid: bool }
 
 ### What the program carries out
 
-The assistant does not speak or type itself. It puts what should happen in
-an outbox that the program carries out. A spoken sentence says whether it
-holds a secret; a filled form says which page it went to.
+The assistant does not speak or type itself. A choice returns what the
+program must carry out beside the new state. A spoken sentence says whether
+it holds a secret; a filled form says which page it went to.
 
 ```quint
 type Effect = Said({ secret: bool }) | Filled({ page: Page })
@@ -51,17 +51,19 @@ type Effect = Said({ secret: bool }) | Filled({ page: Page })
 ### The assistant
 
 What is saved survives a restart: the bill, what was charged, the last request
-and the one last answered, and the outbox. The rest is in memory.
+and the one last answered. The rest is in memory.
 
 ```quint
 type Assistant = {
   phase: Phase, budget: int, page: Page, waiting: bool,
-  bill: Bill, charged: int, request: int, answered: int, outbox: List[Effect],
+  bill: Bill, charged: int, request: int, answered: int,
 }
+
+type Chosen = { state: Assistant, out: List[Effect] }
 
 pure val initial: Assistant = {
   phase: Idle, budget: 0, page: Unknown, waiting: false,
-  bill: { amount: 0, reviewed: false, paid: false }, charged: 0, request: 0, answered: 0, outbox: List(),
+  bill: { amount: 0, reviewed: false, paid: false }, charged: 0, request: 0, answered: 0,
 }
 ```
 
@@ -91,16 +93,21 @@ is refused. The turn ends when the model finishes or the budget runs out.
 pure def canChoose(s: Assistant, choice: Choice, by: Actor): bool =
   by == Agent and s.phase == Planning and s.budget > 0 and choice != Recite
 
-pure def choose(s: Assistant, choice: Choice, by: Actor): Assistant =
+pure def choose(s: Assistant, choice: Choice, by: Actor): Chosen =
   val t = { ...s, budget: s.budget - 1 }
   val chosen =
     if (choice == Lookup) { ...t, request: t.request + 1, waiting: true }
     else if (choice == Review) { ...t, bill: { ...t.bill, reviewed: t.bill.amount > 0 } }
-    else if (choice == Fill) (if (t.page == Genuine) { ...t, outbox: t.outbox.append(Filled({ page: t.page })) } else t)
     else if (choice == Pay) (if (t.bill.reviewed and not(t.bill.paid)) { ...t, phase: Asking } else t)
-    else if (choice == Speak or choice == Recite) { ...t, outbox: t.outbox.append(Said({ secret: choice == Recite })) }
-    else { ...t, phase: Done }
-  if (chosen.phase == Planning and chosen.budget == 0) { ...chosen, phase: Done } else chosen
+    else if (choice == Finish) { ...t, phase: Done }
+    else t
+  {
+    state: if (chosen.phase == Planning and chosen.budget == 0) { ...chosen, phase: Done } else chosen,
+    out:
+      if (choice == Fill and t.page == Genuine) List(Filled({ page: t.page }))
+      else if (choice == Speak or choice == Recite) List(Said({ secret: choice == Recite }))
+      else List(),
+  }
 ```
 
 ### A turn's budget stays within bounds, and a turn being planned has some left
@@ -223,21 +230,15 @@ pure def sometimesPaid(s: Assistant): bool = s.bill.paid
 ### Card details go only into the biller's own page
 
 ```quint
-pure def alwaysFilledOnlyGenuine(s: Assistant): bool =
-  s.outbox.every(e => match e { | Filled(f) => f.page == Genuine | _ => true })
+pure def stepFilledOnlyGenuine(before: Assistant, after: Assistant, out: List[Effect]): bool =
+  out.every(e => match e { | Filled(f) => f.page == Genuine | _ => true })
 ```
 
 ### Nothing secret is said aloud
 
 ```quint
-pure def alwaysNothingSecretSaid(s: Assistant): bool =
-  s.outbox.every(e => match e { | Said(x) => not(x.secret) | _ => true })
-```
-
-### The program carries out the outbox, then empties it
-
-```quint
-pure def drain(s: Assistant): Assistant = { ...s, outbox: List() }
+pure def stepNothingSecretSaid(before: Assistant, after: Assistant, out: List[Effect]): bool =
+  out.every(e => match e { | Said(x) => not(x.secret) | _ => true })
 ```
 
 ## Story: Survive a restart

@@ -4,14 +4,14 @@ import { VIA, type Law, type Param, type Roles, type Transition } from "./classi
 import { fail, type Json, type Types } from "./types.ts";
 
 /** A definition the simulator evaluates so that its result can be compared with TypeScript's. */
-export interface Eval { name: string; params: (Param & { from: "state" | "prev" | "pick" })[]; result: Json }
+export interface Eval { name: string; params: (Param & { from: "state" | "prev" | "emitted" | "pick" })[]; result: Json }
 
 /** Values the simulator tries for a parameter of each scalar type (the proof covers all values). */
 const TRIED: Record<string, string> = { int: "(-1).to(6)", bool: "Set(true, false)", str: 'Set("", "a", "b")' };
 
 export function harness(
   module: string, source: string, imports: string[], funs: Json[], sig: (d: Json) => { params: Param[]; result: Json },
-  samples: Map<string, { elem: Json; line: number | undefined }>, { stateType, transitions, always, sometimes, steps, laws }: Roles,
+  samples: Map<string, { elem: Json; line: number | undefined }>, { stateType, transitions, always, sometimes, steps, laws, output, refines }: Roles,
   { fields, typedef, resolve, shape, tagged, named, qType }: Types,
 ): { text: string; evals: Eval[]; uncompared: string[] } {
   const stateShape = stateType && shape(stateType);
@@ -66,7 +66,10 @@ export function harness(
     const { params, result } = sig(d);
     const onStates = stateType ? params.filter((p) => shape(p.type) === stateShape).length : 0;
     let seen = 0;
-    const sources = params.map((p) => (stateType && shape(p.type) === stateShape ? (onStates === 2 && seen++ === 0 ? "prev" as const : "state" as const) : "pick" as const));
+    // A step rule's `out` is what the last transition output.
+    const emitted = steps.some((r) => r.name === d.name && r.out);
+    const sources = params.map((p, i) => (stateType && shape(p.type) === stateShape ? (onStates === 2 && seen++ === 0 ? "prev" as const : "state" as const)
+      : emitted && i === params.length - 1 ? "emitted" as const : "pick" as const));
     params.forEach((p, i) => sources[i] === "pick" && given(p, d.name)); // a mismatched set is a mistake in the spec, not a reason to skip
     try {
       if (onStates > 2) fail("the simulator holds two states at most: the state and the one before it");
@@ -80,14 +83,27 @@ export function harness(
   });
 
   // Harness variables: the state, the state before the last event, whether an event has happened and which, whether
-  // the last law tried held, and the result of the last definition evaluated.
-  const vars = [...(stateType ? ["state", "prev", "moved", "last"] : []), "lawsHold", ...(evals.length ? ["out"] : [])];
+  // the last law tried held, the result of the last definition evaluated, and what the last event output.
+  // whether every step so far refined the machine the spec refines.
+  const vars = [...(stateType ? ["state", "prev", "moved", "last"] : []), "lawsHold", ...(evals.length ? ["outcome"] : []), ...(output ? ["emitted"] : []), ...(refines ? ["refined"] : [])];
+  /** The step from `state` to `after` leaves the abstract state as it was, or is the abstract step of its name (gen/typescript.ts, `refined`). */
+  const refined = (t: Transition, after: string) => {
+    const A = `D_${refines!.of.module}`;
+    const [from, to] = ["state", after].map((s) => `M::${refines!.fn}(${s})`);
+    const u = refines!.of.transitions.find((u) => u.name === t.name);
+    const guard = u?.guard ? `${A}::${u.guard}(${[from, ...u.guardParams].join(", ")}) and ` : "";
+    return `(${to} == ${from}${u ? ` or (${guard}${to} == ${A}::${u.name}(${[from, ...u.params.map((p) => p.name)].join(", ")})${u.emits ? ".state" : ""})` : ""})`;
+  };
   /** An action body: the given conditions and assignments, with every other variable left as it is. */
   const frame = (conditions: string[], set: Record<string, string>) =>
     `all { ${[...conditions, ...vars.map((v) => `${v}' = ${set[v] ?? v}`)].join(", ")} }`;
   const call = (fn: string, params: string[], from = "state") => `M::${fn}(${[from, ...params].join(", ")})`;
-  const action = (t: Transition) => `  action ${t.name} = ${braces(t.params, t.name, frame(t.guard ? [call(t.guard, t.guardParams)] : [],
-    { state: call(t.name, t.params.map((p) => p.name)), prev: "state", moved: "true", last: JSON.stringify(t.name) }))}`;
+  const action = (t: Transition) => {
+    const result = call(t.name, t.params.map((p) => p.name));
+    const after = t.emits ? `${result}.state` : result;
+    return `  action ${t.name} = ${braces(t.params, t.name, frame(t.guard ? [call(t.guard, t.guardParams)] : [],
+      { state: after, emitted: t.emits ? `${result}.out` : "List()", refined: refines ? refined(t, after) : "", prev: "state", moved: "true", last: JSON.stringify(t.name) }))}`;
+  };
   // A law is tried on values picked for each parameter. One that takes the state is also evaluated on the states the
   // simulator reaches (below); if the spec gives no `<param>Values` for that parameter, that is the only way it is tried.
   const onReached = (l: Law) => evals.some((v) => v.name === l.name);
@@ -103,7 +119,7 @@ export function harness(
     const result = `M::${v.name}(${args})`;
     const law: Record<string, string> = laws.some((l) => l.name === v.name) ? { lawsHold: result } : {};
     const guard = transition ? [call(transition.guard!, transition.guardParams.map((name) => argument(v.params.find((p) => p.name === name)!)), argument(v.params[0]))] : [];
-    return `  action eval_${v.name} = ${braces(v.params.filter((p) => p.from === "pick"), v.name, frame(guard, { out: `Out_${v.name}(${result})`, ...law }))}`;
+    return `  action eval_${v.name} = ${braces(v.params.filter((p) => p.from === "pick"), v.name, frame(guard, { outcome: `Out_${v.name}(${result})`, ...law }))}`;
   };
   const events = [...transitions.map((t) => t.name), ...sampled.map((l) => l.name)];
   const any = (actions: string[]) => `any { ${(actions.length ? actions : [frame([], {})]).join(", ")} }`;
@@ -112,25 +128,28 @@ export function harness(
     `module ${module}_run {`,
     `  import ${module} as M from "./${module}"`,
     ...imports.map((i) => `  import ${i} as D_${i} from "./${i}"`),
-    ...(evals.length ? [`  type Out = Nothing | ${evals.map((v) => `Out_${v.name}(${qType(v.result)})`).join(" | ")}`, `  var out: Out`] : []),
+    ...(evals.length ? [`  type Out = Nothing | ${evals.map((v) => `Out_${v.name}(${qType(v.result)})`).join(" | ")}`, `  var outcome: Out`] : []),
     ...(stateType ? [`  var state: ${qType(stateType)}`, `  var prev: ${qType(stateType)}`, `  var moved: bool`, `  var last: str`] : []),
+    ...(output ? [`  var emitted: ${qType(output.out)}`] : []),
+    ...(refines ? [`  var refined: bool`] : []),
     `  var lawsHold: bool`,
-    `  action init = ${frame([], { state: "M::initial", prev: "M::initial", moved: "false", last: '""', lawsHold: "true", out: "Nothing" })}`,
+    `  action init = ${frame([], { state: "M::initial", prev: "M::initial", moved: "false", last: '""', lawsHold: "true", outcome: "Nothing", emitted: "List()",
+      refined: refines ? `(M::${refines.fn}(M::initial) == D_${refines.of.module}::initial)` : "" })}`,
     ...transitions.map(action),
     ...sampled.map(lawAction),
     ...evals.map(evalAction),
     `  action step = ${any(events)}`,
     // Half events, half evaluations, so that definitions are evaluated on states well into a trace and not just near its start.
     `  action probe = ${events.length && evals.length ? `any { step, ${any(evals.map((v) => `eval_${v.name}`))} }` : any([...events, ...evals.map((v) => `eval_${v.name}`)])}`,
-    `  val inv = and { lawsHold, ${[...always.map((a) => `M::${a}(state)`), ...steps.map((r) => `(not(moved) or M::${r.name}(prev, ${r.via ? "last, " : ""}state))`), "true"].join(", ")} }`,
+    `  val inv = and { lawsHold, ${[...(refines ? ["refined"] : []),...always.map((a) => `M::${a}(state)`), ...steps.map((r) => `(not(moved) or M::${r.name}(prev, ${r.via ? "last, " : ""}state${r.out ? ", emitted" : ""}))`), "true"].join(", ")} }`,
     // A witness search also stops at a broken rule, so that no run can step over one unreported.
     ...sometimes.map((w) => `  val never_${w} = inv and not(M::${w}(state))`),
     // A guard's witnesses, for the `probe` step: breaking `never_allows_X` shows a reachable state and values for
     // which X allows its event, breaking `never_refuses_X` one for which it refuses it. Each reads the result the
     // last evaluation recorded, so a state costs the same however many values a parameter could take.
     ...transitions.flatMap((t) => (t.guard && evals.some((v) => v.name === t.guard) ? [
-      `  val never_allows_${t.guard} = inv and match out { | Out_${t.guard}(r) => not(r) | _ => true }`,
-      `  val never_refuses_${t.guard} = inv and match out { | Out_${t.guard}(r) => r | _ => true }`,
+      `  val never_allows_${t.guard} = inv and match outcome { | Out_${t.guard}(r) => not(r) | _ => true }`,
+      `  val never_refuses_${t.guard} = inv and match outcome { | Out_${t.guard}(r) => r | _ => true }`,
     ] : [])),
     `}`,
     ``,
