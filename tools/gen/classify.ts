@@ -14,8 +14,6 @@ export interface Roles {
   laws: Law[];
 }
 
-const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
-
 /**
  * `funs` are the spec's `pure def`s in the order it gives them; `sig` gives a definition's parameters and result.
  * The convention: `initial` is the state; a definition from the state to the state is a transition and `can<Name>`
@@ -25,6 +23,7 @@ export function classify(funs: Json[], stateType: Json | undefined, sig: (d: Jso
   const stateShape = stateType && shape(stateType);
   const onState = (d: Json, at = 0) => sig(d).params.length > at && shape(sig(d).params[at].type) === stateShape;
   const isBool = (d: Json) => sig(d).result.kind === "bool";
+  const spelled = (d: Json) => sig(d).params.map((p) => p.name + shape(p.type)).join();
   // A rule whose name is nearly right would otherwise be an unchecked helper.
   for (const d of funs) {
     const role = d.name.match(/^(always|sometimes|step|law|can)/i)?.[1].toLowerCase();
@@ -45,8 +44,7 @@ export function classify(funs: Json[], stateType: Json | undefined, sig: (d: Jso
   const transitions: Transition[] = !stateType ? [] : funs
     .filter((d) => !rules.has(d.name) && onState(d) && shape(sig(d).result) === stateShape)
     .map((d) => {
-      const guard = funs.find((g) => g.name === `can${cap(d.name)}`);
-      const spelled = (x: Json) => sig(x).params.map((p) => p.name + shape(p.type)).join();
+      const guard = funs.find((g) => g.name === `can${d.name[0].toUpperCase()}${d.name.slice(1)}`);
       if (guard && spelled(guard) !== spelled(d)) fail(`${guard.name} must take the same parameters as ${d.name}`);
       return { name: d.name, params: sig(d).params.slice(1), guard: guard?.name };
     });

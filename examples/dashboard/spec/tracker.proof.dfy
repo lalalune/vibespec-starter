@@ -36,6 +36,12 @@ lemma create_ensures(s: Tracker, actor: string)
       }
     }
     TSentRecordedKept(s, s2);
+    forall j | 0 <= j < |s2.tasks|
+      ensures forall q :: q in problemsOf(s2, s2.tasks[j]) ==> exists i :: 0 <= i < |s.tasks| && q in problemsOf(s, s.tasks[i])
+    {
+      TCreateTask(s, actor, j);
+    }
+    TSomeTaskNoNewProblem(s, s2);
   }
 }
 
@@ -187,6 +193,12 @@ lemma addParent_ensures(s: Tracker, id: int, other: int, actor: string)
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
+    forall i | 0 <= i < |s.tasks|
+      ensures forall q :: q in problemsOf(s2, s2.tasks[i]) ==> q in problemsOf(s, s.tasks[i])
+    {
+      TAddParentTask(s, id, other, actor, i);
+    }
+    TEachTaskNoNewProblem(s, s2);
   }
 }
 
@@ -2124,4 +2136,314 @@ lemma TFixShortens(s: Tracker, index: int)
     TFixCountTask(s, s2, index, k);
   }
   TFoldLenLe((acc: seq<Problem>, t: Task) => (acc + problemsOf(s, t)), (acc: seq<Problem>, t: Task) => (acc + problemsOf(s2, t)), (t: Task) => problemsOf(s, t), (t: Task) => problemsOf(s2, t), [], [], s.tasks, s2.tasks);
+}
+
+
+// ===== The ancestor search finds everything there is to find (F7) =====
+// A list c is closed when it holds every parent (other than itself) of each task it names.
+
+// A subset is no larger. (General: belongs in tools/proof/lib.dfy.)
+lemma TSubsetCard(a: set<int>, b: set<int>)
+  requires a <= b
+  ensures |a| <= |b|
+  decreases |a|
+{
+  if a != {} {
+    var x :| x in a;
+    TSubsetCard(a - {x}, b - {x});
+  }
+}
+
+// No more distinct task numbers than tasks.
+lemma TIdCountBound(xs: seq<Task>, a: seq<int>)
+  ensures |(set u | u in xs && u.id in a :: u.id)| <= |xs|
+  decreases |xs|
+{
+  if |xs| > 0 {
+    TIdCountBound(xs[1..], a);
+    var r := (set u | u in xs[1..] && u.id in a :: u.id);
+    var w := (set u | u in xs && u.id in a :: u.id);
+    assert w <= r + {xs[0].id} by {
+      forall v | v in w
+        ensures v in r + {xs[0].id}
+      {
+        var u :| u in xs && u.id in a && u.id == v;
+        var k :| 0 <= k < |xs| && xs[k] == u;
+        if k > 0 {
+          assert xs[1..][k - 1] == u;
+        }
+      }
+    }
+    TSubsetCard(w, r + {xs[0].id});
+  }
+}
+
+// Starting inside a closed list, the ancestor search stays inside it.
+lemma TAncFoldWithin(s: Tracker, a: seq<int>, xs: seq<Task>, c: seq<int>)
+  requires forall y :: y in a ==> y in c
+  requires (forall u, p :: u in s.tasks && u.id in c && p in u.parents && p != u.id ==> p in c)
+  ensures forall y :: y in Std.Collections.Seq.FoldLeft((acc: seq<int>, t: Task) => (acc + Std.Collections.Seq.Filter((p: int) => !((p in acc)), parentsOfAll(s, acc))), a, xs) ==> y in c
+  decreases |xs|
+{
+  if |xs| > 0 {
+    var b := ((acc: seq<int>, t: Task) => (acc + Std.Collections.Seq.Filter((p: int) => !((p in acc)), parentsOfAll(s, acc))))(a, xs[0]);
+    forall y | y in b
+      ensures y in c
+    {
+      TAncRoundMember(s, a, xs[0], y);
+      TParentsOfAllMember(s, a, y);
+    }
+    TAncFoldWithin(s, b, xs[1..], c);
+  }
+}
+
+// The ancestors of a task lie in any closed list that holds the task's own parents.
+lemma TAncWithin(s: Tracker, y: int, c: seq<int>)
+  requires (forall u, p :: u in s.tasks && u.id in c && p in u.parents && p != u.id ==> p in c)
+  requires forall u, p :: u in s.tasks && u.id == y && p in u.parents && p != u.id ==> p in c
+  ensures forall x :: x in ancestors(s, y) ==> x in c
+{
+  forall x | x in parentsOfAll(s, [y])
+    ensures x in c
+  {
+    TParentsOfAllMember(s, [y], x);
+  }
+  TAncFoldWithin(s, parentsOfAll(s, [y]), s.tasks, c);
+}
+
+// A round that leaves the list open added a task number, and started from an open list.
+lemma TAncRoundGrows(s: Tracker, a: seq<int>, t: Task)
+  requires !(forall u, p :: u in s.tasks && u.id in ((acc: seq<int>, t: Task) => (acc + Std.Collections.Seq.Filter((p: int) => !((p in acc)), parentsOfAll(s, acc))))(a, t) && p in u.parents && p != u.id ==> p in ((acc: seq<int>, t: Task) => (acc + Std.Collections.Seq.Filter((p: int) => !((p in acc)), parentsOfAll(s, acc))))(a, t))
+  ensures !(forall u, p :: u in s.tasks && u.id in a && p in u.parents && p != u.id ==> p in a)
+  ensures |(set u | u in s.tasks && u.id in a :: u.id)| < |(set u | u in s.tasks && u.id in ((acc: seq<int>, t: Task) => (acc + Std.Collections.Seq.Filter((p: int) => !((p in acc)), parentsOfAll(s, acc))))(a, t) :: u.id)|
+{
+  var b := ((acc: seq<int>, t: Task) => (acc + Std.Collections.Seq.Filter((p: int) => !((p in acc)), parentsOfAll(s, acc))))(a, t);
+  var u, p :| u in s.tasks && u.id in b && p in u.parents && p != u.id && !(p in b);
+  TAncRoundMember(s, a, t, p);
+  TAncRoundMember(s, a, t, u.id);
+  if u.id in a {
+    TParentsOfAllMember(s, a, p);
+    assert false;
+  }
+  if u.id in parentsOfAll(s, a) {
+    TParentsOfAllMember(s, a, u.id);
+  }
+  var sa := (set v | v in s.tasks && v.id in a :: v.id);
+  var sb := (set v | v in s.tasks && v.id in b :: v.id);
+  forall x | x in sa
+    ensures x in sb
+  {
+    var v :| v in s.tasks && v.id in a && v.id == x;
+    TAncRoundMember(s, a, t, x);
+  }
+  assert u.id in sb;
+  assert !(u.id in sa);
+  TSubsetCard(sa + {u.id}, sb);
+}
+
+// Either the search ends closed, or every round added a task number to an open start.
+lemma TAncConverge(s: Tracker, a: seq<int>, xs: seq<Task>)
+  ensures (forall u, p :: u in s.tasks && u.id in Std.Collections.Seq.FoldLeft((acc: seq<int>, t: Task) => (acc + Std.Collections.Seq.Filter((p: int) => !((p in acc)), parentsOfAll(s, acc))), a, xs) && p in u.parents && p != u.id ==> p in Std.Collections.Seq.FoldLeft((acc: seq<int>, t: Task) => (acc + Std.Collections.Seq.Filter((p: int) => !((p in acc)), parentsOfAll(s, acc))), a, xs)) || (!(forall u, p :: u in s.tasks && u.id in a && p in u.parents && p != u.id ==> p in a) && |(set u | u in s.tasks && u.id in Std.Collections.Seq.FoldLeft((acc: seq<int>, t: Task) => (acc + Std.Collections.Seq.Filter((p: int) => !((p in acc)), parentsOfAll(s, acc))), a, xs) :: u.id)| >= |(set u | u in s.tasks && u.id in a :: u.id)| + |xs|)
+  decreases |xs|
+{
+  if |xs| > 0 {
+    var b := ((acc: seq<int>, t: Task) => (acc + Std.Collections.Seq.Filter((p: int) => !((p in acc)), parentsOfAll(s, acc))))(a, xs[0]);
+    TAncConverge(s, b, xs[1..]);
+    assert Std.Collections.Seq.FoldLeft((acc: seq<int>, t: Task) => (acc + Std.Collections.Seq.Filter((p: int) => !((p in acc)), parentsOfAll(s, acc))), a, xs) == Std.Collections.Seq.FoldLeft((acc: seq<int>, t: Task) => (acc + Std.Collections.Seq.Filter((p: int) => !((p in acc)), parentsOfAll(s, acc))), b, xs[1..]);
+    if !(forall u, p :: u in s.tasks && u.id in Std.Collections.Seq.FoldLeft((acc: seq<int>, t: Task) => (acc + Std.Collections.Seq.Filter((p: int) => !((p in acc)), parentsOfAll(s, acc))), b, xs[1..]) && p in u.parents && p != u.id ==> p in Std.Collections.Seq.FoldLeft((acc: seq<int>, t: Task) => (acc + Std.Collections.Seq.Filter((p: int) => !((p in acc)), parentsOfAll(s, acc))), b, xs[1..])) {
+      TAncRoundGrows(s, a, xs[0]);
+    }
+  }
+}
+
+// An open list names at least one task.
+lemma TAncOpenCount(s: Tracker, a: seq<int>)
+  requires !(forall u, p :: u in s.tasks && u.id in a && p in u.parents && p != u.id ==> p in a)
+  ensures |(set u | u in s.tasks && u.id in a :: u.id)| >= 1
+{
+  var u, p :| u in s.tasks && u.id in a && p in u.parents && p != u.id && !(p in a);
+  TSubsetCard({u.id}, (set v | v in s.tasks && v.id in a :: v.id));
+}
+
+// After one round per task, the ancestors are closed: one more round finds nothing new.
+lemma TAncestorsClosed(s: Tracker, y: int)
+  ensures (forall u, p :: u in s.tasks && u.id in ancestors(s, y) && p in u.parents && p != u.id ==> p in ancestors(s, y))
+{
+  var a := parentsOfAll(s, [y]);
+  assert ancestors(s, y) == Std.Collections.Seq.FoldLeft((acc: seq<int>, t: Task) => (acc + Std.Collections.Seq.Filter((p: int) => !((p in acc)), parentsOfAll(s, acc))), a, s.tasks);
+  TAncConverge(s, a, s.tasks);
+  if !(forall u, p :: u in s.tasks && u.id in ancestors(s, y) && p in u.parents && p != u.id ==> p in ancestors(s, y)) {
+    TAncOpenCount(s, a);
+    TIdCountBound(s.tasks, ancestors(s, y));
+    assert false;
+  }
+}
+
+// ===== create adds no problem =====
+
+// Each old task keeps its problems or loses some; the new task has none.
+lemma TCreateTask(s: Tracker, actor: string, j: int)
+  requires inv(s)
+  requires 0 <= j < |create(s, actor).tasks|
+  ensures forall q :: q in problemsOf(create(s, actor), create(s, actor).tasks[j]) ==> exists i :: 0 <= i < |s.tasks| && q in problemsOf(s, s.tasks[i])
+{
+  var s2 := create(s, actor);
+  var n := s2.tasks[|s.tasks|];
+  assert s2.tasks == s.tasks + [n];
+  kernel_lawNextIsAboveTheCounter_ensures(numbersInUse(s), s.lastId);
+  kernel_lawNextIsAboveEverythingSeen_ensures(numbersInUse(s), s.lastId);
+  assert n.id > s.lastId;
+  assert forall u :: u in s.tasks ==> u.id <= s.lastId;
+  assert forall x :: x in numbersInUse(s) ==> n.id > x;
+  assert forall u :: u in s2.tasks ==> u in s.tasks || u == n;
+  // The ancestors of every number are found among the same ones as before.
+  forall y, x | x in ancestors(s2, y)
+    ensures x in ancestors(s, y)
+  {
+    TAncestorsClosed(s, y);
+    forall u, p | u in s2.tasks && u.id == y && p in u.parents && p != u.id
+      ensures p in ancestors(s, y)
+    {
+      assert u in s.tasks;
+      TParentsOfAllMember(s, [y], p);
+      TAncInflate(s, parentsOfAll(s, [y]), s.tasks, p);
+    }
+    TAncWithin(s2, y, ancestors(s, y));
+  }
+  if j < |s.tasks| {
+    var t := s.tasks[j];
+    assert s2.tasks[j] == t;
+    forall r | r in t.related
+      ensures r != n.id
+    {
+      TFoldConcatMember((acc: seq<int>, t: Task) => (((acc + [t.id]) + t.parents) + t.related), (t: Task) => (([t.id] + t.parents) + t.related), [], s.tasks, r);
+    }
+    forall r | hasTask(s, r)
+      ensures hasTask(s2, r)
+    {
+      var u :| u in s.tasks && u.id == r;
+      assert u in s2.tasks;
+    }
+    forall r | r != n.id && hasTask(s2, r)
+      ensures hasTask(s, r)
+    {
+      var u :| u in s2.tasks && u.id == r;
+    }
+    forall r, x | linksBack(s, r, x)
+      ensures linksBack(s2, r, x)
+    {
+      var u :| u in s.tasks && u.id == r && x in u.related;
+      assert u in s2.tasks;
+    }
+    TProblemsOfSubset(s, s2, t, t);
+    forall q | q in problemsOf(s2, s2.tasks[j])
+      ensures exists i :: 0 <= i < |s.tasks| && q in problemsOf(s, s.tasks[i])
+    {
+      assert q in problemsOf(s, s.tasks[j]);
+    }
+  } else {
+    assert s2.tasks[j] == n;
+    forall x | x in ancestors(s2, n.id)
+      ensures false
+    {
+      TAncWithin(s2, n.id, []);
+    }
+    TProblemsOfParts(s2, n);
+    ProofLib.FilterNil((o: string) => !((o in s2.owners)), n.owners);
+    ProofLib.FilterNil((p: int) => ((p != n.id) && !(hasTask(s2, p))), n.parents);
+    ProofLib.FilterNil((r: int) => ((r != n.id) && !(hasTask(s2, r))), n.related);
+    ProofLib.FilterNil((r: int) => (((r != n.id) && hasTask(s2, r)) && !(linksBack(s2, r, n.id))), n.related);
+    assert problemsOf(s2, n) == [];
+  }
+}
+
+// ===== addParent adds no problem =====
+
+// A loop after adding id -> other would run from other back to id before: the guard rules it out.
+lemma TAddParentAncestors(s: Tracker, id: int, other: int, actor: string, y: int)
+  requires canAddParent(s, id, other, actor)
+  ensures y in ancestors(addParent(s, id, other, actor), y) ==> y in ancestors(s, y)
+{
+  var s2 := addParent(s, id, other, actor);
+  forall u2 | u2 in s2.tasks
+    ensures exists u :: u in s.tasks && u.id == u2.id && (forall p :: p in u2.parents ==> p in u.parents || (u.id == id && p == other))
+  {
+    var k :| 0 <= k < |s2.tasks| && s2.tasks[k] == u2;
+    var u := s.tasks[k];
+    assert u in s.tasks;
+  }
+  var c := ancestors(s, y);
+  var d := ancestors(s, other);
+  TAncestorsClosed(s, y);
+  TAncestorsClosed(s, other);
+  forall u, p | u in s.tasks && u.id == y && p in u.parents && p != u.id
+    ensures p in c
+  {
+    TParentsOfAllMember(s, [y], p);
+    TAncInflate(s, parentsOfAll(s, [y]), s.tasks, p);
+  }
+  forall u, p | u in s.tasks && u.id == other && p in u.parents && p != u.id
+    ensures p in d
+  {
+    TParentsOfAllMember(s, [other], p);
+    TAncInflate(s, parentsOfAll(s, [other]), s.tasks, p);
+  }
+  assert !(id in d);
+  if !(id in c) && y != id {
+    forall u2, p | u2 in s2.tasks && u2.id in c && p in u2.parents && p != u2.id
+      ensures p in c
+    {
+      var u :| u in s.tasks && u.id == u2.id && (forall p :: p in u2.parents ==> p in u.parents || (u.id == id && p == other));
+    }
+    forall u2, p | u2 in s2.tasks && u2.id == y && p in u2.parents && p != u2.id
+      ensures p in c
+    {
+      var u :| u in s.tasks && u.id == u2.id && (forall p :: p in u2.parents ==> p in u.parents || (u.id == id && p == other));
+    }
+    TAncWithin(s2, y, c);
+  } else {
+    var e := c + [other] + d;
+    forall u2, p | u2 in s2.tasks && u2.id in e && p in u2.parents && p != u2.id
+      ensures p in e
+    {
+      var u :| u in s.tasks && u.id == u2.id && (forall p :: p in u2.parents ==> p in u.parents || (u.id == id && p == other));
+    }
+    forall u2, p | u2 in s2.tasks && u2.id == y && p in u2.parents && p != u2.id
+      ensures p in e
+    {
+      var u :| u in s.tasks && u.id == u2.id && (forall p :: p in u2.parents ==> p in u.parents || (u.id == id && p == other));
+    }
+    TAncWithin(s2, y, e);
+    if y in ancestors(s2, y) && !(y in c) {
+      assert y == other || y in d;
+      if y == id {
+        assert false;
+      } else {
+        assert id in c;
+        if y in d {
+          forall u, p | u in s.tasks && u.id == y && p in u.parents && p != u.id
+            ensures p in d
+          {
+          }
+          TAncWithin(s, y, d);
+        }
+        assert false;
+      }
+    }
+  }
+}
+
+// Each task keeps its problems or loses some.
+lemma TAddParentTask(s: Tracker, id: int, other: int, actor: string, i: int)
+  requires canAddParent(s, id, other, actor)
+  requires 0 <= i < |s.tasks|
+  ensures forall q :: q in problemsOf(addParent(s, id, other, actor), addParent(s, id, other, actor).tasks[i]) ==> q in problemsOf(s, s.tasks[i])
+{
+  var s2 := addParent(s, id, other, actor);
+  var t := s.tasks[i];
+  var t2 := s2.tasks[i];
+  TSameIdsHasTask(s, s2);
+  TSameLinksHasTask(s, s2);
+  TAddParentAncestors(s, id, other, actor, t.id);
+  TProblemsOfSubset(s, s2, t, t2);
 }

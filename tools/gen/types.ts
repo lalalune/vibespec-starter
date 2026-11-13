@@ -3,6 +3,8 @@
 
 export type Json = any;
 export const fail = (msg: string): never => { throw new Error(msg); };
+/** Reads the type the checker inferred for an expression, failing where it recorded none. */
+export const typeOfIn = (inferred: (id: number) => Json | undefined) => (id: number): Json => inferred(id) ?? fail(`no inferred type for expression ${id}`);
 
 const PRIMITIVE: Record<string, string> = { int: "number", bool: "boolean", str: "string" };
 
@@ -35,9 +37,14 @@ export function typeWalks(typedefs: Json[], module: string, prefix = "") {
   }
   /** A sum type is a plain string union unless some variant carries data; then it is a tagged union. */
   const tagged = (t: Json) => t.kind === "sum" && fields(t).some((f) => payload(f));
-  const isScalar = (t: Json) => ["int", "bool", "str"].includes(resolve(t).kind) || (resolve(t).kind === "sum" && !tagged(resolve(t)));
+  const isScalar = (t0: Json) => {
+    const t = resolve(t0);
+    return ["int", "bool", "str"].includes(t.kind) || (t.kind === "sum" && !tagged(t));
+  };
   /** The declared type with this structure, if there is one. */
   const named = (t: Json, kind?: string): Json | undefined => typedefs.find((d) => (!kind || d.type.kind === kind) && shape(d.type) === shape(t));
+  /** The record carried by the variant of a tagged union that a value has, if that variant carries one. */
+  const carriedBy = (t: Json, tag: string) => payload(fields(t).find((f) => f.fieldName === tag)!);
   /** The type a variant belongs to. */
   const ownerOf = (variant: string): Json => {
     const [base, alias] = variant.split("::").reverse();
@@ -124,10 +131,7 @@ export function typeWalks(typedefs: Json[], module: string, prefix = "") {
     if (t.kind === "set") return v["#set"].map((x: any) => decode(t.elem, x));
     if (t.kind === "rec") return Object.fromEntries(fields(t).map((f) => [f.fieldName, decode(f.fieldType, v[f.fieldName])]));
     if (t.kind === "fun") return Object.fromEntries(v["#map"].map(([k, x]: [any, any]) => ["$" + decode(t.arg, k), decode(t.res, x)]));
-    if (tagged(t)) {
-      const carried = payload(fields(t).find((f) => f.fieldName === v.tag)!);
-      return { tag: v.tag, ...(carried ? decode(carried, v.value) : {}) };
-    }
+    if (tagged(t)) return { tag: v.tag, ...(carriedBy(t, v.tag) ? decode(carriedBy(t, v.tag), v.value) : {}) };
     return t.kind === "sum" ? v.tag : v;
   };
   /** The same value with every set in a fixed order, so that two sets compare equal however they were built. */
@@ -137,13 +141,10 @@ export function typeWalks(typedefs: Json[], module: string, prefix = "") {
     if (t.kind === "set") return [...v].sort((x, y) => (JSON.stringify(x) < JSON.stringify(y) ? -1 : 1));
     if (t.kind === "rec") return Object.fromEntries(fields(t).map((f) => [f.fieldName, canon(f.fieldType, v[f.fieldName])]));
     if (t.kind === "fun") return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, canon(t.res, x)]));
-    if (tagged(t)) {
-      const carried = payload(fields(t).find((f) => f.fieldName === v.tag)!);
-      return carried ? { tag: v.tag, ...canon(carried, v) } : v;
-    }
+    if (tagged(t)) return carriedBy(t, v.tag) ? { tag: v.tag, ...canon(carriedBy(t, v.tag), v) } : v;
     return v;
   };
 
-  return { fields, resolve, shape, payload, tagged, isScalar, named, ownerOf, typeName, tsType, declaration, qType, wellFormed, copy, decode, canon };
+  return { fields, resolve, shape, tagged, isScalar, named, ownerOf, typeName, tsType, declaration, qType, wellFormed, copy, decode, canon };
 }
 export type Types = ReturnType<typeof typeWalks>;

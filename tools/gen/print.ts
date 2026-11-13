@@ -1,5 +1,5 @@
 // Quint expressions as TypeScript. Anything outside the supported subset throws with the name of the construct.
-import { fail, type Json, type Types } from "./types.ts";
+import { fail, typeOfIn, type Json, type Types } from "./types.ts";
 
 // Operator precedence, loosest first. Mixed `&&`/`||` is always parenthesised.
 const [ARROW, TERNARY, OR, AND, EQ, COMPARE, ADD, MULTIPLY, UNARY, ATOM] = [-1, 0, 1, 2, 3, 4, 5, 6, 7, 8];
@@ -12,7 +12,7 @@ const BINARY: Record<string, [string, number]> = {
 type SetArgs = { a: string; b: string; el: string; out: string };
 const SET_OPS: Record<string, (x: SetArgs) => string> = {
   contains: ({ a, b }) => `${a}.includes(${b})`,
-  in: ({ a, b }) => `${a}.includes(${b})`,
+  in: (x) => SET_OPS.contains(x), // members() puts its arguments in contains' order
   size: ({ a }) => `${a}.length`,
   union: ({ a, b, el }) => `[...${a}, ...${b}.filter((set_x: ${el}) => !${a}.includes(set_x))]`,
   intersect: ({ a, b, el }) => `${a}.filter((set_x: ${el}) => ${b}.includes(set_x))`,
@@ -40,9 +40,18 @@ export interface Scope {
   sampleSets: Set<string>;
 }
 
+/** Native array methods for the list helpers the tangler marks (LIST_HELPERS in tools/gen.ts). */
+const LIST_METHODS: Record<string, string> = { every: "every", some: "some", listMap: "map" };
+
+/** The set and the value of a membership test, whichever way round it is written. */
+const members = (op: string, a: Json[]): [Json, Json] => (op === "in" ? [a[1], a[0]] : [a[0], a[1]]);
+
+/** Puts a binding back as it was before an inner scope shadowed it. */
+const restore = <V>(m: Map<string, V>, k: string, v: V | undefined) => (v === undefined ? m.delete(k) : m.set(k, v));
+
 export function printer({ types, inferred, ref, helper, bind, variants, definitions, sampleSets }: Scope) {
   const { resolve, tagged, isScalar, named, ownerOf, typeName, tsType } = types;
-  const typeOf = (id: number): Json => inferred(id) ?? fail(`no inferred type for expression ${id}`);
+  const typeOf = typeOfIn(inferred);
   /** Which arithmetic helpers the printed code needs, and the value types of the maps it looks things up in. */
   const arithmetic = new Set<string>();
   const lookups: string[] = [];
@@ -70,6 +79,7 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
   };
   const scalarOnly = (what: string, xs: Json[]) =>
     xs.every((x) => isScalar(typeOf(x.id))) || fail(`${what} on records or lists is not supported: compare fields, or use every/some`);
+  const scalarSet = (t: Json) => isScalar(t.elem) || fail("sets of records or lists are not supported; use a list");
   /** `name: value` for each pair of a record literal's arguments. */
   const pairs = (args: Json[]) => args.flatMap((_, i) => (i % 2 ? [] : [`${args[i].value}: ${ex(args[i + 1], TERNARY)}`]));
   /** `{ ...x, a: 1, b: 2 }` arrives as nested updates; this is what is updated, and the updates in order. */
@@ -130,8 +140,7 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
       case "ite": {
         // `if (m.keys().contains(k)) m.get(k) else d` is a lookup with a default. It goes through a helper in which
         // the key is one name, which is the form both TypeScript and the prover can see is safe.
-        const test = a[0].kind === "app" && (a[0].opcode === "contains" || a[0].opcode === "in") ? a[0] : undefined;
-        const [keys, key] = test ? (test.opcode === "in" ? [test.args[1], test.args[0]] : [test.args[0], test.args[1]]) : [];
+        const [keys, key] = a[0].kind === "app" && (a[0].opcode === "contains" || a[0].opcode === "in") ? members(a[0].opcode, a[0].args) : [];
         const get = a[1].kind === "app" && a[1].opcode === "get" ? a[1] : undefined;
         if (keys?.opcode === "keys" && get && ex(get.args[0]) === ex(keys.args[0]) && ex(get.args[1]) === ex(key)) {
           const of = tsType(resolve(typeOf(keys.args[0].id)).res);
@@ -161,9 +170,7 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
         const [acc, item] = a[2].kind === "lambda" ? a[2].params : [];
         const which = acc?.name.match(/^std_(every|some|listMap|includes)_/)?.[1];
         const inner = a[2].expr?.args?.[1];
-        if (which === "every") return [`${recv()}.every(${arrow([item], inner)})`, ATOM];
-        if (which === "some") return [`${recv()}.some(${arrow([item], inner)})`, ATOM];
-        if (which === "listMap") return [`${recv()}.map(${arrow([item], inner)})`, ATOM];
+        if (LIST_METHODS[which]) return [`${recv()}.${LIST_METHODS[which]}(${arrow([item], inner)})`, ATOM];
         if (which === "includes") { scalarOnly("includes", [inner.args[1]]); return [`${recv()}.includes(${ex(inner.args[1], TERNARY)})`, ATOM]; }
         return [`${recv()}.reduce(${ex(a[2])}, ${ex(a[1], TERNARY)})`, ATOM];
       }
@@ -185,34 +192,31 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
       const isTagged = tagged(resolve(typeOf(a[0].id)));
       const arms: { test?: string; result: string }[] = [];
       for (let i = 1; i < a.length; i += 2) {
+        // Inside the arm the binder stands for the matched value; an outer binder of the same name comes back after.
         const binder = a[i + 1].params[0]?.name;
-        // Inside the arm the binder stands for the matched value; an outer arm's binder of the same name comes back after.
-        const outer = binder ? [renamed.get(binder), matchedAs.get(binder)] as const : undefined;
-        if (binder && binder !== "_") { renamed.set(binder, subject); matchedAs.set(binder, a[i].value); }
+        const bound = binder && binder !== "_";
+        const outer = bound ? [renamed.get(binder), matchedAs.get(binder)] : [];
+        if (bound) { renamed.set(binder, subject); matchedAs.set(binder, a[i].value); }
         const result = ex(a[i + 1].expr, OR);
-        if (binder && outer![0] !== undefined) { renamed.set(binder, outer![0]); matchedAs.set(binder, outer![1]!); }
-        else if (binder) { renamed.delete(binder); matchedAs.delete(binder); }
+        if (bound) { restore(renamed, binder, outer[0]); restore(matchedAs, binder, outer[1]); }
         arms.push({ test: a[i].value === "_" ? undefined : `${subject}${isTagged ? ".tag" : ""} === ${JSON.stringify(a[i].value)}`, result });
       }
       const last = arms.pop()!;
       return [arms.reduceRight((rest, arm) => `${arm.test} ? ${arm.result} : ${rest}`, last.result), arms.length ? TERNARY : OR];
     }
-    if ((op === "contains" || op === "in") && (op === "in" ? a[1] : a[0]).opcode === "keys") {
-      const [keys, key] = op === "in" ? [a[1], a[0]] : [a[0], a[1]];
-      return [`(${mapKey(key)}) in ${ex(keys.args[0], COMPARE + 1)}`, COMPARE];
-    }
+    const [x, y] = members(op, a);
+    if ((op === "contains" || op === "in") && x.opcode === "keys") return [`(${mapKey(y)}) in ${ex(x.args[0], COMPARE + 1)}`, COMPARE];
     if (SET_OPS[op]) {
       // A set is an array that never holds the same value twice. Only simple values can be in one.
-      const t = resolve(typeOf(op === "in" ? a[1].id : a[0].id));
+      const t = resolve(typeOf(x.id));
       if (t.kind !== "set") return fail(`\`${op}\` is supported on sets only`);
-      if (!isScalar(t.elem)) fail("sets of records or lists are not supported; use a list");
+      scalarSet(t);
       const el = tsType(t.elem);
-      const [x, y] = op === "in" ? [a[1], a[0]] : [a[0], a[1]];
       return [SET_OPS[op]({ a: ex(x, ATOM), b: y && ex(y, y.kind === "lambda" ? ARROW : ATOM), el, out: op === "map" ? tsType(resolve(typeOf(e.id)).elem) : el }), ATOM];
     }
     if (op === "Set") {
       const t = resolve(typeOf(e.id));
-      if (!isScalar(t.elem)) fail("sets of records or lists are not supported; use a list");
+      scalarSet(t);
       const items = [...new Set(a.map((x) => ex(x, TERNARY)))];
       const literal = (x: Json) => ["int", "str", "bool"].includes(x.kind) || (x.kind === "name" && variants.has(x.name));
       if (a.length > 1 && !a.every(literal)) fail("Set(…) with several members that are not literals could hold the same value twice; write Set(a).union(Set(b))");

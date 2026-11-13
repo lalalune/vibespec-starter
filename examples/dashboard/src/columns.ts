@@ -1,9 +1,7 @@
 //@ backend dafny
-// Hand-written, because Quint has no loops or recursion: a spreadsheet column
-// as base-26 digits, most significant first (0 is A, 26 is AA). Every write to
-// a sheet is aimed with this, so each digit must be a letter.
-// `npm run check` proves the `//@ ensures` lines for every column number.
+// Hand-written because Quint has no loops; `npm run check` proves its contracts.
 
+/** A column as base-26 digits, most significant first: 0 is [0] (A), 26 is [0, 0] (AA). */
 export function columnDigits(col: number): number[] {
   //@ requires col >= 0
   //@ ensures \result.length >= 1
