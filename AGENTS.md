@@ -345,10 +345,11 @@ for each one, in this order:
    to another. Read the list before recording it: an obligation that is false
    is also "not proved".
 
-Counting is per obligation. Dafny checks every `ensures` on its own, a
-failing one is never assumed while another is checked, and the prover works
-to a fixed resource limit (`RESOURCE_LIMIT` in `tools/prove.ts`) rather than a
-time limit, so the answer does not depend on the machine. An obligation it
+Counting is per obligation. Dafny verifies each definition whole, and one
+that fails again with every assertion on its own; a failing `ensures` is never
+assumed while another is checked. The prover works to a fixed resource limit
+(`RESOURCE_LIMIT` in `tools/prove.ts`, per definition and then per assertion)
+rather than a time limit, so the answer does not depend on the machine. An obligation it
 could not finish is marked `[the prover ran out of resources]`. A lemma
 assumes what every lemma it calls ensures, so an obligation whose proof calls,
 directly or through helpers, a lemma with an obligation not proved is not
@@ -407,8 +408,8 @@ a body.
 
 **What a proof can call:**
 
-- `ProofLib.<Name>(...)` from `tools/proof/lib.dfy`, added to every unit that
-  has a proof file: `Filter` (a heap-free view of `Std.Collections.Seq.Filter`,
+- `ProofLib.<Name>(...)` from `tools/proof/lib.dfy`, of which every unit that
+  has a proof file gets what the file calls and what that uses: `Filter` (a heap-free view of `Std.Collections.Seq.Filter`,
   see below), `Distinct`, `DistinctBy`, and lemmas about filters
   (`FilterNil`, `FilterCons`, `FilterAppend`, `FilterMember`, `FilterSubset`,
   `FilterNone`, `FilterOne`, `FilterTwo`, `FilterCountOneIffUnique`,
@@ -564,9 +565,11 @@ with `tsc`; it has no dependencies.
   order and proves each against the *definitions* of what it imports, not
   their proofs, so the cost of a proof grows with the spec, not with
   everything beneath it.
-- **Only what changed is checked again.** Each passing simulation and proof
-  result is kept in `.spec-cache/` under a fingerprint of the spec, everything it
-  imports and the versions of the tools.
+- **Only what changed is checked again.** Each simulation result, a failing
+  one too (its seed is fixed), and each passing proof result is kept in
+  `.spec-cache/` under a fingerprint of the spec's Quint without its comments,
+  everything it imports and the versions of the tools; `tsc` keeps its
+  incremental state there. The specs are simulated at once.
 - **The spec covers the rules, not the plumbing.** Chat, HTTP and storage stay
   hand-written around the generated core, as `examples/dashboard/src/notify.ts`
   does for sending messages.
@@ -591,7 +594,7 @@ In the vibespec-starter repository:
 | File | Role |
 |---|---|
 | `tools/spec.ts` | the pipeline and the `spec` command |
-| `tools/prove.ts` | proves one unit: checks and splices the proof file, runs LemmaScript and `dafny audit`, and rechecks alone every postcondition a failing one could hide |
+| `tools/prove.ts` | proves one unit: checks and splices the proof file, runs LemmaScript and `dafny audit`, verifies again with every assertion isolated each definition that fails, and alone every postcondition a failing one could hide |
 | `tools/proof/lib.dfy` | the library proof files call |
 | `tools/gen.ts` | the translator: reads what a module imports and defines |
 | `tools/gen/types.ts` | everything decided by a type |

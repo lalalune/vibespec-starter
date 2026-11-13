@@ -9,6 +9,13 @@ export const digest = (text: string) => createHash("sha256").update(text).digest
 export const sha = (...parts: string[]) => digest(JSON.stringify(parts));
 export const short = (text: string) => digest(text).slice(0, 12);
 export const indent = (s: string, by = 6) => s.split("\n").map((l) => " ".repeat(by) + l).join("\n");
+/** What each promise gives, once every one has finished: a failure is thrown only then, so that nothing is left running. */
+export async function allDone<T>(promises: Promise<T>[]): Promise<T[]> {
+  const settled = await Promise.allSettled(promises);
+  const failure = settled.find((r) => r.status === "rejected");
+  if (failure) throw failure.reason;
+  return settled.map((r) => (r as PromiseFulfilledResult<T>).value);
+}
 
 export function srcUnits(root: string, other = false): { file: string; code: string }[] {
   const src = path.join(root, "src");
