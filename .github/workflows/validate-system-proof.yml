@@ -1,0 +1,29 @@
+name: validate system proof
+on:
+  push:
+    branches: [codex/fullstack-system-proof]
+  workflow_dispatch:
+jobs:
+  fullstack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dafny-lang/setup-dafny-action@v1
+        with:
+          dafny-version: '4.11.0'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: npm
+      - run: npm ci
+      - run: node ../../spec.ts accept
+        working-directory: vibespec/examples/fullstack
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fullstack-proof
+          path: |
+            vibespec/examples/fullstack/gen/proof/
+            vibespec/examples/fullstack/spec/lock.json
+          if-no-files-found: ignore
