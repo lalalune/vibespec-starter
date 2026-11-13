@@ -227,11 +227,11 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
         const runsOf = sim.traces.map((t) => ({ t, ...lasso(domain, model, t) }));
         const live = runsOf.filter((r) => r.broken).sort((x, y) => x.broken!.end - y.broken!.end)[0];
         if (live) {
-          const { rule, from, loop, end } = live.broken!;
-          const marks: Record<number, string> = { [from]: `<- ${rule} is owed from here` };
-          marks[loop] = (marks[loop] ? `${marks[loop]}; ` : "<- ") + (loop === end ? "the run may stop here" : "the run goes round from here");
-          const shown = showTrace(live.t.slice(0, end + 1)).split("\n").map((l, i) => (marks[i] ? `${l}   ${marks[i]}` : l)).join("\n");
-          say(false, "always", `a fair run breaks ${cite(rule)}: no state after the one marked is one the rule relates it to, and the run ${loop === end
+          const { rule, from, loop, end, within } = live.broken!;
+          const shown = showTrace(live.t.slice(0, end + 1), [[from, `${rule} is owed from here`],
+            [loop, within ? "the bound runs out here" : loop === end ? "the run may stop here" : "the run goes round from here"]]);
+          say(false, "always", within ? `a run breaks ${cite(rule)} within its bound (\`within_${rule} = ${within}\`): neither the state marked nor the next ${within} that events lead to is one the rule relates it to. Fix the model, or raise the bound`
+            : `a fair run breaks ${cite(rule)}: no state after the one marked is one the rule relates it to, and the run ${loop === end
             ? "may stop at the last state, since no fair event is possible there. Declare fair the event that should come next (`fair_<event>`), or fix the model"
             : "may repeat its loop for ever, taking every fair event it must. Fix the model, or declare fair the event that should break the loop (\"strong\" if it is possible only at times)"}`,
           `${shown}\n      ${sim.again}`);
