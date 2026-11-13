@@ -56,12 +56,12 @@ lemma handSetChannel_ensures(r: Registry, key: string, channel: string)
 // ---- bridges from the generated definitions to ProofLib.Filter ----
 
 lemma SheetsFilter(r: Registry)
-  ensures alwaysASheetHasOneProject(r) == Std.Collections.Seq.All(r.entries, (a: Entry) => (|ProofLib.Filter((b: Entry) => (b.sheet == a.sheet), r.entries)| == 1))
+  ensures alwaysASheetHasOneProject(r) == !(exists a :: a in r.entries && !(|ProofLib.Filter((b: Entry) => (b.sheet == a.sheet), r.entries)| == 1))
 {
 }
 
 lemma KeysFilter(r: Registry)
-  ensures alwaysAKeyNamesOneProject(r) == Std.Collections.Seq.All(r.entries, (a: Entry) => (|ProofLib.Filter((b: Entry) => (b.key == a.key), r.entries)| == 1))
+  ensures alwaysAKeyNamesOneProject(r) == !(exists a :: a in r.entries && !(|ProofLib.Filter((b: Entry) => (b.key == a.key), r.entries)| == 1))
 {
 }
 
