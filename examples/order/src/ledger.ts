@@ -1,7 +1,7 @@
 //@ backend dafny
 // Hand-written business logic, proved against the generated contract.
 // `npm run check` proves every `//@ ensures` below for all inputs.
-import { type Event, type Order, initial, step } from "../gen/order.ts";
+import { type Event, type Order, initial, step } from "../gen/index.ts";
 
 /** Rebuild an order from its event log. Events the rules reject are skipped. */
 export function replay(events: Event[]): Order {

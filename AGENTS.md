@@ -1,8 +1,9 @@
 # Operating procedure for agents
 
-Each application has one source of truth, `spec/<name>.md`: its stories, rules
-and Quint model. `gen/` is derived from it. Keep the spec true to what the user
-wants and `npm run check` green.
+Each application starts at `spec/index.md`: its stories, rules and Quint
+model, with links to child specs wherever an area needs its own directory.
+`gen/` is derived from it. Keep the spec true to what the user wants and
+`npm run check` green.
 
 **Read this file and [README.md](README.md) in full before doing any work.**
 The spec format, naming rules and everything the tools accept are in
@@ -23,7 +24,7 @@ The user signs off with `npm run accept`.
 
 ## Hard rules
 
-- Never edit `gen/`, `.spec-cache/` or `spec/*.lock.json`, and never add a
+- Never edit `gen/`, `.spec-cache/` or `spec/lock.json`, and never add a
   `lemmascript.json`. The tools own them; a change there could make a check
   pass that should not.
 - Never run `npm run accept -- unproved` unless the user asks. It lowers the
@@ -32,7 +33,7 @@ The user signs off with `npm run accept`.
   rule `review` lists and finding that its prose and Quint say the same thing.
 - Never weaken or delete a rule (`always`, `step`, `sometimes` or `law`) to
   make a check pass without telling the user which rule and why.
-- Proving obligations is your work, in `spec/<name>.proof.dfy` or
+- Proving obligations is your work, in `spec/<path>.proof.dfy` or
   `src/<path>.proof.dfy` ("Proof files", below). Satisfy a check;
   never get past it: no trust or skip annotations, no edits to the tools or
   what they generate, no workaround for what a proof file may not contain.
@@ -74,7 +75,7 @@ and nothing else would catch it.
 | A shell bug that was found: one more step in the journey it broke | That a function was called; what `tsc` already checks |
 
 - **Journeys.** A test walks a story end to end, is named after it, and cites
-  the rule each assertion serves (`// spec/order.md, "…"`). A story whose
+  the rule each assertion serves (`// spec/index.md, "…"`). A story whose
   path never leaves the verified core needs none.
 - **Real services.** Run the real database, server, queue and filesystem,
   started and reset by the `test` script or the runner's setup: an in-process
@@ -106,8 +107,8 @@ How `npm run check` runs them:
   the runner's summary of failures, or its last 80 lines.
 - **Citations.** A test, or a shell file in `src/`, names the story or rule it
   serves by its heading, on one line:
-  `// spec/order.md, "A payment never exceeds the balance"`, or
-  `// spec/order.md, "Story: Check out"` for a story; several may share a line,
+  `// spec/index.md, "A payment never exceeds the balance"`, or
+  `// spec/index.md, "Story: Check out"` for a story; several may share a line,
   separated by `;`. `check` fails on a
   citation whose heading the spec no longer has, so a renamed or removed rule
   brings its tests up for review.
@@ -132,15 +133,32 @@ The spec format, the generated code and the code built on it. The agent's
 loop is the [`sync` skill](.claude/skills/sync/SKILL.md); setup and the stages
 of `npm run check` are in [README.md](README.md).
 
-In the vibespec-starter repository, "the order example" is `spec/order.md` and "the
-tracker example" is `examples/dashboard/spec/tracker.md`.
+In the vibespec-starter repository, "the order example" is
+`examples/order/spec/index.md` and "the tracker example" is
+`examples/dashboard/spec/tracker.md`. The root `spec/index.md` is blank, ready
+for a new application.
 
 ## Writing a spec
 
-`npx spec new <name>` writes a starter `spec/<name>.md` that passes every
-stage but `review`. The file name is the module name: `[a-z][A-Za-z0-9]*`,
-not `src` or `unproved` (their lock files are the tools' ledgers).
-`spec/order.md` becomes `gen/order.ts`; `check` reads every `spec/*.md`.
+`npx spec new` fills an empty `spec/index.md` with a starter that passes every
+stage but `review`. `npx spec new <name>` writes `spec/<name>/index.md`;
+nested names such as `billing/payments` are allowed. A non-empty spec is
+never replaced.
+
+`check` reads every `spec/**/*.md`, including child directories. A spec may
+link to another with `[Payments](./payments/)` or
+`[Currency](../shared/currency.md)`. Directory links resolve to `index.md`;
+references stay inside `spec/`. Links organize the spec; Quint imports bring
+in definitions. An empty index or one containing only navigation links is
+valid. A `##` story still needs rules.
+
+Each path component uses `[a-z][A-Za-z0-9]*`. The generated module name is
+the path relative to `spec/`, without `.md` or a trailing `/index`, with
+slashes replaced by `__`: `spec/index.md` becomes `gen/index.ts`,
+`spec/billing/index.md` becomes `gen/billing.ts`, and
+`spec/billing/payments.md` becomes `gen/billing__payments.ts`. Flat files
+remain supported. Two paths cannot name the same module, so use either
+`spec/billing.md` or `spec/billing/index.md`.
 
 ````markdown
 # Order checkout                         <- title, free text
@@ -172,7 +190,7 @@ the same character, at least as long, with nothing after it, so a fence of
 four backticks can hold a ```` ```quint ```` example. A fence is Quint when
 the first word of its info string is `quint`.
 
-Quint errors are reported at `spec/<name>.md:line:col`.
+Quint errors are reported at the source file's path and `line:col`.
 
 ### What goes in the Quint blocks
 
@@ -218,8 +236,14 @@ and near-misses of the conventions above such as `alwayspaid` or `CanPay`.
   neither lamp could state (`tools/fixtures/room.md` in the vibespec-starter
   repository).
 
+Import paths resolve relative to the spec that contains them. For example,
+`import currency.* from "../shared/currency"` uses a sibling area's library,
+and `import payments as P from "./payments"` uses `payments/index.md`.
+Generated code uses the imported spec's full module path.
+
 A spec is imported once, one way or the other, and imports cannot form a
-circle. In the generated TypeScript a name from another module is spelled
+circle. Navigation links may point back to a parent. In the generated
+TypeScript a name from another module is spelled
 `<module>_<name>`, for example `lamp_toggle`.
 
 ### Supported Quint
@@ -301,9 +325,10 @@ is in the [`sync` skill](.claude/skills/sync/SKILL.md).
 
 | What | Recorded in, under | Fingerprint of | Statuses |
 |---|---|---|---|
-| story | `spec/<name>.lock.json`, `## <title>` | its text, whitespace collapsed | `story has no rules`, `new story`, `story changed`, `removed or renamed` |
-| rule | `spec/<name>.lock.json`, `<story> / <heading>` | 1. its prose, whitespace collapsed<br>2. its Quint<br>3. the Quint of every rule it relies on | `not formalized` (no Quint), `new`, `prose changed`, `model changed`, `model changed through <names> (<rule>)`, `prose and model both changed`, `removed or renamed` |
-| contract | `spec/src.lock.json`, `src/<path>.ts` | its `//@` lines | `new contract`, `contract changed`, `contract removed` |
+| document | `spec/lock.json`, `specs[<path>]["@document"]` | title, introduction and links before the first story, whitespace collapsed | `document changed` |
+| story | `spec/lock.json`, `specs[<path>]["## <title>"]` | its text, whitespace collapsed | `story has no rules`, `new story`, `story changed`, `removed or renamed` |
+| rule | `spec/lock.json`, `specs[<path>][<story> / <heading>]` | 1. its prose, whitespace collapsed<br>2. its Quint<br>3. the Quint of every rule it relies on | `not formalized` (no Quint), `new`, `prose changed`, `model changed`, `model changed through <names> (<rule>)`, `prose and model both changed`, `removed or renamed` |
+| contract | `spec/lock.json`, `contracts["src/<path>.ts"]` | its `//@` lines | `new contract`, `contract changed`, `contract removed` |
 
 ```mermaid
 flowchart LR
@@ -316,6 +341,13 @@ variant) that its own Quint mentions, transitively and across imports. Above,
 editing C's Quint makes A and B `model changed through Status (…C)`; a rule in
 another spec is named `spec/<file>: <rule>`. A renamed heading is one rule
 removed and one new.
+
+The versioned `spec/lock.json` holds `specs` keyed by source path, `contracts`
+keyed by source file, and `unproved` keyed by proof unit. `npx spec migrate`
+consolidates older per-spec ledgers without accepting new reviews or proof
+exceptions. Commit the resulting lock with the specs.
+
+Removed spec paths stay in review until their removal is accepted.
 
 Accept records everything or nothing: only when every other stage passes,
 every story has a rule and every rule has Quint.
@@ -338,8 +370,8 @@ for each one, in this order:
    only for a spec unit: nothing simulates hand-written code, so a `src`
    unit's obligations must be proved.
    `npm run accept -- unproved` records the obligations in
-   `spec/unproved.lock.json`, per unit, with a fingerprint of the unit's text
-   and proof file. The check then passes and says how many obligations are
+   `spec/lock.json` under `unproved`, per unit, with a fingerprint of the
+   unit's text and proof file. The check then passes and says how many obligations are
    simulated only. It fails again if a *new* one appears, or if the unit or
    its proof file changes: what was accepted for one text does not carry over
    to another. Read the list before recording it: an obligation that is false
@@ -359,7 +391,8 @@ obligations simulated only lists them.
 
 ### Proof files
 
-`spec/<name>.proof.dfy` proves obligations of `gen/<name>.ts`;
+A spec's adjacent `.proof.dfy` proves its generated module: for example,
+`spec/billing/index.proof.dfy` proves `gen/billing.ts`;
 `src/<path>.proof.dfy` proves those of `src/<path>.ts`. A proof file that
 belongs to no unit is reported.
 
@@ -478,7 +511,7 @@ Every definition from the spec carries a doc comment naming its rule and spec
 line.
 
 - Import with the `.ts` extension, as Node requires:
-  `import { type Event, enabled, step } from "../gen/order.ts";`
+  `import { type Event, enabled, step } from "../gen/index.ts";`
 - **Pass everything that arrives from outside through `parseEvent` or
   `parseState`.** The proofs assume whole numbers and plain data.
 
@@ -491,7 +524,7 @@ line.
   afterwards.
 - Calling a transition directly (`pay(o, 5)`) is only meaningful when its
   guard holds. Application code goes through `enabled` and `step`, as
-  `src/app.ts` does.
+  `examples/order/src/app.ts` does.
 - `gen/` is rebuilt by `npm run gen` and `npm run check`, and by
   `npm install` when every spec is valid.
 
@@ -501,7 +534,7 @@ Put logic in the spec when you can: it is then simulated, proved and
 generated. For pure logic that Quint cannot express, such as a loop over an
 event log, write TypeScript under `src/` with
 [LemmaScript](https://github.com/midspiral/LemmaScript) annotations.
-`src/ledger.ts` is the worked example.
+`examples/order/src/ledger.ts` is the worked example.
 
 - Any `.ts` file under `src/` that contains `//@` is proved by
   `npm run check`, as the unit `src-<path>`. Its `//@` lines are its
@@ -540,18 +573,19 @@ a tarball made with `npm pack`.
 ```sh
 npm install --save-dev /path/to/vibespec-0.1.0.tgz
 npx spec init          # adds what is missing; replaces nothing
-npx spec new <name>    # a starter spec/<name>.md
+npx spec new           # fill an empty spec/index.md
+npx spec new <name>    # a starter spec/<name>/index.md
 npm run check
 ```
 
 | `spec init` adds | |
 |---|---|
 | `.claude/skills/sync/`, `.claude/skills/design/`, `AGENTS.md`, `CONTRIBUTING.md` | the agent's procedure and this reference, and a pointer to them |
-| `tsconfig.json`, `spec/` | |
+| `tsconfig.json`, an empty `spec/index.md` | |
 | `.gitignore` | `gen/`, `.spec-cache/` |
 | `package.json` scripts | `check`, `gen`, `accept` |
 
-`spec` works on `spec/*.md`, and optionally `src/`, the package's
+`spec` works on `spec/**/*.md`, and optionally `src/`, the package's
 [tests](#tests) and a `tsconfig.json`, in the directory it is run from. Without a `tsconfig.json`
 nothing is typechecked, and the check says so. To hand the generated code to another package, compile `gen/*.ts`
 with `tsc`; it has no dependencies.
@@ -581,7 +615,7 @@ To check a model exhaustively up to a depth with the Apalache model checker
 (needs Java 17+, downloads Apalache on first use):
 
 ```sh
-npx quint verify gen/order.run.qnt --main order_run --invariant inv --max-steps 10
+npx quint verify gen/index.run.qnt --main index_run --invariant inv --max-steps 10
 ```
 
 ## Changing the tools

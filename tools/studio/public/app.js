@@ -90,7 +90,8 @@ function merge(snap, mine) {
     out.push(d);
   }
   for (const f of fresh) if (!out.some((o) => o.file === f.file)) out.push(f);
-  out.sort((a, b) => a.file.localeCompare(b.file));
+  const order = (file) => file.replace(/(?:^spec\/|\/)index\.md$/, "/");
+  out.sort((a, b) => order(a.file).localeCompare(order(b.file)));
   for (const s of out) for (const sec of s.doc.sections) { sec.uid ??= uid(); for (const r of sec.rules) r.uid ??= uid(); }
   uidCount = Math.max(uidCount, ...out.flatMap((s) => s.doc.sections.flatMap((x) => [x.uid, ...x.rules.map((r) => r.uid)])).map((u) => Number(u.slice(1)) || 0));
   return out;
@@ -171,8 +172,29 @@ function toast(text, action) {
 }
 
 /** Markdown, as far as specs use it: paragraphs, quotes, lists, code and emphasis. */
-function markdown(text) {
-  const inline = (s) => esc(s).replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>").replace(/(^|[^*])\*([^*]+)\*/g, "$1<em>$2</em>");
+function markdown(text, file) {
+  const inline = (s) => {
+    const tokens = /`([^`]+)`|\[([^\]]+)\]\(([^)]+)\)|\*\*([^*]+)\*\*|\*([^*]+)\*/g;
+    let out = "", end = 0;
+    for (const m of s.matchAll(tokens)) {
+      out += esc(s.slice(end, m.index));
+      if (m[1]) out += `<code>${esc(m[1])}</code>`;
+      else if (m[2]) {
+        let link, name = "";
+        try {
+          link = new URL(m[3], new URL(file, "https://spec.invalid/"));
+          name = decodeURIComponent(link.pathname).slice(1).replace(/\/$/, "");
+        } catch { link = undefined; }
+        const local = link?.origin === "https://spec.invalid";
+        const target = local && S.specs.find((spec) => !spec.deleted && [name, `${name}.md`, `${name}/index.md`].includes(spec.file));
+        out += target ? `<a href="#${encodeURIComponent(target.file)}" data-spec="${esc(target.file)}">${esc(m[2])}</a>`
+          : link && !local && /^(https?:)$/.test(link.protocol) ? `<a href="${esc(link.href)}" target="_blank" rel="noreferrer">${esc(m[2])}</a>` : esc(m[0]);
+      } else if (m[4]) out += `<strong>${esc(m[4])}</strong>`;
+      else out += `<em>${esc(m[5])}</em>`;
+      end = m.index + m[0].length;
+    }
+    return out + esc(s.slice(end));
+  };
   const out = [];
   const blocks = text.trim().split(/\n\s*\n/);
   for (const block of blocks) {
@@ -229,9 +251,9 @@ function failures() {
   for (const r of S.snap?.check?.results ?? []) {
     if (r.ok || r.stage === "review" || r.stage === "skipped") continue;
     const text = `${r.summary}\n${r.detail}`;
-    const file = r.where?.startsWith("spec/") ? r.where : r.where?.endsWith(".ts") && !r.where.startsWith("src") ? `spec/${r.where.replace(/\.ts$/, ".md")}` : null;
+    const file = r.where?.startsWith("spec/") ? r.where : S.snap?.specs.find((s) => `${s.module}.ts` === r.where)?.file;
     if (file) bySpec.set(file, [...(bySpec.get(file) ?? []), r]);
-    for (const m of text.matchAll(/"([^"]+)" \((spec\/\w+\.md):\d+\)/g)) {
+    for (const m of text.matchAll(/"([^"]+)" \((spec\/(?:[a-z][A-Za-z0-9]*\/)*[a-z][A-Za-z0-9]*\.md):\d+\)/g)) {
       const id = nodeId(m[2], m[1]);
       byKey.set(id, [...(byKey.get(id) ?? []), `${r.stage}: ${r.summary}`]);
     }
@@ -335,7 +357,7 @@ function render() {
 function renderRail() {
   const fails = failures().bySpec;
   const rail = document.getElementById("rail");
-  const newName = h("input", { placeholder: "new spec", "aria-label": "Name of a new spec", pattern: "[a-z][A-Za-z0-9]*", onkeydown: (e) => e.key === "Enter" && create() });
+  const newName = h("input", { placeholder: "area/child", "aria-label": "Path of a new spec", pattern: "[a-z][A-Za-z0-9]*(/[a-z][A-Za-z0-9]*)*", onkeydown: (e) => e.key === "Enter" && create() });
   const create = async () => {
     const name = newName.value.trim();
     if (!name) return newName.focus();
@@ -456,7 +478,7 @@ function renderDoc() {
       textBox(spec.doc.body.trim(), (v) => (spec.doc.body = writeText(v)), { label: "What the application is for" }),
       h("div", { class: "bar" }, h("span", { class: "spacer" }), h("button", { class: "btn", type: "button", onclick: () => { S.editing.delete("head"); renderDoc(); } }, icon("check"), "Done")))
     : [h("h1", { ondblclick: () => editNode("head"), title: "Double-click to edit" }, spec.doc.title ?? spec.name, " ", iconButton("edit", "Edit title and introduction", () => editNode("head"))),
-      spec.doc.body.trim() && h("div", { class: "intro prose", html: markdown(spec.doc.body) })]);
+      spec.doc.body.trim() && h("div", { class: "intro prose", html: markdown(spec.doc.body, spec.file) })]);
 
   const sections = spec.doc.sections.map((s, i) => renderSection(spec, s, i, byKey)).filter(Boolean);
   doc.replaceChildren(toolbar, conflict || "", problem || "",
@@ -509,7 +531,7 @@ function renderSection(spec, s, i, byKey) {
       textBox(s.body.trim(), (v) => (s.body = writeText(v)), { placeholder: "> As a …, I want …, so that …", label: "Story text" }),
       review ? h("div", { class: "status review" }, review) : "",
       h("div", { class: "bar" }, h("span", { class: "spacer" }), h("button", { class: "btn", type: "button", onclick: () => { S.editing.delete(s.uid); renderDoc(); } }, icon("check"), "Done")))
-      : open && s.body.trim() ? h("div", { class: "story prose", html: markdown(s.body), ondblclick: () => s.title !== null && editNode(s.uid) }) : "",
+      : open && s.body.trim() ? h("div", { class: "story prose", html: markdown(s.body, spec.file), ondblclick: () => s.title !== null && editNode(s.uid) }) : "",
     open && review && !editing ? h("div", { class: "story status review" }, review) : "",
     open ? h("ul", { class: "rules" }, ruleViews, !S.q && !S.attention ? h("li", { class: "add" }, h("button", { class: "btn", type: "button", onclick: () => addRule(s) }, icon("plus"), "Rule")) : "") : "");
   draggable(card, s.uid, "section");
@@ -536,7 +558,7 @@ function renderRule(spec, s, r, j, byKey) {
     h("span", { class: "actions" }, iconButton("edit", "Edit rule", () => editNode(r.uid)), moveMenu(r.uid, "rule"), iconButton("trash", "Delete rule", () => removeNode(r.uid), "danger")));
   const quints = r.items.filter((i) => i.quint);
   const body = !open ? "" : editing ? renderRuleEditor(r) : h("div", { class: "body" },
-    r.items.map((i) => (i.quint ? h("pre", { class: "code", html: highlight(i.text) }) : h("div", { class: "prose", html: markdown(i.text) }))),
+    r.items.map((i) => (i.quint ? h("pre", { class: "code", html: highlight(i.text) }) : h("div", { class: "prose", html: markdown(i.text, spec.file) }))),
     !quints.length ? h("div", { class: "status review" }, "No Quint yet: the agent writes it on sync.") : "",
     review ? h("div", { class: "status review" }, review) : "",
     fails ? fails.map((f) => h("div", { class: "status bad" }, f)) : "");
@@ -802,6 +824,13 @@ document.addEventListener("keydown", (e) => {
     const id = document.activeElement.closest("[data-uid]")?.dataset.uid;
     if (id && S.editing.delete(id)) { renderDoc(); focusLater(`[data-uid="${id}"] > .row`); }
   }
+});
+document.addEventListener("click", (e) => {
+  const link = e.target.closest?.("a[data-spec]");
+  if (!link) return;
+  e.preventDefault();
+  S.sel = link.dataset.spec;
+  render();
 });
 window.addEventListener("beforeunload", (e) => { if (dirtySpecs().length) saveDraft(); });
 

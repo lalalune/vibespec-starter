@@ -9,12 +9,18 @@ import os from "node:os";
 import path from "node:path";
 import { after, describe, test } from "node:test";
 import { LIB_FILE, parseProofFile, readVerdict, splice } from "./prove.ts";
+import { migrateLocks, pendingSpecs, readLedger, writeLedger } from "./review.ts";
+import { danglingCitations } from "./util.ts";
 import { nodesOf } from "./studio/doc.ts";
 import { startStudio } from "./studio/server.ts";
 import { acceptContracts, acceptReviews, check, checkVerifiedSource, expandListHelpers, gen, init, parseSpec, pending, pendingContracts, readSpecs, replay, show, type Result } from "./spec.ts";
 
 const project = path.join(import.meta.dirname, "..");
-const read = (file: string) => fs.readFileSync(path.join(project, file), "utf8");
+const read = (file: string): string => {
+  const example = file === "spec/order.md" ? "spec/index.md" : /^(src|test)\//.test(file) || file === "tsconfig.json" ? file : undefined;
+  return fs.readFileSync(path.join(project, ...(example ? ["examples/order", example] : [file])), "utf8")
+    .replaceAll("gen/index.ts", "gen/order.ts").replaceAll("spec/index.md", "spec/order.md");
+};
 const F = "`".repeat(3);
 const roots: string[] = [];
 const nodeModules = (function find(dir: string): string {
@@ -49,7 +55,16 @@ const oneRule = (name: string, heading: string, quint: string) => scratch({ [`sp
 // This project's spec and src with whatever awaits sign-off here accepted, checked once
 // so that every copy starts with its cache: an edit then re-runs only what it changes.
 const pristine = scratch({});
-for (const dir of ["spec", "src", "test", "tsconfig.json"]) fs.cpSync(path.join(project, dir), path.join(pristine, dir), { recursive: true });
+fs.mkdirSync(path.join(pristine, "spec"));
+fs.writeFileSync(path.join(pristine, "spec/order.md"), read("spec/order.md"));
+for (const dir of ["src", "test"]) {
+  fs.cpSync(path.join(project, "examples/order", dir), path.join(pristine, dir), { recursive: true });
+  for (const file of fs.readdirSync(path.join(pristine, dir))) {
+    const target = path.join(pristine, dir, file);
+    if (file.endsWith(".ts")) fs.writeFileSync(target, read(`${dir}/${file}`));
+  }
+}
+fs.copyFileSync(path.join(project, "examples/order/tsconfig.json"), path.join(pristine, "tsconfig.json"));
 fs.symlinkSync(nodeModules, path.join(pristine, "node_modules"), "dir");
 for (const spec of readSpecs(pristine)) acceptReviews(pristine, spec);
 acceptContracts(pristine);
@@ -549,7 +564,96 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.equal(fs.readFileSync(path.join(root, "AGENTS.md"), "utf8"), "mine\n");
     assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).scripts.check, "mine");
     assert.ok(["sync", "design"].every((s) => fs.existsSync(path.join(root, `.claude/skills/${s}/SKILL.md`))) && added.includes("tsconfig.json"), added.join());
+    assert.equal(fs.readFileSync(path.join(root, "spec/index.md"), "utf8"), "");
     assert.deepEqual(init(root), []);
+  });
+
+  test("nested specs link to children and reuse a machine through its directory index", async () => {
+    const root = scratch({
+      "spec/index.md": "# Home\n\n[Room](./rooms/)\n[Other lamp](./other/light/index.md)\n",
+      "spec/rooms/index.md": read("tools/fixtures/room.md").replace('import lamp as L from "./lamp"', 'import /* from "wrong" */ lamp\n  as L\n  from\n  "./light"'),
+      "spec/rooms/light/index.md": read("tools/fixtures/lamp.md"),
+      "spec/rooms/light/index.proof.dfy": "",
+      "spec/other/light/index.md": read("tools/fixtures/lamp.md"),
+      "src/app.ts": `// ${"spec/rooms/index.md"}, ${JSON.stringify("Story: Light a room")}\nexport { initial, step } from "../gen/rooms.ts";\n`,
+    });
+    const specs = readSpecs(root);
+    assert.deepEqual(specs.find((s) => s.name === "index")?.links, ["spec/rooms/index.md", "spec/other/light/index.md"]);
+    assert.deepEqual(specs.find((s) => s.name === "rooms")?.imports, ["rooms__light"]);
+    assert.deepEqual(danglingCitations(root, specs), []);
+    const first = await run(root, "reviews");
+    assert.deepEqual(first.failed, [], first.text);
+    assert.ok(first.said("proof", /^rooms\.ts: all \d+ obligations proved/), first.text);
+    const room = await import(path.join(root, "gen/rooms.ts"));
+    const lit = room.step(room.step(room.initial, { type: "toggleLeft" }), { type: "toggleRight" });
+    assert.equal(room.sometimesFullyLit(lit), true);
+    assert.equal(room.inv(lit), true);
+    assert.ok(fs.existsSync(path.join(root, "gen/other__light.ts")));
+    fs.appendFileSync(path.join(root, "spec/rooms/light/index.md"), `\n${F}quint\npure val label = "lamp"\n${F}\n`);
+    const changed = readSpecs(root);
+    assert.ok(pending(root, changed.find((s) => s.name === "rooms")!, changed).some((p) => p.note?.includes("spec/rooms/light/index.md")));
+  });
+
+  test("nested spec paths refuse missing links, escaped targets, duplicate modules, cycles and symlinks", () => {
+    const cases: [Record<string, string>, RegExp][] = [
+      [{ "spec/index.md": "[Missing](./missing/)\n" }, /no spec at this path/],
+      [{ "spec/index.md": "[Outside](../outside.md)\n", "outside.md": "" }, /stay within spec/],
+      [{ "spec/index.md": "[Outside](..%2Foutside.md)\n", "outside.md": "" }, /stay within spec/],
+      [{ "spec/index.md": "", "spec/room.md": "", "spec/room/index.md": "" }, /same module name/],
+      [{ "spec/index.md": "", "spec/a/index.md": `# A\n### Import\n${F}quint\nimport b.* from "../b"\n${F}\n`,
+        "spec/b/index.md": `# B\n### Import\n${F}quint\nimport a.* from "../a"\n${F}\n` }, /circle/],
+    ];
+    for (const [files, error] of cases) assert.throws(() => readSpecs(scratch(files)), error);
+    const root = scratch({ "spec/index.md": "", "outside.md": "" });
+    fs.symlinkSync(path.join(root, "outside.md"), path.join(root, "spec/linked.md"));
+    assert.throws(() => readSpecs(root), /symbolic links/);
+  });
+
+  test("one lock preserves migrated reviews, contracts and proof acceptance and records deleted specs", async () => {
+    const root = fixtures(["door"]);
+    for (const spec of readSpecs(root)) acceptReviews(root, spec);
+    const proof = { door: { text: "previously-reviewed", unproved: ["an obligation"] } };
+    writeLedger(root, proof);
+    const lockPath = path.join(root, "spec/lock.json");
+    const before = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+    before.contracts["src/old.ts"] = "old-contract";
+    fs.writeFileSync(path.join(root, "spec/door.lock.json"), JSON.stringify(before.specs["spec/door.md"]));
+    fs.writeFileSync(path.join(root, "spec/src.lock.json"), JSON.stringify(before.contracts));
+    fs.writeFileSync(path.join(root, "spec/unproved.lock.json"), JSON.stringify(before.unproved));
+    fs.rmSync(lockPath);
+    assert.deepEqual(migrateLocks(root), ["spec/door.lock.json", "spec/src.lock.json", "spec/unproved.lock.json"]);
+    assert.deepEqual(JSON.parse(fs.readFileSync(lockPath, "utf8")), before);
+    assert.deepEqual(readLedger(root), proof);
+    assert.deepEqual(pending(root, readSpecs(root)[0]), []);
+    assert.equal(fs.existsSync(path.join(root, "spec/door.lock.json")), false);
+    fs.rmSync(path.join(root, "spec/door.md"));
+    fs.writeFileSync(path.join(root, "spec/index.md"), "");
+    assert.deepEqual(pendingSpecs(root, readSpecs(root)).map((p) => p.where), ["spec/door.md"]);
+    const removed = await run(root, "reviews");
+    assert.deepEqual(removed.failed, [], removed.text);
+    const after = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+    assert.deepEqual(Object.keys(after.specs), ["spec/index.md"]);
+    assert.deepEqual(pendingSpecs(root, readSpecs(root)), []);
+    assert.deepEqual(after.contracts, {});
+    assert.deepEqual(after.unproved, proof);
+    fs.mkdirSync(path.join(root, "spec/child"));
+    fs.writeFileSync(path.join(root, "spec/child/index.md"), "");
+    fs.writeFileSync(path.join(root, "spec/index.md"), "# Home\n\n[Child](./child/)\n");
+    assert.deepEqual((await run(root, "reviews")).failed, []);
+    fs.writeFileSync(path.join(root, "spec/index.md"), "# Home\n\n[Open child](./child/)\n");
+    const linked = readSpecs(root);
+    assert.ok(pending(root, linked.find((s) => s.name === "index")!, linked).some((p) => p.status === "document changed"));
+    assert.deepEqual((await run(root, "reviews")).failed, []);
+    assert.deepEqual(pending(root, readSpecs(root).find((s) => s.name === "index")!), []);
+  });
+
+  test("malformed unified review records fail before checks can accept them", async () => {
+    const root = scratch({ "spec/index.md": "", "spec/lock.json": JSON.stringify({ version: 1, specs: { "spec/index.md": { invalid: false } }, contracts: {}, unproved: {} }) });
+    const before = fs.readFileSync(path.join(root, "spec/lock.json"), "utf8");
+    const result = await run(root, "reviews");
+    assert.deepEqual(result.failed, ["model"], result.text);
+    assert.match(result.text, /invalid review records/);
+    assert.equal(fs.readFileSync(path.join(root, "spec/lock.json"), "utf8"), before);
   });
 
   test("the package's own test script is what runs, never the check itself, and a test citing a heading the spec does not have is caught", async () => {
@@ -624,6 +728,46 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
       }
       assert.equal(current.job?.status, "failed");
       assert.equal(current.check?.next.includes("npm run accept"), true);
+      const created = await post("spec", { name: "nested/child" });
+      assert.equal(created.status, 200, await created.clone().text());
+      assert.equal((await created.json()).file, "spec/nested/child/index.md");
+      const child = readSpecs(root).find((s) => s.file === "spec/nested/child/index.md")!;
+      acceptReviews(root, child);
+      const ledger = fs.readFileSync(path.join(root, "spec/lock.json"), "utf8");
+      const escaped = await post("publish", { files: [{ file: "spec/../outside.md", base: null, text: "" }], origins: [] });
+      assert.equal(escaped.status, 400);
+      assert.equal(fs.existsSync(path.join(root, "outside.md")), false);
+      fs.symlinkSync(path.join(root, "outside.md"), path.join(root, "spec/escape.md"));
+      assert.equal((await post("publish", { files: [{ file: "spec/escape.md", base: null, text: "" }], origins: [] })).status, 400);
+      assert.equal(fs.existsSync(path.join(root, "outside.md")), false);
+      fs.rmSync(path.join(root, "spec/escape.md"));
+      const linked = await post("publish", { files: [{ file: "spec/index.md", base: null, text: "[Child](./nested/child/)\n" }], origins: [] });
+      assert.equal(linked.status, 200, await linked.clone().text());
+      const waitForCheck = async () => {
+        let snap = await (await fetch(`${url}/api/project`)).json();
+        const until = Date.now() + 120_000;
+        while (snap.job?.status === "running" && Date.now() < until) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          snap = await (await fetch(`${url}/api/project`)).json();
+        }
+        assert.notEqual(snap.job?.status, "running");
+        return snap;
+      };
+      const nested = await waitForCheck();
+      assert.deepEqual(nested.specs.map((s: { file: string }) => s.file), ["spec/index.md", "spec/door.md", "spec/nested/child/index.md"]);
+      const index = nested.specs.find((s: { file: string }) => s.file === "spec/index.md");
+      const childIndex = nested.specs.find((s: { file: string }) => s.file === child.file);
+      const deleted = await post("publish", { files: [
+        { file: index.file, base: index.hash, text: "" },
+        { file: childIndex.file, base: childIndex.hash, text: null },
+      ], origins: [] });
+      assert.equal(deleted.status, 200, await deleted.clone().text());
+      const manifestAfterDelete = (await deleted.json()).manifest;
+      assert.ok(manifestAfterDelete.changes.some((c: { kind: string; spec: string }) => c.kind === "spec" && c.spec === "spec/index.md"));
+      assert.equal(fs.existsSync(path.join(root, child.file)), false);
+      assert.equal(fs.readFileSync(path.join(root, "spec/lock.json"), "utf8"), ledger);
+      const final = await waitForCheck();
+      assert.ok(final.check.results.some((r: Result) => r.stage === "review" && /removed spec/.test(r.summary)));
     } finally {
       await studio.close();
     }
@@ -729,6 +873,12 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     fs.mkdirSync(path.dirname(lock), { recursive: true });
     fs.writeFileSync(lock, `${process.pid}\n`);
     await assert.rejects(check(root), /another check or accept is running in this project \(process \d+\)/);
+    fs.writeFileSync(path.join(root, "spec/door.lock.json"), "{}");
+    const migration = await runCli(path.join(project, "tools/spec.ts"), root, "migrate");
+    assert.equal(migration.status, 1);
+    assert.match(migration.stderr, /another check or accept is running/);
+    assert.ok(fs.existsSync(path.join(root, "spec/door.lock.json")));
+    fs.rmSync(path.join(root, "spec/door.lock.json"));
     fs.writeFileSync(lock, `${spawnSync(process.execPath, ["-e", ""]).pid}\n`);
     const unused = path.join(root, ".spec-cache/000000000000000000000000.json");
     fs.writeFileSync(unused, "{}");
@@ -742,10 +892,20 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
   test("the command line: spec new, the arguments it accepts, gen --if-valid and check --json", async () => {
     const cli = (root: string, ...args: string[]) => runCli(path.join(project, "tools/spec.ts"), root, ...args);
     const root = scratch({});
+    const blank = scratch({ "spec/index.md": "" });
+    assert.equal((await cli(blank, "new")).status, 0);
+    assert.match(fs.readFileSync(path.join(blank, "spec/index.md"), "utf8"), /## Story:/);
+    assert.equal((await cli(blank, "new")).status, 1);
+    assert.equal((await cli(blank, "new", "area/child")).status, 0);
+    assert.ok(fs.existsSync(path.join(blank, "spec/area/child/index.md")));
+    assert.equal((await cli(blank, "new", "../escape")).status, 1);
+    fs.writeFileSync(path.join(blank, "spec/conflict.md"), "");
+    assert.equal((await cli(blank, "new", "conflict")).status, 1);
+    assert.equal(fs.existsSync(path.join(blank, "spec/conflict")), false);
     assert.equal((await cli(root, "new", "Tally")).status, 1);
-    assert.equal((await cli(root, "new", "src")).status, 1);
+    assert.equal((await cli(scratch({}), "new", "src")).status, 0);
     assert.equal((await cli(root, "new", "tally")).status, 0);
-    assert.match((await cli(root, "new", "tally")).stderr, /spec\/tally\.md already exists/);
+    assert.match((await cli(root, "new", "tally")).stderr, /spec\/tally\/index\.md already exists/);
     assert.equal((await cli(root, "accept", "unprovd")).status, 2);
     assert.equal((await cli(root, "check", "--everything")).status, 2);
     // The starter spec passes every stage but review, and proves without a proof file.
@@ -753,7 +913,7 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.deepEqual([...new Set(checked.results.filter((r: Result) => !r.ok).map((r: Result) => r.stage))], ["review"], JSON.stringify(checked, null, 2));
     for (const stage of ["model", "always", "sometimes", "replay", "proof"]) assert.ok(checked.results.some((r: Result) => r.stage === stage && r.ok), stage);
     assert.match(checked.next, /npm run accept/);
-    fs.appendFileSync(path.join(root, "spec/tally.md"), `\n### Broken\n\n${F}quint\npure def\n${F}\n`);
+    fs.appendFileSync(path.join(root, "spec/tally/index.md"), `\n### Broken\n\n${F}quint\npure def\n${F}\n`);
     const lenient = await cli(root, "gen", "--if-valid");
     assert.equal(lenient.status, 0, lenient.stderr);
     assert.match(lenient.stdout, /^note: gen\/ was not generated/);
@@ -909,7 +1069,7 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.equal(inc?.ok, false, text);
     assert.match(inc!.summary, /Hand-written code is not simulated, so they must be proved/);
     assert.doesNotMatch(inc!.summary, /accept -- unproved/);
-    const ledger = path.join(root, "spec/unproved.lock.json");
+    const ledger = path.join(root, "spec/lock.json");
     assert.ok(!fs.existsSync(ledger) || !fs.readFileSync(ledger, "utf8").includes("src-inc.ts"), text);
   });
 });

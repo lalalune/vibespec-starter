@@ -7,7 +7,7 @@ description: Design or review anything a person looks at, built from a spec in t
 
 ## Before you draw
 
-1. **Inventory.** For each story in `spec/<name>.md`, write down what the user
+1. **Inventory.** For each story in `spec/index.md` or a linked child spec, write down what the user
    must see or do, and the rule behind it. That list is the whole content:
    everything on it ships; no page, section, setting or sample content off it does.
 2. **Cut.** For each item ask: does the user need to see this, here, now? What
