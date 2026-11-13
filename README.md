@@ -265,8 +265,9 @@ npm run accept
 
 Before committing your application's starting point:
 
-1. **Adopt your project's metadata.** Update the package name, description,
-   repository links and workspace configuration for your application.
+1. **Remove the example projects.** Delete `vibespec/examples/` and remove
+   its workspace entries, npm scripts and CI steps. Update the package name,
+   description and repository links for your application.
 2. **Keep the toolchain guide with the toolchain.** Move this README to
    `vibespec/README.md`, update its relative links, and keep the template
    license in `vibespec/LICENSE` alongside the retained Vibespec code.
