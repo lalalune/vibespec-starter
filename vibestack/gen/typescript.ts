@@ -32,7 +32,7 @@ export function typescript({ header, typedefs, vals, funs, sig, typeOf, doc, loc
   // Where some transition has output, `step` returns it beside the state, and a transition without output outputs nothing.
   const nothing = output && `([] as ${tsType(output.out)})`;
   const outputs = (s: string) => (output ? `{ state: ${s}, out: ${nothing} }` : s);
-  // A refining spec's step leaves the abstract state as it was, or takes the abstract step of its name (AGENTS.md,
+  // A refining spec's step leaves the abstract state as it was, or takes the abstract step of its name (SPEC.md,
   // "Refinement"; gen/harness.ts, `refined`).
   const abstract = (n: string) => `${refines!.of.module}_${n}`;
   const refined = (t: Transition, before: string, after: string) => {

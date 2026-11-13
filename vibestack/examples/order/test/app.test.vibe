@@ -75,7 +75,7 @@ effect function outcome(id: string, event: Event) {
 }
 
 // Every story of spec/index.md through the real order book: a journey per `sometimes` rule, then random walks over
-// two orders at once (AGENTS.md, "Conformance").
+// two orders at once (SPEC.md, "Conformance").
 it("the order book does what spec/index.md says", () => {
   let app = ManagedRuntime.make(OrderBookMemory)
   return conformance({
