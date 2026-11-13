@@ -50,6 +50,8 @@ pure def addItem(o: Order, qty: int): Order =
 
 ### The amount due is always the price of the units
 
+An order never holds a negative number of units.
+
 ```quint
 pure def alwaysDueMatchesUnits(o: Order): bool =
   o.units >= 0 and o.due == o.units * unitPrice
@@ -116,6 +118,8 @@ pure def sometimesPaid(o: Order): bool = o.status == Paid
 > get my money back.
 
 ### A pending order can be cancelled, refunding every payment
+
+An order on hold must be released before it can be cancelled.
 
 ```quint
 pure def canCancel(o: Order): bool = o.status == Pending
@@ -238,6 +242,9 @@ pure def sometimesOnHold(o: Order): bool = o.status == OnHold
 ```
 
 ### No payment is taken while an order is on hold
+
+Nor is any money handed back: the amount paid stays exactly as it was until
+the order is released.
 
 ```quint
 pure def stepNothingIsPaidOnHold(before: Order, after: Order): bool =
