@@ -23,7 +23,7 @@ import { isDeepStrictEqual } from "node:util";
 import ts from "typescript";
 import { generate, LIST_HELPERS, type Model, type Origin } from "./gen.ts";
 import { fail } from "./gen/types.ts";
-import { LIB_FILE, prove, run, runAsync, type Proof, type Unit } from "./prove.ts";
+import { LIB_FILE, prove, run, runAsync, solver, type Proof, type Unit } from "./prove.ts";
 
 // How much is simulated. SPEC_QUICK=1 simulates a tenth as much, for iterating; `accept` never does.
 let SAMPLES = 10000; // simulated traces per check
@@ -364,7 +364,7 @@ const indent = (s: string, by = 6) => s.split("\n").map((l) => " ".repeat(by) + 
 
 // --- remembered results ------------------------------------------------------------
 
-/** What a remembered result was produced by: a different Quint, LemmaScript, Dafny or version of these tools must not reuse it. */
+/** What a remembered result was produced by: a different Quint, LemmaScript, Dafny, solver or version of these tools must not reuse it. */
 let toolchain: string | undefined;
 function toolchainId(): string {
   if (toolchain) return toolchain;
@@ -378,7 +378,7 @@ function toolchainId(): string {
   // Every file of the tools themselves, as source or as built, and the proof library; the self-test and its fixtures are not part of them.
   const own = (f: string) => f.endsWith(path.extname(import.meta.filename)) && !f.startsWith("selftest") && !f.startsWith("fixtures");
   const tools = [...(fs.readdirSync(import.meta.dirname, { recursive: true }) as string[]).filter(own).sort().map((f) => fs.readFileSync(path.join(import.meta.dirname, f), "utf8")), fs.readFileSync(LIB_FILE, "utf8")];
-  return (toolchain = [version("@informalsystems/quint"), version("lemmascript"), `dafny@${dafnyVersion().version ?? "none"}`, sha(...tools).slice(0, 12)].join(" "));
+  return (toolchain = [version("@informalsystems/quint"), version("lemmascript"), `dafny@${dafnyVersion().version ?? "none"}`, `z3@${solver().version ?? "none"}`, sha(...tools).slice(0, 12)].join(" "));
 }
 
 /** The version of Dafny on the PATH, read once, or why it could not be read. */
@@ -645,15 +645,22 @@ function checkVerifiedSource(file: string, code: string) {
     if (!allowed) refuse(s.getStart(), "verified code may hold only imports, functions with a body, interfaces, type aliases and const declarations, each exported in its own declaration or not at all");
   }
   // Every comment is the leading trivia of a token; JSDoc is skipped, since its parts lie inside a comment.
+  // A `//` comment after code on its line is trailing trivia, which LemmaScript does not read.
   const lineComments: [number, number][] = [];
+  const trailing: [number, number][] = [];
   const visit = (n: ts.Node) => {
     if (n.kind >= ts.SyntaxKind.FirstJSDocNode && n.kind <= ts.SyntaxKind.LastJSDocNode) return;
     for (const c of ts.getLeadingCommentRanges(code, n.pos) ?? []) if (c.kind === ts.SyntaxKind.SingleLineCommentTrivia) lineComments.push([c.pos, c.end]);
+    for (const c of ts.getTrailingCommentRanges(code, n.end) ?? []) if (c.kind === ts.SyntaxKind.SingleLineCommentTrivia) trailing.push([c.pos, c.end]);
     n.getChildren(sf).forEach(visit);
   };
   visit(sf);
-  for (const m of code.matchAll(/\/\/@/g))
-    if (!lineComments.some(([from, to]) => from <= m.index && m.index < to)) refuse(m.index, "`//@` here is not in a `//` comment (it is in a block comment or a string), so it is not an annotation; remove it or make it one");
+  const within = (ranges: [number, number][], at: number) => ranges.some(([from, to]) => from <= at && at < to);
+  for (const m of code.matchAll(/\/\/@/g)) {
+    if (within(lineComments, m.index)) continue;
+    if (within(trailing, m.index)) refuse(m.index, "a `//@` must start its own line: after code on the same line it is not read as an annotation; move it to a line of its own");
+    refuse(m.index, "`//@` here is not in a `//` comment (it is in a block comment or a string), so it is not an annotation; remove it or make it one");
+  }
 }
 
 /** Proof files that belong to no unit: a typo, or a source file that is no longer proved. */
@@ -968,14 +975,21 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
         const assuming = (assumed.length ? `, assuming the obligations that are simulated only (${assumed.join(", ")})` : "")
           // A precondition is assumed by the proof and checked by no one: callers outside verified code must meet it.
           + (u.requires ? `, under ${u.requires} //@ requires that its unverified callers must meet` : "");
+        // A unit proved against a module whose own proof fails is likely to fail for that reason alone.
+        const blocking = u.rests.filter((r) => { const p = proved.get(r); return p && (p.unproved.length || p.errors.length); });
         if (proof.errors.length) {
           recordable = false;
-          said(false, "proof", `${u.unit}: Dafny could not check it (full output in ${logFile}, final Dafny in gen/proof/${base}/${base}.dfy)`, indent(proof.errors.join("\n")), u.unit);
+          said(false, "proof", blocking.length
+            ? `${u.unit}: not checked on its own: it is proved against ${blocking.join(", ")}, whose obligations are not all proved; prove those first (full output in ${logFile}, final Dafny in gen/proof/${base}/${base}.dfy)`
+            : `${u.unit}: Dafny could not check it (full output in ${logFile}, final Dafny in gen/proof/${base}/${base}.dfy)`, indent(proof.errors.join("\n")), u.unit);
         } else if (fresh.length && accept !== "unproved") {
           said(false, "proof", `${u.unit}: ${fresh.length} of ${proof.total} obligations not proved${outdated}. Prove them in ${u.proofFile}, or add the rule that makes them provable; if simulation is enough for them, that is the user's decision (\`npm run accept -- unproved\`). Full output in ${logFile}, final Dafny in gen/proof/${base}/${base}.dfy`, listed(fresh), u.unit);
         } else {
           said(true, "proof", `${u.unit}: ${proof.unproved.length ? `${proof.total} obligations, of which ${proof.unproved.length} are simulated only (accepted) and the rest proved` : `all ${proof.total} obligations proved`} for all states and inputs${assuming}`
-            + (stale.length && accept !== "unproved" ? `; ${stale.length} accepted earlier now prove, run \`npm run accept -- unproved\` to tighten the ledger` : ""), "", u.unit);
+            + (accept === "unproved" ? ""
+              : stale.length ? `; ${stale.length} accepted earlier now prove, run \`npm run accept -- unproved\` to tighten the ledger`
+              : was && was.text !== meaning && was.unproved.length ? `; ${path.relative(root, ledgerFile(root))} still lists ${was.unproved.length} of its obligations, accepted for another text of it, which no longer count; run \`npm run accept -- unproved\` to tighten the ledger`
+              : ""), "", u.unit);
         }
       }
       if (accept === "unproved" && recordable) {
