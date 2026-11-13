@@ -3,7 +3,7 @@
 Draft, instalments, take-back, hold, cancel and reopen.
 
 ```sh
-pnpm install   # once at the repository root, for the tools, and once here
+pnpm install --ignore-workspace   # here, after `pnpm install` at the repository root for the tools
 pnpm check
 pnpm demo
 ```
