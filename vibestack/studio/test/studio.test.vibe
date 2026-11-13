@@ -293,7 +293,7 @@ it.live("new and nested specs are published, deleted specs leave their ledger fo
   const resumed = (try again.project()).session
   const markedAgain = (try again.post("synced", {})).status
   try check(() => {
-    assert.deepStrictEqual(resumed, { unpublished: false, waiting: 2, job: "Idle", verdict: "Unknown" })
+    assert.deepStrictEqual(resumed, { unpublished: false, waiting: 2, job: "Idle", verdict: "Unknown", previewing: false })
     assert.equal(markedAgain, 200)
   })
 }) } })
