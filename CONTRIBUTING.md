@@ -339,8 +339,10 @@ Tests for the shell go in `test/*.test.ts` and run with Node's test runner.
 ## Who syncs
 
 The agent working in your session does: Claude Code, or any agent that reads
-AGENTS.md. Claude Code reads `AGENTS.md` itself, so no `CLAUDE.md` is needed;
-a project that has one keeps it, and both are read. Its procedure is the `sync` skill in
+AGENTS.md. Claude Code reads `AGENTS.md` only when a project has no
+`CLAUDE.md` (and only from v2.1.277), so `spec init` makes `CLAUDE.md`
+import it with one line, `@AGENTS.md`, adding that line to a `CLAUDE.md` the
+project already has. The instructions then load once, in every version. Its procedure is the `sync` skill in
 `.claude/skills/sync/SKILL.md`: run `npm run check`, translate what the
 report asks for (story to rules, rule to Quint, a changed model back to prose,
 a counterexample to a new rule), repeat, then stop for your `npm run accept`.
@@ -354,8 +356,9 @@ registry; install it from a path or a tarball made with `npm pack`.
 ```sh
 npm install --save-dev /path/to/onespec-0.1.0.tgz
 npx spec init      # adds the sync skill, CONTRIBUTING.md, a tsconfig.json, .gitignore
-                   # entries and package scripts, and a section to AGENTS.md (created
-                   # if missing); replaces nothing of the project's own
+                   # entries and package scripts, a section to AGENTS.md (created
+                   # if missing) and an import of it to CLAUDE.md; replaces nothing
+                   # of the project's own
 npm run check
 ```
 

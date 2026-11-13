@@ -492,6 +492,11 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     const root = scratch({ "AGENTS.md": "mine\n", "package.json": `{"scripts":{"check":"mine"}}` });
     const added = init(root);
     const agents = () => fs.readFileSync(path.join(root, "AGENTS.md"), "utf8");
+    // Claude Code skips AGENTS.md when a CLAUDE.md exists, so CLAUDE.md imports it.
+    assert.equal(fs.readFileSync(path.join(root, "CLAUDE.md"), "utf8"), "@AGENTS.md\n");
+    const kept = scratch({ "CLAUDE.md": "Use pnpm.\n" });
+    init(kept);
+    assert.equal(fs.readFileSync(path.join(kept, "CLAUDE.md"), "utf8"), "Use pnpm.\n\n@AGENTS.md\n");
     assert.ok(agents().startsWith("mine\n") && agents().includes("<!-- onespec:start") && agents().includes("sync"), agents());
     fs.writeFileSync(path.join(root, "AGENTS.md"), agents().replace(/(<!-- onespec:start[^\n]*\n)[\s\S]*?(<!-- onespec:end -->)/, "$1outdated\n$2") + "\nmore of mine\n");
     assert.deepEqual(init(root), ["AGENTS.md (its section on specs)"]);

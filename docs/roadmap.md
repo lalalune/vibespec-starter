@@ -69,8 +69,11 @@ ranked by value within each section.
 
 **Agents**
 
-- Claude Code reads `AGENTS.md` itself, so `CLAUDE.md` is not needed (copying
-  it there would load the same instructions twice).
+- Claude Code reads `AGENTS.md` only when there is no `CLAUDE.md`, and only
+  from v2.1.277 (docs: code.claude.com/docs/en/memory, "AGENTS.md"). So
+  `spec init` makes `CLAUDE.md` import it (`@AGENTS.md`) instead of copying
+  it: one source, loaded once in every version, also in projects that already
+  have a `CLAUDE.md`. This repository has the same one-line `CLAUDE.md`.
 - `spec init` silently skipped `AGENTS.md` when a project already had one,
   which is common, so the agent never learned the procedure. It now inserts a
   marked section into an existing `AGENTS.md` and refreshes it on re-run.

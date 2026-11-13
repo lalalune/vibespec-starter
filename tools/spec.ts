@@ -1109,6 +1109,15 @@ export function init(root: string): string[] {
     fs.writeFileSync(agents, merged);
     done.push(existing === undefined ? "AGENTS.md" : "AGENTS.md (its section on specs)");
   }
+  // Claude Code reads AGENTS.md only when there is no CLAUDE.md (and only from v2.1.277), so CLAUDE.md imports it:
+  // then it loads once, in every version, whether or not the project had a CLAUDE.md of its own.
+  const claude = path.join(root, "CLAUDE.md");
+  const own = fs.existsSync(claude) ? fs.readFileSync(claude, "utf8") : undefined;
+  if (own === undefined || !/^@AGENTS\.md\s*$/m.test(own)) {
+    const ceol = own?.includes("\r\n") ? "\r\n" : "\n";
+    fs.writeFileSync(claude, own === undefined ? "@AGENTS.md\n" : `${own.trimEnd()}${ceol}${ceol}@AGENTS.md${ceol}`);
+    done.push(own === undefined ? "CLAUDE.md (imports AGENTS.md)" : "CLAUDE.md (an import of AGENTS.md)");
+  }
   add("tsconfig.json", () => JSON.stringify({ compilerOptions: { target: "es2023", module: "nodenext", strict: true, noEmit: true, allowImportingTsExtensions: true, erasableSyntaxOnly: true, skipLibCheck: true, types: ["node"] }, include: ["src", "test", "gen/*.ts"] }, null, 2) + "\n");
   if (!fs.existsSync(path.join(root, "spec"))) { fs.mkdirSync(path.join(root, "spec")); done.push("spec/"); }
   const ignore = path.join(root, ".gitignore");
