@@ -343,8 +343,8 @@ example's directory to open its specs in Studio:
 
 The same argument accepts any project directory containing `spec/`, including
 projects outside this repository. Studio edits and checks the selected
-project; the examples with executable applications also have their own
-run commands below. Check or generate one example by passing its path:
+project; the examples with executable applications have run commands in
+their linked project guides. Check or generate one example by passing its path:
 
 ```bash
 node vibespec/spec.ts check vibespec/examples/order
