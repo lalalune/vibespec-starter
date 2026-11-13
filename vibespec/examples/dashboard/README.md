@@ -6,14 +6,14 @@ dashboard shows the state. A separate package that depends on the toolchain
 like any project would.
 
 ```sh
-npm install
-npm run check   # model, proofs, types (vibelang --noEmit) and tests
-npm test        # the journeys alone: vitest run
-npm run build   # vibelang: JavaScript in dist/
+pnpm install   # here, after the install at the repository root
+pnpm check   # model, proofs, types (vibelang --noEmit) and tests
+pnpm test        # the journeys alone: vitest run
+pnpm build   # vibelang: JavaScript in dist/
 ```
 
 The shell is [VibeLang](https://github.com/smithersai/vibelang): Effect in
-TypeScript syntax, in `.vibe` files. `npm run gen` writes an adapter
+TypeScript syntax, in `.vibe` files. `pnpm gen` writes an adapter
 `gen/<name>.effect.vibe` beside each generated module; the shell takes the
 tracker's types from its adapter, and the test drives that adapter's `Machine`.
 
@@ -54,4 +54,4 @@ that text. `gen/*.ts` stays TypeScript too; the adapters only wrap it.
   showing the column is not negative; the proof refused it.
 
 Obligations that hold in simulation only are listed in `spec/lock.json` under
-`unproved`; `npm run check` shows where each stands.
+`unproved`; `pnpm check` shows where each stands.

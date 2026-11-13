@@ -2,8 +2,9 @@
   "name": "fullstack-todo",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@10.24.0",
   "engines": {
-    "node": ">=24.11.1"
+    "node": ">=26"
   },
   "scripts": {
     "check": "node ../../spec.ts check",
@@ -11,7 +12,7 @@
     "accept": "node ../../spec.ts accept",
     "build": "vibelang && node bundle.ts",
     "test": "vitest run",
-    "start": "npm run -s build && node dist/src/main.js"
+    "start": "pnpm -s build && node dist/src/main.js"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
@@ -27,5 +28,10 @@
     "@effect/platform-node": "4.1.1",
     "effect": "4.1.1",
     "vibelang-runtime": "0.0.12"
+  },
+  "pnpm": {
+    "overrides": {
+      "@effect/platform-node-shared": "4.1.1"
+    }
   }
 }

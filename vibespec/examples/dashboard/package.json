@@ -2,8 +2,9 @@
   "name": "dashboard-model",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@10.24.0",
   "engines": {
-    "node": ">=24.11.1"
+    "node": ">=26"
   },
   "scripts": {
     "check": "node ../../spec.ts check",
@@ -24,5 +25,10 @@
     "@effect/platform-node": "4.1.1",
     "effect": "4.1.1",
     "vibelang-runtime": "0.0.12"
+  },
+  "pnpm": {
+    "overrides": {
+      "@effect/platform-node-shared": "4.1.1"
+    }
   }
 }

@@ -7,10 +7,11 @@ puts the server, two tabs and an unreliable network together and checks the
 rules only the whole system can state.
 
 ```sh
-npm run check      # the whole pipeline (from this directory)
-npm test           # the tests alone: Vitest, against the real server on a free port
-npm run build      # the backend into dist/src, the page into dist/web
-npm start          # build, then serve: open http://localhost:3000 in two windows
+pnpm install    # here, after the install at the repository root
+pnpm check      # the whole pipeline (from this directory)
+pnpm test           # the tests alone: Vitest, against the real server on a free port
+pnpm build      # the backend into dist/src, the page into dist/web
+pnpm start          # build, then serve: open http://localhost:3000 in two windows
 ```
 
 Needs Node 24+ and Dafny on the path. The page loads React 18 from esm.sh.
@@ -20,7 +21,7 @@ Needs Node 24+ and Dafny on the path. The page loads React 18 from esm.sh.
 The shell is written in [VibeLang](https://github.com/smithersai/vibelang)
 (`.vibe`): TypeScript syntax for Effect, where a failure is a typed value
 and everything outside the program (HTTP, files, the clock) is a service a
-test can replace. It is built on `gen/<name>.effect.vibe`, which `npm run gen`
+test can replace. It is built on `gen/<name>.effect.vibe`, which `pnpm gen`
 writes beside each generated module: the machine's definitions as functions
 that throw nothing, `Rejected` and `NotAnEvent` for what `enabled` and
 `parseEvent` refuse, and for the server the `Machine` service that holds the
@@ -37,7 +38,7 @@ state and applies one event at a time.
 `dist/`. A browser cannot load that output as it is (it imports `effect` by
 name), so `bundle.ts` has esbuild bundle `src/web/app.ts` and the `.vibe`
 files it imports into `dist/web/app.js`, which the server serves beside
-`index.html`. Vitest runs `bundle.ts` before the tests, so `npm test` needs
+`index.html`. Vitest runs `bundle.ts` before the tests, so `pnpm test` needs
 no build.
 
 | Path | Kind | What it covers |
@@ -90,7 +91,7 @@ no build.
 - **Proof obligations** (205, none accepted as simulated only): every
   transition of the server, the client and the system must keep every
   `always` and `step` rule, every law must hold, and `drain` must meet its
-  contract. `npm run check` reports the current proof result. At the system
+  contract. `pnpm check` reports the current proof result. At the system
   level that includes: each part keeps its
   own rules, no tab is ahead of the server, and every copy of the list, in a
   tab or in flight, is exactly the list as it was at the version it carries.

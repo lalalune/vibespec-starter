@@ -3,13 +3,13 @@
 An illustrative agent turn driving a bill payment, in one spec:
 [spec/assistant.md](spec/assistant.md), and the agent loop around it.
 
-After the install at the repository root, from this directory:
+After `pnpm install` at the repository root and in this directory:
 
 ```sh
-npm run check   # model, proofs, types (vibelang --noEmit) and tests
-npm test        # the journeys alone: vitest run
-npm run build   # vibelang: JavaScript in dist/
-npm run demo    # generates gen/, builds, and a scripted model pays a bill, then tries what the rules refuse
+pnpm check   # model, proofs, types (vibelang --noEmit) and tests
+pnpm test        # the journeys alone: vitest run
+pnpm build   # vibelang: JavaScript in dist/
+pnpm demo    # generates gen/, and a scripted model pays a bill, then tries what the rules refuse
 ```
 
 | Behaviour | Rule |
@@ -36,7 +36,7 @@ Written by hand here, with no help from the tools yet:
 ## The shell
 
 The shell is [VibeLang](https://github.com/smithersai/vibelang): Effect in
-TypeScript syntax, in `.vibe` files. `npm run gen` writes
+TypeScript syntax, in `.vibe` files. `pnpm gen` writes
 `gen/assistant.effect.vibe` beside the generated module, and the shell is
 built on its `Machine` service: every event reaches the state through
 `send(event, by)` or `receive(input, by)`, which fail with `Rejected` or

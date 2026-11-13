@@ -4,19 +4,20 @@ A checkout with a draft, instalment payments, hold, cancellation and reopening.
 The complete example lives here; the template's root `spec/index.md` is empty.
 
 ```sh
-npm run check --workspace order-example
-npm run demo
+pnpm install   # once at the repository root, for the tools, and once here
+pnpm check
+pnpm demo
 ```
 
-Run those commands from the repository root. This package can also run them
-from its own directory after the root install:
+Run them from this directory: the example is a package of its own, with its
+own lock file.
 
 | Command | Does |
 |---|---|
-| `npm run check` | Everything: model, simulation, proofs, types, the tests below, review |
-| `npm run demo` | Generates `gen/`, builds, and prints a scripted checkout |
-| `npm run build` | `vibelang`: typechecks `.vibe` and `.ts` together and writes JavaScript to `dist/` |
-| `npm test` | `vitest run`: the journeys in `test/app.test.vibe`, compiled by `vibelang-vite`. `check` runs it after writing the simulated events its last journey sends; `gen` and `demo` clear them |
+| `pnpm check` | Everything: model, simulation, proofs, types, the tests below, review |
+| `pnpm demo` | Generates `gen/` and prints a scripted checkout, run from source |
+| `pnpm build` | `vibelang`: typechecks `.vibe` and `.ts` together and writes JavaScript to `dist/` |
+| `pnpm test` | `vitest run`: the journeys in `test/app.test.vibe`, compiled by `vibelang-vite`. `check` runs it after writing the simulated events its last journey sends; `gen` and `demo` clear them |
 
 | Path | Role |
 |---|---|
@@ -50,5 +51,5 @@ Two things stay TypeScript:
   from TypeScript. `src/app.vibe` calls it through a `module` body, the one
   place a `.vibe` file states what a TypeScript function throws.
 
-A `.vibe` file does not run from source on every Node 24, so `demo` builds
-first and runs `dist/src/demo.js`. `dist/` and `.vibe/` are build output.
+`demo` runs `src/demo.vibe` from source with `node --import vibelang/register`.
+`dist/` and `.vibe/` are build output.
