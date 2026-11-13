@@ -24,10 +24,8 @@ Every edit is one record, whatever its kind; the fields a kind does not use
 are ignored. Setting the done mark carries the value to set, not "flip it", so
 that an edit applied twice has the same effect as once.
 
-The kind is one of the strings `"create"`, `"done"`, `"rename"` and
-`"remove"` rather than a variant type: the server and client specs keep their
-state in records written out in full (see the README), and a variant type
-cannot be written out that way.
+The supported kind strings are `"create"`, `"done"`, `"rename"` and
+`"remove"`. `isKind` recognises them, and `opAllowed` rejects any other kind.
 
 ```quint
 type Op = { kind: str, id: str, title: str, done: bool }
@@ -100,7 +98,8 @@ pure def applyOp(todos: List[Todo], op: Op): List[Todo] =
 
 ### Two lists of to-dos are the same when they agree position by position
 
-`==` does not compare records, so this is spelled out.
+`sameTodo` compares each field explicitly. `sameTodos` compares the list
+lengths and the to-do at each position.
 
 ```quint
 pure def sameTodo(a: Todo, b: Todo): bool =

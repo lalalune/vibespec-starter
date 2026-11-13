@@ -4,8 +4,9 @@ The backend: one shared list of to-dos behind an HTTP API. Every request
 names the client that sent it and that client's sequence number for it, so a
 request that arrives twice, because the client retried after a lost reply,
 is recognised, provided it carries the same edit. The server answers each
-request once and remembers the answer and the edit it answered. Every change to the list raises the version by one; clients use the
-version to tell an old copy of the list from a newer one.
+request once and remembers the answer and the edit it answered. Every
+accepted edit raises the version by one, even if it leaves the list unchanged;
+clients use the version to tell an old copy of the list from a newer one.
 
 ## Domain
 
@@ -25,11 +26,8 @@ type Server = {
 }
 ```
 
-The to-do and edit records are written out in full rather than as `Todo`
-and `Op`, because the
-system spec imports this one under a name, and the tools can only follow a
-type of an imported machine back to that machine's own types. They are the
-same types as `Todo` and `Op`.
+The inline to-do and edit records have the same fields and types as `Todo`
+and `Op`, so the server shares their data shape with the client and system.
 
 ### A new server has an empty list at version 0
 
@@ -100,9 +98,10 @@ pure def remove(s: Server, client: str, seq: int, id: str): Server =
 
 ### A new request can be refused, which is logged with its edit and changes nothing else
 
-The shell refuses a request whose edit does not make sense, such as ticking
-off a to-do another client has just removed. Refusing is the server's own
-decision: a client cannot ask for it.
+For a well-formed new request, the HTTP shell applies an allowed edit and
+otherwise refuses it, such as ticking off a to-do another client has just
+removed. The model permits refusing any unanswered request; choosing between
+application and refusal belongs to the shell. A client cannot ask for refusal.
 
 ```quint
 pure def canRefuse(s: Server, client: str, seq: int, op: Op): bool = not(answered(s, client, seq))
@@ -111,6 +110,9 @@ pure def refuse(s: Server, client: str, seq: int, op: Op): Server =
 ```
 
 ### The version counts the changes
+
+A change here means one accepted edit, including setting a field to its
+current value. Refused requests and retries do not increment the version.
 
 ```quint
 pure def alwaysTheVersionCountsTheChanges(s: Server): bool =
@@ -166,13 +168,15 @@ pure def sometimesATombstone(s: Server): bool = s.todos.some(t => t.deleted)
 ## Story: Other specs can rely on the server's rules
 
 > As the author of a spec that runs the server inside a larger system, I
-> want the server's rules stated as laws, so that my proofs can use them
-> rather than prove them again.
+> want the server's state invariants stated as laws, so that my proofs can
+> use them rather than prove them again.
 
 ### Applying or refusing a new request keeps every rule of the server
 
-What is proved about the transitions of a spec cannot be called from a spec
-that imports it; a law can.
+For these laws, the server's rules are its three state invariants: the version
+counts accepted edits, requests are logged once, and to-do ids are unique.
+Step and reachability rules are checked separately. What is proved about the
+transitions of a spec cannot be called from a spec that imports it; a law can.
 
 ```quint
 pure val sValues =
