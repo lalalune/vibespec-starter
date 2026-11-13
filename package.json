@@ -23,7 +23,7 @@
     "lint:js": "eslint . --max-warnings 0",
     "lint:css": "stylelint \"**/*.css\" --allow-empty-input",
     "analyze": "knip && madge --circular vibestack packages apps",
-    "examples": "for d in vibestack/examples/*/; do pnpm -C \"$d\" install --frozen-lockfile --ignore-workspace && pnpm -C \"$d\" check || exit 1; done",
+    "examples": "failed=0; for d in vibestack/examples/*/; do pnpm -C \"$d\" install --frozen-lockfile --ignore-workspace && pnpm -C \"$d\" check || failed=1; done; exit $failed",
     "quick": "turbo run typecheck test //#lint:js //#lint:css",
     "verify": "turbo run build typecheck test test:browser check //#lint:js //#lint:css //#analyze //#examples",
     "all": "turbo run"
