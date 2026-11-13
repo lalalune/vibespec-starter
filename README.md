@@ -77,7 +77,7 @@ blank.
 
 1. Click **[Use this template](https://github.com/lalalune/vibespec-starter/generate)**
    to create your own repository, then clone it.
-2. Install and check the template and examples:
+2. Install and check the template:
 
 ```bash
 npm install
@@ -92,8 +92,9 @@ npm run demo
 ```
 
 `npm install` builds the `spec` command and generates `gen/` when every spec
-is valid. `npm run check` checks the blank template and each example workspace,
-ending each project with a `next:` line naming what to do first.
+is valid. `npm run check` checks the root specification, ending with a
+`next:` line naming what to do first. Run `npm run check --workspaces --if-present`
+to check the examples.
 `npm run demo` generates and runs `vibespec/examples/order`, driving the verified checkout
 through a scripted session; every `✗` is a rule refusing an event:
 
@@ -351,7 +352,8 @@ npm run accept
 | Command | Does |
 |---|---|
 | `npm run dev` | Opens the local Studio for editing, checking and reviewing specs |
-| `npm run check` | Every stage below, for the template and example workspaces; ends each project with a `next:` line |
+| `npm run check` | Every stage below for the root specification; ends with a `next:` line |
+| `npm run check --workspaces --if-present` | Checks each example workspace |
 | `npx spec check --json` | The current project's check as one JSON object ([shape](AGENTS.md#changing-the-tools)) |
 | `npm run gen` | Generates `gen/` only |
 | `npm run accept` | The user's sign-off: checks afresh and records what `review` lists, [all or nothing](AGENTS.md#review) |

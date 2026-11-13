@@ -335,12 +335,12 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
         // What was accepted is tied to the text it was accepted for.
         const meaning = sha(u.text, proofText ?? "").slice(0, 12);
         const was = accepted[u.unit];
-        const valid = was?.text === meaning ? was.unproved : [];
+        const valid = !u.src && was?.text === meaning ? was.unproved : [];
         const outdated = was && was.text !== meaning ? `; the ${was.unproved.length} accepted earlier were accepted for another text of this unit or its proof file, and no longer count` : "";
         const fresh = proof.unproved.filter((x) => !valid.includes(x));
         const stale = valid.filter((x) => !proof.unproved.includes(x));
-        if (proof.unproved.length) ledger[u.unit] = { text: meaning, unproved: proof.unproved };
-        const listed = (xs: string[]) => indent(xs.map((x) => (proof.exhausted.includes(x) ? `${x}   [the prover ran out of resources]` : x)).join("\n"));
+        if (!u.src && proof.unproved.length) ledger[u.unit] = { text: meaning, unproved: proof.unproved };
+        const listed = (xs: string[]) => indent(xs.map((x) => x + (proof.exhausted.includes(x) ? "   [the prover ran out of resources]" : "") + (proof.resting[x] ? `   [rests on ${proof.resting[x]}]` : "")).join("\n"));
         // Hand-written code proved against a module that is only partly proved rests on what is not.
         const assumed = u.rests.flatMap((r) => (proved.get(r)?.unproved.length ? [`${proved.get(r)!.unproved.length} of ${r}`] : []));
         const assuming = (assumed.length ? `, assuming the obligations that are simulated only (${assumed.join(", ")})` : "")
@@ -349,11 +349,17 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
         if (proof.errors.length) {
           recordable = false;
           said(false, "proof", `${u.unit}: Dafny could not check it (full output in ${logFile}, final Dafny in gen/proof/${base}/${base}.dfy)`, indent(proof.errors.join("\n")), u.unit);
+        } else if (u.src && proof.unproved.length) {
+          recordable = false;
+          said(false, "proof", `${u.unit}: ${proof.unproved.length} of ${proof.total} obligations not proved. Hand-written code is not simulated, so they must be proved in ${u.proofFile}. Full output in ${logFile}, final Dafny in gen/proof/${base}/${base}.dfy`, listed(proof.unproved), u.unit);
         } else if (fresh.length && accept !== "unproved") {
           said(false, "proof", `${u.unit}: ${fresh.length} of ${proof.total} obligations not proved${outdated}. Prove them in ${u.proofFile}, or add the rule that makes them provable; if simulation is enough for them, that is the user's decision (\`npm run accept -- unproved\`). Full output in ${logFile}, final Dafny in gen/proof/${base}/${base}.dfy`, listed(fresh), u.unit);
         } else {
           said(true, "proof", `${u.unit}: ${proof.unproved.length ? `${proof.total} obligations, of which ${proof.unproved.length} are simulated only (accepted) and the rest proved` : `all ${proof.total} obligations proved`} for all states and inputs${assuming}`
-            + (stale.length && accept !== "unproved" ? `; ${stale.length} accepted earlier now prove, run \`npm run accept -- unproved\` to tighten the ledger` : ""), "", u.unit);
+            + (stale.length && accept !== "unproved" ? `; ${stale.length} accepted earlier now prove, run \`npm run accept -- unproved\` to tighten the ledger` : ""), [
+              ...(proof.unproved.length ? [`    simulated only, accepted in spec/lock.json:\n${listed(proof.unproved)}`] : []),
+              ...(assumed.length ? [`    assumed from the module it is proved against, simulated only there:\n${indent(u.rests.flatMap((name) => (proved.get(name)?.unproved ?? []).map((clause) => `${name}: ${clause}`)).join("\n"))}`] : []),
+            ].join("\n"), u.unit, true);
         }
       }
       if (accept === "unproved" && recordable) pendingLedger = { ledger, accepted };
