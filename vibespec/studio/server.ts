@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
-import { newSpec, parseSpec, pending, readSpecs, type Result } from "../spec.ts";
+import { newSpec, parseSpec, pending, pendingKey, readSpecs, type Lock, type Result } from "../spec.ts";
 import { specFiles, specName } from "../parse.ts";
 import { filesUnder, projectRoot } from "../util.ts";
 import { manifestOf, nodesOf, parseDoc, promptFor, type Ids, type Manifest } from "./doc.ts";
@@ -105,8 +105,8 @@ function snapshot(live: Live, agents: Record<string, Agent>) {
   let problem: string | undefined;
   try {
     const specs = readSpecs(root);
-    review = Object.fromEntries(specs.map((s) => [s.file, Object.fromEntries(pending(root, s, specs).map((p) => [
-      p.story ? `## ${p.story.title}` : p.rule?.key ?? p.where.split("  ")[1], p.status + (p.note ?? "")]))]));
+    const locks = new Map<string, Lock>();
+    review = Object.fromEntries(specs.map((s) => [s.file, Object.fromEntries(pending(root, s, specs, locks).map((p) => [pendingKey(p), p.status + (p.note ?? "")]))]));
   } catch (e) {
     problem = (e as Error).message;
   }

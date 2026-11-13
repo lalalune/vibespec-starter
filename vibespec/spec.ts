@@ -9,14 +9,14 @@ import { conformance, conformanceFound, writeConformance, type Machine } from ".
 import { LIB_FILE, dafnyVersion, proofPaths, prove, type Proof } from "./prove.ts";
 import { run } from "./run.ts";
 import { readSpecs, badSpecName, specFiles, specName, importedMeanings, isStd, located, type Spec } from "./parse.ts";
-import { contracts, pending, pendingContracts, acceptAllReviews, pendingSpecs, migrateLocks, moved, showPending, ledgerFile, readLedger, writeLedger, type Pending, type Accepted } from "./review.ts";
+import { contracts, pending, pendingKey, pendingContracts, acceptAllReviews, pendingSpecs, migrateLocks, moved, showPending, ledgerFile, readLedger, writeLedger, type Pending, type Accepted, type Lock } from "./review.ts";
 import { entry, remembered, collectGarbage, type Memory } from "./cache.ts";
 import { gen, generated, typecheckAll, proofUnits, proofFiles, strayProofFiles } from "./units.ts";
 import { SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, LASSO_TRACES, STEPS, DEPTHS, SEARCHED, simulate, search, firstBreak, lasso, showTrace, replay, type Step } from "./simulate.ts";
 import { sha, indent, tests, readSrc, projectRoot, type SrcFile } from "./util.ts";
 
 export { readSpecs, badSpecName, parseSpec, scanSpec, expandListHelpers, type Spec, type Rule, type Story } from "./parse.ts";
-export { pending, pendingContracts, acceptReviews, acceptContracts, dependencies, type Pending } from "./review.ts";
+export { pending, pendingKey, pendingContracts, acceptReviews, acceptContracts, dependencies, type Lock, type Pending } from "./review.ts";
 export { gen, checkVerifiedSource } from "./units.ts";
 export { replay, type Step } from "./simulate.ts";
 export { danglingCitations } from "./util.ts";
@@ -392,7 +392,8 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
   fs.rmSync(loaded, { recursive: true, force: true });
 
   // A spec that is not a valid model has nothing to reconcile yet. Everything is recorded at once, or nothing is.
-  const todos = valid.filter((spec) => !isStd(spec.file)).map((spec) => ({ spec, todo: pending(root, spec, specs) }));
+  const locks = new Map<string, Lock>();
+  const todos = valid.filter((spec) => !isStd(spec.file)).map((spec) => ({ spec, todo: pending(root, spec, specs, locks) }));
   const contractsToDo = pendingContracts(root, srcFiles);
   const removedSpecs = pendingSpecs(root, specs);
   if (accept) {
@@ -425,7 +426,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
   };
   for (const { spec, todo } of todos) {
     if (record && todo.length) {
-      report(true, "review", `${spec.file}: recorded as reconciled: ${todo.map((t) => t.rule?.key ?? t.story?.title ?? (t.where.includes("  ") ? t.where.slice(t.where.indexOf("  ") + 2) : t.where)).join("; ")}`, "", spec.file);
+      report(true, "review", `${spec.file}: recorded as reconciled: ${todo.map(pendingKey).join("; ")}`, "", spec.file);
     } else report(!todo.length, "review", todo.length ? `${spec.file}: ${todo.length} item(s) to reconcile, ${why}` : `${spec.file}: prose and model reconciled for all ${spec.rules.length} rules and ${spec.stories.length} stories`,
       items(todo, "What moved, in full"), spec.file);
   }
