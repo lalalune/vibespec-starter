@@ -798,7 +798,7 @@ repository they are `@repo/ui`; a standalone project keeps its own.
 | Stories | the component, and `<Name>.meta.tsx` where its types are not enough | `generated/stories/`: Storybook stories, `catalog.json`, and a mount test and a browser test (accessibility, marked snapshots) of every story | `spec stories gen [--watch] [--check]` |
 
 `spec` is the tool's command: `pnpm exec spec` in a project that installed
-it, `node ../../spec.ts` in an example. In `@repo/ui`: `pnpm stories`,
+it, `node ../../spec.ts` in an example. In `@repo/ui`: `pnpm gen` (the stories),
 `pnpm storybook`, `pnpm test`, `pnpm test:browser`; in
 `@repo/design-system`: `pnpm build`, `pnpm check`.
 
@@ -833,7 +833,7 @@ it, `node ../../spec.ts` in an example. In `@repo/ui`: `pnpm stories`,
 
 To change a component: find it in `generated/stories/catalog.json` or in
 Studio's Components view, read its props and model there, edit the source,
-run `pnpm stories` (or leave `pnpm storybook` running), look at it, then
+run `pnpm gen` (or leave `pnpm storybook` running), look at it, then
 `pnpm test` and `pnpm lint`.
 
 ### Building, running and testing
