@@ -1,7 +1,7 @@
 name: fuzz
 
 # Larger property-test budgets and a fresh seed each night; a failure prints
-# the seed, and `FUZZ_SEED=<seed> pnpm test` repeats it.
+# the seed, and `FUZZ_SEED=<seed> pnpm all test` repeats it.
 on:
   schedule:
     - cron: "17 4 * * *"
@@ -24,7 +24,7 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           dafny: "true"
-      - run: pnpm exec turbo run test //#test:tool --force
+      - run: pnpm exec turbo run test --force
       - run: pnpm test:models
       - if: failure()
         uses: actions/upload-artifact@v7

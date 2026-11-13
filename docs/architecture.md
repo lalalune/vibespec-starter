@@ -32,7 +32,7 @@ A transition is legal exactly when the spec's guard allows it: `enabled` and
 | Property and model-based tests | schemas, contracts, drivers | `vibestack/testing/generate.ts` | `.cache/generated/tests/` | no |
 | Component stories and their catalog | component prop types and `*.meta.tsx` | `vibestack/stories` | `generated/stories/` | no |
 | Theme CSS | `packages/design-system/tokens.json` | `vibestack/design` | `packages/design-system/generated/` | no |
-| The packaged `spec` command | `vibestack/` | `pnpm build:tool` | `dist/` | no; it is what `npm pack` ships |
+| The packaged `spec` command | `vibestack/` | `pnpm build` | `dist/` | no; it is what `npm pack` ships |
 | Review ledger | a person's sign-off | `pnpm accept` | `spec/lock.json` | yes |
 | Counterexamples | a failing conformance run | `vibestack/testing` | `test/counterexamples/` | yes: they are regression tests |
 

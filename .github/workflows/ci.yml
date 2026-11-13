@@ -27,7 +27,7 @@ jobs:
       - if: env.FULL != 'true'
         run: pnpm quick
       - if: env.FULL == 'true'
-        run: pnpm exec turbo run build typecheck test //#typecheck:tool //#test:tool //#build:tool //#lint:js //#lint:css //#analyze --continue
+        run: pnpm exec turbo run build typecheck test //#lint:js //#lint:css //#analyze --continue
         env:
           FUZZ_RUNS: "1000"
       - if: env.FULL == 'true'
@@ -46,7 +46,7 @@ jobs:
         with:
           dafny: "true"
       - if: env.FULL != 'true'
-        run: pnpm exec turbo run check //#check --affected
+        run: pnpm exec turbo run check --affected
       - if: env.FULL == 'true'
         run: pnpm test:models
       - if: always()

@@ -64,16 +64,18 @@ holds no business rules. A shared type lives with the contract that owns it.
 | `pnpm dev` | Studio |
 | `pnpm quick` | the fast local check: types, lint and tests of what changed since the base branch |
 | `pnpm verify` | everything CI runs for `main`: build, types, lint, tests, browser tests, every `check`, Knip, Madge, the examples |
-| `pnpm build`, `pnpm typecheck`, `pnpm test`, `pnpm test:affected`, `pnpm test:browser` | one kind of task in every package |
+| `pnpm all <task>…` | one or more kinds of task in every package: `pnpm all build typecheck test` |
+| `pnpm test:affected`, `pnpm test:browser` | tests of what changed; the browser tests |
 | `pnpm test:models` | `check` in every package with a `spec/`, and in the examples |
 | `pnpm lint`, `pnpm lint:css` | ESLint; Stylelint |
 | `pnpm analyze` | Knip (unused files, exports, dependencies) and Madge (import cycles) |
-| `pnpm check` | this package's own `check`, as everywhere else in this file |
+| `pnpm check`, `pnpm build`, `pnpm typecheck`, `pnpm test` | this package's own, here as in every package: at the root, the root project and the tools |
 
 Turborepo (`turbo.json`) orders these and caches each by its inputs, the lock
 file and the Node version; `spec` keeps its own finer cache in `.spec-cache/`.
 A package joins by having a script named `build`, `typecheck`, `test`,
-`test:browser` or `check`. Pull requests go to `develop` and run what they
+`test:browser` or `check`; its `check` runs after its other tasks, since both
+write `gen/`. Pull requests go to `develop` and run what they
 affect; `develop` to `main` runs `pnpm verify`
 (`.github/workflows/ci.yml`), and `fuzz.yml` runs the property tests nightly
 with a larger budget and a new seed.
