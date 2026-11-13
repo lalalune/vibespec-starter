@@ -511,6 +511,7 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     init(root);
     assert.ok(!/[^\r]\n/.test(agents()), "every line ends in \\r\\n");
     assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).scripts.check, "mine");
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).scripts.watch, "spec watch");
     assert.ok(fs.existsSync(path.join(root, ".claude/skills/sync/SKILL.md")) && added.includes("tsconfig.json"), added.join());
     assert.deepEqual(init(root), []);
   });

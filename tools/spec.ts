@@ -1127,7 +1127,7 @@ export function init(root: string): string[] {
   const manifest = path.join(root, "package.json");
   if (fs.existsSync(manifest)) {
     const json = JSON.parse(fs.readFileSync(manifest, "utf8"));
-    const scripts = { check: "spec check", gen: "spec gen", accept: "spec accept" };
+    const scripts = { check: "spec check", watch: "spec watch", gen: "spec gen", accept: "spec accept", new: "spec new" };
     const added = Object.entries(scripts).filter(([name]) => !json.scripts?.[name]);
     if (added.length) {
       json.scripts = { ...json.scripts, ...Object.fromEntries(added) };
