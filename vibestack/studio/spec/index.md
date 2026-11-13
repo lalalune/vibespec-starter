@@ -1,0 +1,210 @@
+# Spec Studio
+
+A local page for building an application from its stories. A person edits
+the stories and rules of a project's specs, publishes them, has an agent
+bring the rules and Quint in step, checks, and signs off. This spec is the
+session around that work: what may happen when. Editing one spec is
+[the outline](./outline.md).
+
+The session is shared by the page, which knows whether there are edits not
+yet published, and the server, which runs one job at a time and remembers
+what the last check found.
+
+## Domain
+
+### A session
+
+`waiting` is how many published changes the agent has not synced yet: the
+length of the manifest. The verdict is what the last finished check found,
+and is unknown while nothing has been checked since the specs last changed.
+
+```quint
+type Job = Idle | Checking | Syncing | SigningOff
+type Verdict = Unknown | Failing | Reviewable | Green
+type Session = { unpublished: bool, waiting: int, job: Job, verdict: Verdict }
+```
+
+### A new session has nothing to do
+
+```quint
+pure val initial: Session = { unpublished: false, waiting: 0, job: Idle, verdict: Unknown }
+```
+
+### What the simulator tries
+
+```quint
+pure val changesValues = Set(0, 1, 3)
+```
+
+## Story: Edit, then publish
+
+> As a spec author, I want my edits kept in the page until I publish them,
+> and publishing to hand them to the agent and check them, so that nothing
+> half-done reaches the specs and nothing published goes unchecked.
+
+### Edits stay in the page until they are published or discarded
+
+```quint
+pure def edit(s: Session): Session = { ...s, unpublished: true }
+pure def canDiscard(s: Session): bool = s.unpublished
+pure def discard(s: Session): Session = { ...s, unpublished: false }
+```
+
+### Only edits can be published, and not while a job runs
+
+Publishing writes the specs that changed, records how many changes now wait
+for the agent, and starts a check.
+
+```quint
+pure def canPublish(s: Session, changes: int): bool = s.unpublished and s.job == Idle and changes >= 0
+pure def publish(s: Session, changes: int): Session =
+  { ...s, unpublished: false, waiting: changes, job: Checking, verdict: Unknown }
+```
+
+### Publishing always starts a check
+
+```quint
+pure def stepPublishingChecks(before: Session, via: str, after: Session): bool =
+  via == "publish" implies (after.job == Checking and not(after.unpublished))
+```
+
+### A change to the specs on disk makes the last verdict unknown
+
+An agent or an editor may change a spec while the page is open.
+
+```quint
+pure def touch(s: Session): Session = { ...s, verdict: Unknown }
+```
+
+## Story: Sync with an agent
+
+> As a spec author, I want an agent to bring the rules and Quint in step with
+> what I published, and to see when that is done, so that I review a spec
+> that checks rather than one in pieces.
+
+### An agent syncs only what is published, and not while a job runs
+
+```quint
+pure def canSync(s: Session): bool = not(s.unpublished) and s.job == Idle
+pure def sync(s: Session): Session = { ...s, job: Syncing }
+```
+
+### A sync that ends well leaves nothing waiting and checks again
+
+A sync that fails leaves what was waiting, and what the agent did is not
+known to check until it is checked.
+
+```quint
+pure def canSynced(s: Session): bool = s.job == Syncing
+pure def synced(s: Session, ok: bool): Session =
+  if (ok) { ...s, waiting: 0, job: Checking, verdict: Unknown }
+  else { ...s, job: Idle, verdict: Unknown }
+```
+
+### What is waiting can be marked as synced by hand
+
+For a sync done outside the studio.
+
+```quint
+pure def canMarkSynced(s: Session): bool = s.job == Idle and s.waiting > 0
+pure def markSynced(s: Session): Session = { ...s, waiting: 0 }
+```
+
+### What is waiting goes down only by a sync, by hand, or by publishing what undoes a change
+
+What waits is measured against the specs as last synced, so publishing an
+edit that puts a story back as it was leaves less to sync. Discovered by
+simulation: the first version of this rule left that case out.
+
+```quint
+pure def stepWaitingGoesDownOnlyBySyncOrUndo(before: Session, via: str, after: Session): bool =
+  (after.waiting < before.waiting) implies (via == "synced" or via == "markSynced" or via == "publish")
+```
+
+### A sync can be under way
+
+```quint
+pure def sometimesSyncing(s: Session): bool = s.job == Syncing and s.waiting > 0
+```
+
+## Story: Check
+
+> As a spec author, I want to check the project whenever I like and see what
+> the check found, so that I know what is left to do.
+
+### A check can start whenever no job runs
+
+```quint
+pure def canCheck(s: Session): bool = s.job == Idle
+pure def check(s: Session): Session = { ...s, job: Checking, verdict: Unknown }
+```
+
+### A finished check gives its verdict
+
+`Reviewable` means only review is left and every story has rules and every
+rule has Quint, so the review can be recorded.
+
+```quint
+pure def canChecked(s: Session, verdict: Verdict): bool = s.job == Checking and verdict != Unknown
+pure def checked(s: Session, verdict: Verdict): Session = { ...s, job: Idle, verdict: verdict }
+```
+
+### A running job can be stopped, and then nothing is known of its result
+
+```quint
+pure def canStop(s: Session): bool = s.job != Idle
+pure def stop(s: Session): Session = { ...s, job: Idle, verdict: Unknown }
+```
+
+### While a check runs, its verdict is unknown
+
+```quint
+pure def alwaysNoVerdictWhileChecking(s: Session): bool = s.job == Checking implies s.verdict == Unknown
+```
+
+### A job starts only when none is running
+
+```quint
+pure def stepOneJobAtATime(before: Session, via: str, after: Session): bool =
+  (before.job != Idle and after.job != Idle and after.job != before.job)
+    implies (via == "synced" or via == "signedOff")
+```
+
+### A check can find everything green
+
+```quint
+pure def sometimesGreen(s: Session): bool = s.verdict == Green
+```
+
+## Story: Sign off
+
+> As a spec author, I want to record my review once only review is left, so
+> that the spec I sign off is the one that was checked.
+
+### Sign-off needs a check that left only review, nothing unpublished and nothing waiting
+
+```quint
+pure def canSignOff(s: Session): bool =
+  s.job == Idle and s.verdict == Reviewable and not(s.unpublished) and s.waiting == 0
+pure def signOff(s: Session): Session = { ...s, job: SigningOff }
+```
+
+### A sign-off is checked again when it ends
+
+```quint
+pure def canSignedOff(s: Session): bool = s.job == SigningOff
+pure def signedOff(s: Session): Session = { ...s, job: Checking, verdict: Unknown }
+```
+
+### A sign-off starts only from a reviewable check
+
+```quint
+pure def stepSignOffFollowsReview(before: Session, via: str, after: Session): bool =
+  via == "signOff" implies (before.verdict == Reviewable and before.waiting == 0 and not(before.unpublished))
+```
+
+### A sign-off can be under way
+
+```quint
+pure def sometimesSigningOff(s: Session): bool = s.job == SigningOff
+```

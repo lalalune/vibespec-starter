@@ -1,0 +1,14 @@
+{
+  "name": "vibestack-studio",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "check": "node ../spec.ts check",
+    "gen": "node ../spec.ts gen",
+    "accept": "node ../spec.ts accept",
+    "test": "node --test test/*.test.ts"
+  }
+}

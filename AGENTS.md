@@ -89,7 +89,8 @@ and nothing else would catch it.
 - **Compact.** Shared helpers over repeated setup, one assertion of a whole
   value over one per field, no comment that restates the test's name.
 - **One command.** `npm run check` runs the package's `test` script, which
-  runs the tests and never the check. No other test scripts, and nothing a
+  runs the tests and never the package's own check (a tool's journeys may check
+  scratch projects, as Studio's do). No other test scripts, and nothing a
   person must set to run them; the config a runner or service needs is fine.
 - **Size.** One file per package and runner is the norm, and 5,000 lines is fine. At
   15,000 lines, consolidate and simplify; split only at 20,000.
@@ -122,7 +123,7 @@ How `npm run check` runs them:
 
 - `npm run check` is where step 3 of the sync skill's loop stops: what is
   left waits on the user.
-- In the vibespec-starter repository, if you changed `vibespec/`, `npm run selftest`
+- In the vibestack repository, if you changed `vibestack/`, `npm run selftest`
   passes, with a new case for each new kind of mistake the change catches.
 - What you wrote has had its passes under "Writing code".
 - Your summary follows "When you stop" in the sync skill.
@@ -133,9 +134,9 @@ The spec format, the generated code and the code built on it. The agent's
 loop is the [`sync` skill](.claude/skills/sync/SKILL.md); setup and the stages
 of `npm run check` are in [README.md](README.md).
 
-In the vibespec-starter repository, "the order example" is
-`vibespec/examples/order/spec/index.md` and "the tracker example" is
-`vibespec/examples/dashboard/spec/tracker.md`. The root `spec/index.md` is blank, ready
+In the vibestack repository, "the order example" is
+`vibestack/examples/order/spec/index.md` and "the tracker example" is
+`vibestack/examples/dashboard/spec/tracker.md`. The root `spec/index.md` is blank, ready
 for a new application.
 
 ## Writing a spec
@@ -211,9 +212,9 @@ is generated. The role of a definition comes from its name and signature:
 | `pure def leadsToPaid(o: Order, later: Order): bool` | a liveness rule: from every reachable state `o`, every fair run reaches a state `later` that it relates to `o` (`o` itself counts) | a search of simulated traces for a fair run that breaks it ("Liveness", below) |
 | `pure def lawTotalIsNotNegative(xs: List[int]): bool` | a law: true for every value of its parameters | a function proved to return `true`, and sampled by the simulator |
 | `pure val idValues = Set(1, 2, 3)` | what the simulator tries for a parameter named `id`. It must be a set whose elements match the parameter type; any supported Quint is allowed in it | nothing: it never reaches TypeScript |
-
 | `pure val weight_pay = 5` | how often the simulator tries `pay`: a whole number from 1 to 100, times as often as an event of weight 1 (the default). For deep interleavings, such as a message lost, repeated and reordered | nothing |
 | `pure val fair_pay = "weak"` or `"strong"` | an assumption for `leadsTo` rules: a fair run does not put `pay` off for ever while its guard keeps allowing it (`"weak"`), or while it allows it again and again (`"strong"`) | nothing |
+| `pure val within_leadsToPaid = 3` | a bound for a `leadsTo` rule: every run meets it within 3 events, from 1 to 100 | a search of simulated traces for a run that does not ("Liveness", below) |
 | any other `pure val` or `pure def` | a constant or helper | the same constant or function |
 
 A transition parameter named `by` identifies its sender. All such parameters
@@ -244,13 +245,13 @@ and near-misses of the conventions above such as `alwayspaid` or `CanPay`.
 - **`import kernel.* from "./kernel"`** takes a library's names as they are.
   A library is a spec with no `initial`: definitions and laws, or a
   *component* such as an account with `canWithdraw` and `withdraw` and no
-  state of its own (`vibespec/fixtures/account.md` in the vibespec-starter repository,
+  state of its own (`vibestack/fixtures/account.md` in the vibestack repository,
   used by `bank.md`).
 - **`import lamp as L from "./lamp"`** takes any spec under a name, a state
   machine included. A room can then hold two `L::Lamp`s in its state, start
   them from `L::initial`, move them with `L::toggle`, require
   `L::alwaysFlipsAreCounted` of each, and add rules about the pair that
-  neither lamp could state (`vibespec/fixtures/room.md` in the vibespec-starter
+  neither lamp could state (`vibestack/fixtures/room.md` in the vibestack
   repository).
 
 Import paths resolve relative to the spec that contains them. For example,
@@ -260,10 +261,10 @@ Generated code uses the imported spec's full module path.
 - **`import net as N from "./net"`** takes a spec that ships with the tools,
   from their `std/` directory, when `spec/` has none of that name. It is
   simulated and proved with the specs that import it, never reviewed.
-  [`vibespec/std/net.md`](vibespec/std/net.md) is a network that loses, repeats and reorders:
+  [`vibestack/std/net.md`](vibestack/std/net.md) is a network that loses, repeats and reorders:
   the numbers of the messages in flight, with `N::send`, `N::take` (to
   deliver or lose one), `N::repeat`, and laws for an `always` rule that only
-  messages sent are in flight. `vibespec/fixtures/ping.md` uses it.
+  messages sent are in flight. `vibestack/fixtures/ping.md` uses it.
 
 A spec is imported once, one way or the other, and imports cannot form a
 circle. Navigation links may point back to a parent. In the generated
@@ -278,7 +279,7 @@ TypeScript a name from another module is spelled
 | records | interfaces | Nest as deep as you like |
 | `type Status = Draft \| Paid` | `"Draft" \| "Paid"` | |
 | `type Parcel = Packed({ weight: int }) \| Lost` | `{ tag: "Packed"; weight: number } \| { tag: "Lost" }` | Read with `match p { \| Packed(x) => … \| _ => … }` |
-| `List[T]` | `T[]` | `List(…)`, `append`, `concat`, `length`, `nth`, `head`, `tail`, `select`, `foldl`, and `every`, `some`, `includes`, `listMap` |
+| `List[T]` | `T[]` | `List(…)`, `append`, `concat`, `length`, `nth`, `nthOr`, `removeAt`, `head`, `tail`, `select`, `foldl`, and `every`, `some`, `includes`, `listMap` |
 | `Set[T]` of simple values | `T[]` that never holds a value twice | `Set(…)`, `union`, `intersect`, `exclude`, `filter`, `map`, `forall`, `exists`, `contains`, `in`, `subseteq`, `size` |
 | `K -> T` | `Record<K, T>` | Keys are integers, strings or plain variants; `Map()`, `put`, `get`, `getOr`, `m.keys().contains(k)` |
 
@@ -312,8 +313,8 @@ stage with the name of the construct.
   real thing and a list when they are not.
 - **A map is a lookup table.** It cannot be listed or iterated; keep a list of
   keys beside it, or use a list of records with a key field. An event cannot
-  carry one. In the generated state its keys carry a `$` in front, so that no
-  key can collide with a property every JavaScript object has.
+  carry one. In the generated state a string key carries a `$` in front, so
+  that no key can collide with a property every JavaScript object has.
 - **In a `match` arm, use the fields of what the variant carries**
   (`x.weight`), or rebuild the variant (`Packed({ ...x, weight: 2 })`). The
   carried value cannot be passed on whole. `match` must be on a name.
@@ -327,7 +328,8 @@ stage with the name of the construct.
 - **The simulator tries small values**: integers −1…6, both booleans, three
   strings, every variant of a plain sum type, and short lists and sets of
   those. Define `<param>Values` to choose, which a record or a variant that
-  carries data needs.
+  carries data needs. The sets of an imported spec apply too; the spec's own
+  win.
 
 ### Writing good rules
 
@@ -367,8 +369,12 @@ the state marked.
   anywhere: declare fair the events the property waits on, the system's own
   steps and the deliveries the environment promises, and no others.
 - An event lost and sent again forever loops; only `"strong"` fairness of
-  the delivery rules that out (`vibespec/fixtures/ping.md`).
+  the delivery rules that out (`vibestack/fixtures/ping.md`).
 - "Allows" is for the values the simulator tries (`<param>Values`).
+- `within_<rule> = n` also asks that the rule be met within `n` events of
+  any state, whatever events they are: a run that takes `n` without meeting
+  it breaks the rule, fair or not. Events of the environment count too, so a
+  bound holds only where nothing can delay the answer without limit.
 - A loop needs a state reached twice. A counter that only grows rules loops
   out, and then only runs that stop are checked: the stage says how many
   loops it found. Nothing proves a `leadsTo` rule.
@@ -436,7 +442,7 @@ for each one, in this order:
 Counting is per obligation. Dafny verifies each definition whole, and one
 that fails again with every assertion on its own; a failing `ensures` is never
 assumed while another is checked. The prover works to a fixed resource limit
-(`RESOURCE_LIMIT` in `vibespec/prove.ts`, per definition and then per assertion)
+(`RESOURCE_LIMIT` in `vibestack/prove.ts`, per definition and then per assertion)
 rather than a time limit, so the answer does not depend on the machine. An obligation it
 could not finish is marked `[the prover ran out of resources]`. A lemma
 assumes what every lemma it calls ensures, so an obligation whose proof calls,
@@ -480,13 +486,13 @@ a body.
 - Names from Dafny's standard library (`Std.…`) only as the generated code
   writes them, such as `Std.Collections.Seq.Filter`: the library holds axioms,
   and `dafny audit` does not report them in the unit. `ProofLib.<Name>` only
-  for what `vibespec/proof/lib.dfy` declares.
+  for what `vibestack/proof/lib.dfy` declares.
 - Refused: block comments, `@`, any other attribute, character literals, NUL,
   anything but ASCII outside comments and strings, and the words that
   declare or trust something: `assume`, `expect`, `function`, `predicate`,
   `method`, `ghost`, `const`, `type`, `datatype`, `include`, `import`,
   `module`, `reads`, `modifies`, `opaque`, `axiom`, `verify` and the rest of
-  `FORBIDDEN` in `vibespec/prove.ts`.
+  `FORBIDDEN` in `vibestack/prove.ts`.
 - After that, LemmaScript refuses the `.dfy` unless it is its own output plus
   added lines, and `dafny audit` refuses anything assumed rather than proved.
   A failure anywhere but in a generated definition (a helper, the library, a
@@ -497,14 +503,14 @@ a body.
 
 **What a proof can call:**
 
-- `ProofLib.<Name>(...)` from `vibespec/proof/lib.dfy`, of which every unit that
+- `ProofLib.<Name>(...)` from `vibestack/proof/lib.dfy`, of which every unit that
   has a proof file gets what the file calls and what that uses: `Filter` (a heap-free view of `Std.Collections.Seq.Filter`,
   see below), `Distinct`, `DistinctBy`, and lemmas about filters
   (`FilterNil`, `FilterCons`, `FilterAppend`, `FilterMember`, `FilterSubset`,
   `FilterNone`, `FilterOne`, `FilterTwo`, `FilterCountOneIffUnique`,
   `FilterDistinctCountOne`, `FilterKeepsDistinctBy`, `FilterLengthPointwise`,
   `FilterPointwise`, `FilterSamePredicate`, `FilterOfFilterShorter`) and folds
-  (`FoldLeftMax`, `FoldLeftPointwise`, `FoldLeftConcatEmpty`, `FoldLeftDedupDistinct`).
+  (`FoldLeftAppend`, `FoldLeftMax`, `FoldLeftPointwise`, `FoldLeftConcatEmpty`, `FoldLeftDedupDistinct`).
   Read the file for what each states. A lemma general enough for any project
   belongs there, with its proof; one about your spec belongs in your proof
   file.
@@ -515,7 +521,7 @@ a body.
   gives `<module>_<law>(args) == true`, and `<module>_<transition>_ensures(s, …)`
   gives each rule of that module for `<module>_<transition>(s, …)`, under its
   `inv` and guard, so a machine that holds another need not prove its rules
-  again (`vibespec/fixtures/office.md`). (In a `src` unit, those of the module
+  again (`vibestack/fixtures/office.md`). (In a `src` unit, those of the module
   it imports are `<fn>_ensures`.)
 - The generated `_ensures` lemmas, and Dafny's standard library by the names
   the generated code uses.
@@ -544,8 +550,8 @@ supply one to replace it.
 3. Run `npm run check`. Dafny's messages point into the `.dfy`; the log has
    them all.
 
-`vibespec/fixtures/highest.md` is the smallest example: its law needs induction
-over a fold, and this proof file proves it (the selftest runs it):
+`vibestack/fixtures/highest.md` is the smallest example: its law needs induction
+over a fold, and `vibestack/fixtures/highest.proof.dfy` proves it (the selftest runs it):
 
 ```dafny
 lemma lawTheHighestIsAtLeastTheStart_ensures(xs: seq<int>, start: int)
@@ -586,9 +592,28 @@ line.
   afterwards.
 - Calling a transition directly (`pay(o, 5)`) is only meaningful when its
   guard holds. Application code goes through `enabled` and `step`, as
-  `vibespec/examples/order/src/app.ts` does.
+  `vibestack/examples/order/src/app.ts` does.
 - `gen/` is rebuilt by `npm run gen` and `npm run check`, and by
   `npm install` when every spec is valid.
+
+### Conformance
+
+Three ways to run the real application against a state machine's spec:
+
+| | How | Checked by |
+|---|---|---|
+| `gen/<name>.conformance.ts` | `conformance(driver, options)` in a test: a journey per `sometimes` rule, then random walks | the test |
+| `test/traces/<name>.jsonl` | recorded lines: `{state}` starts, `{event, by?, state?, out?}` steps; at least one state observed | `check`, `traces` |
+| `driver:<name>` script | a program that answers each `{}` (reset) or `{event, by?}` line with one `{state, out?}` line | `check`, `traces`, on the simulated traces |
+
+A `Driver` has `reset`, `dispatch` (returns `"accepted"` or `"refused"`),
+`observe` and, for a spec that emits effects, `observeOutput`.
+
+A disagreement throws `ConformanceError`: its `trace` is the shrunk list of
+`[key, event]` pairs that shows it, `seed` the seed of its walks and `origin`
+the journey or walk that found it. Save the trace as a counterexample;
+`replay(driver, trace)`, from the same module, runs exactly it again, and
+`conformance(driver, { seed })` repeats the walks.
 
 ## Hand-written verified logic
 
@@ -596,7 +621,7 @@ Put logic in the spec when you can: it is then simulated, proved and
 generated. For pure logic that Quint cannot express, such as a loop over an
 event log, write TypeScript under `src/` with
 [LemmaScript](https://github.com/midspiral/LemmaScript) annotations.
-`vibespec/examples/order/src/ledger.ts` is the worked example.
+`vibestack/examples/order/src/ledger.ts` is the worked example.
 
 - Any `.ts` file under `src/` that contains `//@` is proved by
   `npm run check`, as the unit `src-<path>`. Its `//@` lines are its
@@ -633,7 +658,7 @@ The toolchain is a package with a `spec` command, installed from a path or
 a tarball made with `npm pack`.
 
 ```sh
-npm install --save-dev /path/to/vibespec-0.1.0.tgz
+npm install --save-dev /path/to/vibestack-0.1.0.tgz
 npx spec init          # adds what is missing; updates only its own marked instructions
 npx spec new           # fill an empty spec/index.md
 npx spec new <name>    # a starter spec/<name>/index.md
@@ -642,7 +667,7 @@ npm run check
 
 | `spec init` adds | |
 |---|---|
-| `.claude/skills/sync/`, `.claude/skills/design/`, `AGENTS.md` | the agent's procedure and this reference; existing AGENTS content is kept around a marked Vibespec section |
+| `.claude/skills/sync/`, `.claude/skills/design/`, `AGENTS.md` | the agent's procedure and this reference; existing AGENTS content is kept around a marked Vibestack section |
 | `.agents/skills/` | links to the same skills in `.claude/skills/` |
 | `CLAUDE.md` | imports `AGENTS.md`, preserving any existing instructions |
 | `tsconfig.json`, an empty `spec/index.md` | |
@@ -668,7 +693,7 @@ with `tsc`; it has no dependencies.
   everything it imports and the versions of the tools; `tsc` keeps its
   incremental state there. The specs are simulated at once.
 - **The spec covers the rules, not the plumbing.** Chat, HTTP and storage stay
-  hand-written around the generated core, as `vibespec/examples/dashboard/src/notify.ts`
+  hand-written around the generated core, as `vibestack/examples/dashboard/src/notify.ts`
   does for sending messages.
 
 ## Checking harder
@@ -686,22 +711,24 @@ npx quint verify gen/index.run.qnt --main index_run --invariant inv --max-steps 
 
 ## Changing the tools
 
-In the vibespec-starter repository:
+In the vibestack repository:
 
 | File | Role |
 |---|---|
-| `vibespec/spec.ts` | the pipeline and the `spec` command |
-| `vibespec/parse.ts`, `vibespec/review.ts` | literate specs and the review ledgers |
-| `vibespec/cache.ts`, `vibespec/run.ts` | stage caches and bounded tool execution |
-| `vibespec/units.ts`, `vibespec/simulate.ts` | generation, proof units, simulation and replay |
-| `vibespec/util.ts` | source discovery, test execution and citations |
-| `vibespec/prove.ts` | proves one unit: checks and splices the proof file, runs LemmaScript and `dafny audit`, verifies again with every assertion isolated each definition that fails, and alone every postcondition a failing one could hide |
-| `vibespec/proof/lib.dfy` | the library proof files call |
-| `vibespec/gen.ts` | the translator: reads what a module imports and defines |
-| `vibespec/gen/types.ts` | everything decided by a type |
-| `vibespec/gen/print.ts` | expressions |
-| `vibespec/gen/classify.ts` | which definition is a transition, a guard or a rule |
-| `vibespec/gen/typescript.ts`, `vibespec/gen/harness.ts` | the two outputs |
+| `vibestack/spec.ts` | the pipeline and the `spec` command |
+| `vibestack/parse.ts`, `vibestack/review.ts` | literate specs and the review ledgers |
+| `vibestack/cache.ts`, `vibestack/run.ts` | stage caches and bounded tool execution |
+| `vibestack/units.ts`, `vibestack/simulate.ts` | generation, proof units, simulation and replay |
+| `vibestack/util.ts` | source discovery, test execution and citations |
+| `vibestack/scan.ts` | how a spec's lines are read; imports nothing, so Studio's page uses it too |
+| `vibestack/studio/` | Studio, a workspace package with its own spec, checked by `npm run check --workspace vibestack-studio`: change `spec/`, then its shell in `src/` |
+| `vibestack/prove.ts` | proves one unit: checks and splices the proof file, runs LemmaScript and `dafny audit`, verifies again with every assertion isolated each definition that fails, and alone every postcondition a failing one could hide |
+| `vibestack/proof/lib.dfy` | the library proof files call |
+| `vibestack/gen.ts` | the translator: reads what a module imports and defines |
+| `vibestack/gen/types.ts` | everything decided by a type |
+| `vibestack/gen/print.ts` | expressions |
+| `vibestack/gen/classify.ts` | which definition is a transition, a guard or a rule |
+| `vibestack/gen/typescript.ts`, `vibestack/gen/harness.ts` | the two outputs |
 
 Node runs all of it directly; `npm run build` compiles it for the packaged
 `spec` command.
@@ -710,6 +737,6 @@ Node runs all of it directly; `npm run build` compiles it for the packaged
 that object. Each result has `ok`, `stage` (a stage, or `skipped`),
 `summary`, `detail` and, when it concerns one, `where`; `next` is the line
 the command line ends with. `npm run selftest` builds scratch projects from
-this project's spec or from `vibespec/fixtures/`, breaks one thing at a time and
+this project's spec or from `vibestack/fixtures/`, breaks one thing at a time and
 asserts which stage catches each. Add a case for every new kind of mistake a
 change is meant to catch.

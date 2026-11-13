@@ -12,11 +12,12 @@
     ]
   },
   "include": [
-    "vibespec",
+    "vibestack",
     "gen/*.ts"
   ],
   "exclude": [
-    "vibespec/examples",
+    "vibestack/examples",
+    "vibestack/studio",
     "node_modules"
   ]
 }
