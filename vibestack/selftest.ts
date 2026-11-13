@@ -1276,8 +1276,8 @@ export effect function independent() {
     const after = await run(root);
     assert.deepEqual(after.failed, [], after.text);
     assert.equal(after.next, "all green");
-    // The total is the `ensures` of the generated Dafny: two are left in src/ledger.ts, and its loop invariants are not counted.
-    assert.ok(after.said("proof", /^src-ledger\.ts: all 2 obligations proved/), after.text);
+    // The total is the `ensures` of the generated Dafny: three remain after the paid-order clause is removed; loop invariants are not counted.
+    assert.ok(after.said("proof", /^src-ledger\.ts: all 3 obligations proved/), after.text);
   });
 
   test("a second check in the same project is refused, a lock left by a process that ended is taken over, and unused cache entries go", async () => {
