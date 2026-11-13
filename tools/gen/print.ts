@@ -38,10 +38,29 @@ export interface Scope {
   variants: Set<string>;
   definitions: Set<string>;
   sampleSets: Set<string>;
+  /**
+   * Whether the code is for the prover rather than for Node. Node's code checks at run time two things the proof takes
+   * as given: that integer arithmetic is exact (a number past 2^53 is rounded, where Quint's and Dafny's integers are
+   * not, so such a result throws a RangeError), and that `==` on records, lists and variants compares their structure
+   * (which JavaScript's `===` does not, but Dafny's `==` does). Otherwise the two are the same text.
+   */
+  proof: boolean;
 }
 
 /** Native array methods for the list helpers the tangler marks (LIST_HELPERS in tools/gen.ts). */
 const LIST_METHODS: Record<string, string> = { every: "every", some: "some", listMap: "map" };
+
+/**
+ * `m.getOr(k, d)`, `xs.nthOr(i, d)` and `xs.removeAt(i)` are not Quint either. The tangler renames each call to
+ * `std_<name>_<module>` and defines that, in Quint, below the module's last line (expandBuiltins in parse.ts), so that a
+ * module and one it imports never define the same name; `print` writes the TypeScript the prover follows.
+ */
+export const BUILTINS: Record<string, string> = {
+  getOr: "(std_m: a -> b, std_k: a, std_d: b): b = if (std_m.keys().contains(std_k)) std_m.get(std_k) else std_d",
+  nthOr: "(std_xs: List[a], std_i: int, std_d: a): a = if (0 <= std_i and std_i < std_xs.length()) std_xs.nth(std_i) else std_d",
+  removeAt: "(std_xs: List[a], std_i: int): List[a] = if (0 <= std_i and std_i < std_xs.length()) std_xs.slice(0, std_i).concat(std_xs.slice(std_i + 1, std_xs.length())) else std_xs",
+};
+export const BUILTIN = new RegExp(`^std_(${Object.keys(BUILTINS).join("|")})_`);
 
 /** The set and the value of a membership test, whichever way round it is written. */
 const members = (op: string, a: Json[]): [Json, Json] => (op === "in" ? [a[1], a[0]] : [a[0], a[1]]);
@@ -49,12 +68,12 @@ const members = (op: string, a: Json[]): [Json, Json] => (op === "in" ? [a[1], a
 /** Puts a binding back as it was before an inner scope shadowed it. */
 const restore = <V>(m: Map<string, V>, k: string, v: V | undefined) => (v === undefined ? m.delete(k) : m.set(k, v));
 
-export function printer({ types, inferred, ref, helper, bind, variants, definitions, sampleSets }: Scope) {
-  const { resolve, tagged, isScalar, setElem, named, ownerOf, typeName, tsType } = types;
+export function printer({ types, inferred, ref, helper, bind, variants, definitions, sampleSets, proof }: Scope) {
+  const { resolve, tagged, isScalar, setElem, keyOf, storedKey, holdsSet, named, ownerOf, typeName, tsType } = types;
   const typeOf = typeOfIn(inferred);
-  /** Which arithmetic helpers the printed code needs, and the value types of the maps it looks things up in. */
-  const arithmetic = new Set<string>();
-  const lookups: string[] = [];
+  /** Which helpers the printed code needs (see typescript.ts), and the types of the maps it looks things up in. */
+  const helpers = new Set<string>();
+  const lookups: { map: string; key: string; of: string; stored: string }[] = [];
   /** Names that stand for something else while a `match` arm is printed: the arm's binder is the matched value. */
   const renamed = new Map<string, string>();
   const matchedAs = new Map<string, string>(); // binder -> the variant its arm matched
@@ -69,16 +88,34 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
   };
   const flat = (e: Json, op: string): Json[] => (e.kind === "app" && e.opcode === op ? e.args.flatMap((x: Json) => flat(x, op)) : [e]);
   const tag = (variant: string) => JSON.stringify(variant.split("::").pop());
-  // A key is stored with a "$" in front, so that no key can be mistaken for something every object has, such as
-  // "constructor" or "__proto__".
-  const mapKey = (k: Json) => `"$" + ${ex(k, ADD + 1)}`;
+  /** A key of the map `m` as the generated object stores it (keyOf in types.ts). */
+  const mapKey = (m: Json, k: Json) => storedKey(typeOf(m.id), ex(k, ADD + 1));
+  /** The map `m`, of type `t`, with `value` under `key`. */
+  const put = (m: string, t: Json, key: string, value: string) => `({ ...${m}, [${key}]: ${value} } as ${tsType(t)})`;
+  /**
+   * What the map `m` holds for the key `k`, or `d`. It goes through a helper in which the key is one name, which is the
+   * form both TypeScript and the prover can see is safe.
+   */
+  const lookup = (m: Json, k: Json, d: Json): [string, number] => {
+    const t = resolve(typeOf(m.id));
+    const entry = { map: tsType(t), key: tsType(keyOf(t)), of: tsType(t.res), stored: storedKey(t, "k") };
+    const i = lookups.findIndex((l) => l.map === entry.map);
+    return [`${helper(`lookup${i < 0 ? lookups.push(entry) - 1 : i}`)}(${ex(m, TERNARY)}, ${ex(k, TERNARY)}, ${ex(d, TERNARY)})`, ATOM];
+  };
+  /** A call to one of the module's helpers in typescript.ts, which it then carries. */
+  const call = (which: string, ...args: string[]) => {
+    helpers.add(which);
+    return `${helper(which)}(${args.join(", ")})`;
+  };
+  /** An integer result of arithmetic, which Node's code checks is exact (Scope.proof). */
+  const exact = (text: string, prec: number): [string, number] => (proof ? [text, prec] : [call("exact", text), ATOM]);
+  /** Records, lists and variants compare by structure (Scope.proof); a set inside one would compare in order in the proof. */
+  const comparable = (e: Json) => !holdsSet(typeOf(e.id)) || fail("== and includes on a value that holds a set are not supported: in the proof a set is a sequence, compared in order; compare sets with subseteq both ways");
   /** Inside another expression a record literal has no declared type to check against, so it states its own. */
   const typed = (text: string, e: Json): string => {
     const d = nesting > 1 ? named(typeOf(e.id), "rec") : undefined;
     return d ? `(${text} as ${typeName(d)})` : text;
   };
-  const scalarOnly = (what: string, xs: Json[]) =>
-    xs.every((x) => isScalar(typeOf(x.id))) || fail(`${what} on records or lists is not supported: compare fields, or use every/some`);
   /** `name: value` for each pair of a record literal's arguments. */
   const pairs = (args: Json[]) => args.flatMap((_, i) => (i % 2 ? [] : [`${args[i].value}: ${ex(args[i + 1], TERNARY)}`]));
   /** `{ ...x, a: 1, b: 2 }` arrives as nested updates; this is what is updated, and the updates in order. */
@@ -87,11 +124,19 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
     for (; e.kind === "app" && e.opcode === "with"; e = e.args[0]) updates.unshift(`${e.args[1].value}: ${ex(e.args[2], TERNARY)}`);
     return { base: e, updates };
   };
-  /** `a.append(x).concat(b)` as the items of one array literal, `...a, x, ...b`, rather than spreads nested in spreads. */
-  const items = (e: Json): string[] =>
-    e.kind === "app" && e.opcode === "append" ? [...items(e.args[0]), ex(e.args[1], TERNARY)]
-    : e.kind === "app" && e.opcode === "concat" ? [...items(e.args[0]), ...items(e.args[1])]
-    : [`...${ex(e, ATOM)}`];
+  /**
+   * `a.append(x).append(y).concat(b)` as one call, `a.concat([x, y], b)`, rather than calls nested in calls. Not an
+   * array literal: LemmaScript knows what `concat` returns, but not what a literal is, if a list method is called on it.
+   */
+  const parts = (e: Json): (string | string[])[] =>
+    e.kind === "app" && e.opcode === "append" ? [...parts(e.args[0]), [ex(e.args[1], TERNARY)]]
+    : e.kind === "app" && e.opcode === "concat" ? [...parts(e.args[0]), ...parts(e.args[1])]
+    : [ex(e, ATOM)];
+  const joined = (e: Json): string => {
+    const [first, ...rest] = parts(e);
+    const args = rest.reduce<(string | string[])[]>((all, p) => (Array.isArray(p) && Array.isArray(all.at(-1)) ? [...all.slice(0, -1), [...all.at(-1)!, ...p]] : [...all, p]), []);
+    return `${first}.concat(${args.map((p) => (Array.isArray(p) ? `[${p.join(", ")}]` : p)).join(", ")})`;
+  };
   /** A lambda. Its parameters carry their types, which LemmaScript cannot always infer. */
   const arrow = (params: Json[], result: Json): string => {
     // A parameter hides an enclosing match arm's binder of the same name: inside the lambda the name is the parameter.
@@ -126,20 +171,28 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
     const op: string = e.opcode;
     if (BINARY[op]) {
       const [symbol, prec] = BINARY[op];
-      if (op === "eq" || op === "neq") scalarOnly("== and !=", a);
-      return [`${ex(a[0], prec)} ${symbol} ${ex(a[1], prec + 1)}`, prec];
+      const structural = (op === "eq" || op === "neq") && !isScalar(typeOf(a[0].id)) && comparable(a[0]);
+      if (structural && !proof) return op === "eq" ? [call("equal", ex(a[0], TERNARY), ex(a[1], TERNARY)), ATOM] : [`!${call("equal", ex(a[0], TERNARY), ex(a[1], TERNARY))}`, UNARY];
+      const text = `${ex(a[0], prec)} ${symbol} ${ex(a[1], prec + 1)}`;
+      return prec === ADD || prec === MULTIPLY ? exact(text, prec) : [text, prec];
     }
     const recv = () => ex(a[0], ATOM);
+    const builtin = op.match(BUILTIN)?.[1];
+    // Outside the list, nthOr gives the default and removeAt the list as it is, as their Quint does (BUILTINS).
+    const inRange = () => `0 <= ${ex(a[1], COMPARE + 1)} && ${ex(a[1], COMPARE + 1)} < ${recv()}.length`;
+    if (builtin === "getOr") return lookup(a[0], a[1], a[2]);
+    if (builtin === "nthOr") return [`${inRange()} ? ${recv()}[${ex(a[1])}] : ${ex(a[2], OR)}`, TERNARY];
+    if (builtin === "removeAt") return [`${inRange()} ? ${recv()}.slice(0, ${ex(a[1])}).concat(${recv()}.slice(${ex(a[1], ADD)} + 1)) : ${recv()}`, TERNARY];
     switch (op) {
       case "iuminus": return [`0 - ${ex(a[0], ADD + 1)}`, ADD]; // not -x: in JavaScript that gives -0 for 0
       // Quint divides towards zero, and its remainder takes the sign of the dividend. JavaScript's floor and Dafny's
       // division do neither for negative numbers, so both go through helpers that are exact in all three.
-      case "idiv": arithmetic.add("quotient"); return [`${helper("quotient")}(${ex(a[0], TERNARY)}, ${ex(a[1], TERNARY)})`, ATOM];
-      case "imod": arithmetic.add("quotient").add("remainder"); return [`${helper("remainder")}(${ex(a[0], TERNARY)}, ${ex(a[1], TERNARY)})`, ATOM];
-      // A map is a record keyed by strings. Looking a key up is only safe where the same definition has tested for it.
-      case "Map": return [a.reduce((m, pair) => `{ ...${m}, [${mapKey(pair.args[0])}]: ${ex(pair.args[1], TERNARY)} }`, `({} as ${tsType(typeOf(e.id))})`), ATOM];
-      case "put": case "set": return [`{ ...${recv()}, [${mapKey(a[1])}]: ${ex(a[2], TERNARY)} }`, ATOM];
-      case "get": return [`${recv()}[${mapKey(a[1])}]`, ATOM];
+      case "idiv": return [call("quotient", ex(a[0], TERNARY), ex(a[1], TERNARY)), ATOM];
+      case "imod": helpers.add("quotient"); return [call("remainder", ex(a[0], TERNARY), ex(a[1], TERNARY)), ATOM];
+      // A map is an object. Looking a key up is only safe where the same definition has tested for it.
+      case "Map": return [a.reduce((m, pair) => put(m, typeOf(e.id), mapKey(e, pair.args[0]), ex(pair.args[1], TERNARY)), `({} as ${tsType(typeOf(e.id))})`), ATOM];
+      case "put": case "set": return [put(recv(), typeOf(a[0].id), mapKey(a[0], a[1]), ex(a[2], TERNARY)), ATOM];
+      case "get": return [`${recv()}[${mapKey(a[0], a[1])}]`, ATOM];
       case "keys": return fail("a map cannot be listed or iterated, only asked about one key: write `m.keys().contains(k)`, and keep a list of keys beside the map if you need to go through them");
       case "not": return [`!${ex(a[0], ATOM)}`, UNARY];
       case "and": return [flat(e, "and").map((x) => ex(x, AND + 1)).join(" && "), AND];
@@ -147,15 +200,10 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
       case "implies": return [`!${ex(a[0], ATOM)} || ${ex(a[1], AND + 1)}`, OR];
       case "iff": return [`${ex(a[0], EQ + 1)} === ${ex(a[1], EQ + 1)}`, EQ];
       case "ite": {
-        // `if (m.keys().contains(k)) m.get(k) else d` is a lookup with a default. It goes through a helper in which
-        // the key is one name, which is the form both TypeScript and the prover can see is safe.
+        // `if (m.keys().contains(k)) m.get(k) else d` is a lookup with a default, as `m.getOr(k, d)` is.
         const [keys, key] = a[0].kind === "app" && (a[0].opcode === "contains" || a[0].opcode === "in") ? members(a[0].opcode, a[0].args) : [];
         const get = a[1].kind === "app" && a[1].opcode === "get" ? a[1] : undefined;
-        if (keys?.opcode === "keys" && get && ex(get.args[0]) === ex(keys.args[0]) && ex(get.args[1]) === ex(key)) {
-          const of = tsType(resolve(typeOf(keys.args[0].id)).res);
-          if (!lookups.includes(of)) lookups.push(of);
-          return [`${helper(`lookup${lookups.indexOf(of)}`)}(${ex(keys.args[0], TERNARY)}, ${ex(key, TERNARY)}, ${ex(a[2], TERNARY)})`, ATOM];
-        }
+        if (keys?.opcode === "keys" && get && ex(get.args[0]) === ex(keys.args[0]) && ex(get.args[1]) === ex(key)) return lookup(keys.args[0], key, a[2]);
         return [`${ex(a[0], OR)} ? ${ex(a[1], OR)} : ${ex(a[2], OR)}`, TERNARY];
       }
       case "field": return [`${a[0].kind === "name" && renamed.has(a[0].name) ? renamed.get(a[0].name) : recv()}.${a[1].value}`, ATOM];
@@ -167,7 +215,7 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
       // Lists are arrays.
       // An empty list carries its type, which TypeScript cannot infer where it is a fold's starting value.
       case "List": return [a.length ? `[${a.map((x) => ex(x, TERNARY)).join(", ")}]` : `([] as ${tsType(typeOf(e.id))})`, ATOM];
-      case "append": case "concat": return [`[${items(e).join(", ")}]`, ATOM];
+      case "append": case "concat": return [joined(e), ATOM];
       case "length": return [`${recv()}.length`, ATOM];
       case "nth": return [`${recv()}[${ex(a[1])}]`, ATOM];
       case "head": return [`${recv()}[0]`, ATOM];
@@ -179,7 +227,10 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
         const which = acc?.name.match(/^std_(every|some|listMap|includes)_/)?.[1];
         const inner = a[2].expr?.args?.[1];
         if (LIST_METHODS[which]) return [`${recv()}.${LIST_METHODS[which]}(${arrow([item], inner)})`, ATOM];
-        if (which === "includes") { scalarOnly("includes", [inner.args[1]]); return [`${recv()}.includes(${ex(inner.args[1], TERNARY)})`, ATOM]; }
+        if (which === "includes") {
+          const [v, t] = [inner.args[1], typeOf(inner.args[1].id)];
+          return [isScalar(t) || (comparable(v) && proof) ? `${recv()}.includes(${ex(v, TERNARY)})` : `${recv()}.some((x0: ${tsType(t)}) => ${call("equal", "x0", ex(v, TERNARY))})`, ATOM];
+        }
         return [`${recv()}.reduce(${ex(a[2])}, ${ex(a[1], TERNARY)})`, ATOM];
       }
     }
@@ -214,7 +265,7 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
     }
     if ((op === "contains" || op === "in") && (op === "in" ? a[1] : a[0]).opcode === "keys") {
       const [keys, key] = op === "in" ? [a[1], a[0]] : [a[0], a[1]];
-      return [`(${mapKey(key)}) in ${ex(keys.args[0], COMPARE + 1)}`, COMPARE];
+      return [`(${mapKey(keys.args[0], key)}) in ${ex(keys.args[0], COMPARE + 1)}`, COMPARE];
     }
     if (SET_OPS[op]) {
       // A set is an array that never holds the same value twice. Only simple values can be in one.
@@ -248,6 +299,6 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
     return [...lines, `return ${ex(e)};`];
   };
 
-  return { ex, body, arithmetic, lookups };
+  return { ex, body, helpers, lookups };
 }
 export type Printer = ReturnType<typeof printer>;

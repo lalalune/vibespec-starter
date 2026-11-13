@@ -280,6 +280,8 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
       ["an initial state without a transition", "pure val initial: int = 0", /transition/],
       ["a set of records", "type A = { n: int }\npure def count(xs: Set[A]): int = xs.size()", /set|Set/],
       ["a map into records", "pure def records(xs: Set[int]): Set[{ n: int }] = xs.map(x => { n: x })", /set|Set|record/],
+      ["== on values that hold a set", "type A = { s: Set[int] }\npure def same(a: A, b: A): bool = a == b", /a set is a sequence/],
+      ["a map keyed by booleans", "pure def flags(k: bool): bool -> int = Map(k -> 1)", /keys must be/],
     ];
     const results = await Promise.all(cases.map(([, quint]) => run(oneRule("shape", "Shapes", quint))));
     cases.forEach(([what, , message], i) => assert.equal(results[i].said("model", message)?.ok, false, `${what}\n${results[i].text}`));
@@ -374,6 +376,30 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     const { failed, said, text } = await run(fixtures(["account", "bank"]));
     assert.deepEqual(failed, ["review"], text);
     assert.ok(said("model", /^spec\/bank\.md: 2 transitions, 1 always, 1 step, 1 sometimes/), text);
+  });
+
+  test("a machine is simulated with the sample sets of the specs it imports", async () => {
+    // Every amount the account offers is more than the bank's current account holds, so nothing can ever be saved.
+    const { failed, said, text } = await run(fixtures(["account", "bank"], (f) => { f["spec/account.md"] = f["spec/account.md"].replace("type Account", "pure val amountValues = Set(7)\ntype Account"); }));
+    assert.ok(failed.includes("sometimes"), text);
+    assert.ok(said("sometimes", /\bsave in .* never happened/), text);
+  });
+
+  test("tables keyed by integers and variants, getOr, nthOr, removeAt, structural == and a mapped append are simulated, replayed and proved", async () => {
+    const root = fixtures(["hall"]);
+    const { failed, said, text } = await run(root);
+    assert.deepEqual(failed, ["review"], text);
+    assert.ok(said("proof", /^hall\.ts: all \d+ obligations proved/), text);
+    const hall = await import(path.join(root, "gen/hall.ts"));
+    // A seat equal to a booked one, though another object, is booked already.
+    const booked = hall.step(hall.initial, { type: "book", row: 1, kind: "Adult" });
+    assert.equal(hall.enabled(booked, { type: "book", row: 1, kind: "Adult" }), false);
+    assert.deepEqual(hall.parseState(booked), { booked: [{ row: 1, kind: "Adult" }], byRow: { 1: 1 }, byKind: { Adult: 1 } });
+    for (const x of [{ ...booked, byRow: { "01": 1 } }, { ...booked, byRow: { $1: 1 } }, { ...booked, byKind: { Senior: 1 } }])
+      assert.equal(hall.parseState(x), undefined, JSON.stringify(x));
+    // Past 2^53 TypeScript would round where Quint and the proof do not: the arithmetic throws instead.
+    assert.equal(hall.double(2 ** 51), 2 ** 52);
+    assert.throws(() => hall.double(2 ** 52), RangeError);
   });
 
   test("one machine uses another under a name, keeps its rules, and adds rules about the pair", async () => {

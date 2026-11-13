@@ -271,6 +271,59 @@ module ProofLib {
     }
   }
 
+  /** Filtering two lists joined is joining their filters. */
+  lemma FilterConcat<T>(p: T -> bool, xs: seq<T>, ys: seq<T>)
+    ensures Filter(p, xs + ys) == Filter(p, xs) + Filter(p, ys)
+    decreases |ys|
+  {
+    if |ys| == 0 {
+      assert xs + ys == xs;
+      FilterNil(p, ys);
+    } else {
+      var init := ys[..|ys| - 1];
+      assert ys == init + [ys[|ys| - 1]];
+      assert xs + ys == (xs + init) + [ys[|ys| - 1]];
+      FilterAppend(p, xs + init, ys[|ys| - 1]);
+      FilterAppend(p, init, ys[|ys| - 1]);
+      FilterConcat(p, xs, init);
+    }
+  }
+
+  // --- Removing the element at an index: `xs.removeAt(i)` in a spec ----------
+
+  /** What is left: everything before i in place, everything after it one place down, and xs[i] once fewer. */
+  lemma RemoveAt<T>(xs: seq<T>, i: int)
+    requires 0 <= i < |xs|
+    ensures |xs[..i] + xs[i + 1..]| == |xs| - 1
+    ensures forall j :: 0 <= j < i ==> (xs[..i] + xs[i + 1..])[j] == xs[j]
+    ensures forall j :: i < j < |xs| ==> (xs[..i] + xs[i + 1..])[j - 1] == xs[j]
+    ensures multiset(xs[..i] + xs[i + 1..]) == multiset(xs) - multiset{xs[i]}
+  {
+    assert xs == xs[..i] + [xs[i]] + xs[i + 1..];
+  }
+
+  /** Nothing new is left, and every value other than xs[i] still is. */
+  lemma RemoveAtMember<T>(xs: seq<T>, i: int, x: T)
+    requires 0 <= i < |xs|
+    ensures x in xs[..i] + xs[i + 1..] ==> x in xs
+    ensures x in xs && x != xs[i] ==> x in xs[..i] + xs[i + 1..]
+  {
+    assert xs == xs[..i] + [xs[i]] + xs[i + 1..];
+  }
+
+  /** A filter of what is left counts one fewer if xs[i] passes it, and as many otherwise. */
+  lemma RemoveAtFilter<T>(p: T -> bool, xs: seq<T>, i: int)
+    requires 0 <= i < |xs|
+    ensures |Filter(p, xs[..i] + xs[i + 1..])| == |Filter(p, xs)| - (if p(xs[i]) then 1 else 0)
+  {
+    var rest := [xs[i]] + xs[i + 1..];
+    assert xs == xs[..i] + rest;
+    assert rest[1..] == xs[i + 1..];
+    FilterConcat(p, xs[..i], xs[i + 1..]);
+    FilterConcat(p, xs[..i], rest);
+    FilterCons(p, rest);
+  }
+
   // --- FoldLeft -------------------------------------------------------------
 
   /** A fold whose step never lowers the accumulator ends at or above where it started. */

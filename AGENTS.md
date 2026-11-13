@@ -226,26 +226,37 @@ circle. In the generated TypeScript a name from another module is spelled
 
 | In a spec | In TypeScript | Notes |
 |---|---|---|
-| `int`, `bool`, `str` | `number`, `boolean`, `string` | Integer literals must fit in 2^53 |
+| `int`, `bool`, `str` | `number`, `boolean`, `string` | Integers must fit in 2^53 (below) |
 | records | interfaces | Nest as deep as you like |
 | `type Status = Draft \| Paid` | `"Draft" \| "Paid"` | |
 | `type Parcel = Packed({ weight: int }) \| Lost` | `{ tag: "Packed"; weight: number } \| { tag: "Lost" }` | Read with `match p { \| Packed(x) => … \| _ => … }` |
-| `List[T]` | `T[]` | `List(…)`, `append`, `concat`, `length`, `nth`, `head`, `tail`, `select`, `foldl`, and `every`, `some`, `includes`, `listMap` |
+| `List[T]` | `T[]` | `List(…)`, `append`, `concat`, `length`, `nth`, `head`, `tail`, `select`, `foldl`, and `every`, `some`, `includes`, `listMap`, `nthOr`, `removeAt` |
 | `Set[T]` of simple values | `T[]` that never holds a value twice | `Set(…)`, `union`, `intersect`, `exclude`, `filter`, `map`, `forall`, `exists`, `contains`, `in`, `subseteq`, `size` |
-| `str -> T` | `Record<string, T>` | `Map()`, `put`, `get`, `m.keys().contains(k)` |
+| `K -> T`, `K` one of `int`, `str` or a plain variant type | `Record<K, T>`; a Dafny `map` in the proof | `Map()`, `put`, `get`, `getOr`, `m.keys().contains(k)` |
 
 Also: `+ - * / %`, comparisons, `and or not implies iff`, `if … else`, record
 construction, spread update and field access, calls to your own definitions,
 and `val` bindings at the top of a definition. Anything else stops the `model`
 stage with the name of the construct.
 
-- **`==` compares numbers, strings, booleans and plain variants only.** Compare
-  records field by field, and lists with `every`.
+- **`==`, `!=` and `includes` compare by structure**: records, lists, maps and
+  variants as well as numbers, strings and booleans, as Quint and Dafny do.
+  Not a value that holds a set: in the proof a set is a sequence, compared in
+  order. Compare sets with `subseteq` both ways.
 - **Guard every partial operation in the definition that uses it.** An index
   outside a list, a missing map key and a zero divisor stop the simulator and
-  cannot be proved safe. Test first and give a default, as `problemAt` does
-  in the tracker example. For a map the form is exactly
-  `if (m.keys().contains(k)) m.get(k) else 0`.
+  cannot be proved safe. Give a default: `m.getOr(k, d)`, `xs.nthOr(i, d)`, or
+  test first, as `problemAt` does in the tracker example. For a map that test
+  is exactly `if (m.keys().contains(k)) m.get(k) else d`. `xs.removeAt(i)`
+  drops the i-th element, and leaves the list as it is for an index outside
+  it; `tools/proof/lib.dfy` has lemmas about what is left.
+- **Integers are exact.** Quint's and Dafny's have no bound, but a JavaScript
+  number holds integers exactly only up to 2^53. Literals must fit, and in the
+  TypeScript that runs, `+`, `-` and `*` throw a `RangeError` rather than give
+  a rounded result. The prover reads the same code without that check, which
+  can stop the code but never change a result, so what is proved holds of
+  every result it returns. (`bigint` would make every state and event
+  something JSON cannot carry.)
 - **`/` and `%` go towards zero**, as in Quint: `-7 / 2` is `-3` and `-7 % 2`
   is `-1`. The generated TypeScript and the proofs agree.
 - **There are no loops and no recursion.** To repeat something until done,
@@ -258,19 +269,22 @@ stage with the name of the construct.
   real thing and a list when they are not.
 - **A map is a lookup table.** It cannot be listed or iterated; keep a list of
   keys beside it, or use a list of records with a key field. An event cannot
-  carry one. In the generated state its keys carry a `$` in front, so that no
-  key can collide with a property every JavaScript object has.
+  carry one. In the generated state a string key carries a `$` in front, so
+  that no key can collide with a property every JavaScript object has; an
+  integer key is its digits, and a variant its name.
 - **In a `match` arm, use the fields of what the variant carries**
   (`x.weight`), or rebuild the variant (`Packed({ ...x, weight: 2 })`). The
   carried value cannot be passed on whole. `match` must be on a name.
 - **`every`, `some`, `includes` and `listMap` are not Quint.** They are
   rewritten into `foldl` before Quint reads the spec, because Quint evaluates
   a definition that takes a lambda wrongly when it is used inside its own
-  argument.
+  argument. Nor are `getOr`, `nthOr` and `removeAt`: each module that uses one
+  gets a Quint definition of it.
 - **The simulator tries small values**: integers −1…6, both booleans, three
   strings, every variant of a plain sum type, and short lists and sets of
   those. Define `<param>Values` to choose, which a record or a variant that
-  carries data needs.
+  carries data needs. A spec also uses the sets the specs it imports define,
+  for parameters of the same name and type; its own come first.
 
 ### Writing good rules
 
@@ -413,7 +427,9 @@ a body.
   (`FilterNil`, `FilterCons`, `FilterAppend`, `FilterMember`, `FilterSubset`,
   `FilterNone`, `FilterOne`, `FilterTwo`, `FilterCountOneIffUnique`,
   `FilterDistinctCountOne`, `FilterKeepsDistinctBy`, `FilterLengthPointwise`,
-  `FilterPointwise`, `FilterSamePredicate`, `FilterOfFilterShorter`) and folds
+  `FilterPointwise`, `FilterSamePredicate`, `FilterOfFilterShorter`,
+  `FilterConcat`), removing an element (`RemoveAt`, `RemoveAtMember`,
+  `RemoveAtFilter`) and folds
   (`FoldLeftMax`, `FoldLeftPointwise`, `FoldLeftConcatEmpty`, `FoldLeftDedupDistinct`).
   Read the file for what each states. A lemma general enough for any project
   belongs there, with its proof; one about your spec belongs in your proof

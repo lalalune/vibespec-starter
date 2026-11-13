@@ -126,7 +126,7 @@ export async function proofUnits(root: string, models: Model[]): Promise<Unit[]>
     names.flatMap((dep) => byName.get(dep)!.laws.map((l) => ({ fn: `${spelled(dep)}${l.name}`, law: l.name, from: `${dep}.ts` })));
   const units: Unit[] = models.map((m) => ({
     unit: `${m.name}.ts`,
-    text: [...needs(m).map((n) => asDependency(n)), withoutImports(m.ts).kept].join("\n"),
+    text: [...needs(m).map((n) => asDependency(n)), withoutImports(m.render("")).kept].join("\n"),
     meaning: [...needs(m).map((n) => asDependency(n, false)), withoutImports(m.render("", false)).kept].join("\n"),
     src: false,
     proofFile: `spec/${m.name}.proof.dfy`,

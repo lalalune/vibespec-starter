@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { LIST_HELPERS } from "./gen.ts";
+import { BUILTINS } from "./gen/print.ts";
 
 export interface Rule { key: string; story: string; line: number; prose: string; code: string; defs: string[] }
 /** A `##` heading: a story or another group of rules. Its prose is the text between the heading and its first rule. */
@@ -102,7 +103,7 @@ export function parseSpec(root: string, file: string, text = fs.readFileSync(pat
   });
   if (fence?.quint && scan(block).mode) throw new Error(`${file}: a quint block is never closed, and a comment or string in it is still open`);
   try {
-    return { name, file, rules, stories, imports, qnt: expandListHelpers(qnt.join("\n")) + "\n}\n", meaning: meaning.join("\n") };
+    return { name, file, rules, stories, imports, qnt: expandBuiltins(expandListHelpers(qnt.join("\n")), name) + "\n}\n", meaning: meaning.join("\n") };
   } catch (e) {
     throw new Error(`${file}:${(e as Error).message}`);
   }
@@ -159,6 +160,17 @@ export function expandListHelpers(text: string): string {
     return out + text.slice(at, to);
   };
   return expand(0, text.length);
+}
+
+/**
+ * Rename `m.getOr(…)`, `xs.nthOr(…)` and `xs.removeAt(…)` to this module's own definitions of them, and add those
+ * after the last line, so that no line moves (BUILTINS in gen/print.ts). Strings and comments are left alone.
+ */
+function expandBuiltins(text: string, module: string): string {
+  const { code } = scan(text);
+  const used = new Set<string>();
+  const renamed = text.replace(/\.(\w+)\(/g, (call, name: string, at: number) => (code[at] && Object.hasOwn(BUILTINS, name) ? (used.add(name), `.std_${name}_${module}(`) : call));
+  return renamed + [...used].map((n) => `\npure def std_${n}_${module}${BUILTINS[n]}`).join("");
 }
 
 /** Every spec, with each one after the specs it imports. */
