@@ -14,7 +14,7 @@ from its own directory after the root install:
 | Command | Does |
 |---|---|
 | `npm run check` | Everything: model, simulation, proofs, types, the tests below, review |
-| `npm run demo` | Generates `gen/`, builds, and prints a scripted checkout |
+| `npm run demo` | Generates `gen/` and prints a scripted checkout, run from source |
 | `npm run build` | `vibelang`: typechecks `.vibe` and `.ts` together and writes JavaScript to `dist/` |
 | `npm test` | `vitest run`: the journeys in `test/app.test.vibe`, compiled by `vibelang-vite`. `check` runs it after writing the simulated events its last journey sends; `gen` and `demo` clear them |
 
@@ -50,5 +50,5 @@ Two things stay TypeScript:
   from TypeScript. `src/app.vibe` calls it through a `module` body, the one
   place a `.vibe` file states what a TypeScript function throws.
 
-A `.vibe` file does not run from source on every Node 24, so `demo` builds
-first and runs `dist/src/demo.js`. `dist/` and `.vibe/` are build output.
+`demo` runs `src/demo.vibe` from source with `node --import vibelang/register`.
+`dist/` and `.vibe/` are build output.

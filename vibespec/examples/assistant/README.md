@@ -9,7 +9,7 @@ After the install at the repository root, from this directory:
 npm run check   # model, proofs, types (vibelang --noEmit) and tests
 npm test        # the journeys alone: vitest run
 npm run build   # vibelang: JavaScript in dist/
-npm run demo    # generates gen/, builds, and a scripted model pays a bill, then tries what the rules refuse
+npm run demo    # generates gen/, and a scripted model pays a bill, then tries what the rules refuse
 ```
 
 | Behaviour | Rule |

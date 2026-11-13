@@ -10,7 +10,7 @@ import path from "node:path";
 import { after, describe, test } from "node:test";
 import { exec, LIB_FILE, isolatedCopies, parseProofFile, readVerdict, run as tool, splice } from "./prove.ts";
 import { migrateLocks, pendingSpecs, readLedger, writeLedger } from "./review.ts";
-import { danglingCitations } from "./util.ts";
+import { danglingCitations, nodeRunsVibelang } from "./util.ts";
 import { nodesOf } from "./studio/doc.ts";
 import { canonical, departure } from "./conformance.ts";
 import { conformance as checkTraces, conformanceFound, writeConformance } from "./conform.ts";
@@ -377,6 +377,8 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const untyped = copyOfProject();
     fs.rmSync(path.join(untyped, "tsconfig.json"));
     assert.ok((await run(untyped)).failed.includes("types"));
+    // The types stage also refuses a Node that cannot load `.vibe` sources: below either floor, or between the two lines.
+    assert.deepEqual(["22.22.2", "22.22.3", "23.11.1", "24.5.0", "24.11.1", "26.0.0"].map((v) => nodeRunsVibelang(v)), [false, true, false, false, true, true]);
   });
 
   test("a VibeLang shell written for a transition the spec has since renamed no longer fits the generated contract", async () => {
@@ -1002,11 +1004,12 @@ export effect function filled(sku: string, qty: number) {
     const cite = (heading: string) => `// spec/order.md, ${JSON.stringify(heading)}\n`;
     const cites = ["Story: Check out", "Only a non-empty draft can be submitted", "Refunds are instant"].map(cite).join("");
     fs.mkdirSync(path.join(root, "test/journeys"), { recursive: true });
-    fs.writeFileSync(path.join(root, "test/journeys/checkout.test.ts"), `import { test } from "node:test";\n${cites}test("a journey", () => {});\n`);
+    // Node's runner loads the shell the journey imports only through VibeLang's loader.
+    fs.writeFileSync(path.join(root, "test/journeys/checkout.test.ts"), `import assert from "node:assert/strict";\nimport { test } from "node:test";\nimport { noted } from "../../src/notes.vibe";\n${cites}test("a journey", () => assert.ok(noted));\n`);
     fs.writeFileSync(path.join(root, "src/notes.vibe"), `${cite("Story: Check out")}${cite("Refunds are final")}export const noted = true\n`);
     // What the compiler writes for notes.vibe is its output, not the package's code, wherever it lands.
     fs.writeFileSync(path.join(root, "src/notes.d.vibe.ts"), `${cite("Refunds are final")}export declare const noted: boolean;\n`);
-    const dangling = [["src/notes.vibe:2", "Refunds are final"], ["test/journeys/checkout.test.ts:4", "Refunds are instant"]].map(([at, heading]) => `${at}  ${cite(heading).slice(3, -1)}`);
+    const dangling = [["src/notes.vibe:2", "Refunds are final"], ["test/journeys/checkout.test.ts:6", "Refunds are instant"]].map(([at, heading]) => `${at}  ${cite(heading).slice(3, -1)}`);
     assert.deepEqual(danglingCitations(root, readSpecs(root)), dangling);
     const { failed, text, said } = await run(root);
     assert.deepEqual(failed, ["tests"], text);

@@ -11,7 +11,7 @@
     "accept": "node ../../spec.ts accept",
     "build": "vibelang",
     "test": "vitest run",
-    "demo": "npm run -s gen && vibelang && node dist/src/demo.js"
+    "demo": "npm run -s gen && node --import vibelang/register src/demo.vibe"
   },
   "dependencies": {
     "@effect/platform-node": "4.1.1",
