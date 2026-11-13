@@ -16,6 +16,8 @@ model in step; you sign off.
 [![check](https://github.com/lalalune/vibespec-starter/actions/workflows/check.yml/badge.svg)](https://github.com/lalalune/vibespec-starter/actions/workflows/check.yml)
 
 [Quick start](#quick-start) ·
+[Examples](#run-and-test-examples) ·
+[Project setup](#set-up-a-new-project) ·
 [Tutorial](#tutorial) ·
 [How it works](#what-npm-run-check-checks) ·
 [Guarantees](#what-is-and-is-not-guaranteed) ·
@@ -58,8 +60,8 @@ flowchart LR
   app -. "LemmaScript + Dafny" .-> v2
 ```
 
-The [order example](examples/order/README.md) is a checkout
-(`examples/order/spec/index.md`, about 250 lines): fill a draft, submit, pay
+The [order example](vibespec/examples/order/README.md) is a checkout
+(`vibespec/examples/order/spec/index.md`, about 250 lines): fill a draft, submit, pay
 in instalments, hold, cancel, reopen. The template's own `spec/index.md` is
 blank.
 
@@ -67,7 +69,7 @@ blank.
 |---|---|
 | Model | 10 transitions, 6 `always`, 1 `step`, 3 `sometimes` rules |
 | Proved, spec | 72 obligations, all states and inputs |
-| Proved, `examples/order/src/ledger.ts` | 2 hand-written functions, 3 obligations |
+| Proved, `vibespec/examples/order/src/ledger.ts` | 2 hand-written functions, 3 obligations |
 
 ## Quick start
 
@@ -77,7 +79,7 @@ blank.
 
 1. Click **[Use this template](https://github.com/lalalune/vibespec-starter/generate)**
    to create your own repository, then clone it.
-2. Install and check the template and examples:
+2. Install and check the template:
 
 ```bash
 npm install
@@ -92,9 +94,9 @@ npm run demo
 ```
 
 `npm install` builds the `spec` command and generates `gen/` when every spec
-is valid. `npm run check` checks the blank template and each example workspace,
-ending each project with a `next:` line naming what to do first.
-`npm run demo` generates and runs `examples/order`, driving the verified checkout
+is valid. `npm run check` checks the template and every example workspace,
+ending each project with a `next:` line.
+`npm run demo` generates and runs `vibespec/examples/order`, driving the verified checkout
 through a scripted session; every `✗` is a rule refusing an event:
 
 ```
@@ -108,20 +110,111 @@ through a scripted session; every `✗` is a rule refusing an event:
 balance 0
 ```
 
+## Run and test examples
+
+Run these commands from the repository root after `npm install`. Pass the
+project directory containing `spec/`, rather than an individual Markdown spec.
+Its `package.json`, when present, supplies the application's run scripts.
+
+```bash
+npx spec check vibespec/examples/order
+npx spec gen vibespec/examples/order
+npm --prefix vibespec/examples/order run demo
+```
+
+`check` runs the selected project's models, simulation, proofs, typechecking
+and tests. `gen` only rebuilds its generated code. Output and caches stay in
+that project; the root's blank `spec/index.md` is unchanged. Relative paths,
+quoted paths containing spaces and absolute paths all work.
+
+| Example directory | What to run |
+|---|---|
+| `vibespec/examples/order` | The checkout demo above |
+| `vibespec/examples/dashboard` | `npx spec check vibespec/examples/dashboard` for the task model and notification tests |
+| `vibespec/examples/assistant` | `npx spec check vibespec/examples/assistant` for the trusted-sender and payment model |
+| `vibespec/examples/fullstack` | Check it, then start the shared to-do app as shown below |
+
+```bash
+npx spec check vibespec/examples/fullstack
+npm --prefix vibespec/examples/fullstack run start
+```
+
+Open [http://localhost:3000](http://localhost:3000) in two browser windows to
+try the shared list.
+
+To check every bundled example, use the workspace command:
+
+```bash
+npm run check --workspaces --if-present
+```
+
+The same directory argument works with `npx spec accept <directory>`
+when you are ready to sign off on that project's reviews. To recheck while
+editing, run `npx spec watch <directory>`; stop it with Ctrl-C. Omitting the
+directory keeps the `spec` commands on the current project. The root
+`npm run check` script checks the template and all example workspaces.
+
+## Set up a new project
+
+This repository keeps its examples so people can try the template. When you
+use it for a new project, finish this cleanup before feature work:
+
+1. **Remove the examples.** Delete `vibespec/examples/`, including the order
+   example. Remove their workspace entries, npm scripts and CI steps, such
+   as `demo` and `check:dashboard`. Set `check` to `node vibespec/spec.ts check`
+   after removing the workspaces, and replace the package metadata and
+   repository links with the new project's.
+2. **Keep the toolchain guide with the toolchain.** Move this README to
+   `vibespec/README.md` (the toolchain directory formerly called `tools/`).
+   Update its relative links and the guide references in `AGENTS.md` and the
+   skills. Keep the original template license in `vibespec/LICENSE` alongside
+   the retained Vibespec code.
+3. **Write the project's own files.** Create a new root `README.md` describing
+   what the project does and how to install, run and check it. Rewrite the root
+   `LICENSE` for the project's chosen terms and copyright holder. Add the
+   project's initial stories and rules under `spec/`.
+4. **Check and sign off.** Run `npm install` and `npm run check`, resolve what
+   they report, and have the project owner review and accept the new spec with
+   `npm run accept`.
+5. **Commit the starting point.** Commit all setup changes, including the
+   deletions and reviewed spec ledgers, then confirm the working tree is clean:
+
+   ```bash
+   git add -A
+   git commit -m "Initialize project"
+   git status --short
+   ```
+
+An empty status means the project is ready for its first feature.
+
 ## Studio
 
-Run `npm run dev` to open the local Studio. Select the order, dashboard,
-assistant or full-stack example, edit its stories and rules, then publish.
-The Studio records the changes, runs checks, and can hand the sync work to
-Claude Code or Codex. Sign-off uses the same `accept` command as the terminal.
+`npm run dev` opens Studio on the root project. To open an example immediately,
+pass its short name or its directory. To work on another application, pass
+that application's directory instead:
 
-`npx spec watch` reruns checks when a spec, source file or test changes.
+```bash
+npm run dev
+npm run dev -- order
+npm run dev -- vibespec/examples/order
+npm run dev -- ../my-app --port 4310
+```
+
+Absolute directories and quoted paths containing spaces work too. Pass the
+project folder, not its `spec/` folder or `spec/index.md`. With no argument,
+Studio still opens the root project and offers the bundled examples in its
+project selector. A supplied folder is selected when Studio opens.
+
+Edit stories and rules, then publish. Studio records the changes, runs checks,
+and can hand the sync work to Claude Code or Codex. Sign-off uses the same
+`accept` command as the terminal. `npx spec watch <directory>` provides the
+same rechecking loop without Studio.
 
 ## Tutorial
 
 ### 1. Read a spec
 
-In [the order spec](examples/order/spec/index.md), `##` is a story, `###` a
+In [the order spec](vibespec/examples/order/spec/index.md), `##` is a story, `###` a
 rule, and the `quint` block under a rule is its formal half.
 
 ````markdown
@@ -163,6 +256,7 @@ its role ([all of them](AGENTS.md#what-goes-in-the-quint-blocks)):
 | `pure def alwaysX(o: Order): bool` | holds in every reachable state |
 | `pure def stepX(before: Order, after: Order): bool` | holds across every transition |
 | `pure def sometimesX(o: Order): bool` | some reachable state has it |
+| `pure def leadsToX(o: Order, later: Order): bool` | every fair run from `o` reaches such a `later` |
 | `pure def lawX(…): bool` | true for every argument |
 
 The example's `gen/index.ts` gets the same definitions in TypeScript. Each
@@ -194,7 +288,7 @@ npm run new
 This fills the blank `spec/index.md` with a
 [starter spec](AGENTS.md#writing-a-spec) that passes every stage but `review`:
 one story, a state, one guarded transition, an `always` and a `sometimes`
-rule. Replace its story with yours. The order app remains in `examples/order/`.
+rule. Replace its story with yours. The order app remains in `vibespec/examples/order/`.
 
 As the application grows, `npm run new -- billing` creates
 `spec/billing/index.md`, and `npm run new -- billing/payments` creates
@@ -215,6 +309,9 @@ module names reflect paths: `spec/index.md` → `gen/index.ts`,
 `spec/billing/index.md` → `gen/billing.ts`, and
 `spec/billing/payments/index.md` → `gen/billing__payments.ts`.
 All paths stay inside `spec/`; see the [spec reference](AGENTS.md#writing-a-spec).
+
+For a repository created from the template, follow [project setup](#set-up-a-new-project)
+to remove the examples and establish the project's own documentation and license.
 
 ### 3. Write a story; let the agent write the rules
 
@@ -282,7 +379,7 @@ Weaken `canSubmit` in the order example to `o.status == Draft`, and the
 
 The fix is the *reason*, written as a rule in the user's words. Rules found
 this way say so: see "No more can be removed than the order holds" in
-[the order spec](examples/order/spec/index.md).
+[the order spec](vibespec/examples/order/spec/index.md).
 
 ### 5. When a proof fails
 
@@ -308,7 +405,7 @@ can help.
 ### 6. Build on the generated code
 
 Application code goes through `parseEvent`, `enabled` and `step`, as
-[the order shell](examples/order/src/app.ts) does:
+[the order shell](vibespec/examples/order/src/app.ts) does:
 
 ```ts
 dispatch(id: string, input: unknown): Order {
@@ -322,7 +419,7 @@ dispatch(id: string, input: unknown): Order {
 
 Logic Quint cannot express, such as a loop over an event log, is written in
 TypeScript with [LemmaScript](https://github.com/midspiral/LemmaScript)
-contracts and proved too. From [the order ledger](examples/order/src/ledger.ts):
+contracts and proved too. From [the order ledger](vibespec/examples/order/src/ledger.ts):
 
 ```ts
 export function replay(events: Event[]): Order {
@@ -349,19 +446,22 @@ npm run accept
 
 | Command | Does |
 |---|---|
-| `npm run dev` | Opens the local Studio for editing, checking and reviewing specs |
-| `npm run check` | Every stage below, for the template and example workspaces; ends each project with a `next:` line |
-| `npx spec check --json` | The current project's check as one JSON object ([shape](AGENTS.md#changing-the-tools)) |
-| `npm run gen` | Generates `gen/` only |
-| `npm run accept` | The user's sign-off: checks afresh and records what `review` lists, [all or nothing](AGENTS.md#review) |
+| `npm run dev -- <example-or-directory>` | Opens Studio on that project; omit the argument for the root |
+| `npm run check` | Checks the root specification and every example workspace; ends each project with a `next:` line |
+| `npm run check --workspaces --if-present` | Checks each example workspace |
+| `npx spec check <directory>` | Every stage below for that project; omit the directory for the current project |
+| `npx spec check <directory> --json` | That project's check as one JSON object ([shape](AGENTS.md#changing-the-tools)) |
+| `npx spec gen <directory>` | Generates that project's `gen/` only |
+| `npx spec watch <directory>` | Rechecks that project when its spec, source or tests change |
+| `npx spec accept <directory>` | The user's sign-off: checks afresh and records what `review` lists, [all or nothing](AGENTS.md#review) |
 | `npm run accept -- unproved` | Records the listed obligations as simulated only. The user's decision |
 | `npm run new` / `npm run new -- <path>` | Fills an empty root index or creates a child [starter spec](AGENTS.md#writing-a-spec) |
-| `npx spec migrate` | Consolidates old review ledgers into `spec/lock.json`, preserving their recorded approvals |
+| `npx spec migrate <directory>` | Consolidates that project's old review ledgers into `spec/lock.json`, preserving their recorded approvals |
 | `npm run demo` | A scripted session against the verified core |
-| `npm run check:dashboard` | `check` on `examples/dashboard` |
+| `npm run check:dashboard` | `check` on `vibespec/examples/dashboard` |
 | `npm run selftest` | Breaks the pipeline one way at a time and checks each break is caught |
 | `npm run build` | Compiles the tools into `dist/`, the packaged `spec` command |
-| `npx spec init` | Sets up another package; see [Using it from another package](AGENTS.md#using-it-from-another-package) |
+| `npx spec init <directory>` | Sets up an existing project folder; see [Using it from another package](AGENTS.md#using-it-from-another-package) |
 
 | Exit code | Means |
 |---|---|
@@ -377,7 +477,7 @@ Stages run cheapest first. `✓` passed, `✗` failed, `-` skipped: blocked by a
 | Stage | Question | Strength |
 |---|---|---|
 | `model` | Is the spec well-typed and inside the supported subset? | exact; anything unsupported is refused by name |
-| `always` | Does a reachable state break an `always` rule, a step break a `step` rule, or a sampled argument break a law? | 10,000 random traces; a failure comes with the shortest trace and its seed |
+| `always` | Does a reachable state break an `always` rule, a step break a `step` rule, a sampled argument break a law, or a fair run that stops or loops break a [`leadsTo` rule](AGENTS.md#liveness)? | 10,000 random traces; a failure comes with the shortest trace and its seed |
 | `sometimes` | Can each `sometimes` goal be reached? Does each guard allow its event in some reachable state? | a witness trace is a proof; a failure means searches of 20, 40 and 100 events found none (200,000 traces at depth 20, with proportionally fewer at larger depths). [Guards never seen to refuse](AGENTS.md#writing-good-rules) are listed, not failed |
 | `replay` | Does the generated TypeScript mean what the Quint means? | 400 sampled traces and every witness: every state, every law, and every definition the simulator can evaluate. The rest are listed |
 | `types` | Does the application fit the generated contract? | exact |
@@ -387,7 +487,7 @@ Stages run cheapest first. `✓` passed, `✗` failed, `-` skipped: blocked by a
 
 ## What lives where
 
-Keep `spec/`, `src/`, `test/` and `tools/` in git, lock files included.
+Keep `spec/`, `src/`, `test/` and `vibespec/` in git, lock files included.
 `gen/`, `dist/` and `.spec-cache/` are derived and ignored by git; never edit them.
 
 | Path | Role |
@@ -398,19 +498,18 @@ Keep `spec/`, `src/`, `test/` and `tools/` in git, lock files included.
 | `.spec-cache/` | Remembered results, and `lock`: one check or accept per project at a time |
 | `.claude/skills/sync/SKILL.md` | How the agent in your session keeps stories, rules and model in step |
 | `.claude/skills/design/SKILL.md` | How the agent designs what a person sees: only what the spec asks, visual first, few words |
-| `tools/spec.ts` | The pipeline and command line |
-| `tools/parse.ts`, `tools/review.ts` | Literate specs and review ledgers |
-| `tools/cache.ts`, `tools/run.ts` | Stage caches and bounded tool execution |
-| `tools/units.ts`, `tools/simulate.ts`, `tools/util.ts` | Generation, proof units, simulation, replay and shell tests |
-| `tools/prove.ts`, `tools/proof/lib.dfy` | The proof stage for one unit, with the checks on proof files, and the library of general lemmas proof files call |
-| `tools/gen.ts`, `tools/gen/` | Quint → TypeScript and the simulation harness |
-| `tools/selftest.ts`, `tools/fixtures/` | Tests of the pipeline itself, and the small specs they use |
-| `examples/order/src/ledger.ts` | Hand-written logic, proved against the generated contract |
-| `examples/order/src/app.ts`, `examples/order/src/demo.ts` | Unverified shell: storage, input parsing, error reporting; and the demo |
-| `examples/order/test/app.test.ts` | Tests of the shell, run by the `tests` stage |
-| `examples/order/` | Complete checkout example, with its own spec, shell and tests |
-| `examples/dashboard/` | A larger, synthesized example, as a separate package |
-| `writeup.html` | A narrative explainer of the approach |
+| `vibespec/spec.ts` | The pipeline and command line |
+| `vibespec/parse.ts`, `vibespec/review.ts` | Literate specs and review ledgers |
+| `vibespec/cache.ts`, `vibespec/run.ts` | Stage caches and bounded tool execution |
+| `vibespec/units.ts`, `vibespec/simulate.ts`, `vibespec/util.ts` | Generation, proof units, simulation, replay and shell tests |
+| `vibespec/prove.ts`, `vibespec/proof/lib.dfy` | The proof stage for one unit, with the checks on proof files, and the library of general lemmas proof files call |
+| `vibespec/gen.ts`, `vibespec/gen/` | Quint → TypeScript and the simulation harness |
+| `vibespec/selftest.ts`, `vibespec/fixtures/` | Tests of the pipeline itself, and the small specs they use |
+| `vibespec/examples/order/src/ledger.ts` | Hand-written logic, proved against the generated contract |
+| `vibespec/examples/order/src/app.ts`, `vibespec/examples/order/src/demo.ts` | Unverified shell: storage, input parsing, error reporting; and the demo |
+| `vibespec/examples/order/test/app.test.ts` | Tests of the shell, run by the `tests` stage |
+| `vibespec/examples/order/` | Complete checkout example, with its own spec, shell and tests |
+| `vibespec/examples/dashboard/` | A larger, synthesized example, as a separate package |
 | `.github/workflows/check.yml` | Continuous integration: `npm run check` without the cache |
 | **Derived** (not in git) | |
 | `gen/<name>.ts`, `gen/<name>.qnt` | Generated TypeScript, and the tangled Quint model |
@@ -420,7 +519,7 @@ Keep `spec/`, `src/`, `test/` and `tools/` in git, lock files included.
 
 ## A larger example
 
-`examples/dashboard` is a synthesized team task dashboard with made-up names
+`vibespec/examples/dashboard` is a synthesized team task dashboard with made-up names
 and data: tasks live in a shared spreadsheet that people also edit by hand, a
 chat app carries commands and notifications, and a web page shows the state.
 
@@ -439,9 +538,9 @@ once" covers it, and `src/notify.ts` sends each person one message.
 
 Two more examples exercise different boundaries:
 
-- [Shared to-do list](examples/fullstack/README.md): an HTTP server, browser
+- [Shared to-do list](vibespec/examples/fullstack/README.md): an HTTP server, browser
   client and a model of two tabs exchanging messages over an unreliable network.
-- [Assistant](examples/assistant/README.md): trusted senders, a bounded agent
+- [Assistant](vibespec/examples/assistant/README.md): trusted senders, a bounded agent
   turn, late replies and a bill payment that requires the person's confirmation.
 
 ## What is and is not guaranteed
@@ -458,9 +557,9 @@ Trusted, not proved:
 
 - **The prose.** Whether the Quint under a rule means what the sentence above
   it says is a judgement. The `review` stage makes sure someone made it.
-- **The generator** (`tools/gen.ts`, `tools/gen/`). Simulation checks the Quint model; the proof checks the
+- **The generator** (`vibespec/gen.ts`, `vibespec/gen/`). Simulation checks the Quint model; the proof checks the
   TypeScript. `replay` ties the two together on sampled traces only.
-- **The shell** (`examples/order/src/app.ts`), LemmaScript, Dafny and Quint.
+- **The shell** (`vibespec/examples/order/src/app.ts`), LemmaScript, Dafny and Quint.
 - **Built-ins.** The proofs assume that built-ins such as `Math` and
   `Array.prototype` are not modified at run time, anywhere in the process.
 - **Preconditions.** A `//@ requires` that can never hold makes a contract
@@ -498,7 +597,7 @@ on the generated harness, exhaustively up to a depth
 
 How the repository works, the spec format, proof files and how to change the
 tools are in [AGENTS.md](AGENTS.md); every agent reads it and this README in
-full before doing any work. A change to `tools/` needs
+full before doing any work. A change to `vibespec/` needs
 `npm run selftest` to pass, with a new case for each new kind of mistake it
 catches.
 

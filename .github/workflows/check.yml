@@ -1,46 +1,55 @@
-name: Generate reviewed locks
+name: check
 
 on:
   push:
-    branches: [codex/hierarchy-lock-validation-63d95de]
+    branches: [main]
+  pull_request:
 
 jobs:
   check:
-    permissions:
-      contents: write
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        project: [".", "examples/order", "examples/dashboard", "examples/assistant", "examples/fullstack"]
     steps:
-      - uses: actions/checkout@v4
-      # Dafny's action installs Node 16 for itself, so Node 24 must come after it.
+      - uses: actions/checkout@v7
+      # Dafny's action installs Node 16 for itself, so the project Node version must come after it.
       - uses: dafny-lang/setup-dafny-action@v1
         with:
           dafny-version: "4.11.0"
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 26
           cache: npm
       - run: npm ci
-      - run: node "$GITHUB_WORKSPACE/tools/spec.ts" accept
-        working-directory: ${{ matrix.project }}
-      - name: Return the generated review record
-        env:
-          SPEC_ROOT: ${{ matrix.project }}
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add "$SPEC_ROOT/spec/lock.json"
-          if ! git diff --cached --quiet; then
-            git commit -m 'Record fully checked spec reviews'
-          fi
-          git push origin HEAD:refs/heads/codex/hierarchy-lock-result-63d95de-${{ strategy.job-index }}
+      - run: node vibespec/spec.ts check
       - if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: proof-${{ strategy.job-index }}
-          path: ${{ matrix.project }}/gen/proof/
+          name: proof
+          path: |
+            gen/proof/
+            vibespec/examples/*/gen/proof/
           if-no-files-found: ignore
 
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v4
+        id: changed
+        with:
+          filters: |
+            tools:
+              - "vibespec/**"
+              - "package*.json"
+      - if: steps.changed.outputs.tools == 'true'
+        uses: dafny-lang/setup-dafny-action@v1
+        with:
+          dafny-version: "4.11.0"
+      - if: steps.changed.outputs.tools == 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: npm
+      - if: steps.changed.outputs.tools == 'true'
+        run: npm ci
+      - if: steps.changed.outputs.tools == 'true'
+        run: npm run selftest

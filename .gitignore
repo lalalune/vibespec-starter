@@ -6,5 +6,5 @@ dist/
 *.tgz
 .lemmascript/
 _apalache-out/
-!/tools/gen/
+!/vibespec/gen/
 .claude/worktrees/

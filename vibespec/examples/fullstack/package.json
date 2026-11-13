@@ -1,0 +1,17 @@
+{
+  "name": "fullstack-todo",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "check": "node ../../spec.ts check",
+    "gen": "node ../../spec.ts gen",
+    "accept": "node ../../spec.ts accept",
+    "start": "node src/main.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0"
+  }
+}

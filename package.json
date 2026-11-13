@@ -6,19 +6,19 @@
     "node": ">=24"
   },
   "scripts": {
-    "dev": "node tools/spec.ts studio",
-    "check": "node tools/spec.ts check && npm run check --workspaces --if-present",
-    "gen": "node tools/spec.ts gen",
-    "accept": "node tools/spec.ts accept",
-    "new": "node tools/spec.ts new",
+    "dev": "node vibespec/spec.ts studio",
+    "check": "node vibespec/spec.ts check && npm run check --workspaces --if-present",
+    "gen": "node vibespec/spec.ts gen",
+    "accept": "node vibespec/spec.ts accept",
+    "new": "node vibespec/spec.ts new",
     "demo": "npm run demo --workspace order-example",
-    "selftest": "node --test tools/selftest.ts",
-    "build": "node -e \"fs.rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json && node -e \"fs.mkdirSync('dist/proof', { recursive: true }); fs.copyFileSync('tools/proof/lib.dfy', 'dist/proof/lib.dfy'); fs.cpSync('tools/studio/public', 'dist/studio/public', { recursive: true })\"",
-    "prepare": "npm run build && node tools/spec.ts gen --if-valid",
+    "selftest": "node --test vibespec/selftest.ts",
+    "build": "node -e \"fs.rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json && node -e \"fs.chmodSync('dist/spec.js', 0o755); fs.mkdirSync('dist/proof', { recursive: true }); fs.copyFileSync('vibespec/proof/lib.dfy', 'dist/proof/lib.dfy'); fs.cpSync('vibespec/studio/public', 'dist/studio/public', { recursive: true }); fs.cpSync('vibespec/std', 'dist/std', { recursive: true }); fs.copyFileSync('vibespec/conformance.ts', 'dist/conformance.ts')\"",
+    "prepare": "npm run build && node vibespec/spec.ts gen --if-valid",
     "check:dashboard": "npm run check --workspace dashboard-model"
   },
   "version": "0.1.0",
-  "description": "Stories, rules and Quint models in linked Markdown specs; verified TypeScript out.",
+  "description": "Stories, rules and a Quint model in one Markdown file; verified TypeScript out.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -49,12 +49,12 @@
   "dependencies": {
     "@informalsystems/quint": "^0.33.1",
     "lemmascript": "^0.6.8",
-    "typescript": "^5.9.0"
+    "typescript": "^6.0.3"
   },
   "devDependencies": {
     "@types/node": "^24.0.0"
   },
   "workspaces": [
-    "examples/*"
+    "vibespec/examples/*"
   ]
 }

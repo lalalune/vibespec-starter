@@ -7,7 +7,16 @@
     "allowImportingTsExtensions": true,
     "erasableSyntaxOnly": true,
     "skipLibCheck": true,
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
-  "include": ["tools", "gen/*.ts"]
+  "include": [
+    "vibespec",
+    "gen/*.ts"
+  ],
+  "exclude": [
+    "vibespec/examples",
+    "node_modules"
+  ]
 }
