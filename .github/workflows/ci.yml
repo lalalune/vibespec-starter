@@ -11,7 +11,8 @@ on:
     branches: [develop, main]
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  # A newer commit on a pull request replaces its run; every push to develop or main is checked to the end.
+  group: ci-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
 env:
