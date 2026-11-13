@@ -1,6 +1,11 @@
 {
   "version": 1,
   "specs": {
+    "spec/index.md": {
+      "@document": [
+        "506b47796f23"
+      ]
+    },
     "spec/kernel.md": {
       "@document": [
         "8c4d005765f2"
@@ -130,8 +135,8 @@
         "3735f1a0e20d"
       ],
       "Domain / What the simulator tries": [
-        "32dbb5b01a1f",
-        "8d437d15fb06",
+        "a2464fc28450",
+        "f549ec5694f9",
         "475cacf40ce9"
       ],
       "Domain / Small helpers": [
@@ -164,6 +169,11 @@
         "da2096fe43ba",
         "365a1a99e205",
         "56d1326e6033"
+      ],
+      "Story: Edit through the dashboard / A task edited through the dashboard is signed by a member": [
+        "4e40f22bc051",
+        "c27f328069b7",
+        "4c252baabdb6"
       ],
       "Story: Edit through the dashboard / Only a hand edit can make the data worse": [
         "bb0d225d2ba1",
@@ -243,8 +253,13 @@
       ],
       "Story: Be told what changed and what is due / One pass of the notifier sends everything that is due and records that it was sent": [
         "c82dfc52efa7",
-        "bf15c691238c",
+        "a7425c539a4f",
         "e068f7cc742b"
+      ],
+      "Story: Be told what changed and what is due / A pass sends exactly the notes it records": [
+        "367c73329db3",
+        "eed591ea0ae8",
+        "56d1326e6033"
       ],
       "Story: Be told what changed and what is due / No one is told of their own edit": [
         "e3b0c44298fc",
