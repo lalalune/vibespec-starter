@@ -38,7 +38,7 @@ function writeReviewLock(root: string, lock: ReviewLock) {
 }
 /** Prose may be re-wrapped without becoming a different sentence. Code may not: a line break can end a comment. */
 const proseFingerprint = (prose: string) => short(prose.replace(/\s+/g, " ").trim());
-export const fingerprint = (r: Rule): [string, string] => [proseFingerprint(r.prose), short(r.code.split("\n").map((l) => l.trimEnd()).join("\n").trim())];
+const fingerprint = (r: Rule): [string, string] => [proseFingerprint(r.prose), short(r.code.split("\n").map((l) => l.trimEnd()).join("\n").trim())];
 /** A story is recorded under its heading, which no rule's key can be. */
 const storyKey = (s: Story) => `## ${s.title}`;
 /** Story titles are unique (see parseSpec), so a story's rules are the ones filed under its title. */
