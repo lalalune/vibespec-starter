@@ -203,7 +203,8 @@ pure def receiveSnapshot(c: Client, version: int, todos: List[Todo]): Client = c
 
 ### A copy of the list leaves the queue alone
 
-Only an answer takes an edit out of the queue.
+A copy of the list that arrives on its own, not as the answer to an edit,
+leaves the queue exactly as it was.
 
 ```quint
 pure def stepASnapshotLeavesTheQueueAlone(before: Client, via: str, after: Client): bool =
