@@ -140,7 +140,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
 
     // A spec whose model and harness are unchanged, and that passed, is not simulated again.
     const closure = (names: string[]): string => names.map((n) => { const dep = specs.find((x) => x.name === n)!; return closure(dep.imports) + dep.meaning; }).join("");
-    const found = await remembered<Result[]>(memory, entry(root, "simulate", [closure(spec.imports), spec.meaning, model.harness, String([SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, STEPS, ...DEPTHS]), process.env.SPEC_SEED ?? ""]), async () => {
+    const found = await remembered<Result[]>(memory, entry(root, "simulate", [closure(spec.imports), spec.meaning, model.harness, String([SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, STEPS, ...DEPTHS])]), async () => {
       const said: Result[] = [];
       const say = (ok: boolean, stage: Result["stage"], summary: string, detail = "") => said.push({ ok, stage, summary, detail });
       try {

@@ -14,7 +14,9 @@ const PRIMITIVE: Record<string, string> = { int: "number", bool: "boolean", str:
  * is spelled with `prefix` in TypeScript; one from another module is spelled <module>_<name>.
  */
 export function typeWalks(typedefs: Json[], module: string, prefix = "") {
-  const fields = (t: Json): Json[] => t.fields.fields;
+  // `{ __proto__: x }` in JavaScript sets an object's prototype rather than a field.
+  const fields = (t: Json): Json[] => (t.kind === "rec" && t.fields.fields.some((f: Json) => f.fieldName === "__proto__")
+    ? fail("a record field cannot be called `__proto__`, which JavaScript reads as the object's prototype") : t.fields.fields);
   // Quint sometimes names a type from a module imported under a name without that name; `base` finds it.
   const typedef = (n: string): Json => typedefs.find((d) => d.name === n) ?? typedefs.find((d) => d.base === n) ?? fail(`unknown type ${n}`);
   const resolve = (t: Json): Json => (t.kind === "const" ? resolve(typedef(t.name).type) : t);

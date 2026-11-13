@@ -106,9 +106,12 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
   const samples = new Map(defs.filter(isSampleSet).map((d) => [d.name as string, { elem: inferred(d.id)!.elem as Json, line: origin(d.name)?.line }]));
   const code = defs.filter((d) => !isSampleSet(d));
   const localNames = new Set(code.map((d) => d.name as string));
+  // A proof bundle holds every module beneath this one, each name spelled <module>_<name> (proofUnits in units.ts).
+  const beneath = (m: string): string[] => [m, ...deps.get(m)!.imports.flatMap(beneath)];
+  const prefixes = [...new Set(imports.flatMap(beneath))];
   /** A name the spec binds (a type, definition, parameter or local `val`) must survive translation unchanged. */
   const bind = (n: string): string => {
-    const owner = imports.find((m) => n.startsWith(`${m}_`));
+    const owner = prefixes.find((m) => n.startsWith(`${m}_`));
     return TAKEN.has(n) || GENERATED.test(n) ? fail(`\`${n}\` cannot be used as a name: TypeScript or the generated code uses it`)
       : variants.has(n) ? fail(`\`${n}\` is a variant of a type and cannot also name a parameter or value`)
       : owner ? fail(`\`${n}\` cannot be used as a name: names beginning ${owner}_ are how the generated code refers to that module`)
