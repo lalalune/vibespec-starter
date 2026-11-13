@@ -593,8 +593,9 @@ Trusted, not proved:
   vacuous: everything after it is proved. That is why contracts are reviewed,
   through `spec/lock.json` under `contracts`.
 - **Numbers.** The proofs treat `number` as an unbounded integer. The
-  generated `parseEvent` admits only safe integers, but nothing stops sums of
-  them from passing 2^53, where JavaScript arithmetic is no longer exact.
+  generated `parseEvent` admits only safe integers, and generated arithmetic
+  whose result passes 2^53 throws a `RangeError` rather than round; hand-written
+  code in `src/` has no such check.
 - **The working directory.** Anyone who can edit `gen/`, `.spec-cache/` or the
   tools can make `check` say what they like. `accept` ignores the cache, and
   continuous integration starts without `.spec-cache/`, which is not in git.
