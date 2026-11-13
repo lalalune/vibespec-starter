@@ -23,7 +23,7 @@ pnpm demo    # generates gen/, and a scripted model pays a bill, then tries what
 
 | Need | How |
 |---|---|
-| Termination | a budget every choice spends |
+| Termination | a budget every choice spends, and `leadsToPlanningEnds` under fair choosing |
 | Requests in flight | a request number, saved |
 | Crash and restart | `restart` resets what is not saved |
 | The model and the world as adversaries | their choices are event parameters; the simulator tries every sender |
