@@ -11,7 +11,7 @@ import { Machine, enabled, machine } from "../gen/index.effect.vibe"
 import type { Event, Session } from "../gen/index.ts"
 import { promptFor, type Manifest } from "./doc.ts"
 import {
-  NODE, PUBLIC, SPEC, checkCommand, createServer, finder, interactive, manifestFile, opener, ownedFiles, buildPage, appScript, servedAt, componentsOf,
+  NODE, PUBLIC, SPEC, checkCommand, createServer, finder, interactive, manifestFile, opener, ownedFiles, buildPage, appScript, servedAt, buildable, componentsOf,
   planPublish, projectName, readManifest, skillPath, specsOf, stateFile, studioRoot, verdictOf, type Check, type JobView, type Publish, type Snapshot,
 } from "./project.ts"
 
@@ -41,7 +41,7 @@ const AGENTS: Record<string, Agent> = {
   },
 }
 
-type Kind = "check" | "agent" | "accept"
+type Kind = "check" | "agent" | "accept" | "build"
 /** The process behind the session's job, and what it printed. The last of each kind is kept, for its log. */
 interface Job extends JobView { fiber?: Fiber.Fiber<void> }
 
@@ -211,7 +211,7 @@ effect function studio(project: Project, agents: Record<string, Agent>) {
       link: a.link?.({ root, prompt: promptFor(read.manifest, context, DEEPLINK_LIMIT) }),
     })
     return { project, session: try session.get(), ...read, prompt: promptFor(read.manifest, context), check, jobs: jobsView(), agents: shown,
-      app: { script: appScript(root), url: app.url, log: app.log } }
+      app: { script: appScript(root), url: app.url, log: app.log, buildable: buildable(root) } }
   }
   const jobsView = (): Partial<Record<Kind, JobView>> => Object.fromEntries(Object.entries(jobs).map(([kind, { fiber: _fiber, ...j }]) => [kind, { ...j, log: j.log.slice(-400) }]))
 
@@ -274,6 +274,12 @@ effect function studio(project: Project, agents: Record<string, Agent>) {
   effect function post(route: string, body: any) {
     switch (route) {
       case "/api/publish": return try publish(body)
+      // spec/index.md, "Story: Build the app": the project's own build script, as a job.
+      case "/api/build":
+        if (!buildable(root)) throw new Refused({ status: 404, message: "the project has no build script" })
+        try act({ type: "build" })
+        try run("build", "build", ["pnpm", ["run", "build"]], undefined, (l) => l, () => act({ type: "built" }))
+        return {}
       case "/api/check":
         try act({ type: "check" })
         try runCheck()
@@ -326,7 +332,8 @@ effect function studio(project: Project, agents: Record<string, Agent>) {
     Stream.mapEffect(Stream.debounce(Stream.merge(Stream.fromPubSub(ticks), Stream.map(session.changes, () => undefined)), "100 millis"),
       () => effect {
         const script = effect { return appScript(root) } catch () => undefined
-        return frame("job", { session: try session.get(), jobs: jobsView(), check, app: { script, url: app.url, log: app.log } })
+        const canBuild = effect { return buildable(root) } catch () => false
+        return frame("job", { session: try session.get(), jobs: jobsView(), check, app: { script, url: app.url, log: app.log, buildable: canBuild } })
       }),
     Stream.map(Stream.fromPubSub(touched), () => frame("files", {})))))
 

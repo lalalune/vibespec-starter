@@ -119,7 +119,8 @@ pnpm studio vibestack/examples/order    # an example, or any directory with spec
 
 Studio opens in the browser and is where you build the application: you
 shape the stories, an agent turns them into rules, Quint and code, the
-checks say where the project stands, and the application runs beside it.
+checks say where the project stands, and the application runs and builds
+beside it.
 
 | You | Studio |
 |---|---|
@@ -129,6 +130,7 @@ checks say where the project stands, and the application runs beside it.
 | **Run** beside Claude Code or Codex | Starts the agent on the sync prompt in the project and streams its progress; **Open** starts a new chat in the app with the same prompt |
 | **Run check** | Shows each failing stage, and marks the story or rule it names |
 | **Sign off** | Records the same approval as `pnpm accept` |
+| **Build** beside App | Runs the project's `build` script as a job and streams its output |
 | **Start** beside App | Runs the project's own development server (its `start` script, or `dev` when that is not Studio) and links to where it serves; **Stop** ends it |
 
 Studio is itself a Vibestack app in `vibestack/studio/`, built like any
