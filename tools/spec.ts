@@ -627,7 +627,7 @@ function proofUnits(root: string, models: Model[]): Unit[] {
  * comment (one in a block comment or a string is not an annotation, though it looks like one). And NUL, which no
  * source needs.
  */
-function checkVerifiedSource(file: string, code: string) {
+export function checkVerifiedSource(file: string, code: string) {
   const sf = ts.createSourceFile(file, code, ts.ScriptTarget.Latest, true);
   const refuse = (at: number, why: string): never => { throw new Error(`${file}:${sf.getLineAndCharacterOfPosition(at).line + 1}: ${why}`); };
   if (code.includes("\0")) refuse(code.indexOf("\0"), "NUL characters are not allowed");

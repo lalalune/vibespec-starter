@@ -390,7 +390,7 @@ const finished = (out: string) => new RegExp(SUMMARY.source, "m").test(out);
  * lemma the tools add) is an error: the proof itself is broken. So is a count
  * of failures that differs from the one Dafny reports.
  */
-function readVerdict(out: string, dfy: string, file: string, regions: Region[], rename = (n: string) => n): Verdict {
+export function readVerdict(out: string, dfy: string, file: string, regions: Region[], rename = (n: string) => n): Verdict {
   const lines = out.split("\n");
   const source = dfy.split("\n");
   const pattern = new RegExp(`^${file.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\((\\d+),\\d+\\): (Error|Warning|Related location): (.*)$`);

@@ -8,8 +8,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, describe, test } from "node:test";
-import { parseProofFile, splice } from "./prove.ts";
-import { acceptContracts, acceptReviews, check, expandListHelpers, gen, init, parseSpec, pending, pendingContracts, readSpecs, replay, show, type Result } from "./spec.ts";
+import { LIB_FILE, parseProofFile, readVerdict, splice } from "./prove.ts";
+import { acceptContracts, acceptReviews, check, checkVerifiedSource, expandListHelpers, gen, init, parseSpec, pending, pendingContracts, readSpecs, replay, show, type Result } from "./spec.ts";
 
 const project = path.join(import.meta.dirname, "..");
 const read = (file: string) => fs.readFileSync(path.join(project, file), "utf8");
@@ -62,6 +62,26 @@ function copyOfProject(file?: string, edit: (text: string) => string = (s) => s)
   return root;
 }
 
+/**
+ * The cache of one check of an unchanged copy of this project, made once and shared. A copy whose spec is unchanged
+ * starts from it, as a project does between checks: only what its edit changed is simulated or proved again. Every
+ * entry is keyed by all it was computed from, so a stale one is never read; a case where one were would fail.
+ */
+let warm: Promise<string> | undefined;
+const warmCache = () => (warm ??= (async () => {
+  const root = copyOfProject();
+  await check(root);
+  return path.join(root, ".spec-cache");
+})());
+/** `copyOfProject`, starting from the shared cache: for an edit outside spec/, or none. */
+async function warmCopyOfProject(file?: string, edit?: (text: string) => string): Promise<string> {
+  assert.ok(!file?.startsWith("spec/"), "an edited spec reuses nothing of the shared cache");
+  const cache = await warmCache();
+  const root = copyOfProject(file, edit);
+  fs.cpSync(cache, path.join(root, ".spec-cache"), { recursive: true, filter: (f) => path.basename(f) !== "lock" });
+  return root;
+}
+
 /** Check a project: the stages that failed, and what a stage said that matches a pattern. */
 async function run(root: string, accept: false | "reviews" | "unproved" = false) {
   const { results, next } = await check(root, accept);
@@ -74,7 +94,7 @@ async function run(root: string, accept: false | "reviews" | "unproved" = false)
   };
 }
 const failedStages = async (file: string, edit: (text: string) => string, accept = false) =>
-  (await run(copyOfProject(file, edit), accept ? "reviews" : false)).failed;
+  (await run(file.startsWith("spec/") ? copyOfProject(file, edit) : await warmCopyOfProject(file, edit), accept ? "reviews" : false)).failed;
 
 describe("each check catches its own kind of mistake", { concurrency: true }, () => {
   test("a fresh spec with enum and bool parameters and an unguarded transition passes everything but review", async () => {
@@ -149,7 +169,8 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
       ["parameter that collides with the harness's state variable", (s) => s.replace(/\bamount\b/g, "state")],
       ["duplicate rule heading", (s) => s.replace("### An order can be cancelled", "### A pending order can be cancelled, refunding every payment")],
     ];
-    for (const [what, edit] of refused) assert.deepEqual(await failedStages("spec/order.md", edit), ["model"], what);
+    const failed = await Promise.all(refused.map(([, edit]) => failedStages("spec/order.md", edit)));
+    refused.forEach(([what], i) => assert.deepEqual(failed[i], ["model"], what));
   });
 
   test("names and constructs that would be translated wrongly are refused", async () => {
@@ -161,16 +182,16 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
       ["a match binder used as a whole value", "type N = { n: int }\ntype P = A(N) | B\npure val initial: int = 0\npure def g(r: N): int = r.n\npure def f(p: P): int = match p { | A(x) => g(x) | _ => 0 }", /is what a match arm carries/],
       ["state declared by hand", "pure val initial: int = 0\nvar n: int", /only types, imports, `pure val` and `pure def` belong in a spec/],
     ];
-    for (const [what, quint, message] of refused) {
-      const { said, text } = await run(oneRule("t", "A rule", quint));
-      assert.equal(said("model", message)?.ok, false, `${what}\n${text}`);
-    }
+    const checked = await Promise.all(refused.map(([, quint]) => run(oneRule("t", "A rule", quint))));
+    refused.forEach(([what, , message], i) => assert.equal(checked[i].said("model", message)?.ok, false, `${what}\n${checked[i].text}`));
   });
 
   test("a rule written as a `pure val` is refused rather than generated as a constant, and a constant named alike is not", async () => {
-    const { said, text } = await run(oneRule("t", "A rule", "pure val initial: int = 0\npure val alwaysNever = false"));
+    const [{ said, text }, constant] = await Promise.all([
+      run(oneRule("t", "A rule", "pure val initial: int = 0\npure val alwaysNever = false")),
+      run(oneRule("t", "A rule", "pure val stepLimit = 3\npure def lawPositive(k: int): bool = stepLimit > 0")),
+    ]);
     assert.equal(said("model", /is a `pure def` with parameters/)?.ok, false, text);
-    const constant = await run(oneRule("t", "A rule", "pure val stepLimit = 3\npure def lawPositive(k: int): bool = stepLimit > 0"));
     assert.ok(!constant.failed.includes("model"), constant.text);
   });
 
@@ -180,9 +201,13 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.equal(said("model", /a comment is still open at the end of this quint block/)?.ok, false, text);
   });
 
-  test("a quint block under a nested list item is part of the model", async () => {
-    const failed = await failedStages("spec/order.md", (s) => s + "\n### Nothing is ever fine\n\n- because:\n  - nested:\n\n    ```quint\n    pure def alwaysBogus(o: Order): bool = false\n    ```\n");
-    assert.ok(failed.includes("always"), failed.join());
+  test("a quint block indented inside a list, or under a nested list item, is part of the model", () => {
+    // What the model holds is what parseSpec reads; that every block it reads is simulated is covered by the cases above.
+    for (const block of ["- because:\n\n  ```quint\n  pure def alwaysBogus(o: int): bool = false\n  ```\n", "- because:\n  - nested:\n\n    ```quint\n    pure def alwaysBogus(o: int): bool = false\n    ```\n"]) {
+      const root = scratch({ "spec/t.md": `# T\n\n## Story\n\n### Start\n\n${F}quint\npure val initial: int = 0\n${F}\n\n### Nothing is ever fine\n\n${block}` });
+      const spec = parseSpec(root, "spec/t.md");
+      assert.deepEqual(spec.rules.find((r) => r.key === "Story / Nothing is ever fine")?.defs, ["alwaysBogus"], block);
+    }
   });
 
   test("a rule broken only on the way to a `sometimes` goal is still reported", async () => {
@@ -194,26 +219,34 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
   });
 
   test("hand-written code that changes what it is checked against is refused or flagged", async () => {
-    const reexport = await failedStages("src/ledger.ts", (s) => s + '\nexport * from "./app.ts";\n');
+    const [reexport, { said, text }] = await Promise.all([
+      failedStages("src/ledger.ts", (s) => s + '\nexport * from "./app.ts";\n'),
+      run(await warmCopyOfProject("src/ledger.ts", (s) => s.replace(/(\/\/@ ensures)/, "//@ requires true\n$1"))),
+    ]);
     assert.ok(reexport.includes("proof"), reexport.join());
-    const { said, text } = await run(copyOfProject("src/ledger.ts", (s) => s.replace(/(\/\/@ ensures)/, "//@ requires true\n$1")));
     assert.ok(said("proof", /^src-ledger\.ts: .*under 2 \/\/@ requires/), text);
   });
 
   test("the application's types and tests are checked", async () => {
-    assert.ok((await failedStages("src/app.ts", (s) => s + "\nconst wrong: number = \"x\";\n")).includes("types"));
-    const failing = await run(copyOfProject("test/app.test.ts", (s) => s + '\ntest("fails", () => { throw new Error("no"); });\n'));
-    assert.ok(failing.failed.includes("tests"), failing.text);
-    const untyped = copyOfProject();
+    const untyped = await warmCopyOfProject();
     fs.rmSync(path.join(untyped, "tsconfig.json"));
-    assert.ok((await run(untyped)).failed.includes("types"));
+    const [wrong, failing, missing] = await Promise.all([
+      failedStages("src/app.ts", (s) => s + "\nconst wrong: number = \"x\";\n"),
+      run(await warmCopyOfProject("test/app.test.ts", (s) => s + '\ntest("fails", () => { throw new Error("no"); });\n')),
+      run(untyped),
+    ]);
+    assert.ok(wrong.includes("types"), wrong.join());
+    assert.ok(failing.failed.includes("tests"), failing.text);
+    assert.ok(missing.failed.includes("types"), missing.text);
   });
 
   test("Markdown the tools would read differently from a viewer is refused or read as a viewer does", async () => {
-    const cr = await failedStages("spec/order.md", (s) => s.replace("Every unit costs the same", "Every unit costs the same\rpure val sneaky = 1"));
+    const [cr, fence] = await Promise.all([
+      failedStages("spec/order.md", (s) => s.replace("Every unit costs the same", "Every unit costs the same\rpure val sneaky = 1")),
+      // A fence with an info string does not close a quint block, so what follows is still Quint (and here not valid Quint).
+      failedStages("spec/order.md", (s) => s.replace("pure val unitPrice = 5", "pure val unitPrice = 5\n```text\nnot quint")),
+    ]);
     assert.deepEqual(cr, ["model"]);
-    // A fence with an info string does not close a quint block, so what follows is still Quint (and here not valid Quint).
-    const fence = await failedStages("spec/order.md", (s) => s.replace("pure val unitPrice = 5", "pure val unitPrice = 5\n```text\nnot quint"));
     assert.ok(fence.includes("model"), fence.join());
   });
 
@@ -240,42 +273,38 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.ok(said("proof", /^sys\.ts: all \d+ obligations proved/), text);
   });
 
-  test("a quint block indented inside a list is still part of the model", async () => {
-    const failed = await failedStages("spec/order.md", (s) => s + "\n### Nothing is ever fine\n\n- because:\n\n  ```quint\n  pure def alwaysBogus(o: Order): bool = false\n  ```\n");
-    assert.ok(failed.includes("always"), failed.join());
-  });
-
-  test("a story with no rules is flagged for translation", async () => {
-    const failed = await failedStages("spec/order.md", (s) => s + "\n## Story: Gift wrap\n\n> As a shopper, I want my order wrapped.\n");
-    assert.deepEqual(failed, ["review"]);
-  });
-
   test("lists, nested helpers, an imported library, laws, step rules and the proof ledger work together", async () => {
     const shop = (edit?: (files: Record<string, string>) => void) => fixtures(["lib", "shop"], edit);
-    // The nested helpers (some inside some inside every) agree between Quint and TypeScript, and simulation passes.
-    const plain = await run(shop());
-    assert.deepEqual(plain.failed, ["proof", "review"], plain.text);
-    assert.ok(plain.said("proof", /not proved/), plain.text);
     // Once the unproved obligations are recorded, only the review is left.
     // Hand-written code proved against the shop says that it rests on what is simulated only there.
-    const recorded = shop((f) => { f["src/count.ts"] = 'import { type Cart } from "../gen/shop.ts";\n//@ pure\nexport function count(c: Cart): number {\n  //@ ensures \\result === c.count\n  return c.count;\n}\n'; });
-    const recording = await check(recorded, "unproved");
-    const ledger = recording.results.find((r) => r.stage === "proof" && /^spec\/unproved\.lock\.json: [1-9]\d* added, 0 removed$/.test(r.summary));
-    assert.match(ledger?.detail ?? "", /^    \+ shop\.ts: /m, recording.results.map(show).join("\n"));
-    const accepted = await run(recorded);
-    assert.deepEqual(accepted.failed, ["review"], accepted.text);
-    assert.ok(accepted.said("proof", /^src-count\.ts: all 1 obligations proved for all states and inputs, assuming the obligations that are simulated only \([^)]*\d+ of shop\.ts\)/), accepted.text);
-    // What was recorded is tied to the text it was recorded for: once the unit's text changes, it no longer counts.
-    fs.appendFileSync(path.join(recorded, "spec/lib.md"), `\n### Two\n\n${F}quint\npure val two = 2\n${F}\n`);
-    const moved = await run(recorded);
-    assert.equal(moved.said("proof", /^shop\.ts: \d+ of \d+ obligations not proved; the \d+ accepted earlier were accepted for another text/)?.ok, false, moved.text);
-    const wrongStep = await run(shop((f) => { f["spec/shop.md"] = f["spec/shop.md"].replace("count: c.count }", "count: c.count - 1 }"); }));
+    // One project goes through these checks in turn; every other check below is independent and runs beside it.
+    const ledgerLifecycle = async () => {
+      const recorded = shop((f) => { f["src/count.ts"] = 'import { type Cart } from "../gen/shop.ts";\n//@ pure\nexport function count(c: Cart): number {\n  //@ ensures \\result === c.count\n  return c.count;\n}\n'; });
+      const recording = await check(recorded, "unproved");
+      const ledger = recording.results.find((r) => r.stage === "proof" && /^spec\/unproved\.lock\.json: [1-9]\d* added, 0 removed$/.test(r.summary));
+      assert.match(ledger?.detail ?? "", /^    \+ shop\.ts: /m, recording.results.map(show).join("\n"));
+      const accepted = await run(recorded);
+      assert.deepEqual(accepted.failed, ["review"], accepted.text);
+      assert.ok(accepted.said("proof", /^src-count\.ts: all 1 obligations proved for all states and inputs, assuming the obligations that are simulated only \([^)]*\d+ of shop\.ts\)/), accepted.text);
+      // What was recorded is tied to the text it was recorded for: once the unit's text changes, it no longer counts.
+      fs.appendFileSync(path.join(recorded, "spec/lib.md"), `\n### Two\n\n${F}quint\npure val two = 2\n${F}\n`);
+      const moved = await run(recorded);
+      assert.equal(moved.said("proof", /^shop\.ts: \d+ of \d+ obligations not proved; the \d+ accepted earlier were accepted for another text/)?.ok, false, moved.text);
+    };
+    const [plain, wrongStep, wrongLaw, importsMachine, circle] = await Promise.all([
+      run(shop()),
+      run(shop((f) => { f["spec/shop.md"] = f["spec/shop.md"].replace("count: c.count }", "count: c.count - 1 }"); })),
+      run(shop((f) => { f["spec/lib.md"] = f["spec/lib.md"].replace("total(List(n)) == n", "total(List(n)) == n + 1"); })),
+      run(shop((f) => { f["spec/other.md"] = `# Other\n\n## Group\n\n### Uses a machine\n\n${F}quint\nimport shop.* from "./shop"\npure val two = 2\n${F}\n`; })),
+      run(shop((f) => { f["spec/lib.md"] = f["spec/lib.md"].replace("pure def total", 'import shop.* from "./shop"\npure def total'); })),
+      ledgerLifecycle(),
+    ]);
+    // The nested helpers (some inside some inside every) agree between Quint and TypeScript, and simulation passes.
+    assert.deepEqual(plain.failed, ["proof", "review"], plain.text);
+    assert.ok(plain.said("proof", /not proved/), plain.text);
     assert.equal(wrongStep.said("always", /^a step breaks/)?.ok, false, wrongStep.text);
-    const wrongLaw = await run(shop((f) => { f["spec/lib.md"] = f["spec/lib.md"].replace("total(List(n)) == n", "total(List(n)) == n + 1"); }));
     assert.equal(wrongLaw.said("always", /^the law .* is false for \{"n":/)?.ok, false, wrongLaw.text);
-    const importsMachine = await run(shop((f) => { f["spec/other.md"] = `# Other\n\n## Group\n\n### Uses a machine\n\n${F}quint\nimport shop.* from "./shop"\npure val two = 2\n${F}\n`; }));
     assert.ok(importsMachine.said("model", /is imported under a name/), importsMachine.text);
-    const circle = await run(shop((f) => { f["spec/lib.md"] = f["spec/lib.md"].replace("pure def total", 'import shop.* from "./shop"\npure def total'); }));
     assert.ok(circle.said("model", /import each other in a circle/), circle.text);
   });
 
@@ -372,17 +401,19 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
       return root;
     };
     const unproved = /^order\.ts: \d+ of \d+ obligations not proved/;
-    // A file in src/ named after the spec does not take the place of the spec's own proof.
-    const namesake = await run(withFile("src/order.ts", "//@ pure\nexport function one(): number {\n  return 1;\n}\n"));
+    const [namesake, configured, sneaky, lying] = await Promise.all([
+      // A file in src/ named after the spec does not take the place of the spec's own proof.
+      run(withFile("src/order.ts", "//@ pure\nexport function one(): number {\n  return 1;\n}\n")),
+      // A LemmaScript configuration in the project cannot point the proof at files someone could edit.
+      run(withFile("lemmascript.json", `{"proof-dir":"proofs"}`)),
+      // An annotation that asks the prover for trust is refused wherever it sits on the line.
+      run(await warmCopyOfProject("src/ledger.ts", (s) => s.replace("return order.due - order.paid;", "/* x */ //@ assume false\n  return order.paid - order.due;"))),
+      // So is an import of anything but a generated module, however it is indented.
+      run(await warmCopyOfProject("src/ledger.ts", (s) => s.replace("\n/** Rebuild", '\n  import { owed } from "/tmp/lies.ts";\n/** Rebuild'))),
+    ]);
     assert.ok(namesake.said("proof", unproved), namesake.text);
-    // A LemmaScript configuration in the project cannot point the proof at files someone could edit.
-    const configured = await run(withFile("lemmascript.json", `{"proof-dir":"proofs"}`));
     assert.ok(configured.said("proof", unproved), configured.text);
-    // An annotation that asks the prover for trust is refused wherever it sits on the line.
-    const sneaky = await run(copyOfProject("src/ledger.ts", (s) => s.replace("return order.due - order.paid;", "/* x */ //@ assume false\n  return order.paid - order.due;")));
     assert.ok(sneaky.said("proof", /`\/\/@ assume` is not allowed/), sneaky.text);
-    // So is an import of anything but a generated module, however it is indented.
-    const lying = await run(copyOfProject("src/ledger.ts", (s) => s.replace("\n/** Rebuild", '\n  import { owed } from "/tmp/lies.ts";\n/** Rebuild')));
     assert.ok(lying.said("proof", /may only import generated modules/), lying.text);
   });
 
@@ -390,21 +421,23 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     const highestProof = "// The fold keeps the larger of the two.\nlemma lawTheHighestIsAtLeastTheStart_ensures(xs: seq<int>, start: int)\n  ensures (lawTheHighestIsAtLeastTheStart(xs, start) == true)\n{\n  ProofLib.FoldLeftMax((top: int, x: int) => (if (x > top) then x else top), start, xs);\n}\n";
     const ticketProof = "lemma issue_ensures(d: Desk)\n  ensures (inv(d) ==> alwaysTheLastNumberIsNotNegative(issue(d)))\n{\n  highest_lawTheHighestIsAtLeastTheStart_ensures(d.issued, d.last);\n}\n";
     const project = (files: Record<string, string>) => fixtures(["highest", "ticket"], (f) => Object.assign(f, files));
+    const root = project({ "spec/highest.proof.dfy": highestProof, "spec/ticket.proof.dfy": ticketProof });
+    const [bare, proved, unoffered, trusting] = await Promise.all([
+      run(project({ "spec/typo.proof.dfy": "" })),
+      run(root),
+      run(project({ "spec/ticket.proof.dfy": ticketProof })),
+      run(project({ "spec/highest.proof.dfy": highestProof.replace("ProofLib.FoldLeftMax", "assume false;\n  ProofLib.FoldLeftMax") })),
+    ]);
     // Without a proof file the law is not proved, and a proof file that belongs to nothing is pointed out.
-    const bare = await run(project({ "spec/typo.proof.dfy": "" }));
     assert.equal(bare.said("proof", /^highest\.ts: 1 of 1 obligations not proved/)?.ok, false, bare.text);
     assert.equal(bare.said("proof", /^spec\/typo\.proof\.dfy belongs to no proof unit/)?.ok, false, bare.text);
     // With both proof files, everything proves, and the final Dafny is there to read.
-    const root = project({ "spec/highest.proof.dfy": highestProof, "spec/ticket.proof.dfy": ticketProof });
-    const proved = await run(root);
     assert.deepEqual(proved.failed, ["review"], proved.text);
     assert.ok(proved.said("proof", /^ticket\.ts: all 3 obligations proved/), proved.text);
     assert.match(fs.readFileSync(path.join(root, "gen/proof/ticket/ticket.dfy"), "utf8"), /lemma \{:axiom\} highest_lawTheHighestIsAtLeastTheStart_ensures/);
     // A law its own unit does not prove is not offered.
-    const unoffered = await run(project({ "spec/ticket.proof.dfy": ticketProof }));
     assert.equal(unoffered.said("proof", /^ticket\.ts: Dafny could not check it[\s\S]*unresolved identifier: highest_lawTheHighestIsAtLeastTheStart_ensures/)?.ok, false, unoffered.text);
     // A proof file that asks for trust is refused, with its file and line.
-    const trusting = await run(project({ "spec/highest.proof.dfy": highestProof.replace("ProofLib.FoldLeftMax", "assume false;\n  ProofLib.FoldLeftMax") }));
     assert.equal(trusting.said("proof", /spec\/highest\.proof\.dfy:5: `assume` is not allowed/)?.ok, false, trusting.text);
   });
 
@@ -456,9 +489,11 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
   });
 
   test("verified code cannot assume, or import a look-alike of the generated module", async () => {
-    const assumed = await failedStages("src/ledger.ts", (s) => s.replace("return order.due - order.paid;", "//@ assume false\n  return order.paid - order.due;"));
+    const [assumed, lookalike] = await Promise.all([
+      failedStages("src/ledger.ts", (s) => s.replace("return order.due - order.paid;", "//@ assume false\n  return order.paid - order.due;")),
+      run(await warmCopyOfProject("src/ledger.ts", (s) => s.replace('"../gen/order.ts"', '"./order.ts"'))),
+    ]);
     assert.deepEqual(assumed, ["proof", "tests", "review"]); // the code is also wrong, and the new //@ line is a changed contract
-    const lookalike = await run(copyOfProject("src/ledger.ts", (s) => s.replace('"../gen/order.ts"', '"./order.ts"')));
     assert.ok(lookalike.said("proof", /may only import generated modules/), lookalike.text);
   });
 
@@ -472,12 +507,6 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.deepEqual(failed, ["proof", "tests"]);
   });
 
-  test("moving a line break so that a comment swallows half a guard is a change to the model", async () => {
-    const failed = await failedStages("spec/order.md", (s) => s.replace("pure def canAddItem(o: Order, qty: int): bool =\n  o.status == Draft and qty > 0 and o.units + qty <= maxUnits",
-      "pure def canAddItem(o: Order, qty: int): bool =\n  o.status == Draft and qty > 0 // and o.units + qty <= maxUnits"));
-    assert.ok(failed.includes("review"), failed.join());
-  });
-
   test("a deleted rule is flagged for review", async () => {
     const failed = await failedStages("spec/order.md", (s) => s.replace(/### An order can be cancelled[\s\S]*$/, ""));
     assert.deepEqual(failed, ["tests", "review"]); // the application's test of cancelling fails too
@@ -485,8 +514,11 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
 
   test("accept records nothing while another stage fails, and records when all pass", async () => {
     const reworded = (s: string) => s.replace("Every unit costs the same", "Each unit has one price");
-    assert.deepEqual(await failedStages("spec/order.md", reworded, true), []);
-    const failed = await failedStages("spec/order.md", (s) => reworded(s).replace("o.status == Draft and o.units > 0", "o.status == Draft"), true);
+    const [passing, failed] = await Promise.all([
+      failedStages("spec/order.md", reworded, true),
+      failedStages("spec/order.md", (s) => reworded(s).replace("o.status == Draft and o.units > 0", "o.status == Draft"), true),
+    ]);
+    assert.deepEqual(passing, []);
     assert.deepEqual(failed, ["always", "review"]);
   });
 
@@ -519,7 +551,7 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
   });
 
   test("nothing stale survives in gen/", async () => {
-    const root = copyOfProject();
+    const root = await warmCopyOfProject();
     fs.mkdirSync(path.join(root, "gen"));
     fs.writeFileSync(path.join(root, "gen/renamed.ts"), "export const stale = true;\n");
     await check(root);
@@ -541,6 +573,17 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
       || moved.includes("Story: Fill a draft / Items can only be added to a draft: model changed through maxUnits, unitPrice (Domain / Unit price and order size)"), moved.join("\n"));
     assert.ok(moved.includes("Story: Fill a draft / The amount due is always the price of the units: model changed through unitPrice (Domain / Unit price and order size)"), moved.join("\n"));
     assert.ok(!moved.some((m) => m.startsWith("Story: Check out / A payment never exceeds the balance")), "a rule that does not use the price is not flagged");
+    // Moving a line break so that a comment swallows half a guard is a change to the model.
+    edit("spec/order.md", () => original.replace("pure def canAddItem(o: Order, qty: int): bool =\n  o.status == Draft and qty > 0 and o.units + qty <= maxUnits",
+      "pure def canAddItem(o: Order, qty: int): bool =\n  o.status == Draft and qty > 0 // and o.units + qty <= maxUnits"));
+    assert.ok(items().some((m) => /^Story: Fill a draft \/ [^:]+: model changed$/.test(m)), items().join("\n"));
+    // A story with no rules, a rule with no quint, and a rule whose prose and model both changed, each with its own status.
+    edit("spec/order.md", () => original + "\n## Story: Gift wrap\n\n> As a shopper, I want my order wrapped.\n\n## Story: Refunds\n\n### Refunds arrive within three days\n\nNot yet modelled.\n");
+    const added = items();
+    for (const want of ["Story: Gift wrap: story has no rules", "Story: Refunds: new story", "Story: Refunds / Refunds arrive within three days: not formalized"]) assert.ok(added.includes(want), `${want}\n${added.join("\n")}`);
+    edit("spec/order.md", () => original.replace("Every unit costs the same", "Every unit costs 7").replace("pure val unitPrice = 5", "pure val unitPrice = 7"));
+    assert.ok(items().includes("Domain / Unit price and order size: prose and model both changed"), items().join("\n"));
+    edit("spec/order.md", () => original);
 
     // Across specs: a change to a library definition flags the rules that use it.
     const shop = fixtures(["lib", "shop"]);
@@ -562,7 +605,7 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
   });
 
   test("accept records a changed story and a changed contract, after which nothing is left to reconcile", async () => {
-    const root = copyOfProject("src/ledger.ts", (s) => s.replace("  //@ ensures order.status === \"Paid\" ==> \\result === 0\n", ""));
+    const root = await warmCopyOfProject("src/ledger.ts", (s) => s.replace("  //@ ensures order.status === \"Paid\" ==> \\result === 0\n", ""));
     fs.writeFileSync(path.join(root, "spec/order.md"), read("spec/order.md").replace("> get my money back.", "> get all my money back."));
     const before = await run(root);
     assert.deepEqual(before.failed, ["review"], before.text);
@@ -640,5 +683,141 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.deepEqual(spec.rules.map((r) => r.key), ["Story / Real", "Story / Also real"]);
     assert.deepEqual(spec.rules.flatMap((r) => r.defs), ["a", "c"]);
     assert.match(spec.rules[0].prose, /### Not a rule[\s\S]*### Nor this/);
+  });
+});
+
+// Cases for the fixes made on the fix-selftest branch (ported from main, where they first appeared).
+describe("fix-selftest", { concurrency: true }, () => {
+  // Each of these is a way a false obligation could be reported as proved.
+  const bumpHeader = "lemma bump_ensures(c: C, k: int)\n  ensures (inv(c) ==> canBump(c, k) ==> alwaysNonNegative(bump(c, k)))\n  ensures (inv(c) ==> canBump(c, k) ==> alwaysBumpsNonNegative(bump(c, k)))\n{\n";
+  const magic = (proof?: string) => fixtures(["magic"], (f) => { if (proof !== undefined) f["spec/magic.proof.dfy"] = proof; });
+
+  test("a proof file reaches the standard library only by the names the generated code uses, and the tools' library only by its own", () => {
+    const lib = fs.readFileSync(LIB_FILE, "utf8");
+    const gen = "function f(xs: seq<int>): bool\n{\n  Std.Collections.Seq.All(xs, (x: int) => x > 0)\n}\n\nlemma f_ensures(xs: seq<int>)\n  ensures (f(xs) == true)\n{\n}\n";
+    const header = "lemma f_ensures(xs: seq<int>)\n  ensures (f(xs) == true)\n{\n";
+    const spliced = (body: string) => splice(gen, { proof: { file: "p.dfy", text: `${header}${body}\n}\n` }, axioms: [], lib }).dfy;
+    // Std.Ordinal.TimesIncreasingOnLeft is a false {:axiom}; dafny audit reports it only against the library's own file.
+    assert.throws(() => spliced("  Std.Ordinal.TimesIncreasingOnLeft(0, 0, 0);"), /p\.dfy:4: `Std\.Ordinal\.TimesIncreasingOnLeft` is not allowed[^\n]*\(Std\.Collections\.Seq\.All\)/);
+    assert.throws(() => spliced("  ProofLib.Seq.LemmaFlattenConcat<int>([], []);"), /`ProofLib\.Seq\.LemmaFlattenConcat` is not a lemma or function of tools\/proof\/lib\.dfy/);
+    assert.throws(() => spliced("  assert (xs).Std.Ordinal == 0;"), /`Std` may only begin a name/);
+    assert.ok(spliced("  assert Std.Collections.Seq.All(xs, (x: int) => x > 0) == f(xs);\n  ProofLib.FilterNil((x: int) => true, []);").includes("ProofLib.FilterNil"));
+  });
+
+  test("a lemma's body is the brace group that ends it, after a complete header; a set display is never a body", () => {
+    const noBody: [string, string][] = [
+      ["decreases with a set display", "lemma Bad() ensures false decreases {0}\nlemma B() { Bad(); }"],
+      ["ensures with a set display", "lemma Bad(x: int) ensures x in {1}"],
+      ["a multiset display", "lemma Bad(x: int) ensures x in multiset{1}"],
+      ["a body followed by more", "lemma A() { } ensures false"],
+    ];
+    for (const [what, text] of noBody) assert.throws(() => parseProofFile(text, "p.dfy"), /p\.dfy:1: lemma \w+ has no body/, what);
+    const [lemma] = parseProofFile("lemma Ok(s: set<int>) ensures s == {} ==> |s| == 0 ensures 1 in {1} { assert true; }", "p.dfy");
+    assert.equal(lemma.body.trim(), "assert true;");
+    assert.throws(() => parseProofFile("lemma A() { }\0", "p.dfy"), /p\.dfy:1: NUL characters are not allowed/);
+  });
+
+  test("a failure is charged to the definition it is in, by where the tools put each line, not by reading the text back", () => {
+    const gen = "function f(x: int): int\n{\n  x\n}\n\nlemma f_ensures(x: int)\n  ensures (f(x) >= x)\n{\n}\n";
+    const { dfy, regions } = splice(gen, { proof: { file: "p.dfy", text: "lemma\nLiar()\n  ensures false\n{\n}\nlemma f_ensures(x: int)\n  ensures (f(x) >= x)\n{\n  Liar();\n}\n" }, axioms: [] });
+    const lines = dfy.split("\n");
+    const liar = lines.indexOf("Liar()");
+    assert.deepEqual(regions[liar], { def: "Liar", generated: false });
+    assert.equal(regions[lines.indexOf("  Liar();")].def, "f_ensures");
+    const out = (summary: string, ...messages: string[]) => `${messages.join("\n")}\n\nDafny program verifier finished with ${summary}\n`;
+    const failure = `t.dfy(${liar + 4},0): Error: a postcondition could not be proved on this return path\nt.dfy(${liar + 2},10): Related location: this is the postcondition that could not be proved`;
+    assert.match([...readVerdict(out("3 verified, 1 error", failure), dfy, "t.dfy", regions).errors].join("\n"), /^Liar \(t\.dfy:\d+\) does not verify: false; a lemma that is not generated must prove$/);
+  });
+
+  test("only Dafny's own messages are read: from the start of a line, from the error's block and definition, and as many as it counted", () => {
+    const gen = "lemma a_ensures(x: int)\n  ensures P(x)\n  ensures Q(x)\n{\n}\n\nlemma b_ensures(x: int)\n  ensures R(x)\n{\n}\n";
+    const { dfy, regions } = splice(gen, { axioms: [] });
+    const verdict = (...messages: string[]) => readVerdict(`${messages.join("\n")}\n`, dfy, "t.dfy", regions);
+    const error = "t.dfy(4,0): Error: a postcondition could not be proved on this return path";
+    const related = (line: number) => `t.dfy(${line},2): Related location: this is the postcondition that could not be proved`;
+    const summary = (n: number) => `\nDafny program verifier finished with 2 verified, ${n} error${n === 1 ? "" : "s"}`;
+    // A message in the text of a line (as an echoed source line would carry it) is not a message.
+    const echoed = verdict(error, related(3), `  | //x/t.dfy(8,2): Related location: this is the postcondition that could not be proved`, summary(1));
+    assert.deepEqual([...echoed.unproved.keys()], ["a: Q(x)"]);
+    assert.deepEqual([...echoed.errors], []);
+    // A postcondition of another definition does not answer for this one.
+    const elsewhere = verdict(error, related(8), summary(1));
+    assert.deepEqual([...elsewhere.unproved.keys()], []);
+    assert.match([...elsewhere.errors].join("\n"), /a_ensures: a postcondition could not be proved on this return path, and Dafny named no postcondition of it/);
+    // One that comes after another message is not part of the error's block.
+    const later = verdict(error, "t.dfy(9,0): Warning: something", related(3), summary(1));
+    assert.deepEqual([...later.unproved.keys()], []);
+    // Fewer failures read than Dafny counted is an error, never a smaller list.
+    assert.match([...verdict(error, related(3), summary(2)).errors].join("\n"), /Dafny reported 2 failures, but 1 were read from its output/);
+  });
+
+  test("a proof file can neither use the standard library's axioms, nor charge a helper's failure to an obligation, nor spoof Dafny's messages", async () => {
+    const [std, liar, spoof] = await Promise.all([
+      run(magic(`${bumpHeader}  Std.Ordinal.TimesIncreasingOnLeft(0, 0, 0);\n}\n`)),
+      run(magic(`lemma\nLiar()\n  ensures false\n{\n}\n\n${bumpHeader}  Liar();\n}\n`)),
+      // A message inside a source comment must not name mark's obligation in place of bump's.
+      run(magic(`${bumpHeader}  return; //magic.dfy(39,40): Related location: this is the postcondition that could not be proved\n}\n`)),
+    ]);
+    assert.equal(std.said("proof", /^magic\.ts: Dafny could not check it[\s\S]*spec\/magic\.proof\.dfy:5: `Std\.Ordinal\.TimesIncreasingOnLeft` is not allowed/)?.ok, false, std.text);
+    assert.equal(liar.said("proof", /^magic\.ts: Dafny could not check it[\s\S]*Liar \(magic\.dfy:\d+\) does not verify/)?.ok, false, liar.text);
+    const spoofed = spoof.said("proof", /^magic\.ts: 3 of 6 obligations not proved/);
+    assert.equal(spoofed?.ok, false, spoof.text);
+    assert.match(spoofed!.detail, /bump: \(inv\(c\) ==> canBump\(c, k\) ==> alwaysNonNegative\(bump\(c, k\)\)\)/);
+  });
+
+  test("an obligation whose proof calls a lemma that is not proved is not proved either, the tools' own step body included", async () => {
+    const markProof = "lemma mark_ensures(c: C, k: int)\n  ensures (inv(c) ==> canMark(c, k) ==> alwaysNonNegative(mark(c, k)))\n  ensures (inv(c) ==> canMark(c, k) ==> alwaysBumpsNonNegative(mark(c, k)))\n{\n  bump_ensures(C(0, 0), 777777);\n  assert false;\n}\n";
+    const [bare, borrowed] = await Promise.all([run(magic()), run(magic(markProof))]);
+    const plain = bare.said("proof", /^magic\.ts: 3 of 6 obligations not proved/);
+    assert.equal(plain?.ok, false, bare.text);
+    assert.match(plain!.detail, /step: inv\(step\(current, event\)\)   \[rests on bump: /);
+    const resting = borrowed.said("proof", /^magic\.ts: 4 of 6 obligations not proved/);
+    assert.equal(resting?.ok, false, borrowed.text);
+    assert.match(resting!.detail, /mark: \(inv\(c\) ==> canMark\(c, k\) ==> alwaysNonNegative\(mark\(c, k\)\)\)   \[rests on bump: /);
+  });
+
+  test("a law is offered to an importer only if it is proved without resting on one that is not", async () => {
+    const counter = read("tools/fixtures/magic.md").replace("type C = {", 'import forbidden.* from "./forbidden"\ntype C = {').replace(/### Mark by[\s\S]*?(?=### The count is never)/, "").replace(/### The count of bumps[\s\S]*?(?=### Bumped)/, "");
+    const { said, text } = await run(fixtures(["forbidden"], (f) => Object.assign(f, {
+      "spec/magic.md": counter,
+      "spec/forbidden.proof.dfy": "lemma lawNotSecond_ensures(n: int)\n  ensures (lawNotSecond(n) == true)\n{\n  lawNotFirst_ensures(987654321);\n}\n",
+      "spec/magic.proof.dfy": "lemma bump_ensures(c: C, k: int)\n  ensures (inv(c) ==> canBump(c, k) ==> alwaysNonNegative(bump(c, k)))\n{\n  forbidden_lawNotSecond_ensures(123456789);\n}\n",
+    })));
+    const lib = said("proof", /^forbidden\.ts: 2 of 2 obligations not proved/);
+    assert.equal(lib?.ok, false, text);
+    assert.match(lib!.detail, /lawNotSecond: \(lawNotSecond\(n\) == true\)   \[rests on lawNotFirst: /);
+    assert.equal(said("proof", /^magic\.ts: Dafny could not check it[\s\S]*unresolved identifier: forbidden_lawNotSecond_ensures/)?.ok, false, text);
+  });
+
+  test("verified code is refused where the proof and Node would read it differently", () => {
+    const refused: [string, string, RegExp][] = [
+      ["a renamed import", 'import { sometimesFour as alwaysNotNegative, type C } from "../gen/counter.ts";', /may not rename what it imports/],
+      ["a default import", 'import counter from "../gen/counter.ts";', /not a default or namespace import/],
+      ["a namespace import", 'import * as counter from "../gen/counter.ts";', /not a default or namespace import/],
+      ["an export list", "function double(x: number): number {\n  return x * 2;\n}\nexport { double as half };", /may hold only imports, functions with a body/],
+      ["a re-export", 'export * from "../gen/counter.ts";', /may hold only imports, functions with a body/],
+      ["a default export", "export default function f(): number {\n  return 1;\n}", /`default` is not allowed/],
+      ["an export assignment", "const f = 1;\nexport = f;", /may hold only imports, functions with a body/],
+      ["a statement at the top level", "Math.max = (a: number, b: number) => -1000;", /may hold only imports, functions with a body/],
+      ["a declaration without a body", "declare function f(x: number): number;", /`declare` is not allowed/],
+      ["an overload without a body", "export function f(x: number): number;\nexport function f(x: number): number {\n  return x;\n}", /may hold only imports, functions with a body/],
+      ["a let", "let x = 1;", /may hold only imports, functions with a body/],
+      ["an annotation in a block comment", "export function twice(x: number): number {\n  //@ ensures \\result >= x\n  /*\n  //@ ensures \\result === 3 * x\n  */\n  return x + x;\n}", /:5: `\/\/@` here is not in a `\/\/` comment/],
+      ["an annotation in a doc comment", "/** //@ ensures \\result === 3 */\nexport function three(): number {\n  return 3;\n}", /:2: `\/\/@` here is not in a `\/\/` comment/],
+      ["an annotation in a string", 'export const note = "//@ ensures false";', /`\/\/@` here is not in a `\/\/` comment/],
+      ["an annotation in a template", "export const note = `${1} //@ ensures false`;", /`\/\/@` here is not in a `\/\/` comment/],
+      ["a NUL character", "export const x = 1; // \0", /NUL characters are not allowed/],
+    ];
+    for (const [what, code, message] of refused) assert.throws(() => checkVerifiedSource("src/x.ts", `//@ backend dafny\n${code}\n`), message, what);
+    checkVerifiedSource("src/ledger.ts", read("src/ledger.ts"));
+    checkVerifiedSource("src/x.ts", '//@ backend dafny\n// What the //@ lines promise.\nimport { type C, inv } from "../gen/c.ts";\nexport type D = C;\nexport interface E { c: C }\nconst limit = 3;\n//@ pure\nexport function f(c: C): boolean {\n  //@ ensures \\result === inv(c)\n  return inv(c) && limit > 0 || inv(c);\n}\n');
+  });
+
+  test("verified code that renames an import, or annotations in a file that is not .ts, fail the proof", async () => {
+    const renamed = await warmCopyOfProject("src/guard.ts", () => '//@ backend dafny\nimport { canSubmit as canCancel, type Order } from "../gen/order.ts";\n//@ pure\nexport function cancellable(o: Order): boolean {\n  //@ ensures \\result === (o.status === "Pending")\n  return canCancel(o);\n}\n');
+    const module = await warmCopyOfProject("src/dec.mts", () => "//@ backend dafny\nexport function dec(x: number): number {\n  //@ ensures \\result > x\n  return x - 1;\n}\n");
+    const [r, m] = await Promise.all([run(renamed), run(module)]);
+    assert.equal(r.said("proof", /src\/guard\.ts:2: `canSubmit as canCancel`: verified code may not rename what it imports/)?.ok, false, r.text);
+    assert.equal(m.said("proof", /src\/dec\.mts: `\/\/@` appears in it, but only \.ts files under src\/ are proved/)?.ok, false, m.text);
   });
 });
