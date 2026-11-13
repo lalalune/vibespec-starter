@@ -31,7 +31,7 @@ const AGENTS: Record<string, Agent> = {
     label: "Claude Code",
     command: ({ check }) => ["claude", ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits",
       "--allowedTools", "Read", "Edit", "Write", "Glob", "Grep", `Bash(${check}:*)`, "Bash(pnpm check:*)", "Bash(pnpm exec quint:*)",
-      "--disallowedTools", "Bash(pnpm accept:*)", "Bash(spec accept:*)"]],
+      "--disallowedTools", "Bash(pnpm accept:*)", "Bash(pnpm run accept:*)", "Bash(npm run accept:*)", "Bash(spec accept:*)"]],
     link: ({ root, prompt }) => `claude-cli://open?cwd=${encodeURIComponent(root)}&q=${encodeURIComponent(prompt)}`,
   },
   codex: {
@@ -251,8 +251,9 @@ effect function studio(project: Project, agents: Record<string, Agent>) {
     const check = checkCommand(root)
     const prompt = promptFor(readManifest(root), { skill: skillPath(root), check })
     const owned = ownedFiles(root)
+    const command = agent.command({ root, check })
     try act({ type: "sync" })
-    try run("agent", agent.label, agent.command({ root, check }), prompt, readable, (job) => effect {
+    try run("agent", agent.label, command, prompt, readable, (job) => effect {
       // The review ledgers and Studio's state are the tools' to write: a sync that touched them is not trusted.
       // Whatever happens here, the sync ends (spec/index.md, "A sync that ends well leaves nothing waiting and checks again").
       effect {

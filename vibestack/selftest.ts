@@ -1047,7 +1047,7 @@ export effect function independent() {
     const fresh = scratch({ "package.json": '{"name":"fresh"}' });
     assert.deepEqual(init(fresh), [".claude/skills/sync/SKILL.md", ".agents/skills/sync", ".claude/skills/design/SKILL.md", ".agents/skills/design", "AGENTS.md (Vibestack instructions)", "CLAUDE.md (imports AGENTS.md)",
       "tsconfig.json", "vitest.config.ts", "spec/index.md", ".gitignore", "package.json scripts: dev, check, gen, accept, build, test",
-      `package.json VibeLang toolchain: ${[...runtime, ...tooling].join(", ")} (run your package manager's install)`, 'package.json "type": "module"']);
+      `package.json VibeLang toolchain: ${[...runtime, ...tooling].join(", ")} (run your package manager's install)`, "package.json packageManager: pnpm@10.24.0", "package.json engines.node: >=26", 'package.json "type": "module"']);
     assert.deepEqual(json(fresh, "tsconfig.json"), {
       compilerOptions: { target: "es2023", module: "nodenext", strict: true, skipLibCheck: true, types: ["node"], rootDir: ".", rootDirs: [".", ".vibe/declarations"], outDir: "dist", noEmitOnError: true, rewriteRelativeImportExtensions: true },
       include: ["src", "test", "gen/*.ts", "gen/*.vibe"], vibe: { sidecarDir: ".vibe/declarations" },
@@ -1055,8 +1055,8 @@ export effect function independent() {
     assert.equal(read("vitest.config.ts", fresh), 'import vibelang from "vibelang-vite";\nimport { defineConfig } from "vitest/config";\n\nexport default defineConfig({ plugins: [vibelang()], test: { include: ["test/**/*.test.vibe"], passWithNoTests: true, testTimeout: 60_000 } });\n');
     assert.equal(read(".gitignore", fresh), "gen/\n.spec-cache/\n.studio/\ndist/\n.vibe/\n");
     assert.deepEqual(json(fresh, "package.json"), {
-      name: "fresh", type: "module", scripts, engines: { node: "^22.22.3 || >=24.11.1" },
-      dependencies: pinned(...runtime), devDependencies: pinned(...tooling), overrides: one, pnpm: { overrides: one },
+      name: "fresh", type: "module", packageManager: "pnpm@10.24.0", scripts, engines: { node: ">=26" },
+      dependencies: pinned(...runtime), devDependencies: pinned(...tooling), pnpm: { overrides: one },
     });
     assert.ok(Object.values({ ...json(fresh, "package.json").dependencies, ...json(fresh, "package.json").devDependencies }).every((version) => typeof version === "string" && !/^(catalog|workspace):/.test(version)));
     assert.deepEqual(init(fresh), []);
@@ -1067,10 +1067,10 @@ export effect function independent() {
     const kept = scratch({ "package.json": JSON.stringify(own), "tsconfig.json": "{}\n", "vitest.config.ts": "export default {};\n", ".gitignore": "dist/\n" });
     const added = init(kept);
     assert.deepEqual(added.filter((a) => /^(package\.json|tsconfig|vitest|\.gitignore)/.test(a)), [".gitignore", "package.json scripts: dev, check, gen, accept, test",
-      `package.json VibeLang toolchain: ${[...runtime, ...tooling].filter((n) => n !== "effect" && n !== "vitest").join(", ")} (run your package manager's install)`]);
+      `package.json VibeLang toolchain: ${[...runtime, ...tooling].filter((n) => n !== "effect" && n !== "vitest").join(", ")} (run your package manager's install)`, "package.json packageManager: pnpm@10.24.0"]);
     assert.deepEqual([read("tsconfig.json", kept), read("vitest.config.ts", kept), read(".gitignore", kept)], ["{}\n", "export default {};\n", "dist/\ngen/\n.spec-cache/\n.studio/\n.vibe/\n"]);
     assert.deepEqual(json(kept, "package.json"), {
-      ...own, scripts: { ...scripts, build: "mine" }, dependencies: { ...pinned(...runtime), effect: "mine" }, devDependencies: { ...pinned(...tooling), vitest: "mine" },
+      ...own, packageManager: "pnpm@10.24.0", scripts: { ...scripts, build: "mine" }, dependencies: { ...pinned(...runtime), effect: "mine" }, devDependencies: { ...pinned(...tooling), vitest: "mine" },
       pnpm: { overrides: { ...one, other: "mine" } },
     });
     assert.deepEqual(init(kept), []);
@@ -1464,10 +1464,8 @@ export effect function independent() {
     fs.symlinkSync(path.join(nodeModules, ".pnpm"), path.join(consumer, "node_modules/.pnpm"), "dir");
     for (const dependency of ["@informalsystems", "typescript"])
       fs.symlinkSync(path.join(nodeModules, dependency), path.join(consumer, "node_modules", dependency), "dir");
-    for (const command of ["quint", "tsc"]) {
-      const name = process.platform === "win32" ? `${command}.cmd` : command;
-      fs.symlinkSync(path.join(nodeModules, ".bin", name), path.join(binaries, name), "file");
-    }
+    const quint = process.platform === "win32" ? "quint.cmd" : "quint";
+    fs.symlinkSync(path.join(nodeModules, ".bin", quint), path.join(binaries, quint), "file");
     const lsc = path.join(nodeModules, "lemmascript/tools/dist/lsc.js");
     const shim = path.join(binaries, process.platform === "win32" ? "lsc.cmd" : "lsc");
     const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;

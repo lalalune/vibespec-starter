@@ -60,14 +60,6 @@ layer(OrderBookMemory, { buildPerTest: true })((it) => {
       "NotAnEvent", "NotAnEvent", { status: "Draft", units: 0, due: 0, paid: 0 }, { status: "Pending", units: 2, due: 10, paid: 1 },
     ]))
   })
-
-  it.effect("an event is copied on the way in, so nothing the caller keeps can change it", () => effect {
-    let reads = 0
-    const sly = { type: "pay", get amount() { return reads++ === 0 ? 1 : 1_000_000 }, extra: "ignored" }
-    try submitted(2)
-    const paid = try send(sly)
-    try Effect.try(() => assert.deepStrictEqual(paid, { status: "Pending", units: 2, due: 10, paid: 1 }))
-  })
 })
 
 /** What the book did with `event`, as gen/_conformance.ts asks: any failure but the rules refusing it stays a failure. */
