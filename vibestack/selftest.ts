@@ -1226,7 +1226,7 @@ export effect function filled(sku: string, qty: number) {
 
   test("a rebuilt packaged command can generate a project from the repository root", async () => {
     const root = oneRule("packaged", "A packaged value", "pure val answer = 42");
-    const copy = toolchain(scratch({ "package.json": read("package.json"), "tsconfig.build.json": read("tsconfig.build.json") }), "quint", "lsc", "vibelang");
+    const copy = toolchain(scratch({ "package.json": read("package.json"), "tsconfig.build.json": read("tsconfig.build.json"), "tsconfig.base.json": read("tsconfig.base.json") }), "quint", "lsc", "vibelang");
     // Studio's page is built from the workspace packages it shares with every interface.
     fs.cpSync(path.join(project, "packages"), path.join(copy, "packages"), { recursive: true, verbatimSymlinks: true });
     const built = await exec(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "build"], copy);
