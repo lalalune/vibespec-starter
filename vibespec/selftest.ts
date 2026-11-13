@@ -758,6 +758,67 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.deepEqual(fs.readdirSync(path.join(root, "gen")).filter((f) => f.endsWith(".ts")), ["order.ts"]);
   });
 
+  test("the studio opens the current project or a project path, and writes only to the selected project", async () => {
+    const script = path.join(project, "vibespec/spec.ts");
+    const root = scratch({
+      "package.json": '{"name":"my-project"}',
+      "spec/index.md": "",
+      "vibespec/examples/other/spec/index.md": "# Other project\n",
+    });
+    const externalParent = scratch({ "My Project/spec/index.md": "# My project\n" });
+    const external = path.join(externalParent, "My Project");
+    const cases = [
+      { cwd: root, args: [], selected: root, name: "my-project" },
+      ...["order", "dashboard", "assistant", "fullstack"].map((name) => ({
+        cwd: project, args: [`vibespec/examples/${name}`], selected: path.join(project, "vibespec/examples", name),
+        name: JSON.parse(fs.readFileSync(path.join(project, "vibespec/examples", name, "package.json"), "utf8")).name,
+      })),
+      { cwd: root, args: [external], selected: external, name: "My Project" },
+    ];
+    for (const { cwd, args, selected, name } of cases) {
+      const child = execFile(process.execPath, [script, "studio", ...args, "--port", "0"], { cwd });
+      const stopped = new Promise<void>((resolve) => child.once("close", () => resolve()));
+      let output = "";
+      let error = "";
+      child.stderr!.on("data", (chunk) => { error += chunk; });
+      try {
+        const url = await new Promise<string>((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error(`studio did not start: ${output}${error}`)), 10_000);
+          child.once("error", (e) => { clearTimeout(timer); reject(e); });
+          child.once("exit", (code) => { clearTimeout(timer); reject(new Error(`studio exited ${code}: ${error}`)); });
+          child.stdout!.on("data", (chunk) => {
+            output += chunk;
+            const address = output.match(/studio: (http:\/\/localhost:\d+)/)?.[1];
+            if (address) { clearTimeout(timer); resolve(address.replace("localhost", "127.0.0.1")); }
+          });
+        });
+        assert.deepEqual(await (await fetch(`${url}/api/projects`)).json(), { projects: [{ id: ".", name }], open: "." });
+        const opened = await (await fetch(`${url}/api/project`)).json();
+        assert.deepEqual(opened.project, { id: ".", name, root: selected });
+        assert.deepEqual(opened.specs.map((s: { file: string; text: string }) => [s.file, s.text]).sort(),
+          readSpecs(selected).filter((s) => s.file.startsWith("spec/")).map((s) => [s.file, fs.readFileSync(path.join(selected, s.file), "utf8")]).sort());
+        assert.equal((await fetch(`${url}/api/project?project=vibespec/examples/other`)).status, 404);
+        if (selected === external) {
+          const added = await fetch(`${url}/api/spec`, { method: "POST", headers: { "content-type": "application/json" }, body: '{"name":"billing"}' });
+          assert.equal(added.status, 200, await added.clone().text());
+          assert.ok(fs.existsSync(path.join(external, "spec/billing/index.md")));
+          assert.ok(!fs.existsSync(path.join(root, "spec/billing")));
+        }
+      } finally {
+        child.kill("SIGTERM");
+        await stopped;
+      }
+    }
+    const invalid = scratch({ "plain.txt": "not a project", "file-spec/spec": "not a directory" });
+    for (const target of ["missing", "plain.txt", ".", "file-spec"]) {
+      const result = spawnSync(process.execPath, [script, "studio", target, "--port", "0"], { cwd: invalid, encoding: "utf8", timeout: 10_000 });
+      assert.equal(result.status, 1, result.stderr);
+      assert.equal(result.stdout, "");
+      assert.match(result.stderr, /not a project directory|no spec\/ directory/);
+    }
+    assert.deepEqual(fs.readdirSync(invalid).sort(), ["file-spec", "plain.txt"]);
+  });
+
   test("the studio publishes a spec with its origins, checks it, and refuses remote or concurrent writes", async () => {
     const root = fixtures(["door"]);
     const studio = await startStudio({ projects: [{ id: ".", name: "Door", root }], port: 0, agents: {} });
@@ -799,11 +860,11 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       for (const response of concurrent) assert.equal(response.status, 400, await response.text());
       assert.ok(!fs.existsSync(path.join(root, "spec/parallel.md")));
       let current = await (await fetch(`${url}/api/project`)).json();
-      while (current.job?.status === "running") {
+      while (current.jobs.check?.status === "running") {
         await new Promise((resolve) => setTimeout(resolve, 50));
         current = await (await fetch(`${url}/api/project`)).json();
       }
-      assert.equal(current.job?.status, "failed");
+      assert.equal(current.jobs.check?.status, "failed");
       assert.equal(current.check?.next.includes("npm run accept"), true);
     } finally {
       await studio.close();

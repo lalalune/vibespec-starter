@@ -66,14 +66,6 @@ function specTexts(root: string): Record<string, string> {
   return Object.fromEntries(specFiles(root).map((file) => [file, fs.readFileSync(path.join(root, file), "utf8")]));
 }
 
-/** The projects under `repo`: the repository itself if it has specs, and each package in vibespec/examples/ that does. */
-export function projectsOf(repo: string): Project[] {
-  const examples = path.join(repo, "vibespec", "examples");
-  const found = fs.existsSync(examples) ? fs.readdirSync(examples).sort().filter((d) => fs.existsSync(path.join(examples, d, "spec"))) : [];
-  const name = (dir: string) => readJson<{ name?: string }>(path.join(dir, "package.json"))?.name ?? path.basename(dir);
-  return [{ id: ".", name: name(repo), root: repo }, ...found.map((d) => ({ id: `vibespec/examples/${d}`, name: d, root: path.join(examples, d) }))];
-}
-
 /** The command a person or agent runs in a project to check it: its own script if it can, else the tools of this repository. */
 function checkCommand(root: string): string {
   const scripts = readJson<{ scripts?: Record<string, string> }>(path.join(root, "package.json"))?.scripts ?? {};
@@ -387,17 +379,17 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
 }
 
 
-/** `spec studio [<example>] [--port <n>]`: serve the projects under `repo`, show the example if one is named, and open the page. */
+/** `spec studio [<project-path>] [--port <n>]`: open the selected project's spec tree. */
 export async function serve(repo: string, args: string[]) {
-  const projects = projectsOf(repo);
-  const example = args[0] === "--port" ? undefined : args[0];
   const at = args.indexOf("--port");
   const port = at < 0 ? undefined : Number(args[at + 1]);
   if (port !== undefined && !(Number.isInteger(port) && port >= 0 && port < 65536)) throw new Error(`--port ${args[at + 1]}: not a port`);
-  const open = example === undefined ? "." : projects.find((p) => p.id === `vibespec/examples/${example}`)?.id;
-  if (!open) throw new Error(`no example ${example}; there are: ${projects.slice(1).map((p) => p.name).join(", ") || "none"}`);
-  const studio = await startStudio({ projects, open, port });
-  const url = `${studio.url}/?project=${encodeURIComponent(open)}`;
+  const root = path.resolve(repo, args[0] === "--port" ? "." : args[0] ?? ".");
+  if (!fs.statSync(root, { throwIfNoEntry: false })?.isDirectory()) throw new Error(`${root}: not a project directory`);
+  if (!fs.statSync(path.join(root, "spec"), { throwIfNoEntry: false })?.isDirectory()) throw new Error(`${root}: no spec/ directory; run \`spec init\` in the project first`);
+  const name = readJson<{ name?: string }>(path.join(root, "package.json"))?.name ?? path.basename(root);
+  const studio = await startStudio({ projects: [{ id: ".", name, root }], port });
+  const url = `${studio.url}/?project=.`;
   console.log(`studio: ${url}`);
   if (process.stdout.isTTY) spawn(process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer" : "xdg-open", [url], { stdio: "ignore", detached: true }).on("error", () => {}).unref();
 }
