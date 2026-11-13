@@ -1,60 +1,150 @@
 {
   "$schema": "https://turborepo.dev/schema.json",
-  "globalDependencies": [".nvmrc", "pnpm-workspace.yaml", "tsconfig.json"],
-  "globalEnv": ["CI", "FUZZ_RUNS", "FUZZ_SEED"],
+  "globalDependencies": [
+    ".nvmrc",
+    "pnpm-workspace.yaml",
+    "tsconfig.json"
+  ],
+  "globalEnv": [
+    "CI",
+    "FUZZ_RUNS",
+    "FUZZ_SEED"
+  ],
   "tasks": {
     "build": {
-      "dependsOn": ["^build"],
-      "outputs": ["dist/**", "generated/**", "storybook-static/**"]
+      "dependsOn": [
+        "^build"
+      ],
+      "outputs": [
+        "dist/**",
+        "generated/**",
+        "storybook-static/**"
+      ]
     },
     "typecheck": {
-      "dependsOn": ["^build"],
-      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/vibestack/*.ts", "$TURBO_ROOT$/vibestack/gen/**"],
+      "dependsOn": [
+        "^build"
+      ],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/vibestack/*.ts",
+        "$TURBO_ROOT$/vibestack/gen/**"
+      ],
       "outputs": []
     },
     "test": {
-      "dependsOn": ["^build"],
-      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/vibestack/**", "!$TURBO_ROOT$/vibestack/examples/**"],
+      "dependsOn": [
+        "^build"
+      ],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/vibestack/**",
+        "!$TURBO_ROOT$/vibestack/examples/**"
+      ],
       "outputs": []
     },
     "test:browser": {
-      "dependsOn": ["^build"],
+      "dependsOn": [
+        "^build"
+      ],
       "outputs": []
     },
     "check": {
-      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/vibestack/**", "!$TURBO_ROOT$/vibestack/examples/**", "!$TURBO_ROOT$/vibestack/studio/**"],
-      "outputs": ["gen/**"]
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/vibestack/**",
+        "!$TURBO_ROOT$/vibestack/examples/**",
+        "!$TURBO_ROOT$/vibestack/studio/**"
+      ],
+      "outputs": [
+        "gen/**"
+      ]
     },
     "//#check": {
-      "inputs": ["spec/**", "src/**", "test/**", "vibestack/**", "!vibestack/examples/**", "!vibestack/studio/**", "package.json", "tsconfig.json"],
-      "outputs": ["gen/**"]
+      "inputs": [
+        "spec/**",
+        "src/**",
+        "test/**",
+        "vibestack/**",
+        "!vibestack/examples/**",
+        "!vibestack/studio/**",
+        "package.json",
+        "tsconfig.json"
+      ],
+      "outputs": [
+        "gen/**"
+      ]
     },
     "//#typecheck:tool": {
-      "inputs": ["vibestack/**", "!vibestack/examples/**", "gen/*.ts", "tsconfig.json", "package.json"],
+      "inputs": [
+        "vibestack/**",
+        "!vibestack/examples/**",
+        "gen/*.ts",
+        "tsconfig.json",
+        "package.json"
+      ],
       "outputs": []
     },
     "//#test:tool": {
-      "inputs": ["vibestack/**", "!vibestack/examples/**", "!vibestack/studio/**", "vitest.config.ts", "package.json"],
+      "inputs": [
+        "vibestack/**",
+        "!vibestack/examples/**",
+        "!vibestack/studio/**",
+        "vitest.config.ts",
+        "package.json"
+      ],
       "outputs": []
     },
     "//#build:tool": {
-      "inputs": ["vibestack/**", "!vibestack/examples/**", "tsconfig.build.json", "package.json"],
-      "outputs": ["dist/**"]
+      "inputs": [
+        "vibestack/**",
+        "!vibestack/examples/**",
+        "tsconfig.build.json",
+        "package.json"
+      ],
+      "outputs": [
+        "dist/**"
+      ]
     },
     "//#lint:js": {
-      "inputs": ["**/*.{ts,tsx,js,mjs}", "eslint.config.js", "package.json", "!vibestack/examples/**", "!**/gen/**", "!**/dist/**"],
-      "outputs": []
+      "inputs": [
+        "**/*.{ts,tsx,js,mjs}",
+        "eslint.config.js",
+        "package.json",
+        "!vibestack/examples/**",
+        "!**/gen/**",
+        "!**/dist/**"
+      ],
+      "outputs": [],
+      "dependsOn": [
+        "@repo/design-system#build"
+      ]
     },
     "//#lint:css": {
-      "inputs": ["**/*.css", "stylelint.config.js", "package.json", "!**/gen/**", "!**/dist/**"],
+      "inputs": [
+        "**/*.css",
+        "stylelint.config.js",
+        "package.json",
+        "!**/gen/**",
+        "!**/dist/**"
+      ],
       "outputs": []
     },
     "//#analyze": {
-      "inputs": ["**/*.{ts,tsx,js,mjs,json}", "knip.json", "!vibestack/examples/**", "!**/gen/**", "!**/dist/**"],
+      "inputs": [
+        "**/*.{ts,tsx,js,mjs,json}",
+        "knip.json",
+        "!vibestack/examples/**",
+        "!**/gen/**",
+        "!**/dist/**"
+      ],
       "outputs": []
     },
     "//#examples": {
-      "inputs": ["vibestack/**", "package.json"],
+      "inputs": [
+        "vibestack/**",
+        "package.json"
+      ],
       "outputs": []
     },
     "dev": {

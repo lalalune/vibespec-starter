@@ -29,7 +29,7 @@ Every project built here uses this, and nothing beside it:
 | For | Use | Never |
 |---|---|---|
 | Runtime | Node 26 | an older Node |
-| Packages | pnpm workspaces, pinned by `packageManager`; `pnpm -r` and `--filter` run tasks across packages | npm, yarn, bun; a task runner such as Turborepo, unless pnpm has been measured and cannot do the job |
+| Packages | pnpm workspaces, pinned by `packageManager`; Turborepo runs and caches tasks across them ([The monorepo](#the-monorepo)) | npm, yarn, bun; a second task runner |
 | Rules and state | the spec, and the code `gen/` derives from it | a second model of the same state |
 | Shell: effects, services, I/O, async | [VibeLang](#the-vibelang-shell) (`.vibe`) on Effect 4 | plain TypeScript for effectful code; Redux, Zustand or another state library |
 | User interface | React, in `.tsx`, built with Vite | Vue, Svelte, Angular, hand-built DOM |
@@ -42,6 +42,38 @@ Every project built here uses this, and nothing beside it:
   and extend it; add one only when none fits.
 - **TypeScript stays** for `gen/`, for verified `//@` logic
   ("Hand-written verified logic"), for React components and for the tools.
+
+## The monorepo
+
+| Path | Holds |
+|---|---|
+| `apps/` | deployable applications |
+| `packages/` | what applications share: `@repo/ui` (components), `@repo/design-system` (tokens) |
+| `vibestack/` | the tools: the `spec` command, Studio, and what any project uses but does not own (`vibestack/testing`, `vibestack/design`, `vibestack/stories`) |
+| `vibestack/examples/` | standalone projects, each with its own install; never part of the workspace |
+
+A package states what it offers in `exports`; import a package by name, never
+by a path into its `src/`. Domain code does not import React, and a UI package
+holds no business rules. A shared type lives with the contract that owns it.
+
+| Command | Does |
+|---|---|
+| `pnpm dev` | Studio |
+| `pnpm quick` | the fast local check: types, lint and tests of what changed since the base branch |
+| `pnpm verify` | everything CI runs for `main`: build, types, lint, tests, browser tests, every `check`, Knip, Madge, the examples |
+| `pnpm build`, `pnpm typecheck`, `pnpm test`, `pnpm test:affected`, `pnpm test:browser` | one kind of task in every package |
+| `pnpm test:models` | `check` in every package with a `spec/`, and in the examples |
+| `pnpm lint`, `pnpm lint:css` | ESLint; Stylelint |
+| `pnpm analyze` | Knip (unused files, exports, dependencies) and Madge (import cycles) |
+| `pnpm check` | this package's own `check`, as everywhere else in this file |
+
+Turborepo (`turbo.json`) orders these and caches each by its inputs, the lock
+file and the Node version; `spec` keeps its own finer cache in `.spec-cache/`.
+A package joins by having a script named `build`, `typecheck`, `test`,
+`test:browser` or `check`. Pull requests go to `develop` and run what they
+affect; `develop` to `main` runs `pnpm verify`
+(`.github/workflows/ci.yml`), and `fuzz.yml` runs the property tests nightly
+with a larger budget and a new seed.
 
 ## Hard rules
 
@@ -142,7 +174,7 @@ How `pnpm check` runs them:
   brings its tests up for review.
 - **Monorepos.** Each package with a `spec/` runs its own `check` and its own
   tests; run them all from the root with the workspace tool
-  (`pnpm -r --if-present check`; one package with `pnpm --filter <name> check`).
+  (`pnpm test:models`; one package with `pnpm --filter <name> check`).
   A journey that crosses packages is tested in the package that owns it,
   usually the app.
 

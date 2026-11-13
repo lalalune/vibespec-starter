@@ -103,6 +103,9 @@
     "./testing": "./vibestack/testing/index.ts",
     "./testing/vitest": "./vibestack/testing/vitest.ts",
     "./testing/generate": "./vibestack/testing/generate.ts",
+    "./stories": "./vibestack/stories/meta.ts",
+    "./stories/storybook": "./vibestack/stories/storybook.ts",
+    "./design/eslint": "./vibestack/design/eslint.ts",
     "./package.json": "./package.json"
   }
 }
