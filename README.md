@@ -93,8 +93,8 @@ npm run demo
 ```
 
 `npm install` builds the `spec` command and generates `gen/` when every spec
-is valid. `npm run check` checks the current project and ends with a `next:` line.
-Run `npm run check --workspaces --if-present` to check every example.
+is valid. `npm run check` checks the template and every example workspace,
+ending each project with a `next:` line.
 `npm run demo` generates and runs `vibespec/examples/order`, driving the verified checkout
 through a scripted session; every `✗` is a rule refusing an event:
 
@@ -116,7 +116,8 @@ use it for a new project, finish this cleanup before feature work:
 
 1. **Remove the examples.** Delete `vibespec/examples/`, including the order
    example. Remove their workspace entries, npm scripts and CI steps, such
-   as `demo` and `check:dashboard`, and replace the package metadata and
+   as `demo` and `check:dashboard`. Set `check` to `node vibespec/spec.ts check`
+   after removing the workspaces, and replace the package metadata and
    repository links with the new project's.
 2. **Keep the toolchain guide with the toolchain.** Move this README to
    `vibespec/README.md` (the toolchain directory formerly called `tools/`).
