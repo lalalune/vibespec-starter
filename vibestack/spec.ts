@@ -499,7 +499,7 @@ export function init(root: string, warn: (message: string) => void = (message) =
     fs.writeFileSync(path.join(root, file), content());
     done.push(file);
   };
-  for (const name of ["sync", "design"]) {
+  for (const name of ["sync", "design", "shell", "prove"]) {
     const source = `.claude/skills/${name}`;
     add(`${source}/SKILL.md`, () => fs.readFileSync(path.join(pkg, source, "SKILL.md"), "utf8"));
     const link = path.join(root, `.agents/skills/${name}`);
@@ -650,7 +650,7 @@ export function newSpec(root: string, name = ""): string {
 
 // --- CLI -----------------------------------------------------------------------------
 
-/** Run as a command, not imported? `import.meta.main` says so from Node 24.2; before that, compare the paths. */
+/** Older runtimes still reach the CLI's unsupported-Node diagnostic. */
 const isMain = (): boolean => {
   if (typeof import.meta.main === "boolean") return import.meta.main;
   try {
@@ -663,7 +663,7 @@ const isMain = (): boolean => {
 const USAGE = "usage: spec check [<directory>] [--json] | watch [<directory>] | gen [<directory>] [--if-valid] | accept [<directory>] [unproved] | new [<path>] | init [<directory>] | migrate [<directory>] | studio [<directory>] [--port <n>] | tests [<directory>] | stories gen [--watch] [--check] | tokens build|check|apply";
 
 /**
- * Check, then check again whenever spec/, tsconfig.json, or src/ or test/ of the root or of an owner changes. One process stays warm between runs
+ * Check, then check again whenever spec/, package.json, tsconfig.json, or src/ or test/ of the root or of an owner changes. One process stays warm between runs
  * (the compiler, the toolchain's fingerprint and the cache are already loaded), edits that arrive during a run start
  * one more run after it, and what is unchanged comes from the cache as in any check.
  */
@@ -681,7 +681,7 @@ async function watch(root: string) {
       attach(); // a package that came to own part of the spec tree is watched from the next run
       try {
         const { next } = await check(root, false, (r) => console.log(show(r)));
-        console.log(`\nnext: ${next}\n(${((Date.now() - started) / 1000).toFixed(1)}s; watching spec/, src/ and test/, here and in the packages the spec names, and tsconfig.json; Ctrl-C to stop)`);
+        console.log(`\nnext: ${next}\n(${((Date.now() - started) / 1000).toFixed(1)}s; watching spec/, src/ and test/, here and in the packages the spec names, and package.json and tsconfig.json; Ctrl-C to stop)`);
       } catch (e) {
         console.error((e as Error).message);
       }
@@ -698,25 +698,32 @@ async function watch(root: string) {
   const watched = new Map<string, { watcher: fs.FSWatcher; ino: number }>();
   const inode = (dir: string) => { try { return fs.statSync(path.join(root, dir)).ino; } catch { return undefined; } };
   const attach = () => {
-    const dirs = ["spec", ...codeDirs(root).flatMap((dir) => [`${dir}src`, `${dir}test`])];
-    for (const dir of new Set([...dirs, ...watched.keys()])) {
-      const ino = dirs.includes(dir) ? inode(dir) : undefined;
+    let areas: string[] = [];
+    try { areas = fs.readdirSync(path.join(root, "spec"), { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name); } catch { /* the root watcher observes a replacement spec directory */ }
+    const packages = ["apps", "packages"].flatMap((dir) => [dir, ...areas.map((area) => `${dir}/${area}`)]);
+    const dirs = new Map([["spec", true], ...packages.map((dir): [string, boolean] => [dir, false]),
+      ...codeDirs(root).flatMap((dir): [string, boolean][] => [[dir || ".", false], [`${dir}src`, true], [`${dir}test`, true]])]);
+    for (const dir of new Set([...dirs.keys(), ...watched.keys()])) {
+      const ino = dirs.has(dir) ? inode(dir) : undefined;
       const had = watched.get(dir);
       if (had && had.ino === ino) continue;
       if (had) { had.watcher.close(); watched.delete(dir); }
       if (ino === undefined) continue;
       try {
-        const watcher = fs.watch(path.join(root, dir), { recursive: true }, (_, file) => changed(file));
+        const watcher = fs.watch(path.join(root, dir), { recursive: dirs.get(dir) }, (_, file) => {
+          if (dirs.get(dir)) changed(file);
+          else if (dir === "apps" || dir === "packages") {
+            const child = file && `${dir}/${file}`;
+            if (child && inode(child) !== watched.get(child)?.ino) { attach(); changed(); }
+          } else if (file === "apps" || file === "packages" || file === "spec" || file === "src" || file === "test") { attach(); changed(); }
+          else if (file === "package.json" || file === "tsconfig.json") changed(file);
+        });
         watcher.on("error", () => { watcher.close(); if (watched.get(dir)?.watcher === watcher) watched.delete(dir); });
         watched.set(dir, { watcher, ino });
       } catch { /* the directory was removed while attaching; its next parent event retries */ }
     }
   };
   attach();
-  fs.watch(root, (_, file) => {
-    if (file === "spec" || file === "src" || file === "test") { attach(); changed(); }
-    else if (file === "tsconfig.json") changed();
-  });
   await once();
 }
 
@@ -725,7 +732,7 @@ if (isMain()) {
   const [command, ...args] = process.argv.slice(2);
   const takes = (...allowed: string[][]) => allowed.some((a) => a.length === args.length && a.every((x, i) => x === "*" || x === args[i]));
   try {
-    if (Number(process.versions.node.split(".")[0]) < 24) throw new Error(`spec needs Node 24 or later; this is Node ${process.versions.node}`);
+    if (Number(process.versions.node.split(".")[0]) < 26) throw new Error(`spec needs Node 26 or later; this is Node ${process.versions.node}`);
     const options: Record<string, string[]> = { check: ["--json"], gen: ["--if-valid"], accept: ["unproved"], watch: [], init: [], migrate: [] };
     if (Object.hasOwn(options, command)) {
       const directories = args.filter((arg) => !options[command].includes(arg));
@@ -736,15 +743,24 @@ if (isMain()) {
     }
     if (command === "gen" && takes([], ["--if-valid"])) {
       // --if-valid is for `pnpm install`: a spec in the middle of an edit must not make installing fail.
+      const release = lockProject(root);
       try {
         const specs = readSpecs(root);
         const typed = typecheckAll({ root, fresh: false, used: new Set() }, specs);
+        const inputs = await allDone(specs.map((s) => typed.get(s.name)!));
+        fs.rmSync(path.join(root, "gen"), { recursive: true, force: true });
+        fs.mkdirSync(path.join(root, "gen"), { recursive: true });
         const models = new Map<string, Model>();
-        for (const s of specs) generated(root, s, await typed.get(s.name)!, models);
+        for (const [i, s] of specs.entries()) {
+          fs.writeFileSync(path.join(root, "gen", `${s.name}.qnt`), s.qnt);
+          generated(root, s, inputs[i], models);
+        }
         mirrorGen(root, specs);
       } catch (e) {
         if (!args.length) throw e;
         console.log(`note: gen/ was not generated, because a spec is not valid yet (${(e as Error).message.split("\n")[0]}); \`pnpm check\` says why`);
+      } finally {
+        release();
       }
     } else if ((command === "check" && takes([], ["--json"])) || (command === "accept" && takes([], ["unproved"]))) {
       const json = args[0] === "--json";

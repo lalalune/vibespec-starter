@@ -38,6 +38,8 @@ export function effectAdapter(name: string, source: string, text: string, namesp
     return `${doc(f)}\n  export function ${f.name!.text}(${params}): ${f.type!.getText(file)} { return M.${f.name!.text}(${f.parameters.map((p) => p.name.getText(file)).join(", ")}) }`;
   };
   const names = [...consts.map((c) => c.name), ...funs.map((f) => f.name!.text)];
+  const snapshot = `snapshot_${name}`;
+  const step = funs.find((f) => f.name!.text === "step");
   const body = names.length ? [
     `module pure {`,
     `  import * as M from "./${name}.ts"`,
@@ -45,18 +47,19 @@ export function effectAdapter(name: string, source: string, text: string, namesp
     ...foreign,
     ...consts.map((c) => c.line),
     ...funs.map(wrapper),
+    ...(step ? [`  /** A Machine never shares its held state with callers. @throws {never} */`,
+      `  export function ${snapshot}<A>(value: A): A { return structuredClone(value) }`] : []),
     `}`,
-    `import { ${names.join(", ")} } from pure`,
+    `import { ${[...names, ...step ? [snapshot] : []].join(", ")} } from pure`,
     `export { ${names.join(", ")} }`,
   ] : [];
   const out = [
     `// GENERATED from ${source} by vibestack/spec.ts. Do not edit: change the spec and run \`pnpm gen\`.`,
-    `// gen/${name}.ts for Effect code: its definitions as functions that throw nothing${funs.some((f) => f.name!.text === "step") ? ", and its state machine as typed failures and a service" : ""}.`,
+    `// gen/${name}.ts for Effect code: its definitions as functions that throw nothing${step ? ", and its state machine as typed failures and a service" : ""}.`,
     `export type * from "./${name}.ts"`,
     ``,
     ...body,
   ];
-  const step = funs.find((f) => f.name!.text === "step");
   if (!step) return [...out, ``].join("\n");
 
   const clash = OWN.find((n) => names.includes(n) || types.includes(n));
@@ -126,16 +129,17 @@ export function effectAdapter(name: string, source: string, text: string, namesp
     `/** A Machine in memory, from \`initial\` or a state \`decodeState\` returned. */`,
     `export function machine(start: ${state} = initial) {`,
     `  return Layer.effect(Machine, effect {`,
-    `    const held = try SubscriptionRef.make(start)`,
+    `    const held = try SubscriptionRef.make(${snapshot}(start))`,
     `    effect function send(event: T.Event${by}): ${stepped}!Rejected {`,
+    `      const input = ${snapshot}({ event${passed} })`,
     `      return try SubscriptionRef.modifyEffect(held, effect (current) => {`,
-    `        const next = try apply(current, event${passed})`,
-    `        return [next, ${emits ? "next.state" : "next"}] as const`,
+    `        const next = try apply(${snapshot}(current), input.event${sender ? ", input.by" : ""})`,
+    `        return [${snapshot}(next), ${emits ? "next.state" : "next"}] as const`,
     `      })`,
     `    }`,
     `    return {`,
-    `      changes: SubscriptionRef.changes(held),`,
-    `      get: () => SubscriptionRef.get(held),`,
+    `      changes: Stream.map(SubscriptionRef.changes(held), ${snapshot}),`,
+    `      effect get() { return ${snapshot}(try SubscriptionRef.get(held)) },`,
     `      send,`,
     `      effect receive(input: unknown${by}) { return try send(try decodeEvent(input)${passed}) }`,
     `    }`,

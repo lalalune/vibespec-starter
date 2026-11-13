@@ -25,7 +25,6 @@ import todo.* from "./todo"
 
 type MsgKind = Request | Forged | Ack | Refusal | Push
 type Msg = { kind: MsgKind, client: str, seq: int, op: Op, version: int, todos: List[Todo] }
-type Cut = { out: List[Msg], k: int }
 ```
 
 ### The system holds the server, clients a and b, the messages in flight, and the history of the list
@@ -72,9 +71,7 @@ pure def isClient(who: str): bool = who == "a" or who == "b"
 pure val noOp: Op = { kind: "create", id: "", title: "", done: false }
 pure val noMsg: Msg = { kind: Push, client: "", seq: 0, op: noOp, version: -1, todos: List() }
 pure def msgAt(net: List[Msg], i: int): Msg = if (i >= 0 and i < net.length()) net.nth(i) else noMsg
-pure val uncut: Cut = { out: List(), k: 0 }
-pure def dropAt(net: List[Msg], i: int): List[Msg] =
-  net.foldl(uncut, (acc, m) => { out: if (acc.k == i) acc.out else acc.out.append(m), k: acc.k + 1 }).out
+pure def dropAt(net: List[Msg], i: int): List[Msg] = net.removeAt(i)
 
 pure def isRequest(m: Msg): bool = m.kind == Request or m.kind == Forged
 pure def oldest(c: C::Client): C::Pending =

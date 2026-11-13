@@ -22,10 +22,14 @@ with the reason.
 | `sometimes` | each `sometimes` goal is reached, and each event happens in some simulated state | the model is invalid, or simulation stopped at an `always` failure |
 | `replay` | the generated TypeScript agrees with Quint on the simulated traces | as `sometimes` |
 | `types` | the `vibelang` compiler checks `src/`, the tests and `gen/` ([shell skill](.claude/skills/shell/SKILL.md)) | a stage above failed; without a `tsconfig.json` it passes as skipped only when there is no `src/` or `test/` |
-| `proof` | Dafny proves each unit's obligations, or `spec/lock.json` records them as simulated only | a stage above failed |
-| `tests` | the package's [tests](AGENTS.md#tests) pass, and their citations name a story or rule the spec has | a stage above failed |
-| `traces` | recorded traces and `driver:` programs agree with the spec ([Conformance](#conformance)) | a stage above failed |
+| `proof` | Dafny proves each unit's obligations, or `spec/lock.json` records them as simulated only | model, simulation or replay failed |
+| `tests` | the package's [tests](AGENTS.md#tests) pass, and their citations name a story or rule the spec has | model, simulation or replay failed |
+| `traces` | recorded traces and `driver:` programs agree with the spec ([Conformance](#conformance)) | model, simulation or replay failed |
 | `review` | every story, rule and contract changed since `spec/lock.json` was accepted ([Review](#review)) | never |
+
+Types and proofs run concurrently. Tests and traces still report their own
+results when types or proofs fail; a green result there does not clear the
+failed stage.
 
 ## Writing a spec
 

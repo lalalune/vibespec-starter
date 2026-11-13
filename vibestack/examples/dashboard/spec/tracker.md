@@ -56,6 +56,8 @@ pure def today(at: int): int = at / ticksPerDay
 
 Four task numbers, the three team members and one misspelling, and a few
 small spreadsheets that between them show every kind of problem.
+Clock and notifier steps are sampled more often so a quiet period can pass
+before another edit resets it.
 
 ```quint
 pure val idValues = Set(1, 2, 3, 4)
@@ -63,6 +65,8 @@ pure val otherValues = idValues
 pure val ownerValues = Set("ana", "ben", "cal", "ama")
 pure val actorValues = ownerValues
 pure val nameValues = ownerValues
+pure val weight_tick = 5
+pure val weight_notify = 5
 
 pure val sValues =
   val blank = {

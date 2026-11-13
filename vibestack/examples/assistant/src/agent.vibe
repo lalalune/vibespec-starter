@@ -15,7 +15,8 @@ export service Model {
 export service World {
   bill(request: number): number!NoAnswer
   page(): T.Page!!
-  perform(carried: T.Effect): void!!
+  /** Apply each delivery number once for this assistant; a retry returns the previous success. */
+  perform(delivery: number, carried: T.Effect): void!NoAnswer
 }
 
 export type Said = "begin" | "confirm" | "decline"
@@ -25,6 +26,21 @@ export type Refusal = Rejected | NotAnEvent | NoAnswer
 export interface Turn {
   readonly state: T.Assistant
   readonly refused: ReadonlyArray<Refusal>
+}
+
+/** Finish the saved effects, oldest first, keeping each delivery number until the world confirms it. */
+export effect function deliver(): void!NoAnswer!(Machine | World) {
+  const machine = try Machine
+  const world = try World
+  while (true) {
+    const state = try machine.get()
+    const carried = state.pending[0]
+    if (carried === undefined) return
+    const delivery = state.delivered + 1
+    try world.perform(delivery, carried)
+    // Another delivery worker may already have acknowledged this same id.
+    machine.send({ type: "acknowledge", delivery }, "World") catch () => undefined
+  }
 }
 
 /** Offers the rules the page showing now and, for a request still waiting, the biller's answer. */
@@ -45,31 +61,31 @@ export effect function remember(card: T.SecretCard): void!Rejected!Machine {
 }
 
 /**
- * What the person said, then the agent's actions until the turn ends or asks the person. It fails with `Rejected`
- * when the rules refuse what the person said.
+ * What the person said, then the agent's actions until the turn ends or asks the person. `Rejected` refuses what
+ * the person said; `NoAnswer` leaves an unconfirmed delivery queued for the next attempt.
  */
-export effect function hear(said: Said): Turn!Rejected!(Machine | Model | World) {
+export effect function hear(said: Said): Turn!(Rejected | NoAnswer)!(Machine | Model | World) {
   const machine = try Machine
   const model = try Model
-  const world = try World
   const refused: Refusal[] = []
+  try deliver()
   try observe()
-  const heard = try machine.send({ type: said }, "Person")
+  try machine.send({ type: said }, "Person")
   // spec/assistant.md, "What the program carries out": a confirmation submits the payment.
-  for (const carried of heard.out) try world.perform(carried)
-  let state = heard.state
+  try deliver()
+  let state = try machine.get()
   // spec/assistant.md, "Every choice spends the budget": each pass makes one choice, so there are at most `maxActions`.
   while (state.phase === "Planning") {
     // The model's answer can only become the Agent's choice. Any other answer finishes the turn, which
     // spec/assistant.md, "A turn's budget stays within bounds, and a turn being planned has some left" allows.
-    const chosen = effect {
-      return try machine.receive({ type: "choose", choice: try model.choose(seen(state)) }, "Agent")
+    state = effect {
+      return (try machine.receive({ type: "choose", choice: try model.choose(seen(state)) }, "Agent")).state
     } catch effect (error) => {
       refused.push(error)
-      return try machine.send({ type: "choose", choice: "Finish" }, "Agent")
+      return (try machine.send({ type: "choose", choice: "Finish" }, "Agent")).state
     }
     // spec/assistant.md, "What the program carries out": what this choice returned beside the state.
-    for (const carried of chosen.out) try world.perform(carried)
+    try deliver()
     state = try observe()
   }
   return { state, refused }

@@ -52,12 +52,14 @@ type Effect = Said({ text: str }) | Filled({ page: Page, card: SecretCard }) | S
 ### The assistant
 
 What is saved survives a restart: the card, the bill, what was charged, the
-last request and the one last answered. The rest is in memory.
+last request and the one last answered, queued effects and the last delivery
+number. The turn and the browser page are in memory.
 
 ```quint
 type Assistant = {
   phase: Phase, budget: int, page: Page, waiting: bool,
   card: SecretCard, bill: Bill, charged: int, request: int, answered: int,
+  pending: List[Effect], delivered: int,
 }
 
 type Chosen = { state: Assistant, out: List[Effect] }
@@ -65,6 +67,7 @@ type Chosen = { state: Assistant, out: List[Effect] }
 pure val initial: Assistant = {
   phase: Idle, budget: 0, page: Unknown, waiting: false,
   card: "", bill: { amount: 0, reviewed: false, paid: false }, charged: 0, request: 0, answered: 0,
+  pending: List(), delivered: 0,
 }
 ```
 
@@ -90,15 +93,19 @@ pure def begin(s: Assistant, by: Actor): Assistant =
 ### The model chooses each action, and each costs one from the turn
 
 Looking the bill up sends a new request. Reviewing checks an amount that has
-arrived. Filling types the saved card, and only into the biller's own page.
+arrived. Filling queues the saved card to be typed, and only into the biller's
+own page.
 Paying asks the person, once the bill is reviewed and not yet paid. Speaking
-says whether the bill is paid yet. A choice that cannot be carried out still
-costs one. The turn ends when the model finishes, or when the budget runs out
+queues a message saying whether the bill is paid yet. A choice that cannot be
+carried out still costs one. The turn ends when the model finishes, or when the budget runs out
 while planning; a choice that asks the person waits for their answer first.
 
 ```quint
 pure def canChoose(s: Assistant, choice: Choice, by: Actor): bool =
   by == Agent and s.phase == Planning and s.budget > 0
+
+pure def queued(out: List[Effect], s: Assistant): Assistant =
+  { ...s, pending: s.pending.concat(out) }
 
 pure def choose(s: Assistant, choice: Choice, by: Actor): Chosen =
   val t = { ...s, budget: s.budget - 1 }
@@ -108,13 +115,11 @@ pure def choose(s: Assistant, choice: Choice, by: Actor): Chosen =
     else if (choice == Pay) (if (t.bill.reviewed and not(t.bill.paid)) { ...t, phase: Asking } else t)
     else if (choice == Finish) { ...t, phase: Done }
     else t
-  {
-    state: if (chosen.phase == Planning and chosen.budget == 0) { ...chosen, phase: Done } else chosen,
-    out:
-      if (choice == Fill and t.page == Genuine) List(Filled({ page: t.page, card: t.card }))
+  val out = if (choice == Fill and t.page == Genuine) List(Filled({ page: t.page, card: t.card }))
       else if (choice == Speak) List(Said({ text: if (t.bill.paid) "paid" else "working" }))
-      else List(),
-  }
+      else List()
+  val finished = if (chosen.phase == Planning and chosen.budget == 0) { ...chosen, phase: Done } else chosen
+  { state: queued(out, finished), out: out }
 ```
 
 ### A turn's budget stays within bounds, and a turn being planned has some left
@@ -210,17 +215,16 @@ pure def load(s: Assistant, page: Page, by: Actor): Assistant = { ...s, page: pa
 ### Only the person confirms a payment, and only while asked
 
 The person can confirm only on the biller's own page, for a reviewed bill not
-yet paid. Confirming submits the bill's amount on that page. The turn then goes
-back to planning, or ends if no budget is left.
+yet paid. Confirming queues submission of the bill's amount on that page. The
+turn then goes back to planning, or ends if no budget is left.
 
 ```quint
 pure def canConfirm(s: Assistant, by: Actor): bool =
   by == Person and s.phase == Asking and s.page == Genuine and s.bill.reviewed and not(s.bill.paid)
 
-pure def confirm(s: Assistant, by: Actor): Chosen = {
-  state: { ...s, phase: if (s.budget > 0) Planning else Done, bill: { ...s.bill, paid: true }, charged: s.charged + 1 },
-  out: List(Submitted({ page: s.page, amount: s.bill.amount })),
-}
+pure def confirm(s: Assistant, by: Actor): Chosen =
+  val out = List(Submitted({ page: s.page, amount: s.bill.amount }))
+  { state: queued(out, { ...s, phase: if (s.budget > 0) Planning else Done, bill: { ...s.bill, paid: true }, charged: s.charged + 1 }), out: out }
 ```
 
 ### Only the person declines a payment
@@ -294,7 +298,7 @@ pure def sometimesPaid(s: Assistant): bool = s.bill.paid
 
 ### Only the person saves a card
 
-The card typed into the biller's page is the one the person saved last.
+The card queued for the page is the one saved when filling was chosen.
 
 ```quint
 pure def canSaveCard(s: Assistant, by: Actor): bool = by == Person
@@ -381,4 +385,65 @@ pure def stepRequestNeverGoesBack(before: Assistant, via: str, after: Assistant)
 
 ```quint
 pure def sometimesRestartedAfterPaying(s: Assistant): bool = s.phase == Idle and s.bill.paid
+```
+
+## Story: Deliver promised effects after a restart
+
+> As a person, I want a promised payment or other action kept until the
+> outside service confirms it, so a crash cannot silently lose it.
+
+### Every emitted effect stays queued until the world acknowledges its delivery number
+
+Effects are delivered oldest first. The next delivery number is one more
+than `delivered`; it stays the same across retries and restarts. The outside
+service must apply each delivery number at most once within this assistant's
+account, and return success when that number was already applied.
+
+```quint
+pure val deliveryValues = Set(1, 2, 3)
+
+pure def canAcknowledge(s: Assistant, delivery: int, by: Actor): bool =
+  by == World and s.pending.length() > 0 and delivery == s.delivered + 1
+
+pure def acknowledge(s: Assistant, delivery: int, by: Actor): Assistant =
+  { ...s, pending: s.pending.removeAt(0), delivered: s.delivered + 1 }
+
+pure def stepEffectsStayQueued(before: Assistant, via: str, after: Assistant, out: List[Effect]): bool =
+  if (via == "acknowledge")
+    before.pending.length() > 0 and after.pending == before.pending.tail()
+      and after.delivered == before.delivered + 1 and out.length() == 0
+  else after.pending == before.pending.concat(out) and after.delivered == before.delivered
+```
+
+### The number of acknowledged effects is never negative
+
+```quint
+pure def alwaysDeliveryCountIsNotNegative(s: Assistant): bool = s.delivered >= 0
+```
+
+### Queued effects are actions the assistant may promise
+
+A queued message says only "paid" or "working". A queued card fill names the
+biller's own page. A queued payment names that page and the paid bill's
+positive amount, and at most one payment can be waiting for delivery.
+
+```quint
+pure def alwaysQueuedEffectsValid(s: Assistant): bool =
+  submissions(s.pending) <= s.charged and s.pending.every(e => match e {
+    | Said(t) => t.text == "paid" or t.text == "working"
+    | Filled(f) => f.page == Genuine
+    | Submitted(p) => p.page == Genuine and s.bill.paid and p.amount == s.bill.amount and p.amount > 0
+  })
+```
+
+### An effect can await delivery
+
+```quint
+pure def sometimesDeliveryPending(s: Assistant): bool = s.pending.length() > 0
+```
+
+### An effect can be acknowledged
+
+```quint
+pure def sometimesDelivered(s: Assistant): bool = s.delivered >= 1
 ```

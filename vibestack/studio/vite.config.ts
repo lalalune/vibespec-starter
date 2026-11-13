@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
+import vibelang from "vibelang-vite";
 import { defineConfig, type Plugin } from "vite";
 import { themeCss, tokensCss } from "../design/generate.ts";
 import { parseTokens } from "../design/tokens.ts";
@@ -25,7 +26,7 @@ const theme = (): Plugin => ({
 export default defineConfig({
   root: path.join(here, "src/page"),
   base: "./",
-  plugins: [theme(), react(), tailwindcss()],
+  plugins: [theme(), vibelang(), react(), tailwindcss()],
   build: { outDir: path.join(here, "dist/page"), emptyOutDir: true },
   logLevel: "warn",
 });

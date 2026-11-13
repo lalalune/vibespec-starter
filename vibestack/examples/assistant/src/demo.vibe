@@ -30,7 +30,7 @@ effect function say(said: Said) {
 }
 
 effect function main() {
-  const scene: Scene = { page: "Genuine", bills: [5], done: [] }
+  const scene: Scene = { page: "Genuine", bills: [5], done: [], receipts: new Set() }
   provide machine(), scriptedWorld(scene), scriptedModel(["Lookup", "Review", "Fill", "Pay", "Speak", "Recite"]) {
     try remember("4242 4242 4242 4242")
     for (const said of ["confirm", "begin", "confirm", "begin"] as const) try say(said)

@@ -10,6 +10,21 @@ The spec format, naming rules and everything the tools accept are in
 [SPEC.md](SPEC.md); what a task needs beyond it is in
 [Where the rest is](#where-the-rest-is).
 
+## Loading skills
+
+The canonical skills are in `.claude/skills/`: `sync`, `shell`, `prove` and
+`design`. Claude Code discovers them there; Codex discovers the same files
+through the relative links in `.agents/skills/`. Edit the canonical files,
+and give each new skill a matching link so both clients see it.
+
+A skill's name and description are only its discovery metadata. Before
+the work listed in [Where the rest is](#where-the-rest-is), read the matching
+`SKILL.md` in full and follow its relevant linked references. In ChatGPT or
+another client without repository skill discovery, open those files
+explicitly. Resolve repository paths from the repository root and a skill's
+relative links from its own directory. If the client cannot read repository
+files, ask for the relevant instructions before doing that work.
+
 ## Who does what
 
 `pnpm check` detects; you translate: story → rules, rule → Quint, changed
@@ -18,8 +33,8 @@ needs no other program or account.
 
 **Whenever `spec/` or `src/` has changed, follow
 [.claude/skills/sync/SKILL.md](.claude/skills/sync/SKILL.md)**: the loop, what
-each failure asks of you, and what to report. Claude Code loads it as the
-`sync` skill; other agents read the file.
+each failure asks of you, and what to report. Read the skill before following
+its loop.
 
 The user signs off with `pnpm accept`.
 
@@ -30,7 +45,7 @@ Every project built here uses this, and nothing beside it:
 | For | Use | Never |
 |---|---|---|
 | Runtime | Node 26 | an older Node |
-| Packages | pnpm workspaces, pinned by `packageManager`; Turborepo runs and caches tasks across them ([CONTRIBUTING.md](CONTRIBUTING.md#the-monorepo)) | npm, yarn, bun; a second task runner |
+| Packages | pnpm workspaces, pinned by `packageManager`; Turborepo runs and caches tasks across them ([SPEC.md](SPEC.md#one-spec-tree)) | npm, yarn, bun; a second task runner |
 | Rules and state | the spec, and the code `gen/` derives from it | a second model of the same state |
 | Shell: effects, services, I/O, async | [VibeLang](.claude/skills/shell/SKILL.md) (`.vibe`) on Effect 4 | plain TypeScript for effectful code; Redux, Zustand or another state library |
 | User interface | React, in `.tsx`, built with Vite | Vue, Svelte, Angular, hand-built DOM |
@@ -46,8 +61,8 @@ Every project built here uses this, and nothing beside it:
 
 ## Where the rest is
 
-Read each before the work it covers. Claude Code loads the skills by name;
-other agents read the files.
+Read each before the work it covers, whether loaded as a skill or opened
+directly.
 
 | Read | Before |
 |---|---|

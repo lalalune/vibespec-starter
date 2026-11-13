@@ -120,11 +120,26 @@ async function api(route: string, body?: unknown) {
   return json;
 }
 
-export async function refresh() {
-  if (S.publishing) return; // publishing refreshes once it is done
-  const snap: Snapshot = await api("project");
-  if (S.publishing) return;
+export async function refresh(published?: { specs: Map<string, { text: string | null; outline: Outline }>; history: number }) {
+  if (S.publishing && !published) return;
+  const [snap, components]: [Snapshot, ComponentIndex | undefined] = await Promise.all([api("project"), api("components").catch(() => undefined)]);
+  if (S.publishing && !published) return;
+  const acknowledge = (specs: Working[]) => specs.filter((spec) => {
+    const sent = published?.specs.get(spec.file);
+    if (!sent) return true;
+    if (sent.text === null && spec.deleted) return false;
+    const disk = snap.specs.find((s) => s.file === spec.file);
+    spec.orig = sent.text;
+    spec.was = sent.outline;
+    if ((disk?.text ?? null) === sent.text) spec.base = disk?.hash ?? null;
+    return true;
+  });
+  if (published) {
+    S.specs = acknowledge(S.specs);
+    S.history = S.history.slice(published.history).map((entry) => JSON.stringify(acknowledge(JSON.parse(entry))));
+  }
   S.snap = snap;
+  S.components = components;
   S.specs = merge(snap, S.specs);
   if (!S.specs.some((s) => s.file === S.sel)) S.sel = S.specs[0]?.file ?? "";
   redraw();
@@ -141,8 +156,6 @@ export async function connect() {
   S.projects = projects;
   S.project ||= open;
   await refresh();
-  S.components = await api("components").catch(() => undefined);
-  redraw();
   const events = new EventSource(`/api/events?project=${encodeURIComponent(S.project)}`);
   events.addEventListener("files", () => { refresh().catch((e: Error) => toast(e.message)); });
   events.addEventListener("job", (e) => {
@@ -367,23 +380,25 @@ export const discard = () => change(() => { S.specs = S.snap!.specs.map(working)
 export async function publish(force = false): Promise<void> {
   if (S.publishing) return;
   const dirty = dirtySpecs();
+  const submitted = new Map(dirty.map((spec) => [spec.file, { text: publishedText(spec), outline: spec.outline }]));
+  const history = S.history.length;
   // What each story and rule was on disk, so the manifest can say what moved and what was renamed.
   const origins = dirty.filter((s) => !s.deleted).flatMap((spec) => nodesOfOutline(spec.file, spec.outline).map((n) => [n.id, (n.rule ?? n.story).origin || null]));
   S.publishing = true;
   try {
-    await api("publish", { files: dirty.map((s) => ({ file: s.file, base: s.base, text: publishedText(s) })), origins, force });
+    await api("publish", { files: dirty.map((s) => ({ file: s.file, base: s.base, text: submitted.get(s.file)!.text })), origins, force });
   } catch (e: any) {
     S.publishing = false;
     if (e.status === 409 && e.body.conflicts && confirm(`${e.body.conflicts.join(", ")} changed on disk since you loaded it. Overwrite with your version?`)) return publish(true);
     return toast(e.message);
   }
-  // What was published is what is on disk now; the reload takes each spec from there.
-  for (const spec of dirty) spec.orig = publishedText(spec);
-  S.specs = S.specs.filter((s) => !s.deleted);
-  S.editing.clear();
-  S.items.clear();
-  S.history = [];
+  // spec/index.md, "Edits stay in the page until they are published or discarded"
+  try { await refresh({ specs: submitted, history }); }
+  catch (e) {
+    S.publishing = false;
+    return toast(`Published; could not reload: ${(e as Error).message}`);
+  }
   S.publishing = false;
-  await refresh();
+  redraw();
   toast("Published");
 }

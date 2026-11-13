@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { exec } from "./run.ts";
+import { exec, run } from "./run.ts";
 import { heading, type Spec } from "./parse.ts";
 import type { Result } from "./spec.ts";
 import ts from "typescript";
@@ -94,7 +94,7 @@ export async function tests(checking: string, dir: string, specs: Spec[]): Promi
     const scripts = packageScripts(root);
     const dangling = danglingCitations(checking, specs, dir);
     if (dangling.length) said.push([false, "tests", `${dangling.length} citations name no story or rule of the spec`, indent(dangling.join("\n"))]);
-    const directOracle = conformanceImports(root).map((problem) => dir + problem);
+    const directOracle = (await conformanceImports(root)).map((problem) => dir + problem);
     if (directOracle.length) said.push([false, "tests", "conformance drivers must reach the application, not call the generated oracle", indent(directOracle.join("\n"))]);
     // The package's own tests, in whatever runner it chose (AGENTS.md, "Tests"): its `test` script, or else
     // Node's on test/**/*.test.ts. The placeholder `npm init` writes is no script.
@@ -143,39 +143,94 @@ function packageCode(root: string, dir = ""): string[] {
 }
 
 /** Only the driver's body is checked: other journeys in the same file may test generated parsers directly. */
-function conformanceImports(root: string): string[] {
+async function conformanceImports(root: string): Promise<string[]> {
   const problems: string[] = [];
   for (const file of packageCode(root)) {
     const text = fs.readFileSync(path.join(root, file), "utf8");
     if (!text.includes(".conformance.ts")) continue;
-    const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
-    const calls = new Set<string>();
-    const namespaces = new Set<string>();
-    const oracle = new Set<string>();
+    const original = ts.createSourceFile(path.resolve(root, file), text, ts.ScriptTarget.Latest, true);
+    let code = text;
+    let extension = "";
+    let mappings: [number, number, number, number, number][] = [];
+    if (/\.vibex?$/.test(file)) {
+      const projected = await run("vibelang", ["--ts-projection", path.resolve(root, file)], root, text);
+      if (!projected.ok) throw new Error(projected.out);
+      const projection = JSON.parse(projected.out);
+      code = projection.text;
+      extension = projection.extension;
+      mappings = projection.mappings;
+    }
+    const source = ts.createSourceFile(path.resolve(root, file) + extension, code, ts.ScriptTarget.Latest, true);
+    const line = (node: ts.Node) => {
+      const at = node.getStart(source);
+      const span = mappings.find(([start, length]) => start <= at && at < start + length);
+      const offset = span ? span[2] + Math.min(at - span[0], Math.max(0, span[3] - 1)) : at;
+      return original.getLineAndCharacterOfPosition(Math.max(0, Math.min(offset, text.length))).line + 1;
+    };
+    const options: ts.CompilerOptions = { noResolve: true, noLib: true };
+    const host = ts.createCompilerHost(options);
+    host.getSourceFile = (file) => file === source.fileName ? source : undefined;
+    const checker = ts.createProgram([source.fileName], options, host).getTypeChecker();
+    const calls = new Set<ts.Symbol>();
+    const namespaces = new Set<ts.Symbol>();
+    const oracle = new Set<ts.Symbol>();
+    const add = (set: Set<ts.Symbol>, name: ts.Node) => {
+      const symbol = checker.getSymbolAtLocation(name);
+      if (symbol) set.add(symbol);
+    };
     for (const statement of source.statements) {
       if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier) || !statement.importClause || statement.importClause.isTypeOnly) continue;
       const module = statement.moduleSpecifier.text;
       const bindings = statement.importClause.namedBindings;
-      if (module.endsWith(".conformance.ts")) {
-        if (bindings && ts.isNamespaceImport(bindings)) namespaces.add(bindings.name.text);
+      if (/\.conformance\.[jt]s$/.test(module)) {
+        if (bindings && ts.isNamespaceImport(bindings)) add(namespaces, bindings.name);
         if (bindings && ts.isNamedImports(bindings)) for (const element of bindings.elements)
-          if (!element.isTypeOnly && (element.propertyName?.text ?? element.name.text) === "conformance") calls.add(element.name.text);
-      } else if (/\bgen\/[^/]+\.(?:ts|effect\.vibe)$/.test(module) && !module.endsWith("/_conformance.ts")) {
+          if (!element.isTypeOnly && (element.propertyName?.text ?? element.name.text) === "conformance") add(calls, element.name);
+      } else if (/\bgen\/[^/]+\.(?:[jt]s|effect\.vibe)$/.test(module) && !/\/_conformance\.[jt]s$/.test(module)) {
         // The Effect face of a generated module is the same oracle; its typed failures are not.
-        if (statement.importClause.name) oracle.add(statement.importClause.name.text);
-        if (bindings && ts.isNamespaceImport(bindings)) oracle.add(bindings.name.text);
+        if (statement.importClause.name) add(oracle, statement.importClause.name);
+        if (bindings && ts.isNamespaceImport(bindings)) add(oracle, bindings.name);
         if (bindings && ts.isNamedImports(bindings)) for (const element of bindings.elements)
-          if (!element.isTypeOnly && !FAILURES.includes(element.propertyName?.text ?? element.name.text)) oracle.add(element.name.text);
+          if (!element.isTypeOnly && !FAILURES.includes(element.propertyName?.text ?? element.name.text)) add(oracle, element.name);
       }
     }
+    const symbolOf = (name: ts.Identifier) => ts.isShorthandPropertyAssignment(name.parent)
+      ? checker.getShorthandAssignmentValueSymbol(name.parent) : checker.getSymbolAtLocation(name);
+    const declaredValue = (declaration: ts.Declaration): ts.Node | undefined =>
+      ts.isVariableDeclaration(declaration) ? declaration.initializer
+      : ts.isFunctionDeclaration(declaration) ? declaration.body
+      : ts.isBindingElement(declaration) ? declaration.parent.parent
+      : undefined;
+    const conformanceCall = (node: ts.Node, seen = new Set<ts.Symbol>()): boolean => {
+      if (ts.isPropertyAccessExpression(node) && node.name.text === "conformance" && ts.isIdentifier(node.expression))
+        return namespaces.has(symbolOf(node.expression)!);
+      if (!ts.isIdentifier(node)) return false;
+      const symbol = symbolOf(node);
+      if (!symbol || seen.has(symbol)) return false;
+      if (calls.has(symbol)) return true;
+      seen.add(symbol);
+      return (symbol.declarations ?? []).some((d) => { const value = declaredValue(d); return !!value && conformanceCall(value, seen); });
+    };
+    const isReference = (name: ts.Identifier) => {
+      const p = name.parent;
+      return !((ts.isPropertyAccessExpression(p) || ts.isPropertyAssignment(p) || ts.isMethodDeclaration(p)
+        || ts.isPropertyDeclaration(p) || ts.isVariableDeclaration(p) || ts.isParameter(p) || ts.isBindingElement(p)
+        || ts.isFunctionDeclaration(p) || ts.isFunctionExpression(p)) && p.name === name);
+    };
     const visit = (node: ts.Node) => {
-      if (ts.isCallExpression(node) && (ts.isIdentifier(node.expression) && calls.has(node.expression.text)
-        || ts.isPropertyAccessExpression(node.expression) && ts.isIdentifier(node.expression.expression) && namespaces.has(node.expression.expression.text) && node.expression.name.text === "conformance")) {
+      if (ts.isCallExpression(node) && conformanceCall(node.expression)) {
+        const seen = new Set<ts.Node>();
         const inspect = (inside: ts.Node) => {
-          if (ts.isIdentifier(inside) && oracle.has(inside.text)) problems.push(`${file}:${source.getLineAndCharacterOfPosition(inside.getStart(source)).line + 1}: driver uses generated ${inside.text}`);
+          if (seen.has(inside) || ts.isTypeNode(inside)) return;
+          seen.add(inside);
+          if (ts.isIdentifier(inside) && isReference(inside)) {
+            const symbol = symbolOf(inside);
+            if (symbol && oracle.has(symbol)) problems.push(`${file}:${line(inside)}: driver uses generated ${inside.text}`);
+            else for (const d of symbol?.declarations ?? []) { const value = declaredValue(d); if (value) inspect(value); }
+          }
           inside.forEachChild(inspect);
         };
-        node.arguments[0]?.forEachChild(inspect);
+        if (node.arguments[0]) inspect(node.arguments[0]);
       }
       node.forEachChild(visit);
     };

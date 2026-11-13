@@ -6,6 +6,9 @@ bring the rules and Quint in step, checks, and signs off. This spec is the
 session around that work: what may happen when. Editing one spec is
 [the outline](./outline.md).
 
+The [component catalog](./components.md) shows the project's reusable
+components and selects which story to preview.
+
 The session is shared by the page, which knows whether there are edits not
 yet published, and the server, which runs one job at a time, remembers
 what the last check found, and runs the application beside them.

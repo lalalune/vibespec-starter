@@ -10,8 +10,9 @@ import { chromium } from "playwright"
 import { ChildProcess } from "effect/process"
 import { ChildProcessSpawner } from "effect/process/ChildProcessSpawner"
 import { acceptReviews, readSpecs, type Result } from "../../spec.ts"
-import { nodesOf } from "../src/doc.ts"
+import { manifestOf, nodesOf } from "../src/doc.ts"
 import { NODE, TOOLS, type Snapshot } from "../src/project.ts"
+import type { ComponentIndex } from "../src/catalog.ts"
 import { serve, startStudio, type Agent } from "../src/server.vibe"
 
 const services = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)
@@ -109,6 +110,14 @@ it.live("a spec is published with its origins, checked, synced by an agent, and 
   // spec/index.md, "Only edits can be published, and not while a job runs"; spec/index.md, "Publishing always starts a check"
   const door = first.specs[0]
   const text = door.text + "\nThe door remains available.\n"
+  // spec/index.md, "Story: Sync with an agent": the handoff includes the shell and its conformance journey.
+  try fs.makeDirectory(`${root}/src`)
+  try fs.makeDirectory(`${root}/test`)
+  try fs.writeFileString(`${root}/src/app.vibe`, 'import { Machine } from "../gen/door.effect.vibe"\n')
+  try fs.writeFileString(`${root}/test/app.test.vibe`, 'import { conformance } from "../gen/door.conformance.ts"\n')
+  const impacted = (try Effect.try(() => manifestOf(root, { [door.file]: door.text }, { [door.file]: text }, {}))).code
+  try fs.remove(`${root}/src`, { recursive: true })
+  try fs.remove(`${root}/test`, { recursive: true })
   const origins = (try Effect.try(() => nodesOf(door.file, text))).map((n) => [n.id, n.id])
   const body = { files: [{ file: door.file, base: door.hash, text }], origins }
   const published = try post("publish", body)
@@ -120,6 +129,7 @@ it.live("a spec is published with its origins, checked, synced by an agent, and 
     assert.equal(published.status, 200, published.text)
     assert.ok(published.body.manifest.changes.some((c: { kind: string; what: string[] }) => c.kind === "rule" && c.what.includes("prose")))
     assert.equal(written, text)
+    assert.deepStrictEqual(impacted, ["src/app.vibe", "test/app.test.vibe"])
     assert.deepStrictEqual([checking.session.job, checking.session.waiting], ["Checking", 1])
     assert.deepStrictEqual(whileChecking, [409, 409, 409, 409])
   })
@@ -192,8 +202,24 @@ it.live("a rule is edited, a story added and both published from the page", () =
   try on(() => page.getByLabel("Story: As a … I want …").fill("Story: Ring the bell"))
   try on(() => page.getByRole("button", { name: "Done" }).click())
   // spec/index.md, "Only edits can be published, and not while a job runs": publishing shows the diff first.
+  let received!: () => void
+  let release!: () => void
+  const receiving = try Effect.try(() => new Promise<void>((resolve) => { received = resolve }))
+  const releasing = try Effect.try(() => new Promise<void>((resolve) => { release = resolve }))
+  try on(() => page.route("**/api/publish?*", async (route) => {
+    const response = await route.fetch()
+    received()
+    await releasing
+    await route.fulfill({ response })
+  }))
   try on(() => page.keyboard.press("ControlOrMeta+s"))
   try on(() => page.getByRole("dialog").getByRole("button", { name: "Publish" }).click())
+  try on(() => receiving)
+  // spec/index.md, "Edits stay in the page until they are published or discarded": a real publish response is held
+  // at the network boundary while another edit is typed, then that edit survives the reload as unpublished.
+  try on(() => page.getByRole("button", { name: "Edit story", exact: true }).last().click())
+  try on(() => page.getByLabel("Story: As a … I want …").fill("Story: Keep ringing the bell"))
+  try Effect.try(() => release())
   try on(() => page.getByText("Published").waitFor())
   const written = try fs.readFileString(`${root}/spec/door.md`)
   const published = try settled()
@@ -202,6 +228,67 @@ it.live("a rule is edited, a story added and both published from the page", () =
     assert.match(written, /## Story: Ring the bell\n[^]*$/)
     assert.deepStrictEqual(published.specs[0].outline.stories.map((s) => s.title), ["Domain", "Story: Use the door", "Story: Ring the bell"])
     assert.equal(published.session.waiting, 2)
+  })
+  const kept = try on(() => page.getByLabel("Story: As a … I want …").inputValue())
+  const unpublished = try on(() => page.getByRole("button", { name: "Publish 1", exact: true }).count())
+  const conflicts = try on(() => page.getByRole("button", { name: "Keep mine", exact: true }).count())
+  try check(() => {
+    assert.equal(kept, "Story: Keep ringing the bell")
+    assert.equal(unpublished, 1)
+    assert.equal(conflicts, 0)
+  })
+  try on(() => page.unroute("**/api/publish?*"))
+  try on(() => page.getByRole("button", { name: "Done", exact: true }).click())
+  try on(() => page.getByRole("button", { name: "Publish 1", exact: true }).click())
+  try on(() => page.getByRole("dialog").getByRole("button", { name: "Publish" }).click())
+  try on(() => page.getByText("Published").waitFor())
+  try settled()
+  const savedAgain = try fs.readFileString(`${root}/spec/door.md`)
+  try check(() => assert.match(savedAgain, /## Story: Keep ringing the bell\n/))
+}) } })
+
+// spec/components.md, "Story: Inspect a component and its stories"
+it.live("component controls follow the selected story and clear overrides when another preview is chosen", effect () => { provide services { try scoped(effect {
+  const fs = try FileSystem.FileSystem
+  const catalog: ComponentIndex = { version: 1, storybook: {}, components: ["First", "Second"].map((name, at) => ({
+    id: name, name, package: "fixture", title: name, description: "", source: { file: `src/${name}.tsx`, line: 1 },
+    props: [{ name: "amount", kind: "number", required: true }], diagnostics: [], design: ["design.md#preview"],
+    stories: [
+      { id: `${name}-default`, name: "Default", kind: "default", args: { amount: at ? 5 : 1 } },
+      { id: `${name}-more`, name: "More", kind: "example", args: { amount: at ? 6 : 2 } },
+    ],
+  })) }
+  const root = try scratch({ "spec/door.md": try fs.readFileString(`${TOOLS}/fixtures/door.md`), "generated/stories/catalog.json": JSON.stringify(catalog), "design.md": "# Preview\n" })
+  const { url } = try studioOn(root)
+  const browser = try acquireRelease(tryPromise(() => chromium.launch()), (b) => promise(() => b.close()))
+  const page = try tryPromise(() => browser.newPage())
+  const on = <A>(f: () => Promise<A>) => tryPromise(f)
+  try on(() => page.goto(url))
+  try on(() => page.getByRole("button", { name: /^Components/ }).click())
+  const value = page.getByRole("spinbutton", { name: "amount", exact: true })
+  try on(() => value.waitFor())
+  const values = [try on(() => value.inputValue())]
+  // spec/components.md, "Choosing a story stays within its component and clears prop overrides"
+  try on(() => page.getByRole("button", { name: "More", exact: true }).click())
+  values.push(try on(() => value.inputValue()))
+  try on(() => value.fill("9"))
+  values.push(try on(() => value.inputValue()))
+  // spec/components.md, "Choosing a component selects its first story and clears prop overrides"
+  try on(() => page.getByRole("button", { name: "Second", exact: true }).click())
+  values.push(try on(() => value.inputValue()))
+  try on(() => page.getByRole("button", { name: "More", exact: true }).click())
+  values.push(try on(() => value.inputValue()))
+  try on(() => value.fill("8"))
+  const refreshed = try Effect.try(() => page.waitForResponse((response) => response.url().includes("/api/components") && response.status() === 200))
+  try fs.writeFileString(`${root}/spec/door.md`, (try fs.readFileString(`${root}/spec/door.md`)) + "\n")
+  try on(async () => { await (await refreshed).finished() })
+  values.push(try on(() => value.inputValue()))
+  try on(() => page.getByRole("button", { name: "First", exact: true }).click())
+  values.push(try on(() => value.inputValue()))
+  const design = try on(() => page.getByRole("link", { name: "design.md#preview", exact: true }).getAttribute("href"))
+  try check(() => {
+    assert.deepStrictEqual(values, ["1", "2", "9", "5", "6", "8", "1"])
+    assert.equal(design, `vscode://file${root}/design.md`)
   })
 }) } })
 

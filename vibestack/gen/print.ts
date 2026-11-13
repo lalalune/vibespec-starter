@@ -96,7 +96,15 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
   /** Names that stand for something else while a `match` arm is printed: the arm's binder is the matched value. */
   const renamed = new Map<string, string>();
   const matchedAs = new Map<string, string>(); // binder -> the variant its arm matched
+  let locals = new Map<string, string>();
+  let localId = 0;
   let nesting = 0;
+  const reference = (name: string) => locals.get(name) ?? ref(name);
+  const scoped = <T>(names: string[], render: () => T): T => {
+    const outer = locals;
+    locals = new Map([...outer, ...names.map((name) => [name, name] as const)]);
+    try { return render(); } finally { locals = outer; }
+  };
 
   /** `ex(e, min)` prints `e`, parenthesised only if it binds looser than `min`. */
   const ex = (e: Json, min = ARROW): string => {
@@ -157,7 +165,7 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
     // A parameter hides an enclosing match arm's binder of the same name: inside the lambda the name is the parameter.
     const hidden = params.map((p) => [p.name, renamed.get(p.name), matchedAs.get(p.name)] as const);
     for (const [n] of hidden) { renamed.delete(n); matchedAs.delete(n); }
-    const text = not ? `!${ex(result, ATOM)}` : ex(result, TERNARY);
+    const text = scoped(params.map((p) => p.name), () => not ? `!${ex(result, ATOM)}` : ex(result, TERNARY));
     for (const [n, r, m] of hidden) { restore(renamed, n, r); restore(matchedAs, n, m); }
     // The item of a point-free helper is the tangler's own name (expandListHelpers in parse.ts), which no spec can bind.
     const name = (p: Json) => (/^std_x_\d+$/.test(p.name) ? p.name : bind(p.name));
@@ -173,9 +181,9 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
       case "bool": return [String(e.value), ATOM];
       case "str": return [JSON.stringify(e.value), ATOM];
       case "name": {
-        if (simulatorOnly.has(e.name)) return forSimulator(e.name);
+        if (!locals.has(e.name) && simulatorOnly.has(e.name)) return forSimulator(e.name);
         if (renamed.has(e.name)) return fail(`\`${e.name}\` is what a match arm carries; use its fields (${e.name}.field), or rebuild the variant, rather than the value as a whole`);
-        if (!variants.has(e.name)) return [ref(e.name), ATOM];
+        if (!variants.has(e.name)) return [reference(e.name), ATOM];
         const owner = ownerOf(e.name);
         return [tagged(owner.type) ? `({ tag: ${tag(e.name)} } as ${typeName(owner)})` : tag(e.name), ATOM];
       }
@@ -210,20 +218,14 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
       // A map is an object. Looking a key up is only safe where the same definition has tested for it.
       case "Map": return [a.reduce((m, pair) => put(m, typeOf(e.id), mapKey(e, pair.args[0]), ex(pair.args[1], TERNARY)), `({} as ${tsType(typeOf(e.id))})`), ATOM];
       case "put": case "set": return [put(recv(), typeOf(a[0].id), mapKey(a[0], a[1]), ex(a[2], TERNARY)), ATOM];
-      case "get": return [`${recv()}[${mapKey(a[0], a[1])}]`, ATOM];
+      case "get": return [`${recv()}[${mapKey(a[0], a[1])}]!`, ATOM];
       case "keys": return fail("a map cannot be listed or iterated, only asked about one key: write `m.keys().contains(k)`, and keep a list of keys beside the map if you need to go through them");
       case "not": return [`!${ex(a[0], ATOM)}`, UNARY];
       case "and": return [flat(e, "and").map((x) => ex(x, AND + 1)).join(" && "), AND];
       case "or": return [flat(e, "or").map((x) => ex(x, AND + 1)).join(" || "), OR];
       case "implies": return [`!${ex(a[0], ATOM)} || ${ex(a[1], AND + 1)}`, OR];
       case "iff": return [`${ex(a[0], EQ + 1)} === ${ex(a[1], EQ + 1)}`, EQ];
-      case "ite": {
-        // `if (m.keys().contains(k)) m.get(k) else d` is a lookup with a default, as `m.getOr(k, d)` is.
-        const [keys, key] = a[0].kind === "app" && (a[0].opcode === "contains" || a[0].opcode === "in") ? members(a[0].opcode, a[0].args) : [];
-        const get = a[1].kind === "app" && a[1].opcode === "get" ? a[1] : undefined;
-        if (keys?.opcode === "keys" && get && ex(get.args[0]) === ex(keys.args[0]) && ex(get.args[1]) === ex(key)) return lookup(keys.args[0], key, a[2]);
-        return [`${ex(a[0], OR)} ? ${ex(a[1], OR)} : ${ex(a[2], OR)}`, TERNARY];
-      }
+      case "ite": return [`${ex(a[0], OR)} ? ${ex(a[1], OR)} : ${ex(a[2], OR)}`, TERNARY];
       case "field": return [`${a[0].kind === "name" && renamed.has(a[0].name) ? renamed.get(a[0].name) : recv()}.${a[1].value}`, ATOM];
       case "Rec": return [typed(`{ ${pairs(a).join(", ")} }`, e), ATOM];
       case "with": {
@@ -302,22 +304,25 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
       if (a.length > 1 && !a.every(literal)) fail("Set(…) with several members that are not literals could hold the same value twice; write Set(a).union(Set(b))");
       return [distinct.length ? `[${distinct.join(", ")}]` : `([] as ${tsType(t.elem)}[])`, ATOM];
     }
-    if (definitions.has(op)) return [`${ref(op)}(${a.map((x) => ex(x, TERNARY)).join(", ")})`, ATOM];
+    if (definitions.has(op)) return [`${reference(op)}(${a.map((x) => ex(x, TERNARY)).join(", ")})`, ATOM];
     if (simulatorOnly.has(op)) return forSimulator(op);
     return fail(`\`${op}\` is not in the Quint a spec may use (SPEC.md, "Supported Quint"); write it with the operators listed there`);
   };
 
   /** A definition body: leading `val`s become `const`s, the rest is returned. */
-  const body = (e: Json): string[] => {
+  const body = (e: Json, params: Json[] = []): string[] => scoped(params.map((p) => p.name), () => {
     const lines: string[] = [];
     for (; e.kind === "let"; e = e.expr) {
       if (e.opdef.expr.kind === "lambda") fail(`local def ${e.opdef.name} is not supported`);
       const t = typeOf(e.opdef.expr.id);
       const annotation = resolve(t).kind === "sum" ? `: ${tsType(t)}` : "";
-      lines.push(`const ${bind(e.opdef.name)}${annotation} = ${ex(e.opdef.expr)};`);
+      const name = bind(e.opdef.name);
+      const local = `local_${localId++}`;
+      lines.push(`const ${local}${annotation} = ${ex(e.opdef.expr)};`);
+      locals.set(name, local);
     }
     return [...lines, `return ${ex(e)};`];
-  };
+  });
 
   return { ex, body, helpers, lookups };
 }

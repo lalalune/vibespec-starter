@@ -126,6 +126,14 @@ means are in [docs/architecture.md](docs/architecture.md).
    code on them, runs the checks, and reports what needs your review.
 5. Read what it reports, run the app, and sign off with `pnpm accept`.
 
+Agents start with [AGENTS.md](AGENTS.md). All four skills (`sync`, `shell`,
+`prove`, `design`) live in [`.claude/skills/`](.claude/skills/), with relative
+links in [`.agents/skills/`](.agents/skills/) for Codex discovery. Keep both
+directories when copying the template. ChatGPT or another client without
+repository skill discovery must read the applicable `SKILL.md` files linked
+from AGENTS.md explicitly; it needs access to those files or their contents
+in the chat. The full instructions are read when the task needs a skill.
+
 ## Studio
 
 ```bash
@@ -247,8 +255,8 @@ Before committing your application's starting point:
 
 The tools are also the `spec` command of this package. In an existing
 project, `spec init [<dir>]` adds what the stack needs without replacing
-anything you have: the `sync` and `design` skills, the spec reference in
-`SPEC.md`, the procedure in
+anything you have: all four skills in `.claude/skills/` and their relative
+links in `.agents/skills/`, the spec reference in `SPEC.md`, the procedure in
 `AGENTS.md` between `<!-- vibestack:start -->` markers (and `CLAUDE.md`
 importing it), a `tsconfig.json` and `vitest.config.ts` for VibeLang, an
 empty `spec/index.md`, `.gitignore` entries for what the tools own, and the
@@ -312,6 +320,7 @@ workspace.
 | `packages/ui` | Shared React components, with generated stories |
 | `vibestack/` | The tools: generator, simulator, prover, Studio, testing and design helpers |
 | `.claude/skills/` | What agents read before each kind of work: `sync`, `shell`, `prove`, `design` |
+| `.agents/skills/` | Relative links to the same skills for Codex discovery |
 | [AGENTS.md](AGENTS.md), [SPEC.md](SPEC.md), [docs/architecture.md](docs/architecture.md) | The procedure, the spec reference, and the map |
 
 ## Contributing

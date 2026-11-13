@@ -5,24 +5,9 @@
 // was at its version.
 
 // Taking a message off the network leaves only messages that were on it.
-lemma DropFrom(net: seq<Msg>, i: int, rest: seq<Msg>, from: Cut)
-  requires forall x :: x in from.out ==> x in net
-  requires forall x :: x in rest ==> x in net
-  ensures forall x :: x in Std.Collections.Seq.FoldLeft((acc: Cut, m: Msg) => Cut((if (acc.k == i) then acc.out else (acc.out + [m])), (acc.k + 1)), from, rest).out ==> x in net
-  decreases |rest|
-{
-  if |rest| > 0 {
-    var f := (acc: Cut, m: Msg) => Cut((if (acc.k == i) then acc.out else (acc.out + [m])), (acc.k + 1));
-    assert rest[0] in net;
-    assert forall x :: x in rest[1..] ==> x in rest;
-    DropFrom(net, i, rest[1..], f(from, rest[0]));
-  }
-}
-
 lemma DropAtSubset(net: seq<Msg>, i: int)
   ensures forall x :: x in dropAt(net, i) ==> x in net
 {
-  DropFrom(net, i, net, uncut);
 }
 
 // A copy that was the list at its version still is after the history grows.
@@ -196,31 +181,6 @@ lemma lose_ensures(sys: System, i: int)
       ensures isRequest(after.net[j]) || isPast(after.history, after.net[j].version, after.net[j].todos)
     {
       OnTheWire(sys, after.net[j]);
-    }
-  }
-}
-
-// List equality in the spec agrees with the sequence equality used in proofs.
-lemma CompareFrom(rest: seq<todo_Todo>, ys: seq<todo_Todo>, k: int, ok: bool)
-  requires 0 <= k && k + |rest| <= |ys|
-  ensures Std.Collections.Seq.FoldLeft((acc: todo_Walk, t: todo_Todo) => todo_Walk((acc.ok && todo_sameAt(ys, acc.i, t)), (acc.i + 1)), todo_Walk(ok, k), rest).ok == (ok && forall j :: 0 <= j < |rest| ==> rest[j] == ys[k + j])
-  decreases |rest|
-{
-  if |rest| > 0 {
-    var f := (acc: todo_Walk, t: todo_Todo) => todo_Walk((acc.ok && todo_sameAt(ys, acc.i, t)), (acc.i + 1));
-    CompareFrom(rest[1..], ys, k + 1, ok && todo_sameAt(ys, k, rest[0]));
-    assert forall j :: 0 <= j < |rest[1..]| ==> rest[1..][j] == rest[j + 1];
-  }
-}
-
-lemma SameLists(xs: seq<todo_Todo>, ys: seq<todo_Todo>)
-  ensures todo_sameTodos(xs, ys) == (xs == ys)
-{
-  if |xs| == |ys| {
-    CompareFrom(xs, ys, 0, true);
-    if todo_sameTodos(xs, ys) {
-      assert forall j :: 0 <= j < |xs| ==> xs[j] == ys[j];
-      assert xs == ys;
     }
   }
 }
@@ -745,13 +705,10 @@ lemma ActInStep(sys: System, who: string, op: todo_Op, owner: string)
     assert oldestAnswered(after, who) == oldestAnswered(sys, who);
     assert unapplied(after, who) == unapplied(sys, who) + [item];
 
-    SameLists(client_view(c), replay(s.todos, c.pending));
     ReplayAppend(c.confirmed, c.pending, item);
     ReplayAppend(s.todos, c.pending, item);
     assert client_view(queued) == replay(s.todos, queued.pending);
-    SameLists(client_view(queued), replay(s.todos, queued.pending));
     if oldestAnswered(sys, who) {
-      SameLists(todo_applyOp(s.todos, oldest(c).op), s.todos);
       assert replay(s.todos, c.pending) == replay(s.todos, c.pending[1..]);
     }
     assert replay(s.todos, c.pending) == replay(s.todos, unapplied(sys, who));
@@ -815,11 +772,8 @@ lemma ServeInStep(sys: System, i: int, owner: string)
       AllowedTail(s.todos, c.pending);
       assert server_allows(s, owner, m.seq_, m.op);
       ApplyTwice(s.todos, m.op);
-      SameLists(client_view(c), replay(s.todos, c.pending));
       assert after.server.todos == todo_applyOp(s.todos, m.op);
       assert replay(after.server.todos, c.pending) == replay(s.todos, c.pending);
-      SameLists(client_view(c), replay(after.server.todos, c.pending));
-      SameLists(todo_applyOp(after.server.todos, oldest(c).op), after.server.todos);
       assert oldestAnswered(after, owner);
       assert allowedInTurn(after.server.todos, unapplied(after, owner));
     } else {
@@ -894,7 +848,6 @@ lemma DeliverInStep(sys: System, i: int, owner: string)
         WithoutOldest(sys, owner);
         assert d.pending == c.pending[1..];
         assert m.version == s.version;
-        SameLists(todo_applyOp(s.todos, oldest(c).op), s.todos);
         assert replay(s.todos, c.pending) == replay(s.todos, d.pending);
         assert !oldestAnswered(after, owner);
       } else {
@@ -904,19 +857,14 @@ lemma DeliverInStep(sys: System, i: int, owner: string)
       }
       if m.version > c.seen || (client_waiting(c, m.seq_) && c.seen == s.version) {
         assert m.version == s.version;
-        SameLists(pastAt(sys.history, s.version), s.todos);
-        SameLists(pastAt(sys.history, m.version), m.todos);
         assert m.todos == s.todos;
         if m.version == c.seen {
-          SameLists(pastAt(sys.history, c.seen), c.confirmed);
           assert c.confirmed == s.todos;
         }
         assert d.confirmed == s.todos;
         assert d.seen == s.version;
       }
-      SameLists(client_view(c), replay(s.todos, c.pending));
       assert client_view(d) == replay(s.todos, d.pending);
-      SameLists(client_view(d), replay(s.todos, d.pending));
       assert d.refusals == 0;
       WithoutBridge(c.pending, m.seq_);
       ProofLib.FilterSubset((p: client_Pending) => (p.seq_ != m.seq_), c.pending);

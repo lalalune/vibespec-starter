@@ -6,7 +6,7 @@ import { type Client, initial } from "../../gen/client.ts";
 import type { TodoPageProps } from "./components/TodoPage.tsx";
 import { Tab, browser, newId } from "./sync.vibe";
 
-const name = Math.random().toString(36).slice(2, 8);
+const name = crypto.getRandomValues(new Uint32Array(4)).join("-");
 const runtime = ManagedRuntime.make(browser(location.origin, name));
 /** Start one of the tab's effects. */
 const run = (use: (tab: Tab.Shape) => Effect.Effect<unknown, unknown>) => runtime.runFork(Effect.flatMap(Effect.service(Tab), use));

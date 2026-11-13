@@ -25,7 +25,7 @@ export interface Component {
   design?: string[];
   diagnostics: string[];
 }
-interface ComponentIndex { version: 1; storybook: { url?: string }; components: Component[] }
+export interface ComponentIndex { version: 1; storybook: { url?: string }; components: Component[] }
 export interface Options {
   /** The project: globs and paths in the catalog are relative to it. */
   root: string;
@@ -134,10 +134,10 @@ const browser = (files: string[], preview: string | undefined) =>
       "        for (const result of failed) if (result.error) throw result.error;",
       '        expect(failed.flatMap((result) => result.violations.map((v) => `${v.id}: ${v.help} at ${v.nodes.map((node) => node.target.join(" ")).join(", ")}`))).toEqual([]);',
       '        if (!Story.tags.includes("snapshot")) return;',
-      "        // The reference is `__screenshots__/**/<story>-<browser>-<platform>.png` beside this file. One that is missing is",
-      "        // written (never in CI) and does not fail the story; `vitest run --update` replaces one that is out of date.",
+      "        // The test configuration keeps references outside generated output. A local run may create a missing",
+      "        // reference for review; CI must already have one. `vitest run --update` replaces an out-of-date reference.",
       "        await expect(page.elementLocator(document.documentElement)).toMatchScreenshot(Story.id).catch((error) => {",
-      '          if (!error.message.includes("No existing reference screenshot found")) throw error;',
+      '          if (!error.message.includes("No existing reference screenshot found; a new one was created.")) throw error;',
       "        });",
       "      });",
     ],

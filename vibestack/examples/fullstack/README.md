@@ -17,6 +17,7 @@ Needs Node 26+ and Dafny on the path.
 
 | Path | Kind | Covers |
 |---|---|---|
+| `spec/index.md` | entry point | Links to the four domain specs |
 | `spec/todo.md` | library | A to-do, the four edits, when an edit makes sense, how it is applied |
 | `spec/server.md` | machine | One request per edit, answered once, version = number of changes, ids never reused |
 | `spec/client.md` | machine | One tab: confirmed copy, queue of unanswered edits, offline, answers and pushes |
@@ -83,21 +84,20 @@ its event (`canCreate`, `canSetDone`, `canRename`, `canRemove`, `canGoOffline`,
   Dafny and Quint. Convergence is a `sometimes` rule: the model shows it can
   happen, not that it always does.
 
-## Simplifying it
+## Proof structure
 
-The specs were written before the tools could do the following, and still
-work around their absence. Each is a good first exercise:
+List and record equality use `==`; removing a network position uses
+`removeAt`. Their former hand-written walks and induction proofs are gone.
 
-- **Imported proofs.** The server and client restate "a commit / refusal /
-  queued edit / answer keeps the rules" as laws for the system proof file.
-  It can call `server_<transition>_ensures` and `client_<transition>_ensures`
-  instead (AGENTS.md, "Proof files").
-- **Equality.** `sameTodos` and its reflexivity law can become `==`, which
-  compares lists and records by structure.
-- **List operations.** `dropAt`, and its induction, can become `removeAt`.
-- **Liveness.** "Both tabs eventually agree" is stated as "sometimes they
-  agree"; a `leadsTo` rule with `fair_` events can state it (SPEC.md,
-  "Liveness").
+The system still uses laws about generic `queue`, `commit`, refusal and
+answer helpers. These preserve every field of an arbitrary `Op`, including
+fields an operation does not use. The named edit transitions construct an
+operation with normalized fields, so their imported proofs cannot replace
+those helper laws without changing the logged request and retry identity.
+
+Agreement remains a reachability property. This network can lose messages
+forever, so convergence on every run would require an additional delivery
+fairness assumption.
 
 ## Limits of the spec language met here
 

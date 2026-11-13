@@ -1,10 +1,11 @@
 // spec/system.md, "Only a tab's oldest queued edit can be on its way unanswered"; spec/client.md, "Story: Hear back from the server"
 // Shared by useTab.ts and test/e2e.test.vibe.
-import { type Client, type Event, type Pending, NotAnEvent, apply, decodeEvent, initial } from "../../gen/client.effect.vibe"
+import { type Client, type Event, type Pending, NotAnEvent, apply, decodeEvent, initial, parseEvent, parseState } from "../../gen/client.effect.vibe"
 import { toRequest } from "../protocol.vibe"
 
 /** How long a tab waits before it tries the network again. */
 const RETRY = "2 seconds"
+const RESPONSE_TIMEOUT = "10 seconds"
 
 /** The server did not answer, or said something that is no answer. */
 export error Unanswered { cause: unknown }
@@ -47,13 +48,14 @@ effect function heard(type: "receiveAck" | "receiveRefusal" | "receiveSnapshot",
 /** A new tab called `name`, talking to the server at `base`. */
 export effect function open(base: string, name: string) {
   const client = HttpClient.mapRequest(HttpClient.filterStatusOk(try HttpClient.HttpClient), HttpClientRequest.prependUrl(base))
-  const held = try SubscriptionRef.make(initial)
+  const held = try SubscriptionRef.make(parseState(initial)!)
   const sending = try Semaphore.make(1)
-  const get = () => SubscriptionRef.get(held)
-  const asked = <A, E>(answer: A!E) => mapError(answer, (cause) => new Unanswered({ cause }))
+  const get = () => map(SubscriptionRef.get(held), (state) => parseState(state)!)
+  const asked = <A, E>(answer: A!E) => mapError(timeout(answer, RESPONSE_TIMEOUT), (cause) => new Unanswered({ cause }))
 
   effect function dispatch(event: Event) {
-    try SubscriptionRef.updateEffect(held, effect (c) => apply(c, event) catch () => c)
+    const input = parseEvent(event)!
+    try SubscriptionRef.updateEffect(held, effect (c) => map(apply(c, input), (state) => parseState(state)!) catch () => c)
   }
 
   effect function send(p: Pending) {
@@ -62,7 +64,7 @@ export effect function open(base: string, name: string) {
     const said = try (try client.execute(try HttpClientRequest.bodyJson(HttpClientRequest.post("/api/events"), request))).json
     const { ok } = try Schema.decodeUnknownEffect(Verdict)(said)
     const answer = try heard(ok ? "receiveAck" : "receiveRefusal", said)
-    if (!("seq" in answer) || answer.seq !== p.seq) throw new NotAnEvent({ input: said })
+    if (!("seq" in answer) || answer.seq !== request.seq) throw new NotAnEvent({ input: said })
     try dispatch(answer)
   }
 
@@ -76,7 +78,7 @@ export effect function open(base: string, name: string) {
     while (true) {
       const { online, pending: [oldest] } = try get()
       if (!online || oldest === undefined) return
-      send(oldest) catch effect () => { try sleep(RETRY) }
+      asked(send(oldest)) catch effect () => { try sleep(RETRY) }
     }
   })
 
@@ -95,7 +97,7 @@ export effect function open(base: string, name: string) {
   }
 
   return {
-    changes: SubscriptionRef.changes(held),
+    changes: Stream.map(SubscriptionRef.changes(held), (state) => parseState(state)!),
     get,
     dispatch,
     effect edit(event: Edit) {
@@ -106,7 +108,7 @@ export effect function open(base: string, name: string) {
     refresh: () => asked(refresh()),
     effect goOnline() {
       try dispatch({ type: "goOnline" })
-      refresh() catch () => undefined
+      asked(refresh()) catch () => undefined
       try flush
     },
     effect listen() {

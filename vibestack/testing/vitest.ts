@@ -3,6 +3,7 @@ import { playwright } from "@vitest/browser-playwright";
 import vibelang from "vibelang-vite";
 import { defineConfig } from "vitest/config";
 import type { PluginOption } from "vite";
+import { resolve } from "node:path";
 
 export interface Project {
   /** The package directory: `import.meta.dirname` of its vitest.config.ts. */
@@ -38,7 +39,12 @@ export const project = ({ root, environment = "happy-dom", browser = false, gene
     ...browser && {
       // One page at a time in the one browser, so a journey never sees another file's storage or focus.
       fileParallelism: false,
-      browser: { enabled: true, provider: playwright(), headless: true, instances: [{ browser: "chromium" as const }], screenshotFailures: true, trace: "retain-on-failure" as const },
+      browser: {
+        enabled: true, provider: playwright(), headless: true, instances: [{ browser: "chromium" as const }], screenshotFailures: true, trace: "retain-on-failure" as const,
+        expect: { toMatchScreenshot: {
+          resolveScreenshotPath: ({ root, testFileName, arg, browserName, platform, ext }) => resolve(root, "test/screenshots", testFileName, `${arg}-${browserName}-${platform}${ext}`),
+        } },
+      },
     },
   },
 });
