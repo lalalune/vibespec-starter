@@ -2,10 +2,9 @@
 // (or `if inv(s)` for one without a guard), names the state after, and calls the helpers below.
 
 lemma create_ensures(s: Tracker, actor: string)
-  ensures (inv(s) ==> canCreate(s, actor) ==> alwaysTheWarningListIsTheTruth(create(s, actor)))
   ensures (inv(s) ==> canCreate(s, actor) ==> alwaysTaskNumbersAreUnique(create(s, actor)))
   ensures (inv(s) ==> canCreate(s, actor) ==> alwaysTheCounterCoversEveryTask(create(s, actor)))
-  ensures (inv(s) ==> canCreate(s, actor) ==> alwaysNoOneIsToldTwiceInOnePass(create(s, actor)))
+  ensures (inv(s) ==> canCreate(s, actor) ==> alwaysNoOneIsToldOfTheirOwnEdit(create(s, actor)))
   ensures (inv(s) ==> canCreate(s, actor) ==> alwaysAnEditIsAnnouncedAfterTheQuietPeriod(create(s, actor)))
   ensures (inv(s) ==> canCreate(s, actor) ==> alwaysNothingIsSentTwice(create(s, actor)))
   ensures (inv(s) ==> canCreate(s, actor) ==> alwaysWhatWasSentIsRecorded(create(s, actor)))
@@ -13,14 +12,13 @@ lemma create_ensures(s: Tracker, actor: string)
   ensures (inv(s) ==> canCreate(s, actor) ==> alwaysTheBookkeepingIsSane(create(s, actor)))
   ensures (inv(s) ==> canCreate(s, actor) ==> alwaysTheClockIsNeverNegative(create(s, actor)))
   ensures (inv(s) ==> canCreate(s, actor) ==> stepOnlyAHandEditCorrupts(s, create(s, actor)))
+  ensures (inv(s) ==> canCreate(s, actor) ==> stepANewNumberIsUnreferenced(s, create(s, actor)))
   ensures (inv(s) ==> canCreate(s, actor) ==> stepTheCounterNeverGoesBack(s, create(s, actor)))
   ensures (inv(s) ==> canCreate(s, actor) ==> stepANumberIsNeverReissued(s, create(s, actor)))
   ensures (inv(s) ==> canCreate(s, actor) ==> stepAFixRemovesAProblem(s, create(s, actor)))
 {
   if inv(s) && canCreate(s, actor) {
     var s2 := create(s, actor);
-    TWarningList(s2);
-    TNoOneToldTwice(s2);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     kernel_lawNextIsAboveTheCounter_ensures(numbersInUse(s), s.lastId);
@@ -28,6 +26,15 @@ lemma create_ensures(s: Tracker, actor: string)
     assert s2.tasks == s.tasks + [n];
     assert n.id > s.lastId;
     TAppendFreshUnique(s.tasks, n);
+    kernel_lawNextIsAboveEverythingSeen_ensures(numbersInUse(s), s.lastId);
+    assert forall x :: x in numbersInUse(s) ==> n.id > x;
+    forall j | 0 <= j < |s2.tasks|
+      ensures hasTask(s, s2.tasks[j].id) || !(s2.tasks[j].id in numbersInUse(s))
+    {
+      if j < |s.tasks| {
+        assert s.tasks[j] in s.tasks;
+      }
+    }
     forall j | 0 <= j < |s2.tasks|
       ensures s2.tasks[j].id > s.lastId || exists i :: 0 <= i < |s.tasks| && s.tasks[i] == s2.tasks[j]
     {
@@ -46,10 +53,9 @@ lemma create_ensures(s: Tracker, actor: string)
 }
 
 lemma setStatus_ensures(s: Tracker, id: int, status: Status, actor: string)
-  ensures (inv(s) ==> canSetStatus(s, id, status, actor) ==> alwaysTheWarningListIsTheTruth(setStatus(s, id, status, actor)))
   ensures (inv(s) ==> canSetStatus(s, id, status, actor) ==> alwaysTaskNumbersAreUnique(setStatus(s, id, status, actor)))
   ensures (inv(s) ==> canSetStatus(s, id, status, actor) ==> alwaysTheCounterCoversEveryTask(setStatus(s, id, status, actor)))
-  ensures (inv(s) ==> canSetStatus(s, id, status, actor) ==> alwaysNoOneIsToldTwiceInOnePass(setStatus(s, id, status, actor)))
+  ensures (inv(s) ==> canSetStatus(s, id, status, actor) ==> alwaysNoOneIsToldOfTheirOwnEdit(setStatus(s, id, status, actor)))
   ensures (inv(s) ==> canSetStatus(s, id, status, actor) ==> alwaysAnEditIsAnnouncedAfterTheQuietPeriod(setStatus(s, id, status, actor)))
   ensures (inv(s) ==> canSetStatus(s, id, status, actor) ==> alwaysNothingIsSentTwice(setStatus(s, id, status, actor)))
   ensures (inv(s) ==> canSetStatus(s, id, status, actor) ==> alwaysWhatWasSentIsRecorded(setStatus(s, id, status, actor)))
@@ -57,27 +63,26 @@ lemma setStatus_ensures(s: Tracker, id: int, status: Status, actor: string)
   ensures (inv(s) ==> canSetStatus(s, id, status, actor) ==> alwaysTheBookkeepingIsSane(setStatus(s, id, status, actor)))
   ensures (inv(s) ==> canSetStatus(s, id, status, actor) ==> alwaysTheClockIsNeverNegative(setStatus(s, id, status, actor)))
   ensures (inv(s) ==> canSetStatus(s, id, status, actor) ==> stepOnlyAHandEditCorrupts(s, setStatus(s, id, status, actor)))
+  ensures (inv(s) ==> canSetStatus(s, id, status, actor) ==> stepANewNumberIsUnreferenced(s, setStatus(s, id, status, actor)))
   ensures (inv(s) ==> canSetStatus(s, id, status, actor) ==> stepTheCounterNeverGoesBack(s, setStatus(s, id, status, actor)))
   ensures (inv(s) ==> canSetStatus(s, id, status, actor) ==> stepANumberIsNeverReissued(s, setStatus(s, id, status, actor)))
   ensures (inv(s) ==> canSetStatus(s, id, status, actor) ==> stepAFixRemovesAProblem(s, setStatus(s, id, status, actor)))
 {
   if inv(s) && canSetStatus(s, id, status, actor) {
     var s2 := setStatus(s, id, status, actor);
-    TWarningList(s2);
-    TNoOneToldTwice(s2);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
+    TSameIdsOldNumbers(s, s2);
     TSameShapeProblems(s, s2);
     TSubsetNoNewProblem(s, s2);
   }
 }
 
 lemma setDue_ensures(s: Tracker, id: int, due: int, actor: string)
-  ensures (inv(s) ==> canSetDue(s, id, due, actor) ==> alwaysTheWarningListIsTheTruth(setDue(s, id, due, actor)))
   ensures (inv(s) ==> canSetDue(s, id, due, actor) ==> alwaysTaskNumbersAreUnique(setDue(s, id, due, actor)))
   ensures (inv(s) ==> canSetDue(s, id, due, actor) ==> alwaysTheCounterCoversEveryTask(setDue(s, id, due, actor)))
-  ensures (inv(s) ==> canSetDue(s, id, due, actor) ==> alwaysNoOneIsToldTwiceInOnePass(setDue(s, id, due, actor)))
+  ensures (inv(s) ==> canSetDue(s, id, due, actor) ==> alwaysNoOneIsToldOfTheirOwnEdit(setDue(s, id, due, actor)))
   ensures (inv(s) ==> canSetDue(s, id, due, actor) ==> alwaysAnEditIsAnnouncedAfterTheQuietPeriod(setDue(s, id, due, actor)))
   ensures (inv(s) ==> canSetDue(s, id, due, actor) ==> alwaysNothingIsSentTwice(setDue(s, id, due, actor)))
   ensures (inv(s) ==> canSetDue(s, id, due, actor) ==> alwaysWhatWasSentIsRecorded(setDue(s, id, due, actor)))
@@ -85,27 +90,26 @@ lemma setDue_ensures(s: Tracker, id: int, due: int, actor: string)
   ensures (inv(s) ==> canSetDue(s, id, due, actor) ==> alwaysTheBookkeepingIsSane(setDue(s, id, due, actor)))
   ensures (inv(s) ==> canSetDue(s, id, due, actor) ==> alwaysTheClockIsNeverNegative(setDue(s, id, due, actor)))
   ensures (inv(s) ==> canSetDue(s, id, due, actor) ==> stepOnlyAHandEditCorrupts(s, setDue(s, id, due, actor)))
+  ensures (inv(s) ==> canSetDue(s, id, due, actor) ==> stepANewNumberIsUnreferenced(s, setDue(s, id, due, actor)))
   ensures (inv(s) ==> canSetDue(s, id, due, actor) ==> stepTheCounterNeverGoesBack(s, setDue(s, id, due, actor)))
   ensures (inv(s) ==> canSetDue(s, id, due, actor) ==> stepANumberIsNeverReissued(s, setDue(s, id, due, actor)))
   ensures (inv(s) ==> canSetDue(s, id, due, actor) ==> stepAFixRemovesAProblem(s, setDue(s, id, due, actor)))
 {
   if inv(s) && canSetDue(s, id, due, actor) {
     var s2 := setDue(s, id, due, actor);
-    TWarningList(s2);
-    TNoOneToldTwice(s2);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
+    TSameIdsOldNumbers(s, s2);
     TSameShapeProblems(s, s2);
     TSubsetNoNewProblem(s, s2);
   }
 }
 
 lemma addOwner_ensures(s: Tracker, id: int, owner: string, actor: string)
-  ensures (inv(s) ==> canAddOwner(s, id, owner, actor) ==> alwaysTheWarningListIsTheTruth(addOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canAddOwner(s, id, owner, actor) ==> alwaysTaskNumbersAreUnique(addOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canAddOwner(s, id, owner, actor) ==> alwaysTheCounterCoversEveryTask(addOwner(s, id, owner, actor)))
-  ensures (inv(s) ==> canAddOwner(s, id, owner, actor) ==> alwaysNoOneIsToldTwiceInOnePass(addOwner(s, id, owner, actor)))
+  ensures (inv(s) ==> canAddOwner(s, id, owner, actor) ==> alwaysNoOneIsToldOfTheirOwnEdit(addOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canAddOwner(s, id, owner, actor) ==> alwaysAnEditIsAnnouncedAfterTheQuietPeriod(addOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canAddOwner(s, id, owner, actor) ==> alwaysNothingIsSentTwice(addOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canAddOwner(s, id, owner, actor) ==> alwaysWhatWasSentIsRecorded(addOwner(s, id, owner, actor)))
@@ -113,17 +117,17 @@ lemma addOwner_ensures(s: Tracker, id: int, owner: string, actor: string)
   ensures (inv(s) ==> canAddOwner(s, id, owner, actor) ==> alwaysTheBookkeepingIsSane(addOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canAddOwner(s, id, owner, actor) ==> alwaysTheClockIsNeverNegative(addOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canAddOwner(s, id, owner, actor) ==> stepOnlyAHandEditCorrupts(s, addOwner(s, id, owner, actor)))
+  ensures (inv(s) ==> canAddOwner(s, id, owner, actor) ==> stepANewNumberIsUnreferenced(s, addOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canAddOwner(s, id, owner, actor) ==> stepTheCounterNeverGoesBack(s, addOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canAddOwner(s, id, owner, actor) ==> stepANumberIsNeverReissued(s, addOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canAddOwner(s, id, owner, actor) ==> stepAFixRemovesAProblem(s, addOwner(s, id, owner, actor)))
 {
   if inv(s) && canAddOwner(s, id, owner, actor) {
     var s2 := addOwner(s, id, owner, actor);
-    TWarningList(s2);
-    TNoOneToldTwice(s2);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
+    TSameIdsOldNumbers(s, s2);
     forall i | 0 <= i < |s.tasks|
       ensures problemsOf(s2, s.tasks[i]) == problemsOf(s2, s2.tasks[i])
     {
@@ -137,10 +141,9 @@ lemma addOwner_ensures(s: Tracker, id: int, owner: string, actor: string)
 }
 
 lemma removeOwner_ensures(s: Tracker, id: int, owner: string, actor: string)
-  ensures (inv(s) ==> canRemoveOwner(s, id, owner, actor) ==> alwaysTheWarningListIsTheTruth(removeOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canRemoveOwner(s, id, owner, actor) ==> alwaysTaskNumbersAreUnique(removeOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canRemoveOwner(s, id, owner, actor) ==> alwaysTheCounterCoversEveryTask(removeOwner(s, id, owner, actor)))
-  ensures (inv(s) ==> canRemoveOwner(s, id, owner, actor) ==> alwaysNoOneIsToldTwiceInOnePass(removeOwner(s, id, owner, actor)))
+  ensures (inv(s) ==> canRemoveOwner(s, id, owner, actor) ==> alwaysNoOneIsToldOfTheirOwnEdit(removeOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canRemoveOwner(s, id, owner, actor) ==> alwaysAnEditIsAnnouncedAfterTheQuietPeriod(removeOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canRemoveOwner(s, id, owner, actor) ==> alwaysNothingIsSentTwice(removeOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canRemoveOwner(s, id, owner, actor) ==> alwaysWhatWasSentIsRecorded(removeOwner(s, id, owner, actor)))
@@ -148,17 +151,17 @@ lemma removeOwner_ensures(s: Tracker, id: int, owner: string, actor: string)
   ensures (inv(s) ==> canRemoveOwner(s, id, owner, actor) ==> alwaysTheBookkeepingIsSane(removeOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canRemoveOwner(s, id, owner, actor) ==> alwaysTheClockIsNeverNegative(removeOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canRemoveOwner(s, id, owner, actor) ==> stepOnlyAHandEditCorrupts(s, removeOwner(s, id, owner, actor)))
+  ensures (inv(s) ==> canRemoveOwner(s, id, owner, actor) ==> stepANewNumberIsUnreferenced(s, removeOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canRemoveOwner(s, id, owner, actor) ==> stepTheCounterNeverGoesBack(s, removeOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canRemoveOwner(s, id, owner, actor) ==> stepANumberIsNeverReissued(s, removeOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canRemoveOwner(s, id, owner, actor) ==> stepAFixRemovesAProblem(s, removeOwner(s, id, owner, actor)))
 {
   if inv(s) && canRemoveOwner(s, id, owner, actor) {
     var s2 := removeOwner(s, id, owner, actor);
-    TWarningList(s2);
-    TNoOneToldTwice(s2);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
+    TSameIdsOldNumbers(s, s2);
     forall i, o | 0 <= i < |s.tasks| && o in s2.tasks[i].owners && !(o in s2.owners)
       ensures o in s.tasks[i].owners && !(o in s.owners)
     {
@@ -171,10 +174,9 @@ lemma removeOwner_ensures(s: Tracker, id: int, owner: string, actor: string)
 }
 
 lemma addParent_ensures(s: Tracker, id: int, other: int, actor: string)
-  ensures (inv(s) ==> canAddParent(s, id, other, actor) ==> alwaysTheWarningListIsTheTruth(addParent(s, id, other, actor)))
   ensures (inv(s) ==> canAddParent(s, id, other, actor) ==> alwaysTaskNumbersAreUnique(addParent(s, id, other, actor)))
   ensures (inv(s) ==> canAddParent(s, id, other, actor) ==> alwaysTheCounterCoversEveryTask(addParent(s, id, other, actor)))
-  ensures (inv(s) ==> canAddParent(s, id, other, actor) ==> alwaysNoOneIsToldTwiceInOnePass(addParent(s, id, other, actor)))
+  ensures (inv(s) ==> canAddParent(s, id, other, actor) ==> alwaysNoOneIsToldOfTheirOwnEdit(addParent(s, id, other, actor)))
   ensures (inv(s) ==> canAddParent(s, id, other, actor) ==> alwaysAnEditIsAnnouncedAfterTheQuietPeriod(addParent(s, id, other, actor)))
   ensures (inv(s) ==> canAddParent(s, id, other, actor) ==> alwaysNothingIsSentTwice(addParent(s, id, other, actor)))
   ensures (inv(s) ==> canAddParent(s, id, other, actor) ==> alwaysWhatWasSentIsRecorded(addParent(s, id, other, actor)))
@@ -182,17 +184,17 @@ lemma addParent_ensures(s: Tracker, id: int, other: int, actor: string)
   ensures (inv(s) ==> canAddParent(s, id, other, actor) ==> alwaysTheBookkeepingIsSane(addParent(s, id, other, actor)))
   ensures (inv(s) ==> canAddParent(s, id, other, actor) ==> alwaysTheClockIsNeverNegative(addParent(s, id, other, actor)))
   ensures (inv(s) ==> canAddParent(s, id, other, actor) ==> stepOnlyAHandEditCorrupts(s, addParent(s, id, other, actor)))
+  ensures (inv(s) ==> canAddParent(s, id, other, actor) ==> stepANewNumberIsUnreferenced(s, addParent(s, id, other, actor)))
   ensures (inv(s) ==> canAddParent(s, id, other, actor) ==> stepTheCounterNeverGoesBack(s, addParent(s, id, other, actor)))
   ensures (inv(s) ==> canAddParent(s, id, other, actor) ==> stepANumberIsNeverReissued(s, addParent(s, id, other, actor)))
   ensures (inv(s) ==> canAddParent(s, id, other, actor) ==> stepAFixRemovesAProblem(s, addParent(s, id, other, actor)))
 {
   if inv(s) && canAddParent(s, id, other, actor) {
     var s2 := addParent(s, id, other, actor);
-    TWarningList(s2);
-    TNoOneToldTwice(s2);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
+    TSameIdsOldNumbers(s, s2);
     forall i | 0 <= i < |s.tasks|
       ensures forall q :: q in problemsOf(s2, s2.tasks[i]) ==> q in problemsOf(s, s.tasks[i])
     {
@@ -203,10 +205,9 @@ lemma addParent_ensures(s: Tracker, id: int, other: int, actor: string)
 }
 
 lemma removeParent_ensures(s: Tracker, id: int, other: int, actor: string)
-  ensures (inv(s) ==> canRemoveParent(s, id, other, actor) ==> alwaysTheWarningListIsTheTruth(removeParent(s, id, other, actor)))
   ensures (inv(s) ==> canRemoveParent(s, id, other, actor) ==> alwaysTaskNumbersAreUnique(removeParent(s, id, other, actor)))
   ensures (inv(s) ==> canRemoveParent(s, id, other, actor) ==> alwaysTheCounterCoversEveryTask(removeParent(s, id, other, actor)))
-  ensures (inv(s) ==> canRemoveParent(s, id, other, actor) ==> alwaysNoOneIsToldTwiceInOnePass(removeParent(s, id, other, actor)))
+  ensures (inv(s) ==> canRemoveParent(s, id, other, actor) ==> alwaysNoOneIsToldOfTheirOwnEdit(removeParent(s, id, other, actor)))
   ensures (inv(s) ==> canRemoveParent(s, id, other, actor) ==> alwaysAnEditIsAnnouncedAfterTheQuietPeriod(removeParent(s, id, other, actor)))
   ensures (inv(s) ==> canRemoveParent(s, id, other, actor) ==> alwaysNothingIsSentTwice(removeParent(s, id, other, actor)))
   ensures (inv(s) ==> canRemoveParent(s, id, other, actor) ==> alwaysWhatWasSentIsRecorded(removeParent(s, id, other, actor)))
@@ -214,17 +215,17 @@ lemma removeParent_ensures(s: Tracker, id: int, other: int, actor: string)
   ensures (inv(s) ==> canRemoveParent(s, id, other, actor) ==> alwaysTheBookkeepingIsSane(removeParent(s, id, other, actor)))
   ensures (inv(s) ==> canRemoveParent(s, id, other, actor) ==> alwaysTheClockIsNeverNegative(removeParent(s, id, other, actor)))
   ensures (inv(s) ==> canRemoveParent(s, id, other, actor) ==> stepOnlyAHandEditCorrupts(s, removeParent(s, id, other, actor)))
+  ensures (inv(s) ==> canRemoveParent(s, id, other, actor) ==> stepANewNumberIsUnreferenced(s, removeParent(s, id, other, actor)))
   ensures (inv(s) ==> canRemoveParent(s, id, other, actor) ==> stepTheCounterNeverGoesBack(s, removeParent(s, id, other, actor)))
   ensures (inv(s) ==> canRemoveParent(s, id, other, actor) ==> stepANumberIsNeverReissued(s, removeParent(s, id, other, actor)))
   ensures (inv(s) ==> canRemoveParent(s, id, other, actor) ==> stepAFixRemovesAProblem(s, removeParent(s, id, other, actor)))
 {
   if inv(s) && canRemoveParent(s, id, other, actor) {
     var s2 := removeParent(s, id, other, actor);
-    TWarningList(s2);
-    TNoOneToldTwice(s2);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
+    TSameIdsOldNumbers(s, s2);
     forall i | 0 <= i < |s.tasks|
       ensures forall q :: q in problemsOf(s2, s2.tasks[i]) ==> q in problemsOf(s, s.tasks[i])
     {
@@ -235,10 +236,9 @@ lemma removeParent_ensures(s: Tracker, id: int, other: int, actor: string)
 }
 
 lemma relate_ensures(s: Tracker, id: int, other: int, actor: string)
-  ensures (inv(s) ==> canRelate(s, id, other, actor) ==> alwaysTheWarningListIsTheTruth(relate(s, id, other, actor)))
   ensures (inv(s) ==> canRelate(s, id, other, actor) ==> alwaysTaskNumbersAreUnique(relate(s, id, other, actor)))
   ensures (inv(s) ==> canRelate(s, id, other, actor) ==> alwaysTheCounterCoversEveryTask(relate(s, id, other, actor)))
-  ensures (inv(s) ==> canRelate(s, id, other, actor) ==> alwaysNoOneIsToldTwiceInOnePass(relate(s, id, other, actor)))
+  ensures (inv(s) ==> canRelate(s, id, other, actor) ==> alwaysNoOneIsToldOfTheirOwnEdit(relate(s, id, other, actor)))
   ensures (inv(s) ==> canRelate(s, id, other, actor) ==> alwaysAnEditIsAnnouncedAfterTheQuietPeriod(relate(s, id, other, actor)))
   ensures (inv(s) ==> canRelate(s, id, other, actor) ==> alwaysNothingIsSentTwice(relate(s, id, other, actor)))
   ensures (inv(s) ==> canRelate(s, id, other, actor) ==> alwaysWhatWasSentIsRecorded(relate(s, id, other, actor)))
@@ -246,17 +246,17 @@ lemma relate_ensures(s: Tracker, id: int, other: int, actor: string)
   ensures (inv(s) ==> canRelate(s, id, other, actor) ==> alwaysTheBookkeepingIsSane(relate(s, id, other, actor)))
   ensures (inv(s) ==> canRelate(s, id, other, actor) ==> alwaysTheClockIsNeverNegative(relate(s, id, other, actor)))
   ensures (inv(s) ==> canRelate(s, id, other, actor) ==> stepOnlyAHandEditCorrupts(s, relate(s, id, other, actor)))
+  ensures (inv(s) ==> canRelate(s, id, other, actor) ==> stepANewNumberIsUnreferenced(s, relate(s, id, other, actor)))
   ensures (inv(s) ==> canRelate(s, id, other, actor) ==> stepTheCounterNeverGoesBack(s, relate(s, id, other, actor)))
   ensures (inv(s) ==> canRelate(s, id, other, actor) ==> stepANumberIsNeverReissued(s, relate(s, id, other, actor)))
   ensures (inv(s) ==> canRelate(s, id, other, actor) ==> stepAFixRemovesAProblem(s, relate(s, id, other, actor)))
 {
   if inv(s) && canRelate(s, id, other, actor) {
     var s2 := relate(s, id, other, actor);
-    TWarningList(s2);
-    TNoOneToldTwice(s2);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
+    TSameIdsOldNumbers(s, s2);
     forall i | 0 <= i < |s.tasks|
       ensures forall q :: q in problemsOf(s2, s2.tasks[i]) ==> q in problemsOf(s, s.tasks[i])
     {
@@ -267,10 +267,9 @@ lemma relate_ensures(s: Tracker, id: int, other: int, actor: string)
 }
 
 lemma unrelate_ensures(s: Tracker, id: int, other: int, actor: string)
-  ensures (inv(s) ==> canUnrelate(s, id, other, actor) ==> alwaysTheWarningListIsTheTruth(unrelate(s, id, other, actor)))
   ensures (inv(s) ==> canUnrelate(s, id, other, actor) ==> alwaysTaskNumbersAreUnique(unrelate(s, id, other, actor)))
   ensures (inv(s) ==> canUnrelate(s, id, other, actor) ==> alwaysTheCounterCoversEveryTask(unrelate(s, id, other, actor)))
-  ensures (inv(s) ==> canUnrelate(s, id, other, actor) ==> alwaysNoOneIsToldTwiceInOnePass(unrelate(s, id, other, actor)))
+  ensures (inv(s) ==> canUnrelate(s, id, other, actor) ==> alwaysNoOneIsToldOfTheirOwnEdit(unrelate(s, id, other, actor)))
   ensures (inv(s) ==> canUnrelate(s, id, other, actor) ==> alwaysAnEditIsAnnouncedAfterTheQuietPeriod(unrelate(s, id, other, actor)))
   ensures (inv(s) ==> canUnrelate(s, id, other, actor) ==> alwaysNothingIsSentTwice(unrelate(s, id, other, actor)))
   ensures (inv(s) ==> canUnrelate(s, id, other, actor) ==> alwaysWhatWasSentIsRecorded(unrelate(s, id, other, actor)))
@@ -278,17 +277,17 @@ lemma unrelate_ensures(s: Tracker, id: int, other: int, actor: string)
   ensures (inv(s) ==> canUnrelate(s, id, other, actor) ==> alwaysTheBookkeepingIsSane(unrelate(s, id, other, actor)))
   ensures (inv(s) ==> canUnrelate(s, id, other, actor) ==> alwaysTheClockIsNeverNegative(unrelate(s, id, other, actor)))
   ensures (inv(s) ==> canUnrelate(s, id, other, actor) ==> stepOnlyAHandEditCorrupts(s, unrelate(s, id, other, actor)))
+  ensures (inv(s) ==> canUnrelate(s, id, other, actor) ==> stepANewNumberIsUnreferenced(s, unrelate(s, id, other, actor)))
   ensures (inv(s) ==> canUnrelate(s, id, other, actor) ==> stepTheCounterNeverGoesBack(s, unrelate(s, id, other, actor)))
   ensures (inv(s) ==> canUnrelate(s, id, other, actor) ==> stepANumberIsNeverReissued(s, unrelate(s, id, other, actor)))
   ensures (inv(s) ==> canUnrelate(s, id, other, actor) ==> stepAFixRemovesAProblem(s, unrelate(s, id, other, actor)))
 {
   if inv(s) && canUnrelate(s, id, other, actor) {
     var s2 := unrelate(s, id, other, actor);
-    TWarningList(s2);
-    TNoOneToldTwice(s2);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
+    TSameIdsOldNumbers(s, s2);
     forall i | 0 <= i < |s.tasks|
       ensures forall q :: q in problemsOf(s2, s2.tasks[i]) ==> q in problemsOf(s, s.tasks[i])
     {
@@ -298,26 +297,24 @@ lemma unrelate_ensures(s: Tracker, id: int, other: int, actor: string)
   }
 }
 
-lemma deleteTask_ensures(s: Tracker, id: int)
-  ensures (inv(s) ==> canDeleteTask(s, id) ==> alwaysTheWarningListIsTheTruth(deleteTask(s, id)))
-  ensures (inv(s) ==> canDeleteTask(s, id) ==> alwaysTaskNumbersAreUnique(deleteTask(s, id)))
-  ensures (inv(s) ==> canDeleteTask(s, id) ==> alwaysTheCounterCoversEveryTask(deleteTask(s, id)))
-  ensures (inv(s) ==> canDeleteTask(s, id) ==> alwaysNoOneIsToldTwiceInOnePass(deleteTask(s, id)))
-  ensures (inv(s) ==> canDeleteTask(s, id) ==> alwaysAnEditIsAnnouncedAfterTheQuietPeriod(deleteTask(s, id)))
-  ensures (inv(s) ==> canDeleteTask(s, id) ==> alwaysNothingIsSentTwice(deleteTask(s, id)))
-  ensures (inv(s) ==> canDeleteTask(s, id) ==> alwaysWhatWasSentIsRecorded(deleteTask(s, id)))
-  ensures (inv(s) ==> canDeleteTask(s, id) ==> alwaysRemindersAreTimely(deleteTask(s, id)))
-  ensures (inv(s) ==> canDeleteTask(s, id) ==> alwaysTheBookkeepingIsSane(deleteTask(s, id)))
-  ensures (inv(s) ==> canDeleteTask(s, id) ==> alwaysTheClockIsNeverNegative(deleteTask(s, id)))
-  ensures (inv(s) ==> canDeleteTask(s, id) ==> stepOnlyAHandEditCorrupts(s, deleteTask(s, id)))
-  ensures (inv(s) ==> canDeleteTask(s, id) ==> stepTheCounterNeverGoesBack(s, deleteTask(s, id)))
-  ensures (inv(s) ==> canDeleteTask(s, id) ==> stepANumberIsNeverReissued(s, deleteTask(s, id)))
-  ensures (inv(s) ==> canDeleteTask(s, id) ==> stepAFixRemovesAProblem(s, deleteTask(s, id)))
+lemma deleteTask_ensures(s: Tracker, id: int, actor: string)
+  ensures (inv(s) ==> canDeleteTask(s, id, actor) ==> alwaysTaskNumbersAreUnique(deleteTask(s, id, actor)))
+  ensures (inv(s) ==> canDeleteTask(s, id, actor) ==> alwaysTheCounterCoversEveryTask(deleteTask(s, id, actor)))
+  ensures (inv(s) ==> canDeleteTask(s, id, actor) ==> alwaysNoOneIsToldOfTheirOwnEdit(deleteTask(s, id, actor)))
+  ensures (inv(s) ==> canDeleteTask(s, id, actor) ==> alwaysAnEditIsAnnouncedAfterTheQuietPeriod(deleteTask(s, id, actor)))
+  ensures (inv(s) ==> canDeleteTask(s, id, actor) ==> alwaysNothingIsSentTwice(deleteTask(s, id, actor)))
+  ensures (inv(s) ==> canDeleteTask(s, id, actor) ==> alwaysWhatWasSentIsRecorded(deleteTask(s, id, actor)))
+  ensures (inv(s) ==> canDeleteTask(s, id, actor) ==> alwaysRemindersAreTimely(deleteTask(s, id, actor)))
+  ensures (inv(s) ==> canDeleteTask(s, id, actor) ==> alwaysTheBookkeepingIsSane(deleteTask(s, id, actor)))
+  ensures (inv(s) ==> canDeleteTask(s, id, actor) ==> alwaysTheClockIsNeverNegative(deleteTask(s, id, actor)))
+  ensures (inv(s) ==> canDeleteTask(s, id, actor) ==> stepOnlyAHandEditCorrupts(s, deleteTask(s, id, actor)))
+  ensures (inv(s) ==> canDeleteTask(s, id, actor) ==> stepANewNumberIsUnreferenced(s, deleteTask(s, id, actor)))
+  ensures (inv(s) ==> canDeleteTask(s, id, actor) ==> stepTheCounterNeverGoesBack(s, deleteTask(s, id, actor)))
+  ensures (inv(s) ==> canDeleteTask(s, id, actor) ==> stepANumberIsNeverReissued(s, deleteTask(s, id, actor)))
+  ensures (inv(s) ==> canDeleteTask(s, id, actor) ==> stepAFixRemovesAProblem(s, deleteTask(s, id, actor)))
 {
-  if inv(s) && canDeleteTask(s, id) {
-    var s2 := deleteTask(s, id);
-    TWarningList(s2);
-    TNoOneToldTwice(s2);
+  if inv(s) && canDeleteTask(s, id, actor) {
+    var s2 := deleteTask(s, id, actor);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     var kept := ProofLib.Filter((t: Task) => (t.id != id), s.tasks);
@@ -334,37 +331,42 @@ lemma deleteTask_ensures(s: Tracker, id: int)
     }
     TSentRecordedKept(s, s2);
     forall j | 0 <= j < |s2.tasks|
+      ensures hasTask(s, s2.tasks[j].id)
+    {
+      assert kept[j] in s.tasks;
+    }
+    TOldNumbers(s, s2);
+    forall j | 0 <= j < |s2.tasks|
       ensures exists i :: 0 <= i < |s.tasks| && forall q :: q in problemsOf(s2, s2.tasks[j]) ==> q in problemsOf(s, s.tasks[i])
     {
-      TDeleteTaskTask(s, id, j);
+      TDeleteTaskTask(s, id, actor, j);
     }
     TSomeTaskNoNewProblem(s, s2);
   }
 }
 
-lemma renameOwner_ensures(s: Tracker, owner: string, name: string)
-  ensures (inv(s) ==> canRenameOwner(s, owner, name) ==> alwaysTheWarningListIsTheTruth(renameOwner(s, owner, name)))
-  ensures (inv(s) ==> canRenameOwner(s, owner, name) ==> alwaysTaskNumbersAreUnique(renameOwner(s, owner, name)))
-  ensures (inv(s) ==> canRenameOwner(s, owner, name) ==> alwaysTheCounterCoversEveryTask(renameOwner(s, owner, name)))
-  ensures (inv(s) ==> canRenameOwner(s, owner, name) ==> alwaysNoOneIsToldTwiceInOnePass(renameOwner(s, owner, name)))
-  ensures (inv(s) ==> canRenameOwner(s, owner, name) ==> alwaysAnEditIsAnnouncedAfterTheQuietPeriod(renameOwner(s, owner, name)))
-  ensures (inv(s) ==> canRenameOwner(s, owner, name) ==> alwaysNothingIsSentTwice(renameOwner(s, owner, name)))
-  ensures (inv(s) ==> canRenameOwner(s, owner, name) ==> alwaysWhatWasSentIsRecorded(renameOwner(s, owner, name)))
-  ensures (inv(s) ==> canRenameOwner(s, owner, name) ==> alwaysRemindersAreTimely(renameOwner(s, owner, name)))
-  ensures (inv(s) ==> canRenameOwner(s, owner, name) ==> alwaysTheBookkeepingIsSane(renameOwner(s, owner, name)))
-  ensures (inv(s) ==> canRenameOwner(s, owner, name) ==> alwaysTheClockIsNeverNegative(renameOwner(s, owner, name)))
-  ensures (inv(s) ==> canRenameOwner(s, owner, name) ==> stepOnlyAHandEditCorrupts(s, renameOwner(s, owner, name)))
-  ensures (inv(s) ==> canRenameOwner(s, owner, name) ==> stepTheCounterNeverGoesBack(s, renameOwner(s, owner, name)))
-  ensures (inv(s) ==> canRenameOwner(s, owner, name) ==> stepANumberIsNeverReissued(s, renameOwner(s, owner, name)))
-  ensures (inv(s) ==> canRenameOwner(s, owner, name) ==> stepAFixRemovesAProblem(s, renameOwner(s, owner, name)))
+lemma renameOwner_ensures(s: Tracker, owner: string, name: string, actor: string)
+  ensures (inv(s) ==> canRenameOwner(s, owner, name, actor) ==> alwaysTaskNumbersAreUnique(renameOwner(s, owner, name, actor)))
+  ensures (inv(s) ==> canRenameOwner(s, owner, name, actor) ==> alwaysTheCounterCoversEveryTask(renameOwner(s, owner, name, actor)))
+  ensures (inv(s) ==> canRenameOwner(s, owner, name, actor) ==> alwaysNoOneIsToldOfTheirOwnEdit(renameOwner(s, owner, name, actor)))
+  ensures (inv(s) ==> canRenameOwner(s, owner, name, actor) ==> alwaysAnEditIsAnnouncedAfterTheQuietPeriod(renameOwner(s, owner, name, actor)))
+  ensures (inv(s) ==> canRenameOwner(s, owner, name, actor) ==> alwaysNothingIsSentTwice(renameOwner(s, owner, name, actor)))
+  ensures (inv(s) ==> canRenameOwner(s, owner, name, actor) ==> alwaysWhatWasSentIsRecorded(renameOwner(s, owner, name, actor)))
+  ensures (inv(s) ==> canRenameOwner(s, owner, name, actor) ==> alwaysRemindersAreTimely(renameOwner(s, owner, name, actor)))
+  ensures (inv(s) ==> canRenameOwner(s, owner, name, actor) ==> alwaysTheBookkeepingIsSane(renameOwner(s, owner, name, actor)))
+  ensures (inv(s) ==> canRenameOwner(s, owner, name, actor) ==> alwaysTheClockIsNeverNegative(renameOwner(s, owner, name, actor)))
+  ensures (inv(s) ==> canRenameOwner(s, owner, name, actor) ==> stepOnlyAHandEditCorrupts(s, renameOwner(s, owner, name, actor)))
+  ensures (inv(s) ==> canRenameOwner(s, owner, name, actor) ==> stepANewNumberIsUnreferenced(s, renameOwner(s, owner, name, actor)))
+  ensures (inv(s) ==> canRenameOwner(s, owner, name, actor) ==> stepTheCounterNeverGoesBack(s, renameOwner(s, owner, name, actor)))
+  ensures (inv(s) ==> canRenameOwner(s, owner, name, actor) ==> stepANumberIsNeverReissued(s, renameOwner(s, owner, name, actor)))
+  ensures (inv(s) ==> canRenameOwner(s, owner, name, actor) ==> stepAFixRemovesAProblem(s, renameOwner(s, owner, name, actor)))
 {
-  if inv(s) && canRenameOwner(s, owner, name) {
-    var s2 := renameOwner(s, owner, name);
-    TWarningList(s2);
-    TNoOneToldTwice(s2);
+  if inv(s) && canRenameOwner(s, owner, name, actor) {
+    var s2 := renameOwner(s, owner, name, actor);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
+    TSameIdsOldNumbers(s, s2);
     forall i, o | 0 <= i < |s.tasks| && o in s2.tasks[i].owners && !(o in s2.owners)
       ensures o in s.tasks[i].owners && !(o in s.owners)
     {
@@ -384,29 +386,28 @@ lemma renameOwner_ensures(s: Tracker, owner: string, name: string)
   }
 }
 
-lemma deleteOwner_ensures(s: Tracker, owner: string)
-  ensures (inv(s) ==> canDeleteOwner(s, owner) ==> alwaysTheWarningListIsTheTruth(deleteOwner(s, owner)))
-  ensures (inv(s) ==> canDeleteOwner(s, owner) ==> alwaysTaskNumbersAreUnique(deleteOwner(s, owner)))
-  ensures (inv(s) ==> canDeleteOwner(s, owner) ==> alwaysTheCounterCoversEveryTask(deleteOwner(s, owner)))
-  ensures (inv(s) ==> canDeleteOwner(s, owner) ==> alwaysNoOneIsToldTwiceInOnePass(deleteOwner(s, owner)))
-  ensures (inv(s) ==> canDeleteOwner(s, owner) ==> alwaysAnEditIsAnnouncedAfterTheQuietPeriod(deleteOwner(s, owner)))
-  ensures (inv(s) ==> canDeleteOwner(s, owner) ==> alwaysNothingIsSentTwice(deleteOwner(s, owner)))
-  ensures (inv(s) ==> canDeleteOwner(s, owner) ==> alwaysWhatWasSentIsRecorded(deleteOwner(s, owner)))
-  ensures (inv(s) ==> canDeleteOwner(s, owner) ==> alwaysRemindersAreTimely(deleteOwner(s, owner)))
-  ensures (inv(s) ==> canDeleteOwner(s, owner) ==> alwaysTheBookkeepingIsSane(deleteOwner(s, owner)))
-  ensures (inv(s) ==> canDeleteOwner(s, owner) ==> alwaysTheClockIsNeverNegative(deleteOwner(s, owner)))
-  ensures (inv(s) ==> canDeleteOwner(s, owner) ==> stepOnlyAHandEditCorrupts(s, deleteOwner(s, owner)))
-  ensures (inv(s) ==> canDeleteOwner(s, owner) ==> stepTheCounterNeverGoesBack(s, deleteOwner(s, owner)))
-  ensures (inv(s) ==> canDeleteOwner(s, owner) ==> stepANumberIsNeverReissued(s, deleteOwner(s, owner)))
-  ensures (inv(s) ==> canDeleteOwner(s, owner) ==> stepAFixRemovesAProblem(s, deleteOwner(s, owner)))
+lemma deleteOwner_ensures(s: Tracker, owner: string, actor: string)
+  ensures (inv(s) ==> canDeleteOwner(s, owner, actor) ==> alwaysTaskNumbersAreUnique(deleteOwner(s, owner, actor)))
+  ensures (inv(s) ==> canDeleteOwner(s, owner, actor) ==> alwaysTheCounterCoversEveryTask(deleteOwner(s, owner, actor)))
+  ensures (inv(s) ==> canDeleteOwner(s, owner, actor) ==> alwaysNoOneIsToldOfTheirOwnEdit(deleteOwner(s, owner, actor)))
+  ensures (inv(s) ==> canDeleteOwner(s, owner, actor) ==> alwaysAnEditIsAnnouncedAfterTheQuietPeriod(deleteOwner(s, owner, actor)))
+  ensures (inv(s) ==> canDeleteOwner(s, owner, actor) ==> alwaysNothingIsSentTwice(deleteOwner(s, owner, actor)))
+  ensures (inv(s) ==> canDeleteOwner(s, owner, actor) ==> alwaysWhatWasSentIsRecorded(deleteOwner(s, owner, actor)))
+  ensures (inv(s) ==> canDeleteOwner(s, owner, actor) ==> alwaysRemindersAreTimely(deleteOwner(s, owner, actor)))
+  ensures (inv(s) ==> canDeleteOwner(s, owner, actor) ==> alwaysTheBookkeepingIsSane(deleteOwner(s, owner, actor)))
+  ensures (inv(s) ==> canDeleteOwner(s, owner, actor) ==> alwaysTheClockIsNeverNegative(deleteOwner(s, owner, actor)))
+  ensures (inv(s) ==> canDeleteOwner(s, owner, actor) ==> stepOnlyAHandEditCorrupts(s, deleteOwner(s, owner, actor)))
+  ensures (inv(s) ==> canDeleteOwner(s, owner, actor) ==> stepANewNumberIsUnreferenced(s, deleteOwner(s, owner, actor)))
+  ensures (inv(s) ==> canDeleteOwner(s, owner, actor) ==> stepTheCounterNeverGoesBack(s, deleteOwner(s, owner, actor)))
+  ensures (inv(s) ==> canDeleteOwner(s, owner, actor) ==> stepANumberIsNeverReissued(s, deleteOwner(s, owner, actor)))
+  ensures (inv(s) ==> canDeleteOwner(s, owner, actor) ==> stepAFixRemovesAProblem(s, deleteOwner(s, owner, actor)))
 {
-  if inv(s) && canDeleteOwner(s, owner) {
-    var s2 := deleteOwner(s, owner);
-    TWarningList(s2);
-    TNoOneToldTwice(s2);
+  if inv(s) && canDeleteOwner(s, owner, actor) {
+    var s2 := deleteOwner(s, owner, actor);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
+    TSameIdsOldNumbers(s, s2);
     forall i, o | 0 <= i < |s.tasks| && o in s2.tasks[i].owners && !(o in s2.owners)
       ensures o in s.tasks[i].owners && !(o in s.owners)
     {
@@ -418,10 +419,9 @@ lemma deleteOwner_ensures(s: Tracker, owner: string)
 }
 
 lemma handAddOwner_ensures(s: Tracker, id: int, name: string)
-  ensures (inv(s) ==> canHandAddOwner(s, id, name) ==> alwaysTheWarningListIsTheTruth(handAddOwner(s, id, name)))
   ensures (inv(s) ==> canHandAddOwner(s, id, name) ==> alwaysTaskNumbersAreUnique(handAddOwner(s, id, name)))
   ensures (inv(s) ==> canHandAddOwner(s, id, name) ==> alwaysTheCounterCoversEveryTask(handAddOwner(s, id, name)))
-  ensures (inv(s) ==> canHandAddOwner(s, id, name) ==> alwaysNoOneIsToldTwiceInOnePass(handAddOwner(s, id, name)))
+  ensures (inv(s) ==> canHandAddOwner(s, id, name) ==> alwaysNoOneIsToldOfTheirOwnEdit(handAddOwner(s, id, name)))
   ensures (inv(s) ==> canHandAddOwner(s, id, name) ==> alwaysAnEditIsAnnouncedAfterTheQuietPeriod(handAddOwner(s, id, name)))
   ensures (inv(s) ==> canHandAddOwner(s, id, name) ==> alwaysNothingIsSentTwice(handAddOwner(s, id, name)))
   ensures (inv(s) ==> canHandAddOwner(s, id, name) ==> alwaysWhatWasSentIsRecorded(handAddOwner(s, id, name)))
@@ -429,25 +429,24 @@ lemma handAddOwner_ensures(s: Tracker, id: int, name: string)
   ensures (inv(s) ==> canHandAddOwner(s, id, name) ==> alwaysTheBookkeepingIsSane(handAddOwner(s, id, name)))
   ensures (inv(s) ==> canHandAddOwner(s, id, name) ==> alwaysTheClockIsNeverNegative(handAddOwner(s, id, name)))
   ensures (inv(s) ==> canHandAddOwner(s, id, name) ==> stepOnlyAHandEditCorrupts(s, handAddOwner(s, id, name)))
+  ensures (inv(s) ==> canHandAddOwner(s, id, name) ==> stepANewNumberIsUnreferenced(s, handAddOwner(s, id, name)))
   ensures (inv(s) ==> canHandAddOwner(s, id, name) ==> stepTheCounterNeverGoesBack(s, handAddOwner(s, id, name)))
   ensures (inv(s) ==> canHandAddOwner(s, id, name) ==> stepANumberIsNeverReissued(s, handAddOwner(s, id, name)))
   ensures (inv(s) ==> canHandAddOwner(s, id, name) ==> stepAFixRemovesAProblem(s, handAddOwner(s, id, name)))
 {
   if inv(s) && canHandAddOwner(s, id, name) {
     var s2 := handAddOwner(s, id, name);
-    TWarningList(s2);
-    TNoOneToldTwice(s2);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
+    TSameIdsOldNumbers(s, s2);
   }
 }
 
 lemma handAddParent_ensures(s: Tracker, id: int, other: int)
-  ensures (inv(s) ==> canHandAddParent(s, id, other) ==> alwaysTheWarningListIsTheTruth(handAddParent(s, id, other)))
   ensures (inv(s) ==> canHandAddParent(s, id, other) ==> alwaysTaskNumbersAreUnique(handAddParent(s, id, other)))
   ensures (inv(s) ==> canHandAddParent(s, id, other) ==> alwaysTheCounterCoversEveryTask(handAddParent(s, id, other)))
-  ensures (inv(s) ==> canHandAddParent(s, id, other) ==> alwaysNoOneIsToldTwiceInOnePass(handAddParent(s, id, other)))
+  ensures (inv(s) ==> canHandAddParent(s, id, other) ==> alwaysNoOneIsToldOfTheirOwnEdit(handAddParent(s, id, other)))
   ensures (inv(s) ==> canHandAddParent(s, id, other) ==> alwaysAnEditIsAnnouncedAfterTheQuietPeriod(handAddParent(s, id, other)))
   ensures (inv(s) ==> canHandAddParent(s, id, other) ==> alwaysNothingIsSentTwice(handAddParent(s, id, other)))
   ensures (inv(s) ==> canHandAddParent(s, id, other) ==> alwaysWhatWasSentIsRecorded(handAddParent(s, id, other)))
@@ -455,25 +454,24 @@ lemma handAddParent_ensures(s: Tracker, id: int, other: int)
   ensures (inv(s) ==> canHandAddParent(s, id, other) ==> alwaysTheBookkeepingIsSane(handAddParent(s, id, other)))
   ensures (inv(s) ==> canHandAddParent(s, id, other) ==> alwaysTheClockIsNeverNegative(handAddParent(s, id, other)))
   ensures (inv(s) ==> canHandAddParent(s, id, other) ==> stepOnlyAHandEditCorrupts(s, handAddParent(s, id, other)))
+  ensures (inv(s) ==> canHandAddParent(s, id, other) ==> stepANewNumberIsUnreferenced(s, handAddParent(s, id, other)))
   ensures (inv(s) ==> canHandAddParent(s, id, other) ==> stepTheCounterNeverGoesBack(s, handAddParent(s, id, other)))
   ensures (inv(s) ==> canHandAddParent(s, id, other) ==> stepANumberIsNeverReissued(s, handAddParent(s, id, other)))
   ensures (inv(s) ==> canHandAddParent(s, id, other) ==> stepAFixRemovesAProblem(s, handAddParent(s, id, other)))
 {
   if inv(s) && canHandAddParent(s, id, other) {
     var s2 := handAddParent(s, id, other);
-    TWarningList(s2);
-    TNoOneToldTwice(s2);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
+    TSameIdsOldNumbers(s, s2);
   }
 }
 
 lemma handAddRelated_ensures(s: Tracker, id: int, other: int)
-  ensures (inv(s) ==> canHandAddRelated(s, id, other) ==> alwaysTheWarningListIsTheTruth(handAddRelated(s, id, other)))
   ensures (inv(s) ==> canHandAddRelated(s, id, other) ==> alwaysTaskNumbersAreUnique(handAddRelated(s, id, other)))
   ensures (inv(s) ==> canHandAddRelated(s, id, other) ==> alwaysTheCounterCoversEveryTask(handAddRelated(s, id, other)))
-  ensures (inv(s) ==> canHandAddRelated(s, id, other) ==> alwaysNoOneIsToldTwiceInOnePass(handAddRelated(s, id, other)))
+  ensures (inv(s) ==> canHandAddRelated(s, id, other) ==> alwaysNoOneIsToldOfTheirOwnEdit(handAddRelated(s, id, other)))
   ensures (inv(s) ==> canHandAddRelated(s, id, other) ==> alwaysAnEditIsAnnouncedAfterTheQuietPeriod(handAddRelated(s, id, other)))
   ensures (inv(s) ==> canHandAddRelated(s, id, other) ==> alwaysNothingIsSentTwice(handAddRelated(s, id, other)))
   ensures (inv(s) ==> canHandAddRelated(s, id, other) ==> alwaysWhatWasSentIsRecorded(handAddRelated(s, id, other)))
@@ -481,25 +479,24 @@ lemma handAddRelated_ensures(s: Tracker, id: int, other: int)
   ensures (inv(s) ==> canHandAddRelated(s, id, other) ==> alwaysTheBookkeepingIsSane(handAddRelated(s, id, other)))
   ensures (inv(s) ==> canHandAddRelated(s, id, other) ==> alwaysTheClockIsNeverNegative(handAddRelated(s, id, other)))
   ensures (inv(s) ==> canHandAddRelated(s, id, other) ==> stepOnlyAHandEditCorrupts(s, handAddRelated(s, id, other)))
+  ensures (inv(s) ==> canHandAddRelated(s, id, other) ==> stepANewNumberIsUnreferenced(s, handAddRelated(s, id, other)))
   ensures (inv(s) ==> canHandAddRelated(s, id, other) ==> stepTheCounterNeverGoesBack(s, handAddRelated(s, id, other)))
   ensures (inv(s) ==> canHandAddRelated(s, id, other) ==> stepANumberIsNeverReissued(s, handAddRelated(s, id, other)))
   ensures (inv(s) ==> canHandAddRelated(s, id, other) ==> stepAFixRemovesAProblem(s, handAddRelated(s, id, other)))
 {
   if inv(s) && canHandAddRelated(s, id, other) {
     var s2 := handAddRelated(s, id, other);
-    TWarningList(s2);
-    TNoOneToldTwice(s2);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
+    TSameIdsOldNumbers(s, s2);
   }
 }
 
 lemma handDeleteTask_ensures(s: Tracker, id: int)
-  ensures (inv(s) ==> canHandDeleteTask(s, id) ==> alwaysTheWarningListIsTheTruth(handDeleteTask(s, id)))
   ensures (inv(s) ==> canHandDeleteTask(s, id) ==> alwaysTaskNumbersAreUnique(handDeleteTask(s, id)))
   ensures (inv(s) ==> canHandDeleteTask(s, id) ==> alwaysTheCounterCoversEveryTask(handDeleteTask(s, id)))
-  ensures (inv(s) ==> canHandDeleteTask(s, id) ==> alwaysNoOneIsToldTwiceInOnePass(handDeleteTask(s, id)))
+  ensures (inv(s) ==> canHandDeleteTask(s, id) ==> alwaysNoOneIsToldOfTheirOwnEdit(handDeleteTask(s, id)))
   ensures (inv(s) ==> canHandDeleteTask(s, id) ==> alwaysAnEditIsAnnouncedAfterTheQuietPeriod(handDeleteTask(s, id)))
   ensures (inv(s) ==> canHandDeleteTask(s, id) ==> alwaysNothingIsSentTwice(handDeleteTask(s, id)))
   ensures (inv(s) ==> canHandDeleteTask(s, id) ==> alwaysWhatWasSentIsRecorded(handDeleteTask(s, id)))
@@ -507,14 +504,13 @@ lemma handDeleteTask_ensures(s: Tracker, id: int)
   ensures (inv(s) ==> canHandDeleteTask(s, id) ==> alwaysTheBookkeepingIsSane(handDeleteTask(s, id)))
   ensures (inv(s) ==> canHandDeleteTask(s, id) ==> alwaysTheClockIsNeverNegative(handDeleteTask(s, id)))
   ensures (inv(s) ==> canHandDeleteTask(s, id) ==> stepOnlyAHandEditCorrupts(s, handDeleteTask(s, id)))
+  ensures (inv(s) ==> canHandDeleteTask(s, id) ==> stepANewNumberIsUnreferenced(s, handDeleteTask(s, id)))
   ensures (inv(s) ==> canHandDeleteTask(s, id) ==> stepTheCounterNeverGoesBack(s, handDeleteTask(s, id)))
   ensures (inv(s) ==> canHandDeleteTask(s, id) ==> stepANumberIsNeverReissued(s, handDeleteTask(s, id)))
   ensures (inv(s) ==> canHandDeleteTask(s, id) ==> stepAFixRemovesAProblem(s, handDeleteTask(s, id)))
 {
   if inv(s) && canHandDeleteTask(s, id) {
     var s2 := handDeleteTask(s, id);
-    TWarningList(s2);
-    TNoOneToldTwice(s2);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TFilterKeepsUnique((t: Task) => (t.id != id), s.tasks);
@@ -525,14 +521,19 @@ lemma handDeleteTask_ensures(s: Tracker, id: int)
       assert s2.tasks[j] in s.tasks;
     }
     TSentRecordedKept(s, s2);
+    forall j | 0 <= j < |s2.tasks|
+      ensures hasTask(s, s2.tasks[j].id)
+    {
+      assert s2.tasks[j] in s.tasks;
+    }
+    TOldNumbers(s, s2);
   }
 }
 
 lemma handDeleteOwner_ensures(s: Tracker, owner: string)
-  ensures (inv(s) ==> canHandDeleteOwner(s, owner) ==> alwaysTheWarningListIsTheTruth(handDeleteOwner(s, owner)))
   ensures (inv(s) ==> canHandDeleteOwner(s, owner) ==> alwaysTaskNumbersAreUnique(handDeleteOwner(s, owner)))
   ensures (inv(s) ==> canHandDeleteOwner(s, owner) ==> alwaysTheCounterCoversEveryTask(handDeleteOwner(s, owner)))
-  ensures (inv(s) ==> canHandDeleteOwner(s, owner) ==> alwaysNoOneIsToldTwiceInOnePass(handDeleteOwner(s, owner)))
+  ensures (inv(s) ==> canHandDeleteOwner(s, owner) ==> alwaysNoOneIsToldOfTheirOwnEdit(handDeleteOwner(s, owner)))
   ensures (inv(s) ==> canHandDeleteOwner(s, owner) ==> alwaysAnEditIsAnnouncedAfterTheQuietPeriod(handDeleteOwner(s, owner)))
   ensures (inv(s) ==> canHandDeleteOwner(s, owner) ==> alwaysNothingIsSentTwice(handDeleteOwner(s, owner)))
   ensures (inv(s) ==> canHandDeleteOwner(s, owner) ==> alwaysWhatWasSentIsRecorded(handDeleteOwner(s, owner)))
@@ -540,22 +541,21 @@ lemma handDeleteOwner_ensures(s: Tracker, owner: string)
   ensures (inv(s) ==> canHandDeleteOwner(s, owner) ==> alwaysTheBookkeepingIsSane(handDeleteOwner(s, owner)))
   ensures (inv(s) ==> canHandDeleteOwner(s, owner) ==> alwaysTheClockIsNeverNegative(handDeleteOwner(s, owner)))
   ensures (inv(s) ==> canHandDeleteOwner(s, owner) ==> stepOnlyAHandEditCorrupts(s, handDeleteOwner(s, owner)))
+  ensures (inv(s) ==> canHandDeleteOwner(s, owner) ==> stepANewNumberIsUnreferenced(s, handDeleteOwner(s, owner)))
   ensures (inv(s) ==> canHandDeleteOwner(s, owner) ==> stepTheCounterNeverGoesBack(s, handDeleteOwner(s, owner)))
   ensures (inv(s) ==> canHandDeleteOwner(s, owner) ==> stepANumberIsNeverReissued(s, handDeleteOwner(s, owner)))
   ensures (inv(s) ==> canHandDeleteOwner(s, owner) ==> stepAFixRemovesAProblem(s, handDeleteOwner(s, owner)))
 {
   if inv(s) && canHandDeleteOwner(s, owner) {
     var s2 := handDeleteOwner(s, owner);
-    TWarningList(s2);
-    TNoOneToldTwice(s2);
+    TSameIdsOldNumbers(s, s2);
   }
 }
 
 lemma fix_ensures(s: Tracker, index: int)
-  ensures (inv(s) ==> canFix(s, index) ==> alwaysTheWarningListIsTheTruth(fix(s, index)))
   ensures (inv(s) ==> canFix(s, index) ==> alwaysTaskNumbersAreUnique(fix(s, index)))
   ensures (inv(s) ==> canFix(s, index) ==> alwaysTheCounterCoversEveryTask(fix(s, index)))
-  ensures (inv(s) ==> canFix(s, index) ==> alwaysNoOneIsToldTwiceInOnePass(fix(s, index)))
+  ensures (inv(s) ==> canFix(s, index) ==> alwaysNoOneIsToldOfTheirOwnEdit(fix(s, index)))
   ensures (inv(s) ==> canFix(s, index) ==> alwaysAnEditIsAnnouncedAfterTheQuietPeriod(fix(s, index)))
   ensures (inv(s) ==> canFix(s, index) ==> alwaysNothingIsSentTwice(fix(s, index)))
   ensures (inv(s) ==> canFix(s, index) ==> alwaysWhatWasSentIsRecorded(fix(s, index)))
@@ -563,17 +563,17 @@ lemma fix_ensures(s: Tracker, index: int)
   ensures (inv(s) ==> canFix(s, index) ==> alwaysTheBookkeepingIsSane(fix(s, index)))
   ensures (inv(s) ==> canFix(s, index) ==> alwaysTheClockIsNeverNegative(fix(s, index)))
   ensures (inv(s) ==> canFix(s, index) ==> stepOnlyAHandEditCorrupts(s, fix(s, index)))
+  ensures (inv(s) ==> canFix(s, index) ==> stepANewNumberIsUnreferenced(s, fix(s, index)))
   ensures (inv(s) ==> canFix(s, index) ==> stepTheCounterNeverGoesBack(s, fix(s, index)))
   ensures (inv(s) ==> canFix(s, index) ==> stepANumberIsNeverReissued(s, fix(s, index)))
   ensures (inv(s) ==> canFix(s, index) ==> stepAFixRemovesAProblem(s, fix(s, index)))
 {
   if inv(s) && canFix(s, index) {
     var s2 := fix(s, index);
-    TWarningList(s2);
-    TNoOneToldTwice(s2);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
+    TSameIdsOldNumbers(s, s2);
     forall k | 0 <= k < |s.tasks|
       ensures forall q :: q in problemsOf(s2, s2.tasks[k]) ==> q in problemsOf(s, s.tasks[k])
     {
@@ -585,10 +585,9 @@ lemma fix_ensures(s: Tracker, index: int)
 }
 
 lemma tick_ensures(s: Tracker)
-  ensures (inv(s) ==> alwaysTheWarningListIsTheTruth(tick(s)))
   ensures (inv(s) ==> alwaysTaskNumbersAreUnique(tick(s)))
   ensures (inv(s) ==> alwaysTheCounterCoversEveryTask(tick(s)))
-  ensures (inv(s) ==> alwaysNoOneIsToldTwiceInOnePass(tick(s)))
+  ensures (inv(s) ==> alwaysNoOneIsToldOfTheirOwnEdit(tick(s)))
   ensures (inv(s) ==> alwaysAnEditIsAnnouncedAfterTheQuietPeriod(tick(s)))
   ensures (inv(s) ==> alwaysNothingIsSentTwice(tick(s)))
   ensures (inv(s) ==> alwaysWhatWasSentIsRecorded(tick(s)))
@@ -596,24 +595,23 @@ lemma tick_ensures(s: Tracker)
   ensures (inv(s) ==> alwaysTheBookkeepingIsSane(tick(s)))
   ensures (inv(s) ==> alwaysTheClockIsNeverNegative(tick(s)))
   ensures (inv(s) ==> stepOnlyAHandEditCorrupts(s, tick(s)))
+  ensures (inv(s) ==> stepANewNumberIsUnreferenced(s, tick(s)))
   ensures (inv(s) ==> stepTheCounterNeverGoesBack(s, tick(s)))
   ensures (inv(s) ==> stepANumberIsNeverReissued(s, tick(s)))
   ensures (inv(s) ==> stepAFixRemovesAProblem(s, tick(s)))
 {
   if inv(s) {
     var s2 := tick(s);
-    TWarningList(s2);
-    TNoOneToldTwice(s2);
+    TSameIdsOldNumbers(s, s2);
     TSameShapeProblems(s, s2);
     TSubsetNoNewProblem(s, s2);
   }
 }
 
 lemma notify_ensures(s: Tracker)
-  ensures (inv(s) ==> alwaysTheWarningListIsTheTruth(notify(s)))
   ensures (inv(s) ==> alwaysTaskNumbersAreUnique(notify(s)))
   ensures (inv(s) ==> alwaysTheCounterCoversEveryTask(notify(s)))
-  ensures (inv(s) ==> alwaysNoOneIsToldTwiceInOnePass(notify(s)))
+  ensures (inv(s) ==> alwaysNoOneIsToldOfTheirOwnEdit(notify(s)))
   ensures (inv(s) ==> alwaysAnEditIsAnnouncedAfterTheQuietPeriod(notify(s)))
   ensures (inv(s) ==> alwaysNothingIsSentTwice(notify(s)))
   ensures (inv(s) ==> alwaysWhatWasSentIsRecorded(notify(s)))
@@ -621,20 +619,20 @@ lemma notify_ensures(s: Tracker)
   ensures (inv(s) ==> alwaysTheBookkeepingIsSane(notify(s)))
   ensures (inv(s) ==> alwaysTheClockIsNeverNegative(notify(s)))
   ensures (inv(s) ==> stepOnlyAHandEditCorrupts(s, notify(s)))
+  ensures (inv(s) ==> stepANewNumberIsUnreferenced(s, notify(s)))
   ensures (inv(s) ==> stepTheCounterNeverGoesBack(s, notify(s)))
   ensures (inv(s) ==> stepANumberIsNeverReissued(s, notify(s)))
   ensures (inv(s) ==> stepAFixRemovesAProblem(s, notify(s)))
 {
   if inv(s) {
     var s2 := notify(s);
-    TWarningList(s2);
     TNotifyAnnouncedAndTimely(s);
     TNotifyRecorded(s);
     TNotifyNothingSentTwice(s);
-    TNoOneToldTwice(s2);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
+    TSameIdsOldNumbers(s, s2);
     TSameShapeProblems(s, s2);
     TSubsetNoNewProblem(s, s2);
   }
@@ -717,8 +715,8 @@ lemma TTaskClean(s: Tracker, t: Task)
   ProofLib.FilterNone((r: int) => (((r != t.id) && hasTask(s, r)) && !(linksBack(s, r, t.id))), t.related);
 }
 
-lemma TWarningList(s: Tracker)
-  ensures alwaysTheWarningListIsTheTruth(s)
+lemma lawTheWarningListIsTheTruth_ensures(s: Tracker)
+  ensures (lawTheWarningListIsTheTruth(s) == true)
 {
   ProofLib.FoldLeftConcatEmpty((acc: seq<Problem>, t: Task) => (acc + problemsOf(s, t)), (t: Task) => problemsOf(s, t), [], s.tasks);
   forall i | 0 <= i < |s.tasks|
@@ -728,20 +726,42 @@ lemma TWarningList(s: Tracker)
   }
 }
 
-// ===== No one is told twice in one pass, for every state =====
+// ===== Each name is listed once =====
 
-lemma TNoOneToldTwice(s: Tracker)
-  ensures alwaysNoOneIsToldTwiceInOnePass(s)
+lemma lawEachNameIsListedOnce_ensures(xs: seq<string>)
+  ensures (lawEachNameIsListedOnce(xs) == true)
 {
-  forall i, k | 0 <= i < |s.tasks| && 0 <= k < |knownOwners(s, s.tasks[i])|
-    ensures var o := knownOwners(s, s.tasks[i])[k]; |ProofLib.Filter((x: string) => (x == o), knownOwners(s, s.tasks[i]))| == 1
+  var d := distinctNames(xs);
+  ProofLib.FoldLeftDedupDistinct((acc: seq<string>, x: string) => (if (x in acc) then acc else (acc + [x])), [], xs);
+  forall k | 0 <= k < |d|
+    ensures var o := d[k]; |ProofLib.Filter((x: string) => (x == o), d)| == 1
   {
-    var t := s.tasks[i];
-    var ko := knownOwners(s, t);
-    ProofLib.FoldLeftDedupDistinct((acc: seq<string>, x: string) => (if (x in acc) then acc else (acc + [x])), [], ProofLib.Filter((o: string) => (o in s.owners), t.owners));
-    var o := ko[k];
-    ProofLib.FilterDistinctCountOne((x: string) => (x == o), ko, o);
+    var o := d[k];
+    ProofLib.FilterDistinctCountOne((x: string) => (x == o), d, o);
   }
+}
+
+// ===== A step issues no new number, except create =====
+
+// Every task after has the number of a task before.
+lemma TOldNumbers(s: Tracker, s2: Tracker)
+  requires forall j :: 0 <= j < |s2.tasks| ==> hasTask(s, s2.tasks[j].id)
+  ensures stepANewNumberIsUnreferenced(s, s2)
+{
+}
+
+// The same, when every task keeps its number and its position.
+lemma TSameIdsOldNumbers(s: Tracker, s2: Tracker)
+  requires |s.tasks| == |s2.tasks|
+  requires forall i :: 0 <= i < |s.tasks| ==> s.tasks[i].id == s2.tasks[i].id
+  ensures stepANewNumberIsUnreferenced(s, s2)
+{
+  forall j | 0 <= j < |s2.tasks|
+    ensures hasTask(s, s2.tasks[j].id)
+  {
+    assert s.tasks[j] in s.tasks;
+  }
+  TOldNumbers(s, s2);
 }
 
 // ===== Problems depend only on the members and each task's number, owners and links =====
@@ -893,14 +913,33 @@ lemma TFoldConcatMember<A, T>(f: (seq<A>, T) -> seq<A>, h: T -> seq<A>, init: se
   }
 }
 
-// A note of one task's pass names the task, goes out now, and is due.
+// One task's notes of a pass: the edit announcements, then the heads-ups, then the due-day reminders.
+lemma TNotesForParts(s: Tracker, t: Task)
+  ensures var ko := knownOwners(s, t); var up := ProofLib.Filter((o: string) => (o != t.updatedBy), ko);
+    notesFor(s, t) ==
+      (if updateIsDue(t, s.now) then seq(|up|, i requires 0 <= i < |up| => Note(NoteKind.Update, t.id, up[i], t.updatedAt, s.now, t.updatedBy)) else [])
+      + (if reminder(t, s.now).DueSoon? then seq(|ko|, i requires 0 <= i < |ko| => Note(NoteKind.Soon, t.id, ko[i], t.due, s.now, "")) else [])
+      + (if reminder(t, s.now).DueToday? then seq(|ko|, i requires 0 <= i < |ko| => Note(NoteKind.Today, t.id, ko[i], t.due, s.now, "")) else [])
+{
+}
+
+// A note of one task's pass names the task, goes out now, and is due; an announcement skips its editor.
 lemma TNoteFacts(s: Tracker, t: Task, x: Note)
   requires x in notesFor(s, t)
   ensures x.task == t.id && x.at == s.now
-  ensures x.kind.Update? ==> updateIsDue(t, s.now) && x.version == t.updatedAt
+  ensures x.kind.Update? ==> updateIsDue(t, s.now) && x.version == t.updatedAt && x.by_ == t.updatedBy && x.to != x.by_
   ensures x.kind.Soon? ==> reminder(t, s.now).DueSoon? && x.version == t.due
   ensures x.kind.Today? ==> reminder(t, s.now).DueToday? && x.version == t.due
 {
+  var ko := knownOwners(s, t);
+  var up := ProofLib.Filter((o: string) => (o != t.updatedBy), ko);
+  TNotesForParts(s, t);
+  if x.kind.Update? {
+    var a := seq(|up|, i requires 0 <= i < |up| => Note(NoteKind.Update, t.id, up[i], t.updatedAt, s.now, t.updatedBy));
+    assert updateIsDue(t, s.now) && x in a;
+    var k :| 0 <= k < |a| && a[k] == x;
+    ProofLib.FilterMember((o: string) => (o != t.updatedBy), ko, up[k]);
+  }
 }
 
 // A note of one notifier pass comes from one task.
@@ -923,10 +962,11 @@ lemma TUniqueIndex(s: Tracker, i: int, j: int)
   ProofLib.FilterCountOneIffUnique((b: Task) => (b.id == a.id), s.tasks, (t: Task) => t.id, i);
 }
 
-// The notes of a pass are announced after the quiet period and timely, so the rules still hold after it.
+// The notes of a pass are announced after the quiet period, not to their editor, and timely, so the rules still hold after it.
 lemma TNotifyAnnouncedAndTimely(s: Tracker)
   requires inv(s)
   ensures alwaysAnEditIsAnnouncedAfterTheQuietPeriod(notify(s))
+  ensures alwaysNoOneIsToldOfTheirOwnEdit(notify(s))
   ensures alwaysRemindersAreTimely(notify(s))
 {
   var s2 := notify(s);
@@ -934,6 +974,7 @@ lemma TNotifyAnnouncedAndTimely(s: Tracker)
   assert s2.sent == s.sent + newNotes;
   forall k | 0 <= k < |s2.sent|
     ensures (!(s2.sent[k].kind.Update?) || ((s2.sent[k].at - s2.sent[k].version) >= debounce))
+    ensures (!(s2.sent[k].kind.Update?) || (s2.sent[k].to != s2.sent[k].by_))
     ensures ((!(s2.sent[k].kind.Today?) || ((s2.sent[k].version <= today(s2.sent[k].at)) && ((today(s2.sent[k].at) - s2.sent[k].version) <= lateDays))) && (!(s2.sent[k].kind.Soon?) || (((s2.sent[k].version - today(s2.sent[k].at)) >= 1) && ((s2.sent[k].version - today(s2.sent[k].at)) <= soonDays))))
   {
     if k < |s.sent| {
@@ -1066,9 +1107,10 @@ lemma TNotesForDistinct(s: Tracker, t: Task)
   assert ProofLib.DistinctBy(ko, (o: string) => o);
   var up := ProofLib.Filter((o: string) => (o != t.updatedBy), ko);
   ProofLib.FilterKeepsDistinctBy((o: string) => (o != t.updatedBy), ko, (o: string) => o);
-  var a := if updateIsDue(t, s.now) then seq(|up|, i requires 0 <= i < |up| => Note(NoteKind.Update, t.id, up[i], t.updatedAt, s.now)) else [];
-  var b := if reminder(t, s.now).DueSoon? then seq(|ko|, i requires 0 <= i < |ko| => Note(NoteKind.Soon, t.id, ko[i], t.due, s.now)) else [];
-  var c := if reminder(t, s.now).DueToday? then seq(|ko|, i requires 0 <= i < |ko| => Note(NoteKind.Today, t.id, ko[i], t.due, s.now)) else [];
+  var a := if updateIsDue(t, s.now) then seq(|up|, i requires 0 <= i < |up| => Note(NoteKind.Update, t.id, up[i], t.updatedAt, s.now, t.updatedBy)) else [];
+  var b := if reminder(t, s.now).DueSoon? then seq(|ko|, i requires 0 <= i < |ko| => Note(NoteKind.Soon, t.id, ko[i], t.due, s.now, "")) else [];
+  var c := if reminder(t, s.now).DueToday? then seq(|ko|, i requires 0 <= i < |ko| => Note(NoteKind.Today, t.id, ko[i], t.due, s.now, "")) else [];
+  TNotesForParts(s, t);
   assert notesFor(s, t) == a + b + c;
   assert ProofLib.DistinctBy(a, key);
   assert ProofLib.DistinctBy(b, key);
@@ -1612,11 +1654,11 @@ lemma TRemoveParentTask(s: Tracker, id: int, other: int, actor: string, i: int)
   TProblemsOfSubset(s, s2, t, t2);
 }
 
-lemma TDeleteTaskTask(s: Tracker, id: int, j: int)
-  requires 0 <= j < |deleteTask(s, id).tasks|
-  ensures exists i :: 0 <= i < |s.tasks| && forall q :: q in problemsOf(deleteTask(s, id), deleteTask(s, id).tasks[j]) ==> q in problemsOf(s, s.tasks[i])
+lemma TDeleteTaskTask(s: Tracker, id: int, actor: string, j: int)
+  requires 0 <= j < |deleteTask(s, id, actor).tasks|
+  ensures exists i :: 0 <= i < |s.tasks| && forall q :: q in problemsOf(deleteTask(s, id, actor), deleteTask(s, id, actor).tasks[j]) ==> q in problemsOf(s, s.tasks[i])
 {
-  var s2 := deleteTask(s, id);
+  var s2 := deleteTask(s, id, actor);
   var kept := ProofLib.Filter((t: Task) => (t.id != id), s.tasks);
   assert |s2.tasks| == |kept|;
   assert forall k :: 0 <= k < |kept| ==> s2.tasks[k] == kept[k].(parents := drop(kept[k].parents, id), related := drop(kept[k].related, id));
