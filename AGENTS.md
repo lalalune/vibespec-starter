@@ -600,6 +600,12 @@ Three ways to run the real application against a state machine's spec:
 A `Driver` has `reset`, `dispatch` (returns `"accepted"` or `"refused"`),
 `observe` and, for a spec that emits effects, `observeOutput`.
 
+A disagreement throws `ConformanceError`: its `trace` is the shrunk list of
+`[key, event]` pairs that shows it, `seed` the seed of its walks and `origin`
+the journey or walk that found it. Save the trace as a counterexample;
+`replay(driver, trace)`, from the same module, runs exactly it again, and
+`conformance(driver, { seed })` repeats the walks.
+
 ## Hand-written verified logic
 
 Put logic in the spec when you can: it is then simulated, proved and
