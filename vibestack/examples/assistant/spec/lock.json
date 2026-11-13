@@ -13,68 +13,73 @@
         "6c4188aac5e8"
       ],
       "Domain / A turn": [
-        "581db46692b7",
-        "fbff63533759"
+        "ba75a1f86511",
+        "ae619ce618c9"
       ],
       "Domain / The bill and the page": [
         "9f14bbcab792",
         "3353a5a54838"
       ],
       "Domain / What the program carries out": [
-        "50707d700ceb",
-        "8c750e94a6f9",
-        "12431dd944f4"
+        "8e882fcc43fd",
+        "3d23713d117b",
+        "d737ec6b5f82"
       ],
       "Domain / The assistant": [
-        "89bd40bcc880",
-        "53188c58eab5",
-        "4b6fe3af26ee"
+        "8f97988c428a",
+        "e57a2ad1db45",
+        "2a99afc2ee75"
       ],
       "## Story: Take a turn": [
         "f39e71973bd7"
       ],
-      "Story: Take a turn / Only the person starts a turn": [
-        "e3b0c44298fc",
+      "Story: Take a turn / Only the person starts a turn, and not while one is under way": [
+        "486dcca18ded",
         "388dcb261c7f",
-        "5805c87fc8ed"
+        "60cd763e653c"
       ],
       "Story: Take a turn / The model chooses each action, and each costs one from the turn": [
-        "2c143296ae6f",
-        "bd9ca269282d",
-        "5805c87fc8ed"
+        "e866b18fb9ca",
+        "e3fb7678cf7b",
+        "60cd763e653c"
       ],
       "Story: Take a turn / A turn's budget stays within bounds, and a turn being planned has some left": [
         "e3b0c44298fc",
         "acb2cd4c5ebc",
-        "5c6006b70d3f"
+        "64683bf1b57b"
       ],
       "Story: Take a turn / Every choice spends the budget": [
-        "2589509f03d8",
+        "18a0d9e857ba",
         "1a662f0e8a18",
-        "5c6006b70d3f"
+        "64683bf1b57b"
       ],
       "Story: Take a turn / A turn can end": [
         "e3b0c44298fc",
         "f9984fdcc8d4",
-        "5c6006b70d3f"
+        "64683bf1b57b"
       ],
       "## Story: Look up the bill": [
         "8602f30e7eb0"
       ],
-      "Story: Look up the bill / A reply counts only for the request still waiting": [
-        "f4eb9ea56d04",
+      "Story: Look up the bill / Only the world replies, and only to the request still waiting": [
+        "6e2bd700a440",
         "4599d77303c9",
-        "5805c87fc8ed"
+        "60cd763e653c"
       ],
       "Story: Look up the bill / A reply answers the request that was waiting": [
         "e3b0c44298fc",
         "18b41e938a47",
-        "5c6006b70d3f"
+        "64683bf1b57b"
       ],
       "Story: Look up the bill / The amount changes only when a reply arrives": [
         "e3b0c44298fc",
         "d04f8bcb6e63",
-        "5c6006b70d3f"
+        "64683bf1b57b"
+      ],
+      "Story: Look up the bill / A bill's amount can arrive": [
+        "e3b0c44298fc",
+        "a213b261fd6e",
+        "64683bf1b57b"
       ],
       "## Story: Pay a bill": [
         "42a447305304"
@@ -82,60 +87,59 @@
       "Story: Pay a bill / The world decides which page the browser shows": [
         "e3b0c44298fc",
         "ed275a04c996",
-        "5805c87fc8ed"
+        "60cd763e653c"
       ],
-      "Story: Pay a bill / Only the person confirms a payment": [
-        "e3b0c44298fc",
+      "Story: Pay a bill / Only the person confirms a payment, and only while asked": [
+        "225b8737d7c3",
         "7f0c9e23ff9a",
-        "5805c87fc8ed"
+        "60cd763e653c"
       ],
-      "Story: Pay a bill / The person can say no": [
-        "e3b0c44298fc",
+      "Story: Pay a bill / Only the person declines a payment": [
+        "34807c0b6412",
         "8171cd05d73f",
-        "5805c87fc8ed"
+        "60cd763e653c"
       ],
       "Story: Pay a bill / A bill is paid only on the biller's own page": [
         "e3b0c44298fc",
         "8a595bf6b8cd",
-        "5c6006b70d3f"
+        "64683bf1b57b"
       ],
       "Story: Pay a bill / A paid bill was reviewed": [
         "e3b0c44298fc",
         "2f0f5c884497",
-        "5c6006b70d3f"
+        "64683bf1b57b"
       ],
       "Story: Pay a bill / A reviewed bill has a positive amount": [
         "0fa952ae2365",
         "a8f5f0b2011b",
-        "5c6006b70d3f"
+        "64683bf1b57b"
       ],
       "Story: Pay a bill / A bill is charged once, and only when the person confirms": [
         "e3b0c44298fc",
         "f9cb03c21a70",
-        "5c6006b70d3f"
+        "64683bf1b57b"
       ],
       "Story: Pay a bill / A bill can be paid": [
         "e3b0c44298fc",
         "7fdd21b88d94",
-        "5c6006b70d3f"
+        "64683bf1b57b"
       ],
       "## Story: Keep my details safe": [
         "d7e921e34dfc"
       ],
       "Story: Keep my details safe / Card details go only into the biller's own page": [
         "e3b0c44298fc",
-        "aa6a5454ca3d",
-        "5c6006b70d3f"
+        "4d9e47e8e6b4",
+        "64683bf1b57b"
+      ],
+      "Story: Keep my details safe / Card details can be filled in": [
+        "6f0540fc91dc",
+        "7882897591bf",
+        "64683bf1b57b"
       ],
       "Story: Keep my details safe / Nothing secret is said aloud": [
-        "e3b0c44298fc",
-        "83df90edc522",
-        "5c6006b70d3f"
-      ],
-      "Story: Keep my details safe / The program carries out the outbox, then empties it": [
-        "e3b0c44298fc",
-        "69c977cf630d",
-        "5c6006b70d3f"
+        "6d826fa970af",
+        "188b04fc435c"
       ],
       "## Story: Survive a restart": [
         "d18b1057975f"
@@ -143,7 +147,17 @@
       "Story: Survive a restart / A restart loses what was in memory and keeps what was saved": [
         "bb128b6aaadc",
         "7b684c0b09c0",
-        "5c6006b70d3f"
+        "64683bf1b57b"
+      ],
+      "Story: Survive a restart / A request number never goes back": [
+        "e3b0c44298fc",
+        "fd1fc2a7a5b5",
+        "64683bf1b57b"
+      ],
+      "Story: Survive a restart / A restart can come after a payment": [
+        "e3b0c44298fc",
+        "6d54f7f7ff82",
+        "64683bf1b57b"
       ]
     }
   },
