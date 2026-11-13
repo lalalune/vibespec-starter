@@ -1,6 +1,5 @@
-// The Effect face of a generated module, in VibeLang: gen/<name>.effect.vibe beside gen/<name>.ts, written only for a
-// every project. It is read off the generated TypeScript itself, so it
-// cannot say anything that module does not.
+// The Effect face of a generated module, in VibeLang: gen/<name>.effect.vibe beside gen/<name>.ts for every project.
+// It is read off the generated TypeScript itself, so it cannot say anything that module does not.
 import ts from "typescript";
 import { fail } from "./types.ts";
 
@@ -40,7 +39,7 @@ export function effectAdapter(name: string, source: string, text: string, namesp
   };
   const names = [...consts.map((c) => c.name), ...funs.map((f) => f.name!.text)];
   const out = [
-    `// GENERATED from ${source} by vibespec/spec.ts. Do not edit: change the spec and run \`npm run gen\`.`,
+    `// GENERATED from ${source} by vibestack/spec.ts. Do not edit: change the spec and run \`npm run gen\`.`,
     `// gen/${name}.ts for Effect code: its definitions as functions that throw nothing${funs.some((f) => f.name!.text === "step") ? ", and its state machine as typed failures and a service" : ""}.`,
     `export type * from "./${name}.ts"`,
     ``,

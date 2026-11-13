@@ -1,14 +1,14 @@
 <div align="center">
 
-# Vibespec (Starter Template)
+# Vibestack (Starter Template)
 
 Write user stories and rules in Markdown with [Quint](https://quint-lang.org)
 under each rule; get TypeScript that is simulated and proved with
 [Dafny](https://dafny.org) to keep them.
 
-[![Use this template](https://img.shields.io/badge/Use_this_template-2ea44f?style=for-the-badge&logo=github)](https://github.com/lalalune/vibespec-starter/generate)
+[![Use this template](https://img.shields.io/badge/Use_this_template-2ea44f?style=for-the-badge&logo=github)](https://github.com/lalalune/vibestack/generate)
 
-[![check](https://github.com/lalalune/vibespec-starter/actions/workflows/check.yml/badge.svg)](https://github.com/lalalune/vibespec-starter/actions/workflows/check.yml)
+[![check](https://github.com/lalalune/vibestack/actions/workflows/check.yml/badge.svg)](https://github.com/lalalune/vibestack/actions/workflows/check.yml)
 
 [Quickstart](#quickstart) ·
 [Getting started](#getting-started) ·
@@ -27,7 +27,7 @@ under each rule; get TypeScript that is simulated and proved with
 **Starting a new project? Paste this into your agent:**
 
 ```text
-Help me build a new project from https://github.com/lalalune/vibespec-starter.
+Help me build a new project from https://github.com/lalalune/vibestack.
 
 Start by asking what I want to build, who it is for, and its main workflows.
 Then:
@@ -44,12 +44,12 @@ Then:
    my request before running pnpm accept.
 ```
 
-[![Start in ChatGPT](https://img.shields.io/badge/Start_in_ChatGPT-212121?style=for-the-badge)](https://chatgpt.com/?q=Help%20me%20build%20a%20new%20project%20from%20https%3A%2F%2Fgithub.com%2Flalalune%2Fvibespec-starter.%0A%0AStart%20by%20asking%20what%20I%20want%20to%20build%2C%20who%20it%20is%20for%2C%20and%20its%20main%20workflows.%0AThen%3A%0A1.%20Use%20the%20template%20in%20a%20new%20project%20directory%2C%20or%20use%20my%20existing%20copy.%0A%20%20%20Read%20AGENTS.md%20and%20README.md%20in%20full%20and%20follow%20their%20design%20and%20sync%20skills.%0A2.%20Check%20for%20Node.js%2026%2B%20and%20Dafny%204.11%20on%20PATH%2C%20run%20pnpm%20install%2C%20and%20follow%0A%20%20%20the%20README's%20%22Set%20up%20a%20new%20project%22%20section.%0A3.%20Write%20my%20stories%20and%20rules%20in%20spec%2Findex.md%2C%20with%20Quint%20under%20each%20rule.%0A4.%20Build%20the%20app%20in%20src%2F%20using%20the%20generated%20code%20in%20gen%2F.%20Add%20tests%20for%0A%20%20%20user%20journeys%20through%20the%20UI%2C%20API%2C%20storage%2C%20or%20other%20external%20services.%0A5.%20Run%20pnpm%20check%20and%20fix%20failures%20until%20only%20my%20review%20remains.%0A%20%20%20Never%20edit%20generated%20files%20or%20weaken%20rules%20to%20pass%20checks.%0A6.%20Show%20me%20how%20to%20run%20the%20app%2C%20summarize%20what%20needs%20review%2C%20and%20wait%20for%0A%20%20%20my%20request%20before%20running%20pnpm%20accept.)
-[![Start in Claude](https://img.shields.io/badge/Start_in_Claude-B54A32?style=for-the-badge)](https://claude.ai/new?q=Help%20me%20build%20a%20new%20project%20from%20https%3A%2F%2Fgithub.com%2Flalalune%2Fvibespec-starter.%0A%0AStart%20by%20asking%20what%20I%20want%20to%20build%2C%20who%20it%20is%20for%2C%20and%20its%20main%20workflows.%0AThen%3A%0A1.%20Use%20the%20template%20in%20a%20new%20project%20directory%2C%20or%20use%20my%20existing%20copy.%0A%20%20%20Read%20AGENTS.md%20and%20README.md%20in%20full%20and%20follow%20their%20design%20and%20sync%20skills.%0A2.%20Check%20for%20Node.js%2026%2B%20and%20Dafny%204.11%20on%20PATH%2C%20run%20pnpm%20install%2C%20and%20follow%0A%20%20%20the%20README's%20%22Set%20up%20a%20new%20project%22%20section.%0A3.%20Write%20my%20stories%20and%20rules%20in%20spec%2Findex.md%2C%20with%20Quint%20under%20each%20rule.%0A4.%20Build%20the%20app%20in%20src%2F%20using%20the%20generated%20code%20in%20gen%2F.%20Add%20tests%20for%0A%20%20%20user%20journeys%20through%20the%20UI%2C%20API%2C%20storage%2C%20or%20other%20external%20services.%0A5.%20Run%20pnpm%20check%20and%20fix%20failures%20until%20only%20my%20review%20remains.%0A%20%20%20Never%20edit%20generated%20files%20or%20weaken%20rules%20to%20pass%20checks.%0A6.%20Show%20me%20how%20to%20run%20the%20app%2C%20summarize%20what%20needs%20review%2C%20and%20wait%20for%0A%20%20%20my%20request%20before%20running%20pnpm%20accept.)
+[![Start in ChatGPT](https://img.shields.io/badge/Start_in_ChatGPT-212121?style=for-the-badge)](https://chatgpt.com/?q=Help%20me%20build%20a%20new%20project%20from%20https%3A%2F%2Fgithub.com%2Flalalune%2Fvibestack.%0A%0AStart%20by%20asking%20what%20I%20want%20to%20build%2C%20who%20it%20is%20for%2C%20and%20its%20main%20workflows.%0AThen%3A%0A1.%20Use%20the%20template%20in%20a%20new%20project%20directory%2C%20or%20use%20my%20existing%20copy.%0A%20%20%20Read%20AGENTS.md%20and%20README.md%20in%20full%20and%20follow%20their%20design%20and%20sync%20skills.%0A2.%20Check%20for%20Node.js%2026%2B%20and%20Dafny%204.11%20on%20PATH%2C%20run%20pnpm%20install%2C%20and%20follow%0A%20%20%20the%20README's%20%22Set%20up%20a%20new%20project%22%20section.%0A3.%20Write%20my%20stories%20and%20rules%20in%20spec%2Findex.md%2C%20with%20Quint%20under%20each%20rule.%0A4.%20Build%20the%20app%20in%20src%2F%20using%20the%20generated%20code%20in%20gen%2F.%20Add%20tests%20for%0A%20%20%20user%20journeys%20through%20the%20UI%2C%20API%2C%20storage%2C%20or%20other%20external%20services.%0A5.%20Run%20pnpm%20check%20and%20fix%20failures%20until%20only%20my%20review%20remains.%0A%20%20%20Never%20edit%20generated%20files%20or%20weaken%20rules%20to%20pass%20checks.%0A6.%20Show%20me%20how%20to%20run%20the%20app%2C%20summarize%20what%20needs%20review%2C%20and%20wait%20for%0A%20%20%20my%20request%20before%20running%20pnpm%20accept.)
+[![Start in Claude](https://img.shields.io/badge/Start_in_Claude-B54A32?style=for-the-badge)](https://claude.ai/new?q=Help%20me%20build%20a%20new%20project%20from%20https%3A%2F%2Fgithub.com%2Flalalune%2Fvibestack.%0A%0AStart%20by%20asking%20what%20I%20want%20to%20build%2C%20who%20it%20is%20for%2C%20and%20its%20main%20workflows.%0AThen%3A%0A1.%20Use%20the%20template%20in%20a%20new%20project%20directory%2C%20or%20use%20my%20existing%20copy.%0A%20%20%20Read%20AGENTS.md%20and%20README.md%20in%20full%20and%20follow%20their%20design%20and%20sync%20skills.%0A2.%20Check%20for%20Node.js%2026%2B%20and%20Dafny%204.11%20on%20PATH%2C%20run%20pnpm%20install%2C%20and%20follow%0A%20%20%20the%20README's%20%22Set%20up%20a%20new%20project%22%20section.%0A3.%20Write%20my%20stories%20and%20rules%20in%20spec%2Findex.md%2C%20with%20Quint%20under%20each%20rule.%0A4.%20Build%20the%20app%20in%20src%2F%20using%20the%20generated%20code%20in%20gen%2F.%20Add%20tests%20for%0A%20%20%20user%20journeys%20through%20the%20UI%2C%20API%2C%20storage%2C%20or%20other%20external%20services.%0A5.%20Run%20pnpm%20check%20and%20fix%20failures%20until%20only%20my%20review%20remains.%0A%20%20%20Never%20edit%20generated%20files%20or%20weaken%20rules%20to%20pass%20checks.%0A6.%20Show%20me%20how%20to%20run%20the%20app%2C%20summarize%20what%20needs%20review%2C%20and%20wait%20for%0A%20%20%20my%20request%20before%20running%20pnpm%20accept.)
 
 ## Why
 
-Agents write code fast; reading all of it is the slow part. Vibespec moves
+Agents write code fast; reading all of it is the slow part. Vibestack moves
 what you must read to the top: a short list of sentences a product owner
 would call true or false, each with its formal meaning underneath. From
 there:
@@ -91,7 +91,7 @@ CSS v4 and shadcn/ui for everything a person sees
 ([the stack](AGENTS.md#the-stack)). pnpm workspaces hold the examples and
 Studio beside your project.
 
-1. Click **[Use this template](https://github.com/lalalune/vibespec-starter/generate)**
+1. Click **[Use this template](https://github.com/lalalune/vibestack/generate)**
    to create your own repository, then clone it and enter its directory.
 2. Install the toolchain and open your project in Studio:
 
@@ -122,7 +122,7 @@ pnpm dev
 | **Sign off** | Records the same approval as `pnpm accept` |
 
 `pnpm dev <project-path>` opens another project. Studio is itself a
-Vibespec app (`vibespec/studio/`); `pnpm dev vibespec/studio` opens it
+Vibestack app (`vibestack/studio/`); `pnpm dev vibestack/studio` opens it
 on itself.
 
 ## Build your project
@@ -196,13 +196,13 @@ pnpm accept
 
 Before committing your application's starting point:
 
-1. **Remove the example projects.** Delete `vibespec/examples/` and its
+1. **Remove the example projects.** Delete `vibestack/examples/` and its
    workspace entry, the `demo` script, and the `paths-ignore` entries in
    `.github/workflows/check.yml`. Update the package name, description and
    repository links for your project.
 2. **Keep the toolchain guide with the toolchain.** Move this README to
-   `vibespec/README.md`, update its relative links, and keep the template
-   license in `vibespec/LICENSE` alongside the Vibespec code.
+   `vibestack/README.md`, update its relative links, and keep the template
+   license in `vibestack/LICENSE` alongside the Vibestack code.
 3. **Write your project's documentation.** Create a root `README.md` with
    the project's purpose and install, run and check commands. Set the root
    `LICENSE` to the project's chosen terms and copyright holder.
@@ -221,12 +221,12 @@ current one. Installed as a package, use `pnpm exec spec <command> [<dir>]`.
 | `pnpm check [<dir>] [--json]` | Checks spec, source and tests; ends with a `next:` line ([JSON shape](AGENTS.md#changing-the-tools)) |
 | `pnpm -r --if-present check` | Checks every workspace: the examples and Studio |
 | `pnpm gen [<dir>]` | Generates `gen/` only |
-| `node vibespec/spec.ts watch [<dir>]` | Rechecks when a spec, source file or test changes |
+| `node vibestack/spec.ts watch [<dir>]` | Rechecks when a spec, source file or test changes |
 | `pnpm accept [<dir>]` | The user's sign-off: checks afresh and records what `review` lists, [all or nothing](AGENTS.md#review) |
 | `pnpm accept unproved` | Records the listed obligations as simulated only. The user's decision |
 | `pnpm new [<path>]` | Fills an empty root index or creates a child [starter spec](AGENTS.md#writing-a-spec) |
-| `node vibespec/spec.ts migrate [<dir>]` | Consolidates old review ledgers into `spec/lock.json`, keeping their approvals |
-| `node vibespec/spec.ts init [<dir>]` | Sets up an existing project; see [Using it from another package](AGENTS.md#using-it-from-another-package) |
+| `node vibestack/spec.ts migrate [<dir>]` | Consolidates old review ledgers into `spec/lock.json`, keeping their approvals |
+| `node vibestack/spec.ts init [<dir>]` | Sets up an existing project; see [Using it from another package](AGENTS.md#using-it-from-another-package) |
 | `pnpm demo` | Runs the order example's scripted checkout session |
 | `pnpm selftest` | Breaks the pipeline one way at a time and checks each break is caught |
 | `pnpm build` | Compiles the tools into `dist/`, the packaged `spec` command |
@@ -241,10 +241,10 @@ current one. Installed as a package, use `pnpm exec spec <command> [<dir>]`.
 
 | Project | What it covers | Open in Studio |
 |---|---|---|
-| [Order checkout](vibespec/examples/order/README.md) | Guards, payments, cancellation and a proved event ledger | `pnpm dev vibespec/examples/order` |
-| [Team dashboard](vibespec/examples/dashboard/README.md) | Shared spreadsheets, chat notifications and a project registry | `pnpm dev vibespec/examples/dashboard` |
-| [Shared to-do list](vibespec/examples/fullstack/README.md) | HTTP server, browser client and two tabs over an unreliable network | `pnpm dev vibespec/examples/fullstack` |
-| [Assistant](vibespec/examples/assistant/README.md) | Trusted senders, bounded turns, late replies and confirmation before payment | `pnpm dev vibespec/examples/assistant` |
+| [Order checkout](vibestack/examples/order/README.md) | Guards, payments, cancellation and a proved event ledger | `pnpm dev vibestack/examples/order` |
+| [Team dashboard](vibestack/examples/dashboard/README.md) | Shared spreadsheets, chat notifications and a project registry | `pnpm dev vibestack/examples/dashboard` |
+| [Shared to-do list](vibestack/examples/fullstack/README.md) | HTTP server, browser client and two tabs over an unreliable network | `pnpm dev vibestack/examples/fullstack` |
+| [Assistant](vibestack/examples/assistant/README.md) | Trusted senders, bounded turns, late replies and confirmation before payment | `pnpm dev vibestack/examples/assistant` |
 
 ## Contributing
 

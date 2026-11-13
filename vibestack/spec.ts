@@ -270,7 +270,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
           run.traces.filter((trace) => domain[w](trace.at(-1)?.state)).sort((a, b) => a.length - b.length).slice(0, 1).map((trace) => ({ w, trace }))));
       } catch (e) {
         const mismatch = (e as Error).message.startsWith("TypeScript and Quint disagree");
-        say(false, mismatch ? "replay" : "always", mismatch ? "this is a bug in the generator (vibespec/gen.ts, vibespec/gen/), not in the spec" : COULD_NOT_RUN, indent((e as Error).message));
+        say(false, mismatch ? "replay" : "always", mismatch ? "this is a bug in the generator (vibestack/gen.ts, vibestack/gen/), not in the spec" : COULD_NOT_RUN, indent((e as Error).message));
       }
       return { said, tested };
     }, ({ said }) => !said.some((r) => r.summary === COULD_NOT_RUN));
@@ -476,7 +476,7 @@ const VIBELANG = {
   devDependencies: ["vibelang", "vibelang-vite", "vite", "vitest", "@effect/vitest", "@types/node"],
 };
 
-/** Set up a project, preserving its content outside the marked Vibespec instructions. */
+/** Set up a project, preserving its content outside the marked Vibestack instructions. */
 export function init(root: string, warn: (message: string) => void = (message) => console.warn(`note: ${message}`)): string[] {
   const pkg = path.join(import.meta.dirname, "..");
   const done: string[] = [];
@@ -500,17 +500,17 @@ export function init(root: string, warn: (message: string) => void = (message) =
   const procedure = fs.readFileSync(path.join(pkg, "AGENTS.md"), "utf8").trim();
   const previous = fs.existsSync(agents) ? fs.readFileSync(agents, "utf8") : "";
   const eol = previous.includes("\r\n") ? "\r\n" : "\n";
-  const section = `<!-- vibespec:start -->${eol}${procedure.replace(/\r?\n/g, eol)}${eol}<!-- vibespec:end -->`;
-  const starts = [...previous.matchAll(/<!-- (vibespec|onespec):start\b[^>]*-->/g)];
-  const ends = [...previous.matchAll(/<!-- (vibespec|onespec):end -->/g)];
+  const section = `<!-- vibestack:start -->${eol}${procedure.replace(/\r?\n/g, eol)}${eol}<!-- vibestack:end -->`;
+  const starts = [...previous.matchAll(/<!-- (vibestack|onespec):start\b[^>]*-->/g)];
+  const ends = [...previous.matchAll(/<!-- (vibestack|onespec):end -->/g)];
   if (starts.length !== ends.length || starts.length > 1 || (starts.length === 1 && (starts[0][1] !== ends[0][1] || starts[0].index! > ends[0].index!)))
-    throw new Error("AGENTS.md: repair the duplicated or incomplete Vibespec markers before running spec init");
+    throw new Error("AGENTS.md: repair the duplicated or incomplete Vibestack markers before running spec init");
   const updated = starts.length ? previous.slice(0, starts[0].index) + section + previous.slice(ends[0].index! + ends[0][0].length)
     : previous.trim() === procedure ? `${section}${eol}`
     : `${previous.trimEnd()}${previous.trim() ? eol + eol : ""}${section}${eol}`;
   if (updated !== previous) {
     fs.writeFileSync(agents, updated);
-    done.push("AGENTS.md (Vibespec instructions)");
+    done.push("AGENTS.md (Vibestack instructions)");
   }
   const claude = path.join(root, "CLAUDE.md");
   const own = fs.existsSync(claude) ? fs.readFileSync(claude, "utf8") : "";

@@ -15,7 +15,7 @@ import { manifestOf, nodesOf, promptFor, type Ids, type Manifest } from "./doc.t
 import { outlineOf, specOrder } from "./markdown.ts";
 
 const EXT = path.extname(import.meta.filename);
-/** The tools: vibespec/ from source, dist/ when built. */
+/** The tools: vibestack/ from source, dist/ when built. */
 const TOOLS = path.join(import.meta.dirname, "..", "..");
 /** The `spec` command, as source or as built. */
 const SPEC = path.join(TOOLS, `spec${EXT}`);
@@ -342,8 +342,8 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
       if (origin !== undefined && origin !== `http://${host}`) return send(res, 403, { error: "cross-origin requests are not allowed" });
       if (req.headers["sec-fetch-site"] === "cross-site") return send(res, 403, { error: "cross-site requests are not allowed" });
       const url = new URL(req.url ?? "/", `http://${host}`);
-      if (req.method === "GET" && url.pathname.startsWith("/vibespec/")) {
-        const name = url.pathname.slice("/vibespec/".length).replace(/\.js$/, "");
+      if (req.method === "GET" && url.pathname.startsWith("/vibestack/")) {
+        const name = url.pathname.slice("/vibestack/".length).replace(/\.js$/, "");
         const file = [`${name}${EXT}`, `${name}.js`].map((f) => path.join(TOOLS, f)).find((f) => MODULES.test(name) && fs.existsSync(f));
         if (!file) return send(res, 404, { error: "not found" });
         res.writeHead(200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store" });

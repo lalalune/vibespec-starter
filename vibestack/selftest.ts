@@ -1,6 +1,6 @@
 // Does each check catch the kind of mistake it exists for? Every case builds a
 // scratch project, from this project's own spec or from the small specs in
-// vibespec/fixtures/, breaks one thing, and asserts which stage of `check` fails.
+// vibestack/fixtures/, breaks one thing, and asserts which stage of `check` fails.
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -16,7 +16,7 @@ import { conformance as checkTraces, conformanceFound, writeConformance } from "
 import { acceptContracts, acceptReviews, check, checkVerifiedSource, danglingCitations, expandListHelpers, generated, init, parseSpec, pending, pendingContracts, readSpecs, replay, show, typecheckAll, type Result, type Spec } from "./spec.ts";
 
 const project = path.join(import.meta.dirname, "..");
-const EXAMPLE = path.join(project, "vibespec/examples/order");
+const EXAMPLE = path.join(project, "vibestack/examples/order");
 const read = (file: string, from = project): string => fs.readFileSync(path.join(from, file), "utf8");
 const F = "`".repeat(3);
 /** What `init` writes for a package in plain TypeScript, which a scratch project is unless its manifest lists `vibelang`. */
@@ -32,7 +32,7 @@ after(() => roots.forEach((root) => fs.rmSync(root, { recursive: true, force: tr
 
 /** A scratch project holding the given files. */
 function scratch(files: Record<string, string>): string {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "spec-selftest-"));
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "spec-selftest-")));
   roots.push(root);
   for (const [file, text] of Object.entries(files)) {
     fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
@@ -53,13 +53,13 @@ function vibeScratch(files: Record<string, string>): string {
 /** A scratch project whose specs are the named fixtures, with their proof files, each changed by `edit` if it is given. */
 const fixtures = (names: string[], edit: (files: Record<string, string>) => void = () => {}) => {
   const files = Object.fromEntries(names.flatMap((n) => [`${n}.md`, `${n}.proof.dfy`]
-    .filter((f) => f.endsWith(".md") || fs.existsSync(path.join(project, "vibespec/fixtures", f))).map((f) => [`spec/${f}`, read(`vibespec/fixtures/${f}`)])));
+    .filter((f) => f.endsWith(".md") || fs.existsSync(path.join(project, "vibestack/fixtures", f))).map((f) => [`spec/${f}`, read(`vibestack/fixtures/${f}`)])));
   edit(files);
   return scratch(files);
 };
 /** `root` with its own copy of the toolchain, and of node_modules only the packages and the executables `tools`. */
 function toolchain(root: string, ...tools: string[]): string {
-  fs.cpSync(path.join(project, "vibespec"), path.join(root, "vibespec"), { recursive: true, filter: (from) => from !== path.join(project, "vibespec/examples") });
+  fs.cpSync(path.join(project, "vibestack"), path.join(root, "vibestack"), { recursive: true, filter: (from) => from !== path.join(project, "vibestack/examples") });
   const modules = path.join(root, "node_modules");
   fs.mkdirSync(path.join(modules, ".bin"), { recursive: true });
   for (const entry of fs.readdirSync(nodeModules).filter((f) => f !== ".bin"))
@@ -187,17 +187,19 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     writeConformance(root, model, found);
     const helper = await import(path.join(root, "gen/counter.conformance.ts"));
     const states = new Map<string, number>();
-    await helper.conformance({
+    const counting = {
       reset: () => states.clear(),
       dispatch: (key: string) => { const n = states.get(key) ?? 0; if (n === 2) return "refused"; states.set(key, n + 1); return "accepted"; },
       observe: (key: string) => states.get(key) ?? 0,
-    }, { walks: 3, steps: 6 });
+    };
+    await helper.conformance(counting, { walks: 3, steps: 6 });
+    // One counter shared by every key: the failure carries its shrunk trace as data, which replays the same way.
     let shared = 0;
-    await assert.rejects(helper.conformance({
-      reset: () => { shared = 0; },
-      dispatch: () => { shared++; return "accepted"; },
-      observe: () => shared,
-    }, { walks: 1, steps: 1 }), /should be 0, but the application has 1/);
+    const leaky = { reset: () => { shared = 0; }, dispatch: () => { shared++; return "accepted"; }, observe: () => shared };
+    const failure = await helper.conformance(leaky, { walks: 1, steps: 1 }).catch((e: unknown) => e);
+    assert.ok(failure instanceof helper.ConformanceError && failure.trace.length === 1 && /should be 0, but the application has 1/.test(failure.message), String(failure));
+    await assert.rejects(helper.replay(leaky, failure.trace), helper.ConformanceError);
+    await helper.replay(counting, failure.trace);
     assert.equal(departure(domain, found, [{ state: 0 }, { event: { type: "inc" }, state: 1 }]), undefined);
     assert.match(departure(domain, found, [{ event: { type: "inc" } }])?.why ?? "", /no observed state/);
     fs.mkdirSync(path.join(root, "test/traces"), { recursive: true });
@@ -422,7 +424,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
 
   test("every package gets the Effect face of each generated module, and VibeLang checks the shell, senders, effects and independent package machines", async () => {
     const names = ["lamp", "lib", "mailer", "room", "shop", "vault"];
-    const specs = Object.fromEntries(names.map((n) => [`spec/${n}.md`, read(`vibespec/fixtures/${n}.md`)]));
+    const specs = Object.fromEntries(names.map((n) => [`spec/${n}.md`, read(`vibestack/fixtures/${n}.md`)]));
     const generate = async (root: string) => {
       const models = new Map();
       for (const spec of readSpecs(root)) await gen(root, spec, models);
@@ -886,7 +888,7 @@ export effect function independent() {
     assert.throws(() => spliced("lemma f(x: int) { }"), /p\.dfy:1: lemma f: the name is already declared/);
     assert.throws(() => spliced("lemma ProofLib() { }"), /the name is already declared/);
     // Of the library, only what the proof file calls goes in, with everything that uses in turn.
-    const withLib = splice(GENERATED_F, { proof: { file: "p.dfy", text: "lemma H(xs: seq<int>) { ProofLib.FilterMember((x: int) => x > 0, xs, 1); }\n" }, axioms: [], lib: read("vibespec/proof/lib.dfy") }).dfy;
+    const withLib = splice(GENERATED_F, { proof: { file: "p.dfy", text: "lemma H(xs: seq<int>) { ProofLib.FilterMember((x: int) => x > 0, xs, 1); }\n" }, axioms: [], lib: read("vibestack/proof/lib.dfy") }).dfy;
     assert.deepEqual([...withLib.slice(withLib.indexOf("module ProofLib")).matchAll(/^\s*(?:ghost )?(?:lemma|function|predicate) (\w+)/gm)].map((m) => m[1]), ["Filter", "FilterNil", "FilterCons", "FilterMember"]);
   });
 
@@ -933,7 +935,7 @@ export effect function independent() {
     const root = scratch({ "AGENTS.md": "mine\n", "package.json": `{"scripts":{"check":"mine"}}` });
     const added = init(root);
     const agents = path.join(root, "AGENTS.md");
-    const expected = `mine\n\n<!-- vibespec:start -->\n${read("AGENTS.md").trim()}\n<!-- vibespec:end -->\n`;
+    const expected = `mine\n\n<!-- vibestack:start -->\n${read("AGENTS.md").trim()}\n<!-- vibestack:end -->\n`;
     assert.equal(fs.readFileSync(agents, "utf8"), expected);
     assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).scripts.check, "mine");
     assert.ok(["sync", "design"].every((s) => fs.existsSync(path.join(root, `.claude/skills/${s}/SKILL.md`))) && added.includes("tsconfig.json"), added.join());
@@ -944,16 +946,16 @@ export effect function independent() {
     assert.equal(fs.readFileSync(path.join(root, "CLAUDE.md"), "utf8"), "My existing instructions.\n\n@AGENTS.md\n");
     assert.equal(fs.readFileSync(agents, "utf8"), expected);
     assert.deepEqual(init(root), []);
-    for (const marker of ["onespec", "vibespec"]) {
+    for (const marker of ["onespec", "vibestack"]) {
       fs.writeFileSync(agents, `before\r\n<!-- ${marker}:start -->\r\nold instructions\r\n<!-- ${marker}:end -->\r\nafter\r\n`);
       init(root);
-      assert.equal(fs.readFileSync(agents, "utf8"), `before\r\n<!-- vibespec:start -->\r\n${read("AGENTS.md").trim().replace(/\r?\n/g, "\r\n")}\r\n<!-- vibespec:end -->\r\nafter\r\n`);
+      assert.equal(fs.readFileSync(agents, "utf8"), `before\r\n<!-- vibestack:start -->\r\n${read("AGENTS.md").trim().replace(/\r?\n/g, "\r\n")}\r\n<!-- vibestack:end -->\r\nafter\r\n`);
       assert.deepEqual(init(root), []);
     }
     for (const invalid of [
-      "<!-- vibespec:start -->\nincomplete\n",
-      "<!-- vibespec:end -->\n<!-- vibespec:start -->\n",
-      "<!-- vibespec:start -->\n<!-- vibespec:end -->\n<!-- vibespec:start -->\n<!-- vibespec:end -->\n",
+      "<!-- vibestack:start -->\nincomplete\n",
+      "<!-- vibestack:end -->\n<!-- vibestack:start -->\n",
+      "<!-- vibestack:start -->\n<!-- vibestack:end -->\n<!-- vibestack:start -->\n<!-- vibestack:end -->\n",
     ]) {
       fs.writeFileSync(agents, invalid);
       assert.throws(() => init(root), /repair.*markers/);
@@ -962,7 +964,7 @@ export effect function independent() {
   });
 
   test("init starts a package that has no code in VibeLang, with the order example's toolchain, and leaves one that has code or a tsconfig.json in TypeScript; a second run adds nothing", () => {
-    const common = [".claude/skills/sync/SKILL.md", ".agents/skills/sync", ".claude/skills/design/SKILL.md", ".agents/skills/design", "AGENTS.md (Vibespec instructions)", "CLAUDE.md (imports AGENTS.md)"];
+    const common = [".claude/skills/sync/SKILL.md", ".agents/skills/sync", ".claude/skills/design/SKILL.md", ".agents/skills/design", "AGENTS.md (Vibestack instructions)", "CLAUDE.md (imports AGENTS.md)"];
     const json = (root: string, file: string) => JSON.parse(fs.readFileSync(path.join(root, file), "utf8"));
     const text = (root: string, file: string) => fs.readFileSync(path.join(root, file), "utf8");
     const scripts = { dev: "spec studio", check: "spec check", gen: "spec gen", accept: "spec accept" };
@@ -998,10 +1000,10 @@ export effect function independent() {
   test("nested specs link to children and reuse a machine through its directory index", async () => {
     const root = scratch({
       "spec/index.md": "# Home\n\n[Room](./rooms/)\n[Other lamp](./other/light/index.md)\n",
-      "spec/rooms/index.md": read("vibespec/fixtures/room.md").replace('import lamp as L from "./lamp"', 'import /* from "wrong" */ lamp\n  from\n  "./light"').replaceAll("L::", "lamp::"),
-      "spec/rooms/light/index.md": read("vibespec/fixtures/lamp.md"),
+      "spec/rooms/index.md": read("vibestack/fixtures/room.md").replace('import lamp as L from "./lamp"', 'import /* from "wrong" */ lamp\n  from\n  "./light"').replaceAll("L::", "lamp::"),
+      "spec/rooms/light/index.md": read("vibestack/fixtures/lamp.md"),
       "spec/rooms/light/index.proof.dfy": "",
-      "spec/other/light/index.md": read("vibespec/fixtures/lamp.md"),
+      "spec/other/light/index.md": read("vibestack/fixtures/lamp.md"),
       "src/app.ts": `// ${"spec/rooms/index.md"}, ${JSON.stringify("Story: Light a room")}\nexport { initial, step } from "../gen/rooms.ts";\n`,
     });
     const specs = readSpecs(root);
@@ -1092,13 +1094,13 @@ export effect function independent() {
 
   test("the package's own test script is what runs, never the check itself; without one Node runs test/**/*.test.ts and a VibeLang test has no runner; a citation of a heading the spec does not have is caught, in a .vibe file as in a test", async () => {
     const manifest = (scripts: Record<string, string>) => JSON.stringify({ ...JSON.parse(VIBELANG["package.json"]), scripts });
-    const root = copyOfProject("package.json", () => manifest({ test: `node ${JSON.stringify(path.join(project, "vibespec/spec.ts"))} check` }));
+    const root = copyOfProject("package.json", () => manifest({ test: `node ${JSON.stringify(path.join(project, "vibestack/spec.ts"))} check` }));
     const again = await run(root);
     assert.deepEqual(again.failed, ["tests"], again.text);
     assert.ok(again.said("tests", /a test script cannot run spec check or accept: the check already runs the tests/), again.text);
     // A test script may check another project, as a tool's journey tests do: only its own project's lock is held.
     const other = fixtures(["door"]);
-    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { test: `cd ${JSON.stringify(other)} && node ${JSON.stringify(path.join(project, "vibespec/spec.ts"))} check --json > /dev/null; test -f gen/door.ts` } }));
+    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { test: `cd ${JSON.stringify(other)} && node ${JSON.stringify(path.join(project, "vibestack/spec.ts"))} check --json > /dev/null; test -f gen/door.ts` } }));
     const elsewhere = await run(root);
     assert.ok(elsewhere.said("tests", /^pass/), elsewhere.text);
     fs.writeFileSync(path.join(root, "package.json"), manifest({}));
@@ -1161,12 +1163,12 @@ export effect function independent() {
 
   test("proof caching follows library changes and compiler failure waits for proof completion", async () => {
     const root = toolchain(fixtures(["highest"], (f) => { f["package.json"] = '{"type":"module"}'; }), "quint", "lsc");
-    const script = path.join(root, "vibespec/spec.ts");
+    const script = path.join(root, "vibestack/spec.ts");
     const first = await runCli(script, root, "check", "--json");
     const checked = JSON.parse(first.stdout);
     assert.ok(checked.results.some((r: Result) => r.stage === "proof" && r.ok), first.stdout + first.stderr);
     const marker = "// A distinct proof-library version for this scratch project.";
-    fs.appendFileSync(path.join(root, "vibespec/proof/lib.dfy"), `\n${marker}\n`);
+    fs.appendFileSync(path.join(root, "vibestack/proof/lib.dfy"), `\n${marker}\n`);
     const second = await runCli(script, root, "check", "--json");
     const again = JSON.parse(second.stdout);
     assert.ok(again.results.some((r: Result) => r.stage === "proof" && r.ok), second.stdout + second.stderr);
@@ -1207,7 +1209,7 @@ export effect function independent() {
       fs.writeFileSync(path.join(root, "spec/lib.md"), lib);
       return pendingItems(root);
     };
-    const flagged = libChanged(fixtures(["lib", "shop"]), read("vibespec/fixtures/lib.md").replace("acc + x)", "x + acc)"));
+    const flagged = libChanged(fixtures(["lib", "shop"]), read("vibestack/fixtures/lib.md").replace("acc + x)", "x + acc)"));
     assert.ok(flagged.includes("Story: Fill a cart / A cart holds lines: model changed through total (spec/lib.md: Sums / The total of a list)"), flagged.join("\n"));
     const names = (quint: string) => ruleSpec(quint, "Identity", "Names", "Rules");
     const namespaced = libChanged(libAndUse(names("pure def identity(n: int): int = n"), names('import lib as L from "./lib"\npure def identity(n: int): int = 0\npure def lawIdentity(n: int): bool = L::identity(n) == n')),
@@ -1297,7 +1299,7 @@ export effect function independent() {
   });
 
   test("the command line checks, generates and watches a project directory from its parent", async () => {
-    const script = path.join(project, "vibespec/spec.ts");
+    const script = path.join(project, "vibestack/spec.ts");
     const cli = (root: string, ...args: string[]) => runCli(script, root, ...args);
     const parent = scratch({});
     const root = path.join(parent, "a project");
@@ -1393,7 +1395,7 @@ export effect function independent() {
     const spliced = (body: string) => splice(gen, { proof: { file: "p.dfy", text: `${header}${body}\n}\n` }, axioms: [], lib }).dfy;
     // Std.Ordinal.TimesIncreasingOnLeft is a false {:axiom}; dafny audit reports it only against the library's own file.
     assert.throws(() => spliced("  Std.Ordinal.TimesIncreasingOnLeft(0, 0, 0);"), /p\.dfy:4: `Std\.Ordinal\.TimesIncreasingOnLeft` is not allowed[^\n]*\(Std\.Collections\.Seq\.All\)/);
-    assert.throws(() => spliced("  ProofLib.Seq.LemmaFlattenConcat<int>([], []);"), /`ProofLib\.Seq\.LemmaFlattenConcat` is not a lemma or function of vibespec\/proof\/lib\.dfy/);
+    assert.throws(() => spliced("  ProofLib.Seq.LemmaFlattenConcat<int>([], []);"), /`ProofLib\.Seq\.LemmaFlattenConcat` is not a lemma or function of vibestack\/proof\/lib\.dfy/);
     assert.throws(() => spliced("  assert (xs).Std.Ordinal == 0;"), /`Std` may only begin a name/);
     assert.ok(spliced("  assert Std.Collections.Seq.All(xs, (x: int) => x > 0) == f(xs);\n  ProofLib.FilterNil((x: int) => true, []);").includes("ProofLib.FilterNil"));
   });
@@ -1483,7 +1485,7 @@ export effect function independent() {
   });
 
   test("a law is offered to an importer only if it is proved without resting on one that is not", async () => {
-    const counter = read("vibespec/fixtures/magic.md").replace("type C = {", 'import forbidden.* from "./forbidden"\ntype C = {').replace(/### Mark by[\s\S]*?(?=### The count is never)/, "").replace(/### The count of bumps[\s\S]*?(?=### Bumped)/, "");
+    const counter = read("vibestack/fixtures/magic.md").replace("type C = {", 'import forbidden.* from "./forbidden"\ntype C = {').replace(/### Mark by[\s\S]*?(?=### The count is never)/, "").replace(/### The count of bumps[\s\S]*?(?=### Bumped)/, "");
     const { said, text } = await run(fixtures(["forbidden"], (f) => Object.assign(f, {
       "spec/magic.md": counter,
       "spec/forbidden.proof.dfy": "lemma lawNotSecond_ensures(n: int)\n  ensures (lawNotSecond(n) == true)\n{\n  lawNotFirst_ensures(987654321);\n}\n",

@@ -4,10 +4,10 @@ on:
   push:
     branches: [main]
     paths-ignore:
-      - "vibespec/examples/**"
+      - "vibestack/examples/**"
   pull_request:
     paths-ignore:
-      - "vibespec/examples/**"
+      - "vibestack/examples/**"
 
 jobs:
   check:

@@ -19,15 +19,15 @@
     ]
   },
   "include": [
-    "vibespec",
+    "vibestack",
     "src",
     "test",
     "gen/*.ts",
     "gen/*.vibe"
   ],
   "exclude": [
-    "vibespec/examples",
-    "vibespec/studio",
+    "vibestack/examples",
+    "vibestack/studio",
     "node_modules"
   ],
   "vibe": {

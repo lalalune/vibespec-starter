@@ -11,7 +11,6 @@ import { run } from "./run.ts";
 import { importedMeanings, originalColumn, type Spec } from "./parse.ts";
 import { defines } from "./review.ts";
 import { entry, recall, store, type Memory } from "./cache.ts";
-import { effectAdapter } from "./gen/vibe.ts";
 import { filesUnder, plainText, readSrc, type SrcFile } from "./util.ts";
 
 const ANNOTATIONS = ["backend", "pure", "requires", "ensures", "invariant", "decreases", "type", "ghost", "assert"];
@@ -58,8 +57,6 @@ export function generated(root: string, spec: Spec, ir: any, models: Map<string,
   const namespace = (fs.existsSync(manifest) ? JSON.parse(fs.readFileSync(manifest, "utf8")).name : undefined) ?? fs.realpathSync(root);
   fs.writeFileSync(path.join(dir, `${spec.name}.effect.vibe`), effectAdapter(spec.name, spec.file, model.ts, namespace));
   fs.writeFileSync(path.join(dir, `${spec.name}.run.qnt`), model.harness);
-  // Its Effect face, for the project's VibeLang shell (gen/vibe.ts).
-  fs.writeFileSync(path.join(dir, `${spec.name}.effect.vibe`), effectAdapter(spec.name, model.source, model.ts));
   writeConformance(root, model);
   models.set(spec.name, model);
   return model;

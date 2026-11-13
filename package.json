@@ -1,32 +1,32 @@
 {
-  "name": "vibespec",
+  "name": "vibestack",
   "private": true,
   "type": "module",
   "engines": {
     "node": ">=26"
   },
   "scripts": {
-    "dev": "node vibespec/spec.ts studio",
-    "check": "node vibespec/spec.ts check",
-    "gen": "node vibespec/spec.ts gen",
-    "accept": "node vibespec/spec.ts accept",
-    "new": "node vibespec/spec.ts new",
+    "dev": "node vibestack/spec.ts studio",
+    "check": "node vibestack/spec.ts check",
+    "gen": "node vibestack/spec.ts gen",
+    "accept": "node vibestack/spec.ts accept",
+    "new": "node vibestack/spec.ts new",
     "start": "vibelang --noEmit false && node build/src/main.js",
     "test": "vitest run",
     "demo": "pnpm --filter order-example demo",
-    "selftest": "node --test vibespec/selftest.ts",
-    "build": "node vibespec/spec.ts gen vibespec/studio && node -e \"fs.rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json && node -e \"fs.chmodSync('dist/spec.js', 0o755); fs.mkdirSync('dist/proof', { recursive: true }); fs.copyFileSync('vibespec/proof/lib.dfy', 'dist/proof/lib.dfy'); fs.cpSync('vibespec/studio/src/public', 'dist/studio/src/public', { recursive: true }); fs.cpSync('vibespec/std', 'dist/std', { recursive: true }); fs.copyFileSync('vibespec/conformance.ts', 'dist/conformance.ts')\"",
-    "prepare": "pnpm build && node vibespec/spec.ts gen --if-valid"
+    "selftest": "node --test vibestack/selftest.ts",
+    "build": "node vibestack/spec.ts gen vibestack/studio && node -e \"fs.rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json && node -e \"fs.chmodSync('dist/spec.js', 0o755); fs.mkdirSync('dist/proof', { recursive: true }); fs.copyFileSync('vibestack/proof/lib.dfy', 'dist/proof/lib.dfy'); fs.cpSync('vibestack/studio/src/public', 'dist/studio/src/public', { recursive: true }); fs.cpSync('vibestack/std', 'dist/std', { recursive: true }); fs.copyFileSync('vibestack/conformance.ts', 'dist/conformance.ts')\"",
+    "prepare": "pnpm build && node vibestack/spec.ts gen --if-valid"
   },
   "version": "0.1.0",
   "description": "Stories, rules and Quint in a Markdown spec tree; verified TypeScript out.",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/lalalune/vibespec-starter.git"
+    "url": "git+https://github.com/lalalune/vibestack.git"
   },
-  "homepage": "https://github.com/lalalune/vibespec-starter#readme",
-  "bugs": "https://github.com/lalalune/vibespec-starter/issues",
+  "homepage": "https://github.com/lalalune/vibestack#readme",
+  "bugs": "https://github.com/lalalune/vibestack/issues",
   "keywords": [
     "formal-verification",
     "quint",
@@ -63,8 +63,8 @@
     "vitest": "5.1.0"
   },
   "workspaces": [
-    "vibespec/examples/*",
-    "vibespec/studio"
+    "vibestack/examples/*",
+    "vibestack/studio"
   ],
   "packageManager": "pnpm@10.24.0",
   "pnpm": {
