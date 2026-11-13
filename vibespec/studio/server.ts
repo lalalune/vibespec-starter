@@ -9,7 +9,7 @@ import path from "node:path";
 import { newSpec, parseSpec, pending, readSpecs, type Result } from "../spec.ts";
 import { specFiles, specName } from "../parse.ts";
 import { projectRoot } from "../util.ts";
-import { manifestOf, nodesOf, parseDoc, promptFor, type Ids, type Manifest } from "./doc.ts";
+import { filesUnder, manifestOf, nodesOf, parseDoc, promptFor, type Ids, type Manifest } from "./doc.ts";
 
 /** The `spec` command beside this file, as source or as built. */
 const SPEC = path.join(import.meta.dirname, "..", `spec${path.extname(import.meta.filename)}`);
@@ -82,6 +82,12 @@ function skillPath(root: string): string {
     if (fs.existsSync(file)) return path.relative(root, file);
     if (dir === path.dirname(dir)) return ".claude/skills/sync/SKILL.md";
   }
+}
+
+/** The review ledgers and Studio state belong to the tools, not the sync agent. */
+function ownedFiles(root: string): Record<string, string> {
+  return Object.fromEntries([...filesUnder(root, "spec").filter((f) => f.endsWith("lock.json")), ...filesUnder(root, ".studio")]
+    .map((f) => [f, hash(fs.readFileSync(path.join(root, f), "utf8"))]));
 }
 
 const installed = new Map<string, boolean>();
@@ -331,7 +337,11 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
           const agent = agents[body.agent];
           if (!agent) return send(res, 400, { error: `no agent ${body.agent}` });
           const check = checkCommand(root);
+          const owned = ownedFiles(root);
           startJob(live, "agent", agent.label, agent.command({ root, check }), promptFor(readJson<Manifest>(manifestFile(root)), { skill: skillPath(root), check }), readable, (job) => {
+            const now = ownedFiles(root);
+            const touched = [...new Set([...Object.keys(owned), ...Object.keys(now)])].filter((f) => owned[f] !== now[f]);
+            if (touched.length) { job.status = "failed"; job.log.push(`✗ the agent changed ${touched.join(", ")}: not marked synced`); }
             // What the agent did is the new baseline; the check then shows what is left.
             if (job.status !== "passed") return;
             markSynced(root);
