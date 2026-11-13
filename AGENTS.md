@@ -62,23 +62,34 @@ holds no business rules. A shared type lives with the contract that owns it.
 | Command | Does |
 |---|---|
 | `pnpm dev` | Studio |
-| `pnpm quick` | the fast local check: types, lint and tests of what changed since the base branch |
-| `pnpm verify` | everything CI runs for `main`: build, types, lint, tests, browser tests, every `check`, Knip, Madge, the examples |
+| `pnpm quick` | the fast local check: types, tests, ESLint and Stylelint, in every package |
+| `pnpm verify` | what CI runs: build, types, tests, browser tests, every `check`, lint, Knip, Madge, the examples |
 | `pnpm all <task>…` | one or more kinds of task in every package: `pnpm all build typecheck test` |
-| `pnpm test:affected`, `pnpm test:browser` | tests of what changed; the browser tests |
+| `pnpm test:browser` | the browser tests |
 | `pnpm test:models` | `check` in every package with a `spec/`, and in the examples |
-| `pnpm lint`, `pnpm lint:css` | ESLint; Stylelint |
+| `pnpm lint` | ESLint and Stylelint (`pnpm lint:js`, `pnpm lint:css` for one) |
 | `pnpm analyze` | Knip (unused files, exports, dependencies) and Madge (import cycles) |
-| `pnpm check`, `pnpm build`, `pnpm typecheck`, `pnpm test` | this package's own, here as in every package: at the root, the root project and the tools |
+| `pnpm check`, `pnpm gen`, `pnpm build`, `pnpm typecheck`, `pnpm test` | this package's own, here as in every package: at the root, the root project and the tools |
 
-Turborepo (`turbo.json`) orders these and caches each by its inputs, the lock
-file and the Node version; `spec` keeps its own finer cache in `.spec-cache/`.
-A package joins by having a script named `build`, `typecheck`, `test`,
-`test:browser` or `check`; its `check` runs after its other tasks, since both
-write `gen/`. Pull requests go to `develop` and run what they
-affect; `develop` to `main` runs `pnpm verify`
-(`.github/workflows/ci.yml`), and `fuzz.yml` runs the property tests nightly
-with a larger budget and a new seed.
+Turborepo (`turbo.json`) orders these and skips a task whose inputs it has
+seen: the package's files, the tools under `vibestack/`, the lock file,
+`.nvmrc`, and `FUZZ_RUNS` and `FUZZ_SEED`. So every command above runs only
+what a change reaches. `check` is never skipped whole: `spec` keeps its own
+finer cache in `.spec-cache/`, keyed on the prover's versions too, and runs
+the application again each time.
+
+A package joins by having a script named `gen`, `build`, `typecheck`, `test`,
+`test:browser` or `check`. Its other tasks wait for its `gen`, and its `check`
+for all of them, since `check` rewrites `gen/`. `pnpm lint:js` on its own
+needs what `gen` and `typecheck` write (`gen/`, `.vibe/declarations`); `pnpm
+lint` runs them first.
+
+Pull requests go to `develop`, and `develop` to `main`. Every CI run
+(`.github/workflows/ci.yml`) asks for the same tasks and restores the caches
+of the last run; a pull request into `main` and every push to `develop` or
+`main` add 1000 runs per property, the examples and `pnpm selftest`.
+`fuzz.yml` runs properties and model-based tests nightly with 20000 runs and
+a new seed.
 
 ## Hard rules
 

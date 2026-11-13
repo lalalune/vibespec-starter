@@ -47,13 +47,17 @@ result in `.spec-cache/` under a hash of the spec, what it imports and the
 versions of Quint, Dafny, Z3, LemmaScript, Node and the tools themselves.
 Generated test files carry the generator's version and their source's hash,
 are rewritten only when their bytes differ, and are removed when their source
-is. Turborepo caches whole tasks above that (`turbo.json`). Never cached:
-`traces`, which runs the real application, and anything that starts a server.
-CI generates the tests twice and compares.
+is. Turborepo skips whole `gen`, `build`, `typecheck`, `test`, `test:browser`
+and lint tasks whose inputs it has seen (`turbo.json`). It never skips
+`check`, which runs the real application in its `traces` stage, nor the
+examples, which install from the network. CI generates `apps/web`'s tests
+twice and compares.
 
-**Seeds.** Simulation is seeded from what it simulates. Property tests take
-`FUZZ_SEED` (default 1) and `FUZZ_RUNS` (default 100; 1000 for `main`, 20000
-nightly); a failure prints the seed and the shrunk counterexample.
+**Seeds and budgets.** Simulation is seeded from what it simulates. Property
+tests take `FUZZ_SEED` (default 1) and `FUZZ_RUNS` (default 100), which is
+also the number of walks of a model-based test: 1000 on a pull request into
+`main` and on every push to `develop` or `main`, 20000 nightly. A failure
+prints the seed and the shrunk counterexample.
 
 ## Which test, for what
 
@@ -91,20 +95,23 @@ Asynchronous Effect programs are tested, not proved. Each `proof` line of
 ## Packages and boundaries
 
 `apps/*` deploy; `packages/*` are shared by them; `vibestack/` is the tools;
-`vibestack/examples/*` stand alone. ESLint refuses a deep import into another
-package, React inside the tools, and a second state or test framework; Knip
-reports unused files, exports and dependencies; Madge reports import cycles.
-Their few exclusions are listed, with reasons, at the top of `knip.config.js`
-and `eslint.config.js`.
+`vibestack/examples/*` stand alone. ESLint (`eslint.config.js`) refuses an
+import of another package beyond its `exports`, React in domain and tool
+code, and a second state, UI or test framework. Knip reports unused files,
+exports and dependencies, reading `.vibe` through VibeLang's compiler; Madge
+reports import cycles among `.ts` and `.tsx` files, which is all it can
+read. What each excludes, and why, is at the top of `knip.config.js` and in
+`eslint.config.js`.
 
 ## CI
 
 | When | Runs |
 |---|---|
-| pull request into `develop` | `pnpm quick` (types, lint, tests of what the change affects) and the affected `check`s |
-| pull request into `main`; push to `develop` or `main` | build, types, lint, all tests with 1000 runs, every `check`, the examples, browser tests, Knip, Madge, generated tests twice |
-| nightly | property and model-based tests with 20000 runs and a new seed |
+| every pull request and push | build, types, tests, browser tests, every `check`, ESLint, Stylelint, Knip, Madge; `apps/web`'s tests generated twice and compared |
+| pull request into `main`; push to `develop` or `main` | the same with 1000 runs per property, and the examples and `pnpm selftest` |
+| nightly | tests and `check`s with 20000 runs and a new seed |
 
-Superseded runs are cancelled. pnpm's store and Turborepo's cache are restored
-between runs; there is no remote cache, because the local one restored by
-`actions/cache` already covers repeat runs of the same inputs.
+Each run restores pnpm's store, Turborepo's cache and every `.spec-cache/`
+from the last, so a change pays only for what it reaches; superseded runs are
+cancelled. There is no remote cache: the restored local one already covers
+repeat runs of the same inputs.

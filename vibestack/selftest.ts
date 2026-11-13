@@ -24,7 +24,7 @@ const PACKAGE = Object.fromEntries(["package.json", "tsconfig.json", "vitest.con
 const roots: string[] = [];
 const nodeModules = (function find(dir: string): string {
   const here = path.join(dir, "node_modules");
-  return fs.existsSync(here) ? here : dir === path.dirname(dir) ? assert.fail("no node_modules: run npm install") : find(path.dirname(dir));
+  return fs.existsSync(here) ? here : dir === path.dirname(dir) ? assert.fail("no node_modules: run pnpm install") : find(path.dirname(dir));
 })(project);
 after(() => roots.forEach((root) => fs.rmSync(root, { recursive: true, force: true })));
 
@@ -1197,7 +1197,7 @@ export effect function filled(sku: string, qty: number) {
     const before = await run(root);
     assert.deepEqual(before.failed, ["review"], before.text);
     assert.ok(before.said("review", /story changed/) && before.said("review", /src\/ledger\.ts\n\s+contract changed/), before.text);
-    assert.match(before.next, /npm run accept/);
+    assert.match(before.next, /pnpm accept/);
     await check(root, "reviews");
     const after = await run(root);
     assert.deepEqual(after.failed, [], after.text);
@@ -1267,7 +1267,7 @@ export effect function filled(sku: string, qty: number) {
     const checked = JSON.parse((await cli(parent, "check", "a project", "--json")).stdout);
     assert.deepEqual([...new Set(checked.results.filter((r: Result) => !r.ok).map((r: Result) => r.stage))], ["review"], JSON.stringify(checked, null, 2));
     for (const stage of ["model", "always", "sometimes", "replay", "proof"]) assert.ok(checked.results.some((r: Result) => r.stage === stage && r.ok), stage);
-    assert.match(checked.next, /npm run accept/);
+    assert.match(checked.next, /pnpm accept/);
     assert.ok(fs.existsSync(path.join(root, "gen/tally.ts")));
     assert.ok(!fs.existsSync(path.join(parent, "gen")));
     const accepted = await cli(parent, "accept", root);

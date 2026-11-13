@@ -22,10 +22,7 @@ jobs:
         with:
           ref: develop
       - uses: ./.github/actions/setup
-        with:
-          dafny: "true"
-      - run: pnpm exec turbo run test --force
-      - run: pnpm test:models
+      - run: pnpm exec turbo run test check --force
       - if: failure()
         uses: actions/upload-artifact@v7
         with:

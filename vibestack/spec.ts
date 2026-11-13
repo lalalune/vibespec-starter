@@ -44,11 +44,11 @@ export function nextStep(results: Result[]): string {
       tests: "fix the application or its tests",
       traces: "fix the program where it departs from the spec, or the spec if the program is right",
     };
-    return `${first.stage}${about} is the first ✗: ${what[first.stage]}, then run \`npm run check\` again`;
+    return `${first.stage}${about} is the first ✗: ${what[first.stage]}, then run \`pnpm check\` again`;
   }
   if (results.every((r) => r.ok)) return "all green";
-  if (!acceptable(results)) return "write the rules and Quint the review items ask for, then run `npm run check` again";
-  return "read each review item above; when prose and Quint agree, the user runs `npm run accept`";
+  if (!acceptable(results)) return "write the rules and Quint the review items ask for, then run `pnpm check` again";
+  return "read each review item above; when prose and Quint agree, the user runs `pnpm accept`";
 }
 
 /** Take the project's lock for one check or accept at a time; returns what releases it. A lock left by a process that has ended is taken over. */
@@ -359,10 +359,10 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
             recordable = false;
             said(false, "proof", `${u.unit}: ${proof.unproved.length} of ${proof.total} obligations not proved. Hand-written code is not simulated, so they must be proved in ${u.proofFile}. Full output in ${logFile}, final Dafny in ${dfy}`, listed(proof.unproved), u.unit);
           } else if (fresh.length && accept !== "unproved") {
-            said(false, "proof", `${u.unit}: ${fresh.length} of ${proof.total} obligations not proved${outdated}. Prove them in ${u.proofFile}, or add the rule that makes them provable; if simulation is enough for them, that is the user's decision (\`npm run accept -- unproved\`). Full output in ${logFile}, final Dafny in ${dfy}`, listed(fresh), u.unit);
+            said(false, "proof", `${u.unit}: ${fresh.length} of ${proof.total} obligations not proved${outdated}. Prove them in ${u.proofFile}, or add the rule that makes them provable; if simulation is enough for them, that is the user's decision (\`pnpm accept unproved\`). Full output in ${logFile}, final Dafny in ${dfy}`, listed(fresh), u.unit);
           } else {
             said(true, "proof", `${u.unit}: ${proof.unproved.length ? `${proof.total} obligations, of which ${proof.unproved.length} are simulated only (accepted) and the rest proved` : `all ${proof.total} obligations proved`} for all states and inputs${assuming}`
-              + (stale.length && accept !== "unproved" ? `; ${stale.length} accepted earlier now prove, run \`npm run accept -- unproved\` to tighten the ledger` : ""), [
+              + (stale.length && accept !== "unproved" ? `; ${stale.length} accepted earlier now prove, run \`pnpm accept unproved\` to tighten the ledger` : ""), [
                 ...(proof.unproved.length ? [`    simulated only, accepted in spec/lock.json:\n${listed(proof.unproved)}`] : []),
                 ...(assumed.length ? [`    assumed from the module it is proved against, simulated only there:\n${indent(u.rests.flatMap((name) => (proved.get(name)?.unproved ?? []).map((clause) => `${name}: ${clause}`)).join("\n"))}`] : []),
               ].join("\n"), u.unit, true);
@@ -409,7 +409,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
     try {
       if (JSON.stringify(readSpecs(root)) !== JSON.stringify(specs) || JSON.stringify(readSrc(root)) !== JSON.stringify(srcFiles)
         || JSON.stringify(proofInputs()) !== JSON.stringify(proofsRead))
-        report(false, "review", "sources changed while the check ran; nothing was accepted", "      Run `npm run check` again on the files now on disk.");
+        report(false, "review", "sources changed while the check ran; nothing was accepted", "      Run `pnpm check` again on the files now on disk.");
     } catch (e) {
       report(false, "review", "sources changed while the check ran; nothing was accepted", indent((e as Error).message));
     }
@@ -428,7 +428,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
   const formal = todos.every(({ todo }) => !todo.some((t) => t.status === "story has no rules" || t.status === "not formalized"));
   const record = accept === "reviews" && allOk && formal;
   if (record) acceptAllReviews(root, specs.filter((spec) => !isStd(spec.file)), srcFiles);
-  const why = accept !== "reviews" ? "then run `npm run accept`" : !allOk ? "nothing was accepted: fix the stages above first" : "every story needs rules and every rule a quint block before anything can be accepted";
+  const why = accept !== "reviews" ? "then run `pnpm accept`" : !allOk ? "nothing was accepted: fix the stages above first" : "every story needs rules and every rule a quint block before anything can be accepted";
   const items = (todo: Pending[], heading: string) => {
     const shown = moved(todo);
     return todo.map((t) => "    " + showPending(t)).join("\n") + (shown.length ? `\n\n    ${heading}:\n${shown.join("\n")}` : "");
@@ -696,7 +696,7 @@ if (isMain()) {
       }
     }
     if (command === "gen" && takes([], ["--if-valid"])) {
-      // --if-valid is for `npm install`: a spec in the middle of an edit must not make installing fail.
+      // --if-valid is for `pnpm install`: a spec in the middle of an edit must not make installing fail.
       try {
         const specs = readSpecs(root);
         const typed = typecheckAll({ root, fresh: false, used: new Set() }, specs);
@@ -704,7 +704,7 @@ if (isMain()) {
         for (const s of specs) generated(root, s, await typed.get(s.name)!, models);
       } catch (e) {
         if (!args.length) throw e;
-        console.log(`note: gen/ was not generated, because a spec is not valid yet (${(e as Error).message.split("\n")[0]}); \`npm run check\` says why`);
+        console.log(`note: gen/ was not generated, because a spec is not valid yet (${(e as Error).message.split("\n")[0]}); \`pnpm check\` says why`);
       }
     } else if ((command === "check" && takes([], ["--json"])) || (command === "accept" && takes([], ["unproved"]))) {
       const json = args[0] === "--json";
@@ -737,7 +737,7 @@ if (isMain()) {
         console.log(files.length ? `migrated ${files.length} ledgers to spec/lock.json; existing acceptance preserved` : "no legacy ledgers to migrate");
       } finally { release(); }
     } else if (command === "new" && takes([], ["*"])) {
-      console.log(`wrote ${newSpec(root, args[0])}; run \`npm run check\``);
+      console.log(`wrote ${newSpec(root, args[0])}; run \`pnpm check\``);
     } else {
       console.error(USAGE);
       process.exitCode = 2;
