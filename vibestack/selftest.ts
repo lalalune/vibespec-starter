@@ -898,6 +898,8 @@ export effect function filled(sku: string, qty: number) {
     const [runtime, tooling] = [["effect", "@effect/platform-node", "vibelang-runtime"], ["vibelang", "vibelang-vite", "vite", "vitest", "@effect/vitest", "@types/node"]];
     // VibeLang's packages move together, and with one version of Effect: each is pinned exactly.
     for (const name of [...runtime, ...tooling].filter((n) => n !== "@types/node")) assert.match(pins[name], /^\d+\.\d+\.\d+$/, name);
+    // A workspace's `catalog:` means nothing in the package `init` writes it into.
+    assert.match(pins["@types/node"], /^\^\d+\.\d+\.\d+$/);
     const one = { "@effect/platform-node-shared": pins["@effect/platform-node"] };
     const scripts = { dev: "spec studio", check: "spec check", gen: "spec gen", accept: "spec accept", build: "vibelang", test: "vitest run" };
 
