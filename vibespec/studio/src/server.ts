@@ -1,19 +1,28 @@
-// The spec studio: a local web page to read, edit, reorder and regroup the stories and rules of spec/**/*.md, publish
-// them with a manifest of what changed, and run the check, an agent's sync, and the user's sign-off.
-// README, "The studio".
+// The studio's server: the shell around spec/index.md. Every change to the session goes through the generated
+// `enabled` and `step`; this file only runs the jobs the session allows, reads and writes the specs, keeps the
+// manifest (./doc.ts), and serves the page (./page.ts) with the modules it imports.
+// README, "Studio".
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
-import { newSpec, parseSpec, pending, readSpecs, type Result } from "../spec.ts";
-import { specFiles, specName } from "../parse.ts";
-import { projectRoot } from "../util.ts";
-import { manifestOf, nodesOf, parseDoc, promptFor, type Ids, type Manifest } from "./doc.ts";
+import ts from "typescript";
+import { parseSpec, pending, readSpecs, type Result } from "../../spec.ts";
+import { specFiles, specName } from "../../parse.ts";
+import { projectRoot } from "../../util.ts";
+import { enabled, initial, step, type Event, type Session, type Verdict } from "../gen/index.ts";
+import { manifestOf, nodesOf, promptFor, type Ids, type Manifest } from "./doc.ts";
+import { outlineOf } from "./markdown.ts";
 
-/** The `spec` command beside this file, as source or as built. */
-const SPEC = path.join(import.meta.dirname, "..", `spec${path.extname(import.meta.filename)}`);
+const EXT = path.extname(import.meta.filename);
+/** The tools: vibespec/ from source, dist/ when built. */
+const TOOLS = path.join(import.meta.dirname, "..", "..");
+/** The `spec` command, as source or as built. */
+const SPEC = path.join(TOOLS, `spec${EXT}`);
 const PUBLIC = path.join(import.meta.dirname, "public");
+/** The modules the page may load from the tools, by their path below them: the page, what it imports, and nothing else. */
+const MODULES = /^(scan|studio\/src\/(page|markdown)|studio\/gen\/(index|outline))$/;
 const DEEPLINK_LIMIT = 5000; // characters of a prompt a claude-cli:// link carries
 
 export interface Project { id: string; name: string; root: string }
@@ -40,35 +49,39 @@ export const AGENTS: Record<string, Agent> = {
   },
 };
 
-/** One thing running in a project: a check, an agent or a sign-off. Only one at a time, since all of them take the spec lock or write specs. */
+/** The process behind the session's job, and what it printed. The last of each kind is kept, for its log. */
 interface Job { kind: "check" | "agent" | "accept"; label: string; status: "running" | "passed" | "failed" | "stopped"; started: number; finished?: number; log: string[]; child?: ChildProcess }
 interface State { baseline: Record<string, string>; ids: Ids }
 interface Live {
   project: Project;
+  /** spec/index.md; `unpublished` is the page's to know, and is always false here. */
+  session: Session;
   jobs: Partial<Record<Job["kind"], Job>>;
   check?: { ok: boolean; results: Result[]; next: string; finished: number };
   clients: Set<http.ServerResponse>;
   watcher?: fs.FSWatcher;
-  jobTimer?: NodeJS.Timeout;
+  timer?: NodeJS.Timeout;
 }
 
+/** A request the session does not allow now. */
+class Refused extends Error {}
+
 const hash = (text: string) => createHash("sha256").update(text).digest("hex").slice(0, 16);
-const studioDir = (root: string) => path.join(root, ".studio");
 const readJson = <T>(file: string): T | undefined => (fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : undefined);
 const projectName = (root: string) => readJson<{ name?: string }>(path.join(root, "package.json"))?.name ?? path.basename(root);
 const writeJson = (file: string, value: unknown) => {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(value, null, 2) + "\n");
 };
-const stateFile = (root: string) => path.join(studioDir(root), "state.json");
-const manifestFile = (root: string) => path.join(studioDir(root), "manifest.json");
+const stateFile = (root: string) => path.join(root, ".studio", "state.json");
+const manifestFile = (root: string) => path.join(root, ".studio", "manifest.json");
 
 /** Every Markdown spec in the tree, by its path from the project root. */
 function specTexts(root: string): Record<string, string> {
   return Object.fromEntries(specFiles(root).map((file) => [file, fs.readFileSync(path.join(root, file), "utf8")]));
 }
 
-/** The projects under `repo`: the repository itself if it has specs, and each package in vibespec/examples/ that does. */
+/** The projects under `repo`: the repository itself, and each package in vibespec/examples/ that has specs. */
 export function projectsOf(repo: string): Project[] {
   const examples = path.join(repo, "vibespec", "examples");
   const found = fs.existsSync(examples) ? fs.readdirSync(examples).sort().filter((d) => fs.existsSync(path.join(examples, d, "spec"))) : [];
@@ -97,14 +110,26 @@ const onPath = (program: string) => {
   return installed.get(program)!;
 };
 
+/**
+ * What a check found, as spec/index.md's verdict. `Reviewable` is what `accept` can record: every stage but review
+ * passed, every story has rules and every rule has Quint.
+ */
+export function verdictOf(results: Result[]): Verdict {
+  const failed = results.filter((r) => !r.ok);
+  if (!failed.length) return "Green";
+  const reviewOnly = failed.every((r) => r.stage === "review") && !failed.some((r) => /story has no rules|not formalized/.test(r.detail));
+  return reviewOnly ? "Reviewable" : "Failing";
+}
+
 /** Everything the page shows for a project. */
 function snapshot(live: Live, agents: Record<string, Agent>) {
   const { root } = live.project;
-  const texts = specTexts(root);
-  // What the review ledger says of each story and rule; nothing if the specs do not parse.
+  // The specs, and what the review ledger says of each story and rule; what is wrong if they cannot be read.
+  let texts: Record<string, string> = {};
   let review: Record<string, Record<string, string>> = {};
   let problem: string | undefined;
   try {
+    texts = specTexts(root);
     const specs = readSpecs(root);
     review = Object.fromEntries(specs.map((s) => [s.file, Object.fromEntries(pending(root, s, specs).map((p) => [
       p.story ? `## ${p.story.title}` : p.rule?.key ?? p.where.split("  ")[1], p.status + (p.note ?? "")]))]));
@@ -113,24 +138,21 @@ function snapshot(live: Live, agents: Record<string, Agent>) {
   }
   const manifest = readJson<Manifest>(manifestFile(root));
   const context = { skill: skillPath(root), check: checkCommand(root) };
-  const prompt = promptFor(manifest, context);
-  const short = promptFor(manifest, context, DEEPLINK_LIMIT);
+  const order = (file: string) => file.replace(/(?:^spec\/|\/)index\.md$/, "/");
   return {
     project: live.project,
-    specs: Object.entries(texts).sort(([a], [b]) => a.replace(/(?:^spec\/|\/)index\.md$/, "/").localeCompare(b.replace(/(?:^spec\/|\/)index\.md$/, "/")))
-      .map(([file, text]) => ({ file, name: file.slice(5, -3), module: specName(file), hash: hash(text), text, doc: parseDoc(text), review: review[file] ?? {} })),
+    session: live.session,
+    specs: Object.entries(texts).sort(([a], [b]) => order(a).localeCompare(order(b)))
+      .map(([file, text]) => ({ file, module: specName(file), hash: hash(text), text, outline: outlineOf(file, text), review: review[file] ?? {} })),
     problem,
     manifest,
-    prompt,
+    prompt: promptFor(manifest, context),
     check: live.check,
     jobs: jobsView(live),
-    agents: Object.entries(agents).map(([id, a]) => ({ id, label: a.label, available: onPath(a.command({ root, check: context.check })[0]), link: a.link?.({ root, prompt: short }) })),
+    agents: Object.entries(agents).map(([id, a]) => ({ id, label: a.label, available: onPath(a.command({ root, check: context.check })[0]), link: a.link?.({ root, prompt: promptFor(manifest, context, DEEPLINK_LIMIT) }) })),
   };
 }
 const jobsView = (live: Live) => Object.fromEntries(Object.values(live.jobs).map((j) => [j.kind, { label: j.label, status: j.status, started: j.started, finished: j.finished, log: j.log.slice(-400) }]));
-const running = (live: Live) => Object.values(live.jobs).find((j) => j.child);
-/** One job at a time: every job takes the spec lock or writes specs, and so does publishing. */
-const idle = (live: Live) => { const busy = running(live); if (busy) throw new Error(`${busy.label} is still running`); };
 
 /** A line of an agent's JSON output, as a person would want to read it; undefined for bookkeeping. */
 function readable(line: string): string | undefined {
@@ -140,7 +162,8 @@ function readable(line: string): string | undefined {
   // Claude Code's stream-json
   if (e.type === "assistant") return (e.message?.content ?? []).map((c: any) =>
     c.type === "text" ? clip(c.text) : c.type === "tool_use" ? `▸ ${c.name} ${clip(String(c.input?.command ?? c.input?.file_path ?? c.input?.pattern ?? ""), 200)}` : "").filter(Boolean).join("\n") || undefined;
-  if (e.type === "result") return `${e.is_error ? "✗" : "✓"} ${clip(String(e.result ?? e.subtype ?? ""), 2000)}`;
+  // The final message was already shown; the result says only how the run ended, and what it cost.
+  if (e.type === "result") return `${e.is_error ? "✗ failed" : "✓ done"}${e.total_cost_usd ? ` · $${Number(e.total_cost_usd).toFixed(2)}` : ""}`;
   // Codex's --json events
   const item = e.item ?? e.msg;
   if (e.type === "item.completed" && item?.type === "agent_message") return clip(item.text ?? "");
@@ -150,30 +173,51 @@ function readable(line: string): string | undefined {
   if (e.type === "turn.failed" || e.type === "error") return `✗ ${clip(e.error?.message ?? e.message ?? line)}`;
 }
 
+/** A module the page imports, as JavaScript: transpiled from source, or as built. */
+function pageModule(file: string): string {
+  const code = fs.readFileSync(file, "utf8");
+  if (!file.endsWith(".ts")) return code;
+  return ts.transpileModule(code, { fileName: file, compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2023, rewriteRelativeImportExtensions: true } }).outputText;
+}
+
 /** The studio's HTTP server. `open` is the project shown first. */
 export async function startStudio({ projects, open = projects[0].id, port = 4321, agents = AGENTS }: { projects: Project[]; open?: string; port?: number; agents?: Record<string, Agent> }) {
-  const lives = new Map<string, Live>(projects.map((p) => [p.id, { project: p, jobs: {}, clients: new Set() }]));
+  const lives = new Map<string, Live>(projects.map((p) => [p.id, { project: p, session: initial, jobs: {}, clients: new Set() }]));
 
   const broadcast = (live: Live, event: string, data: unknown) => {
     for (const res of live.clients) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   };
-  /** Changes to the specs reach every page, whoever made them: the studio, an agent or an editor. */
+  const changed = (live: Live) => {
+    clearTimeout(live.timer);
+    live.timer = setTimeout(() => broadcast(live, "job", { session: live.session, jobs: jobsView(live), check: live.check }), 100);
+  };
+  /** Refuse what the session does not allow now, saying why. */
+  const allow = (live: Live, event: Event, session = live.session) => {
+    if (enabled(session, event)) return;
+    const busy = Object.values(live.jobs).find((j) => j.child);
+    throw new Refused(busy ? `${busy.label} is still running` : `${event.type} is not allowed now`);
+  };
+  /** The session moves only by an event it allows. */
+  const act = (live: Live, event: Event, session = live.session) => {
+    allow(live, event, session);
+    live.session = step(session, event);
+    changed(live);
+  };
+  /** Changes to the specs reach every page, whoever made them, and make the last verdict unknown (spec/index.md). */
   const watch = (live: Live) => {
     if (live.watcher || !fs.existsSync(path.join(live.project.root, "spec"))) return;
     let timer: NodeJS.Timeout | undefined;
     live.watcher = fs.watch(path.join(live.project.root, "spec"), { recursive: true }, () => {
       clearTimeout(timer);
-      timer = setTimeout(() => broadcast(live, "files", {}), 150);
+      timer = setTimeout(() => {
+        act(live, { type: "touch" });
+        broadcast(live, "files", {});
+      }, 150);
     });
   };
-  const jobChanged = (live: Live) => {
-    clearTimeout(live.jobTimer);
-    live.jobTimer = setTimeout(() => broadcast(live, "job", { jobs: jobsView(live), check: live.check }), 100);
-  };
 
-  /** Start a program in the project as its one job; `done` hears how it ended. */
-  const startJob = (live: Live, kind: Job["kind"], label: string, [program, args]: [string, string[]], input: string | undefined, read: (line: string) => string | undefined, done: (job: Job, out: string) => void) => {
-    idle(live);
+  /** Run the program behind the job the session has just started; `done` hears how it ended. */
+  const run = (live: Live, kind: Job["kind"], label: string, [program, args]: [string, string[]], input: string | undefined, read: (line: string) => string | undefined, done: (job: Job, out: string) => void) => {
     const job: Job = { kind, label, status: "running", started: Date.now(), log: [] };
     live.jobs[kind] = job;
     let out = "";
@@ -183,56 +227,60 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
     const lines = (stream: NodeJS.ReadableStream, keep: boolean) => {
       let rest = "";
       stream.on("data", (chunk: Buffer) => {
-        const text = rest + chunk.toString();
         if (keep) out += chunk.toString();
-        const parts = text.split("\n");
+        const parts = (rest + chunk.toString()).split("\n");
         rest = parts.pop()!;
-        for (const l of parts) { const r = read(l); if (r !== undefined && r.trim()) job.log.push(r); }
-        jobChanged(live);
+        for (const l of parts) { const r = read(l); if (r?.trim()) job.log.push(r); }
+        changed(live);
       });
-      stream.on("end", () => { if (rest.trim()) { const r = read(rest); if (r) job.log.push(r); } });
+      stream.on("end", () => { const r = rest.trim() && read(rest); if (r) job.log.push(r); });
     };
     lines(child.stdout!, true);
     lines(child.stderr!, false);
-    child.on("error", (e) => { job.log.push(`✗ ${e.message}`); });
+    child.on("error", (e) => job.log.push(`✗ ${e.message}`));
     child.on("close", (code) => {
       job.finished = Date.now();
-      if (job.status === "running") job.status = code === 0 ? "passed" : "failed";
       job.child = undefined;
-      try { done(job, out); } catch (e) { job.log.push(`✗ ${(e as Error).message}`); }
-      jobChanged(live);
+      const stopped = job.status === "stopped";
+      if (!stopped) job.status = code === 0 ? "passed" : "failed";
+      // A stopped job's end was already stepped (spec/index.md, "A running job can be stopped, and then nothing is known of its result").
+      if (!stopped) try { done(job, out); } catch (e) { job.log.push(`✗ ${(e as Error).message}`); }
+      changed(live);
     });
-    jobChanged(live);
+    changed(live);
   };
 
-  const runCheck = (live: Live) => startJob(live, "check", "check", [process.execPath, [SPEC, "check", "--json"]], undefined, () => undefined, (job, out) => {
+  /** The check the session is now waiting on (`job == Checking`). */
+  const runCheck = (live: Live) => run(live, "check", "check", [process.execPath, [SPEC, "check", "--json"]], undefined, () => undefined, (job, out) => {
+    let verdict: Verdict = "Failing";
     try {
       const r = JSON.parse(out) as { ok: boolean; results: Result[]; next: string };
       live.check = { ...r, finished: Date.now() };
-      job.status = r.ok ? "passed" : "failed";
+      verdict = verdictOf(r.results);
       job.log.push(r.next);
     } catch {
-      job.status = job.status === "stopped" ? "stopped" : "failed";
       job.log.push(out.trim() || "the check did not finish");
     }
+    job.status = verdict === "Failing" ? "failed" : "passed";
+    act(live, { type: "checked", verdict });
   });
 
-  /** The agent synced what was published: the specs as they are now are the new baseline. */
-  const markSynced = (root: string) => {
+  /** What the agent synced is the new baseline of the manifest. */
+  const clearManifest = (root: string) => {
     fs.rmSync(stateFile(root), { force: true });
     fs.rmSync(manifestFile(root), { force: true });
   };
 
-
   const publish = (live: Live, body: { files: { file: string; base: string | null; text: string | null }[]; origins: [string, string | null][]; force?: boolean }) => {
-    idle(live);
+    // The request carries edits, so the session as the page sees it has some (spec/index.md, "Only edits can be published, and not while a job runs").
+    const session = { ...live.session, unpublished: true };
+    allow(live, { type: "publish", changes: 0 }, session);
     const { root } = live.project;
     const disk = specTexts(root);
     const conflicts = body.force ? [] : body.files.filter((f) => (f.file in disk ? hash(disk[f.file]) : null) !== f.base).map((f) => f.file);
     if (conflicts.length) return { status: 409, body: { error: "changed on disk since you loaded it", conflicts } };
     const next = { ...disk };
     for (const f of body.files) {
-      if (!/^spec\/(?:[a-z][A-Za-z0-9]*\/)*[a-z][A-Za-z0-9]*\.md$/.test(f.file)) return { status: 400, body: { error: `${f.file} is not a spec` } };
       try {
         specName(f.file);
         let target = root;
@@ -240,12 +288,10 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
           target = path.join(target, segment);
           if (fs.lstatSync(target, { throwIfNoEntry: false })?.isSymbolicLink()) throw new Error(`${f.file}: spec paths may not be symlinks`);
         }
+        if (f.text !== null) parseSpec(root, f.file, f.text);
       } catch (e) { return { status: 400, body: { error: (e as Error).message } }; }
       if (f.text === null) delete next[f.file];
-      else {
-        try { parseSpec(root, f.file, f.text); } catch (e) { return { status: 400, body: { error: (e as Error).message } }; }
-        next[f.file] = f.text;
-      }
+      else next[f.file] = f.text;
     }
     // Every heading the page meant to write is a heading of the text: a prose line that starts with ## would not be.
     const origins = new Map(body.origins);
@@ -267,12 +313,13 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
       else if (disk[f.file] !== f.text) { fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, f.text); }
     }
     const manifest = manifestOf(root, state.baseline, next, ids);
-    if (!manifest.changes.length) markSynced(root);
+    if (!manifest.changes.length) clearManifest(root);
     else {
       writeJson(stateFile(root), { baseline: state.baseline, ids });
       writeJson(manifestFile(root), manifest);
     }
     live.check = undefined;
+    act(live, { type: "publish", changes: manifest.changes.length }, session);
     runCheck(live);
     return { status: 200, body: { manifest: manifest.changes.length ? manifest : undefined } };
   };
@@ -281,20 +328,26 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
     res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
     res.end(JSON.stringify(body));
   };
-  const TYPES: Record<string, string> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml" };
+  const TYPES: Record<string, string> = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml" };
 
   const server = http.createServer(async (req, res) => {
     res.setHeader("content-security-policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; object-src 'none'; frame-ancestors 'none'");
     res.setHeader("x-content-type-options", "nosniff");
     try {
       const port = (server.address() as { port: number }).port;
-      const hosts = [`localhost:${port}`, `127.0.0.1:${port}`];
       const host = req.headers.host?.toLowerCase();
-      if (!host || !hosts.includes(host)) return send(res, 403, { error: "use the local studio address" });
+      if (!host || ![`localhost:${port}`, `127.0.0.1:${port}`].includes(host)) return send(res, 403, { error: "use the local studio address" });
       const origin = req.headers.origin;
       if (origin !== undefined && origin !== `http://${host}`) return send(res, 403, { error: "cross-origin requests are not allowed" });
       if (req.headers["sec-fetch-site"] === "cross-site") return send(res, 403, { error: "cross-site requests are not allowed" });
       const url = new URL(req.url ?? "/", `http://${host}`);
+      if (req.method === "GET" && url.pathname.startsWith("/vibespec/")) {
+        const name = url.pathname.slice("/vibespec/".length).replace(/\.js$/, "");
+        const file = [`${name}${EXT}`, `${name}.js`].map((f) => path.join(TOOLS, f)).find((f) => MODULES.test(name) && fs.existsSync(f));
+        if (!file) return send(res, 404, { error: "not found" });
+        res.writeHead(200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store" });
+        return res.end(pageModule(file));
+      }
       if (req.method === "GET" && !url.pathname.startsWith("/api/")) {
         const file = path.join(PUBLIC, url.pathname === "/" ? "index.html" : path.normalize(url.pathname).replace(/^([/\\])+/, ""));
         if (!file.startsWith(PUBLIC) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) return send(res, 404, { error: "not found" });
@@ -324,44 +377,46 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
           const r = publish(live, body);
           return send(res, r.status, r.body);
         }
-        case "/api/spec": {
-          idle(live);
-          const file = newSpec(root, String(body.name ?? ""));
-          live.check = undefined;
-          broadcast(live, "files", {});
-          return send(res, 200, { file });
-        }
         case "/api/check":
+          act(live, { type: "check" });
           runCheck(live);
           return send(res, 200, {});
         case "/api/agent": {
           const agent = agents[body.agent];
           if (!agent) return send(res, 400, { error: `no agent ${body.agent}` });
+          act(live, { type: "sync" });
           const check = checkCommand(root);
-          startJob(live, "agent", agent.label, agent.command({ root, check }), promptFor(readJson<Manifest>(manifestFile(root)), { skill: skillPath(root), check }), readable, (job) => {
-            // What the agent did is the new baseline; the check then shows what is left.
-            if (job.status !== "passed") return;
-            markSynced(root);
-            setImmediate(() => { try { runCheck(live); } catch { /* another job started */ } });
+          run(live, "agent", agent.label, agent.command({ root, check }), promptFor(readJson<Manifest>(manifestFile(root)), { skill: skillPath(root), check }), readable, (job) => {
+            const ok = job.status === "passed";
+            if (ok) clearManifest(root);
+            act(live, { type: "synced", ok });
+            if (ok) runCheck(live);
           });
           return send(res, 200, {});
         }
         case "/api/accept":
-          startJob(live, "accept", "sign-off", [process.execPath, [SPEC, "accept"]], undefined, (l) => l, () => setImmediate(() => { try { runCheck(live); } catch { /* another job started */ } }));
+          act(live, { type: "signOff" });
+          run(live, "accept", "sign-off", [process.execPath, [SPEC, "accept"]], undefined, (l) => l, () => {
+            act(live, { type: "signedOff" });
+            runCheck(live);
+          });
           return send(res, 200, {});
-        case "/api/stop":
-          const job = running(live);
+        case "/api/stop": {
+          act(live, { type: "stop" });
+          const job = Object.values(live.jobs).find((j) => j.child);
           if (job) { job.status = "stopped"; job.child!.kill("SIGTERM"); }
           return send(res, 200, {});
+        }
         case "/api/synced":
-          markSynced(root);
+          act(live, { type: "markSynced" });
+          clearManifest(root);
           broadcast(live, "files", {});
           return send(res, 200, {});
         default:
           return send(res, 404, { error: "not found" });
       }
     } catch (e) {
-      if (!res.headersSent) send(res, 400, { error: (e as Error).message });
+      if (!res.headersSent) send(res, e instanceof Refused ? 409 : 400, { error: (e as Error).message });
     }
   });
 
@@ -377,7 +432,7 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
     close: () => new Promise<void>((resolve) => {
       for (const live of lives.values()) {
         live.watcher?.close();
-        clearTimeout(live.jobTimer);
+        clearTimeout(live.timer);
         for (const job of Object.values(live.jobs)) job.child?.kill("SIGTERM");
         for (const c of live.clients) c.end();
       }
@@ -386,7 +441,6 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
     }),
   };
 }
-
 
 /** `spec studio [<example-or-directory>] [--port <n>]`: select a project and open its page. */
 export async function serve(repo: string, args: string[]) {

@@ -83,7 +83,8 @@ function lockProject(root: string): () => void {
  * check or accept runs in a project at a time; another is refused.
  */
 export async function check(root: string, accept: false | "reviews" | "unproved" = false, log: (result: Result) => void = () => {}): Promise<{ ok: boolean; results: Result[]; next: string }> {
-  if (process.env.SPEC_TESTS) throw new Error("a test script cannot run spec check or accept: the check already runs the tests");
+  // The tests stage names the project whose tests it runs: checking that project again from them would wait on its lock.
+  if (process.env.SPEC_TESTS === fs.realpathSync(root)) throw new Error("a test script cannot run spec check or accept: the check already runs the tests");
   const release = lockProject(root);
   try {
     const results: Result[] = [];
@@ -679,7 +680,7 @@ if (isMain()) {
       await watch(root);
     } else if (command === "studio" && takes([], ["*"], ["--port", "*"], ["*", "--port", "*"])) {
       // The studio imports this module; defer loading it until the command module has finished evaluating.
-      import("./studio/server.ts").then(({ serve }) => serve(root, args)).catch((e: Error) => {
+      import("./studio/src/server.ts").then(({ serve }) => serve(root, args)).catch((e: Error) => {
         console.error(e.message);
         process.exitCode = 1;
       });

@@ -25,7 +25,8 @@ function toolchainId(stage: "model" | "simulate" | "prove"): Promise<string> {
     // Every file of the tools themselves, as source or as built; the self-test and its fixtures are not part of them.
     // Only the prover's own file is left out of what a model or simulation depends on: anything else may be used by both.
     const ext = path.extname(import.meta.filename);
-    const own = (f: string) => f.endsWith(ext) && !f.startsWith("selftest") && !f.startsWith("fixtures") && (stage === "prove" || f !== `prove${ext}`);
+    // The examples and Studio are packages of their own, checked with these tools rather than part of them.
+    const own = (f: string) => f.endsWith(ext) && !/^(selftest|fixtures|examples|studio)/.test(f) && (stage === "prove" || f !== `prove${ext}`);
     const tools = (fs.readdirSync(import.meta.dirname, { recursive: true }) as string[]).filter(own).sort().map((f) => `${f}\0${fs.readFileSync(path.join(import.meta.dirname, f), "utf8")}`);
     const parts = [stage, version("@informalsystems/quint"), `node@${process.versions.node}`, sha(...tools).slice(0, 12)];
     if (stage === "prove") {

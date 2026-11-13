@@ -210,6 +210,20 @@ and can hand the sync work to Claude Code or Codex. Sign-off uses the same
 `accept` command as the terminal. `npx spec watch <directory>` provides the
 same rechecking loop without Studio.
 
+Studio is built the way it asks you to build: it is a Vibespec application of
+its own, in `vibespec/studio/`. [Its session](vibespec/studio/spec/index.md)
+(what may be published, synced, checked or signed off, and when) and
+[the outline of a spec](vibespec/studio/spec/outline.md) (adding, editing,
+removing, reordering and regrouping stories and rules) are specs, checked by
+`npm run check` like any other. The server and the page are the shell around
+the generated code: they act only through its `enabled` and `step`, so a
+button is offered exactly when the spec allows its event. To change what
+Studio does, open it on itself:
+
+```bash
+npm run dev -- vibespec/studio
+```
+
 ## Tutorial
 
 ### 1. Read a spec
@@ -505,6 +519,8 @@ Keep `spec/`, `src/`, `test/` and `vibespec/` in git, lock files included.
 | `vibespec/prove.ts`, `vibespec/proof/lib.dfy` | The proof stage for one unit, with the checks on proof files, and the library of general lemmas proof files call |
 | `vibespec/gen.ts`, `vibespec/gen/` | Quint → TypeScript and the simulation harness |
 | `vibespec/selftest.ts`, `vibespec/fixtures/` | Tests of the pipeline itself, and the small specs they use |
+| `vibespec/scan.ts` | How a spec's lines are read, shared by the parser and Studio's page |
+| `vibespec/studio/` | Studio, a package with its own spec: `spec/index.md` (the session) and `spec/outline.md` (editing one spec), the server and page in `src/`, and journeys in `test/` |
 | `vibespec/examples/order/src/ledger.ts` | Hand-written logic, proved against the generated contract |
 | `vibespec/examples/order/src/app.ts`, `vibespec/examples/order/src/demo.ts` | Unverified shell: storage, input parsing, error reporting; and the demo |
 | `vibespec/examples/order/test/app.test.ts` | Tests of the shell, run by the `tests` stage |

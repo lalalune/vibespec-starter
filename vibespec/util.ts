@@ -63,7 +63,7 @@ export async function tests(root: string, specs: Spec[]): Promise<[boolean, "tes
     const [command, args] = script ? [packageManager(root), ["run", "test"]] : [process.execPath, ["--test", ...files]];
     if (script || files.length) {
       const { NODE_TEST_CONTEXT: _, ...env } = process.env;
-      const t = await exec(command, args, root, { ...env, SPEC_TESTS: "1" });
+      const t = await exec(command, args, root, { ...env, SPEC_TESTS: fs.realpathSync(root) });
       const failures = t.stdout.includes("✖ failing tests:") ? t.stdout.slice(t.stdout.indexOf("✖ failing tests:")) : t.stdout.split("\n").slice(-80).join("\n");
       const ok = t.status === 0 && !t.stopped;
       said.push([ok, "tests", ok ? "pass" : "fail", indent((failures + t.stderr + (t.stopped ? `\n${t.stopped}` : "")).trim()), script ? `${command} run test` : "test/"]);

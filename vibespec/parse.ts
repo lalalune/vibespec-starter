@@ -2,7 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { LIST_HELPERS } from "./gen.ts";
 import { BUILTINS } from "./gen/print.ts";
+import { scanSpec } from "./scan.ts";
 import { plainText } from "./util.ts";
+export { scanSpec, type LineKind } from "./scan.ts";
 
 /** `defs` are the rule's top-level definitions and types; `locals` the names it binds inside a definition (`val x = …` in a body). */
 export interface Rule { key: string; story: string; line: number; prose: string; code: string; defs: string[]; locals: string[] }
@@ -282,30 +284,6 @@ export function originalColumn(tangled: string, qnt: string, line: number, col: 
 
 /** Quint with every string and comment blanked out, line breaks kept. */
 export const bareQuint = (text: string) => { const { code } = scan(text); return text.replace(/[^\n]/g, (c, i) => (code[i] ? c : " ")); };
-
-/** What one line of a spec is: a story or rule heading, a fence that opens or closes, a line inside a fence, or prose. */
-export type LineKind = "story" | "rule" | "open" | "open quint" | "close" | "quint" | "fenced" | "prose";
-
-/**
- * Every line of a spec with what it is. A fence of any kind (``` or ~~~, of any length) closes only with a fence of
- * the same character at least as long and nothing after it; `##` and `###` inside a fence are not headings.
- */
-export function scanSpec(text: string): { text: string; kind: LineKind }[] {
-  let fence: { mark: string; quint: boolean } | undefined;
-  return text.split("\n").map((text) => {
-    const marker = text.match(/^\s*(`{3,}|~{3,})(.*)$/);
-    if (fence && marker && marker[1][0] === fence.mark[0] && marker[1].length >= fence.mark.length && !marker[2].trim()) {
-      fence = undefined;
-      return { text, kind: "close" };
-    }
-    if (fence) return { text, kind: fence.quint ? "quint" : "fenced" };
-    if (marker && (marker[1][0] === "~" || !marker[2].includes("`"))) {
-      fence = { mark: marker[1], quint: marker[2].trim().split(/\s+/)[0] === "quint" };
-      return { text, kind: fence.quint ? "open quint" : "open" };
-    }
-    return { text, kind: text.startsWith("## ") ? "story" : text.startsWith("### ") ? "rule" : "prose" };
-  });
-}
 
 /** Expand total collection operations without moving the source lines. */
 function expandBuiltins(text: string, module: string): { text: string; names: string[] } {

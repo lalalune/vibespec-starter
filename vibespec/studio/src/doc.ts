@@ -1,75 +1,28 @@
-// The studio's view of a spec, and the manifest of what a publish changed since the agent last synced.
-// A spec is read losslessly: writeDoc(parseDoc(text)) === text, so a file nobody edited is written back unchanged.
+// The manifest of what a publish changed since the agent last synced, and the prompt that hands it to an agent.
 import fs from "node:fs";
 import path from "node:path";
-import { danglingCitations, dependencies, parseSpec, scanSpec, type Spec } from "../spec.ts";
-import { readSpecs, specName } from "../parse.ts";
-
-/** A run of prose, or the code of one quint block. */
-export interface Item { quint: boolean; text: string }
-/** A `###` rule: its heading text and everything up to the next heading, raw; `items` is the same body read for display. */
-export interface DocRule { title: string; body: string; items: Item[] }
-/** A `##` story or group of rules. `title` is null for rules that come before any `##`. */
-export interface DocSection { title: string | null; body: string; rules: DocRule[] }
-/** `title` is the `# ` line, if the file starts with one; `body` runs to the first heading. */
-export interface Doc { title: string | null; body: string; sections: DocSection[] }
-
-export function parseDoc(text: string): Doc {
-  const doc: Doc = { title: null, body: "", sections: [] };
-  let section: DocSection | undefined;
-  let rule: DocRule | undefined;
-  const lines = scanSpec(text);
-  lines.forEach(({ text: line, kind }, i) => {
-    if (kind === "story") {
-      section = { title: line.slice(3), body: "", rules: [] };
-      doc.sections.push(section);
-      rule = undefined;
-    } else if (kind === "rule") {
-      if (!section) doc.sections.push((section = { title: null, body: "", rules: [] }));
-      section.rules.push((rule = { title: line.slice(4), body: "", items: [] }));
-    } else if (i === 0 && line.startsWith("# ")) doc.title = line.slice(2);
-    else (rule ?? section ?? doc).body += line + (i < lines.length - 1 ? "\n" : "");
-  });
-  for (const s of doc.sections) for (const r of s.rules) r.items = itemsOf(r.body);
-  return doc;
-}
-
-export const writeDoc = (doc: Doc) =>
-  (doc.title === null ? "" : `# ${doc.title}\n`) + doc.body
-  + doc.sections.map((s) => (s.title === null ? "" : `## ${s.title}\n`) + s.body + s.rules.map((r) => `### ${r.title}\n${r.body}`).join("")).join("");
-
-/** A rule's body as alternating prose and quint code, trimmed, empty runs dropped. */
-export function itemsOf(body: string): Item[] {
-  const items: Item[] = [];
-  let inQuint = false;
-  for (const { text, kind } of scanSpec(body)) {
-    if (kind === "open quint") items.push({ quint: (inQuint = true), text: "" });
-    else if (kind === "close" && inQuint) { inQuint = false; items.push({ quint: false, text: "" }); }
-    else {
-      if (!items.length) items.push({ quint: false, text: "" });
-      items[items.length - 1].text += text + "\n";
-    }
-  }
-  return items.map((i) => ({ quint: i.quint, text: i.quint ? i.text.replace(/\s+$/, "") : i.text.trim() })).filter((i) => i.text);
-}
+import { danglingCitations, dependencies, parseSpec, type Spec } from "../../spec.ts";
+import { itemsOf, nodeId, outlineOf, ruleKey, storyKey } from "./markdown.ts";
+import { readSpecs, specName } from "../../parse.ts";
 
 // --- identity: which node of the baseline a node of the current specs is -----------------------------
 
 /** A story or rule, in one spec, under the key the review ledger uses (spec.ts, `pending`). */
 export interface Node { id: string; file: string; key: string; kind: "story" | "rule"; parent?: string; heading: string; prose: string; quint: string }
-export const nodeId = (file: string, key: string) => `${file}\0${key}`;
-const storyKey = (title: string | null) => (title === null ? "" : `## ${title.trim()}`);
-const ruleKey = (section: string | null, title: string) => `${section?.trim() ?? ""} / ${title.trim()}`;
 const collapse = (s: string) => s.replace(/\s+/g, " ").trim();
 
+/** The stories and rules of a spec's text; rules before the first story belong to no story. */
 export function nodesOf(file: string, text: string): Node[] {
-  return parseDoc(text).sections.flatMap((s) => {
-    const story: Node = { id: nodeId(file, storyKey(s.title)), file, key: storyKey(s.title), kind: "story", heading: s.title?.trim() ?? "", prose: collapse(s.body), quint: "" };
-    return [...(s.title === null ? [] : [story]), ...s.rules.map((r): Node => ({
-      id: nodeId(file, ruleKey(s.title, r.title)), file, key: ruleKey(s.title, r.title), kind: "rule", parent: story.id, heading: r.title.trim(),
-      prose: collapse(r.items.filter((i) => !i.quint).map((i) => i.text).join("\n")),
-      quint: r.items.filter((i) => i.quint).map((i) => i.text.split("\n").map((l) => l.trimEnd()).join("\n").trim()).join("\n\n"),
-    }))];
+  return outlineOf(file, text).stories.flatMap((s) => {
+    const story: Node = { id: nodeId(file, storyKey(s.title)), file, key: storyKey(s.title), kind: "story", heading: s.title.trim(), prose: collapse(s.body), quint: "" };
+    return [...(s.origin ? [story] : []), ...s.rules.map((r): Node => {
+      const items = itemsOf(r.body);
+      return {
+        id: nodeId(file, ruleKey(s.title, r.title)), file, key: ruleKey(s.title, r.title), kind: "rule", parent: story.id, heading: r.title.trim(),
+        prose: collapse(items.filter((i) => !i.quint).map((i) => i.text).join("\n")),
+        quint: items.filter((i) => i.quint).map((i) => i.text.split("\n").map((l) => l.trimEnd()).join("\n").trim()).join("\n\n"),
+      };
+    })];
   });
 }
 
@@ -146,8 +99,8 @@ export function manifestOf(root: string, baseline: Record<string, string>, curre
   for (const f of Object.keys(current)) if (!(f in baseline)) add({ action: "added", kind: "spec", spec: f, key: f, what: [] }, ["A new spec: its stories and rules are listed below"]);
   for (const f of Object.keys(baseline)) if (!(f in current)) add({ action: "deleted", kind: "spec", spec: f, key: f, what: [] }, ["The spec and proof file are gone: review its removal and code in src/ and tests that import gen/" + specName(f) + ".ts or cite it"]);
   for (const [file, text] of Object.entries(current)) if (file in baseline && text !== baseline[file]) {
-    const was = parseDoc(baseline[file]);
-    const now = parseDoc(text);
+    const was = outlineOf(file, baseline[file]);
+    const now = outlineOf(file, text);
     if (was.title !== now.title || was.body !== now.body) add({ action: "changed", kind: "spec", spec: file, key: file, what: ["title or introduction"] }, ["Review the spec's title, introduction and links to other specs"]);
   }
 

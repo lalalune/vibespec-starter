@@ -89,7 +89,8 @@ and nothing else would catch it.
 - **Compact.** Shared helpers over repeated setup, one assertion of a whole
   value over one per field, no comment that restates the test's name.
 - **One command.** `npm run check` runs the package's `test` script, which
-  runs the tests and never the check. No other test scripts, and nothing a
+  runs the tests and never the package's own check (a tool's journeys may check
+  scratch projects, as Studio's do). No other test scripts, and nothing a
   person must set to run them; the config a runner or service needs is fine.
 - **Size.** One file per package and runner is the norm, and 5,000 lines is fine. At
   15,000 lines, consolidate and simplify; split only at 20,000.
@@ -684,6 +685,8 @@ In the vibespec-starter repository:
 | `vibespec/cache.ts`, `vibespec/run.ts` | stage caches and bounded tool execution |
 | `vibespec/units.ts`, `vibespec/simulate.ts` | generation, proof units, simulation and replay |
 | `vibespec/util.ts` | source discovery, test execution and citations |
+| `vibespec/scan.ts` | how a spec's lines are read; imports nothing, so Studio's page uses it too |
+| `vibespec/studio/` | Studio, a workspace package with its own spec, checked by `npm run check`: change `spec/`, then its shell in `src/` |
 | `vibespec/prove.ts` | proves one unit: checks and splices the proof file, runs LemmaScript and `dafny audit`, and rechecks alone every postcondition a failing one could hide |
 | `vibespec/proof/lib.dfy` | the library proof files call |
 | `vibespec/gen.ts` | the translator: reads what a module imports and defines |
