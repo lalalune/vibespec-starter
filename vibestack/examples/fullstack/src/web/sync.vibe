@@ -1,5 +1,5 @@
 // spec/system.md, "Only a tab's oldest queued edit can be on its way unanswered"; spec/client.md, "Story: Hear back from the server"
-// Shared by app.ts and test/e2e.test.vibe.
+// Shared by useTab.ts and test/e2e.test.vibe.
 import { type Client, type Event, type Pending, NotAnEvent, apply, decodeEvent, initial } from "../../gen/client.effect.vibe"
 import { toRequest } from "../protocol.vibe"
 

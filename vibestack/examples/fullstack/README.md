@@ -9,9 +9,11 @@ pnpm install --ignore-workspace   # here, after the install at the repository ro
 pnpm check      # the whole pipeline (from this directory)
 pnpm test       # the tests alone, against the real server on a free port
 pnpm start      # build, then open http://localhost:3000 in two windows
+pnpm storybook  # every component of the page in each of its states
+pnpm lint       # the page uses the design tokens only
 ```
 
-Needs Node 26+ and Dafny on the path. The page loads React 18 from esm.sh.
+Needs Node 26+ and Dafny on the path.
 
 | Path | Kind | Covers |
 |---|---|---|
@@ -22,7 +24,9 @@ Needs Node 26+ and Dafny on the path. The page loads React 18 from esm.sh.
 | `spec/*.proof.dfy` | proofs | What Dafny could not prove alone |
 | `src/server.vibe`, `src/main.vibe` | backend shell | `POST /api/events`, `GET /api/snapshot`, `GET /api/stream`, the page's files |
 | `src/protocol.vibe` | shared shell | Wire format |
-| `src/web/` | frontend shell | React page (`app.ts`) and the `Tab` service (`sync.vibe`) it shares with `test/e2e.test.vibe` |
+| `src/web/sync.vibe` | frontend shell | The `Tab` service: one client machine and its requests, shared with `test/e2e.test.vibe` |
+| `src/web/` | page | React: `useTab.ts` gives `components/TodoPage.tsx` the tab's `Client` and its effects |
+| `tokens.json`, `design.md` | design | The page's colors and shapes, as tokens |
 
 ```mermaid
 sequenceDiagram
@@ -46,13 +50,26 @@ the generated `Machine` service; a tab changes its `Client` only with `apply`.
 | Stays TypeScript | Why |
 |---|---|
 | `gen/*.ts` | generated, and what the proofs are about |
-| `src/web/app.ts` | the DOM, which a `.vibe` file cannot touch; it runs the tab's effects through a `ManagedRuntime` |
-| `bundle.ts`, `vitest.config.ts` | configuration that esbuild and Vitest load themselves |
+| `src/web/**/*.tsx`, `useTab.ts` | React and the DOM, which a `.vibe` file cannot touch; `useTab.ts` runs the tab's effects through a `ManagedRuntime` |
+| `vite.config.ts`, `vitest.config.ts`, `eslint.config.js`, `.storybook/` | configuration the tools load themselves |
 
-A browser cannot load the compiler's output as it is (it imports `effect` by
-name), so `bundle.ts` has esbuild bundle `src/web/app.ts` and the `.vibe`
-files it imports into `dist/web/app.js`, served beside `index.html`. Vitest
-runs `bundle.ts` before the tests, so `pnpm test` needs no build.
+## The page
+
+The `Tab` of `sync.vibe` owns the client's state. `useTab.ts` hands every
+state it publishes to `TodoPage`, whose components take that `Client` and
+callbacks as props, offer a control exactly when the generated guard allows
+its event (`canCreate`, `canSetDone`, `canRename`, `canRemove`, `canGoOffline`,
+`canGoOnline`), and keep only text being typed in `useState`.
+
+| Command | Does |
+|---|---|
+| `pnpm build` | the server (`vibelang`, to `dist/src`), the theme, and the page (Vite, to `dist/web`, which the server serves) |
+| `pnpm tokens` | `generated/theme.css` and the table in `design.md`, from `tokens.json`; `node ../../spec.ts tokens check` fails on contrast below WCAG AA |
+| `pnpm stories` | `generated/stories/`: stories of each component in `src/web/components/`, from its props and its `<Name>.meta.tsx`, and a test that mounts each |
+| `pnpm storybook` | Storybook over those stories, regenerated as components change |
+
+`pnpm test` writes the theme and the stories, has Vitest build the page
+(`test/page.ts`), and runs the shell's journeys and the mount of every story.
 
 ## Proved, simulated, tested, trusted
 
@@ -60,7 +77,8 @@ runs `bundle.ts` before the tests, so `pnpm test` needs no build.
   `always` and `step` rule, and every law holds. `pnpm check` gives the count.
 - **Simulated**: the `sometimes` rules, among them that both tabs can finish
   their edits and agree with the server despite loss, duplication and reordering.
-- **Tested**: the HTTP shell and two tabs against the real server (`test/`).
+- **Tested**: the HTTP shell and two tabs against the real server (`test/`);
+  that every story mounts. No test drives the page in a browser.
 - **Trusted**: `src/`, React, Effect, the VibeLang compiler, the generator,
   Dafny and Quint.
 

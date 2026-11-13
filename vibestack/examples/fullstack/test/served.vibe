@@ -1,4 +1,4 @@
-// The real server on a free port with the page `bundle.ts` built, and an HttpClient that reaches it.
+// The real server on a free port with the page test/page.ts built, and an HttpClient that reaches it.
 import { listening, server } from "../src/server.vibe"
 
 module node {
