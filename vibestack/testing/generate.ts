@@ -1,19 +1,20 @@
 // Writes transient Vitest files to <package>/.cache/generated/tests from the package's declared contracts, never
-// from what its code does today: schemas (`src/**/*.schema.ts`), contracts (`src/**/*.contract.ts`, properties.ts)
-// and machines with an opt-in driver (`gen/<name>.conformance.ts` and `test/drivers/<name>.ts`, conformance.ts).
+// from what its code does today: schemas (`src/**/*.schema.{ts,vibe}`), contracts (`src/**/*.contract.{ts,vibe}`,
+// properties.ts). `project()` (vitest.ts) runs `main` before each test run of a package with a schema or contract.
+// Conformance is not a test of these: the traces stage of `pnpm check` runs each `test/drivers/<name>.ts` (conform.ts).
 import { Arbitrary, Effect, Schema } from "effect";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import ts from "typescript";
 import { declared, isContract } from "./properties.ts";
 
 /** In every header: a change to what is generated rewrites every file. */
 export const VERSION = 1;
 const OUT = ".cache/generated/tests";
 
-/** An export, or a whole module, no test could be derived for. */
+/** An export no test could be derived for, or with `export: "*"` a whole module, which fails `main`. */
 export interface Skipped { file: string; export: string; reason: string }
 export interface Generated { written: string[]; unchanged: string[]; removed: string[]; skipped: Skipped[] }
 
@@ -21,8 +22,9 @@ const posix = (file: string) => file.split(path.sep).join("/");
 const sha = (...texts: string[]) => createHash("sha256").update(texts.join("\0")).digest("hex").slice(0, 16);
 
 /**
- * Bring `<packageDir>/.cache/generated/tests` up to date. Modules are imported to read their exports, so a schema
- * or contract module must load without side effects, and one that throws is skipped; a driver is only parsed.
+ * Bring `<packageDir>/.cache/generated/tests` up to date. Modules are imported to read their exports, a `.vibe` one
+ * through the package's `vibelang/register`, so a schema or contract module must load without side effects, and one
+ * that throws is skipped.
  */
 export async function generateTests(packageDir: string): Promise<Generated> {
   const root = path.resolve(packageDir), out = path.join(root, OUT);
@@ -46,52 +48,36 @@ export async function generateTests(packageDir: string): Promise<Generated> {
   const importing = (from: From, what: string, file: string) => `import ${what} from ${JSON.stringify(from(file))};`;
   const library = (file: string) => path.join(import.meta.dirname, file);
 
-  for (const source of glob("src/**/*.{schema,contract}.{ts,vibe}")) {
+  const sources = glob("src/**/*.{schema,contract}.{ts,vibe}");
+  if (sources.some((source) => source.endsWith(".vibe"))) await import(pathToFileURL(createRequire(path.join(root, "package.json")).resolve("vibelang/register")).href);
+  for (const source of sources) {
     const hash = sha(read(source));
     const skip = (name: string, reason: string) => void result.skipped.push({ file: source, export: name, reason });
     const module: Record<string, unknown> | undefined = await import(`${pathToFileURL(path.join(root, source)).href}?${hash}`).catch((error) =>
-      skip("*", error?.code === "ERR_UNKNOWN_FILE_EXTENSION"
-        ? "Node cannot load this file as it is: run the generator with `node --import vibelang/register`, or declare it in a .ts module"
-        : `the module does not load: ${error instanceof Error ? error.message : String(error)}`));
+      skip("*", `the module does not load: ${error instanceof Error ? error.message : String(error)}`));
     if (!module) continue;
     const names = Object.keys(module).sort(), testFile = `${source.replace(/\.\w+$/, "")}.test.ts`;
     const subject = (from: From) => importing(from, "* as subject", path.join(root, source));
     if (/\.schema\.\w+$/.test(source)) {
       const schemas = names.filter((name) => Schema.isSchema(module[name]) && arbitraryOf(module[name] as Schema.Schema<unknown>, (reason) => skip(name, reason)));
-      if (!names.some((name) => Schema.isSchema(module[name]))) skip("*", "the module exports no Effect Schema");
-      if (schemas.length) emit(testFile, source, hash, schemas.length * 2, (from) => [
+      if (!schemas.length) skip("*", names.some((name) => Schema.isSchema(module[name])) ? "no value can be generated for any schema it exports" : "the module exports no Effect Schema");
+      else emit(testFile, source, hash, schemas.length * 2, (from) => [
         `import { describe } from "vitest";`, importing(from, "{ schemaTests }", library("index.ts")), subject(from), "",
         `describe(${JSON.stringify(source)}, () => {`, ...schemas.map((name) => `  schemaTests(${JSON.stringify(name)}, subject[${JSON.stringify(name)}]);`), "});",
       ]);
     } else {
       const contracts = names.filter((name) => isContract(module[name]));
-      if (!contracts.length) skip("*", "the module exports no contract({ … })");
       const tests = contracts.flatMap((name) => {
         const properties = Object.entries(declared(module[name] as never)).flatMap(([property, check]) => check ? [property] : []);
         if (!properties.length) skip(name, "the contract declares no property: deterministic, idempotent, invariant or inverse");
         return properties.map((property) => `  contractTest(${JSON.stringify(name)}, subject[${JSON.stringify(name)}], ${JSON.stringify(property)});`);
       });
-      if (tests.length) emit(testFile, source, hash, tests.length, (from) => [
+      if (!tests.length) skip("*", contracts.length ? "no contract it exports declares a property" : "the module exports no contract({ … })");
+      else emit(testFile, source, hash, tests.length, (from) => [
         `import { describe } from "vitest";`, importing(from, "{ contractTest }", library("index.ts")), subject(from), "",
         `describe(${JSON.stringify(source)}, () => {`, ...tests, "});",
       ]);
     }
-  }
-
-  for (const machine of glob("gen/*.conformance.ts")) {
-    const name = path.basename(machine, ".conformance.ts"), driver = `test/drivers/${name}.ts`;
-    if (!fs.existsSync(path.join(root, driver))) continue;
-    if (!exportsName(driver, read(driver), "driver")) {
-      result.skipped.push({ file: driver, export: "driver", reason: `the module has no export named \`driver\`, the Driver that ${machine} runs; \`export *\` is not followed` });
-      continue;
-    }
-    emit(`conformance/${name}.test.ts`, `${machine} and ${driver}`, sha(read(machine), read(driver)), 1, (from) => [
-      importing(from, "{ conformanceTests }", library("conformance.ts")),
-      importing(from, "* as machine", path.join(root, machine)),
-      importing(from, "* as app", path.join(root, driver)), "",
-      // `options` is the driver module's optional export: the Options of SPEC.md, "Conformance".
-      `conformanceTests(${JSON.stringify(name)}, machine, app.driver, { ...app.options, dir: \`\${import.meta.dirname}/${from(path.join(root, "test/counterexamples", name))}\` });`,
-    ]);
   }
 
   if (fs.existsSync(out)) for (const file of fs.globSync("**/*.test.ts", { cwd: out }).map(posix).sort()) {
@@ -120,21 +106,15 @@ function arbitraryOf(schema: Schema.Schema<unknown>, skip: (reason: string) => v
   }
 }
 
-/** Whether the module `text` exports `name` itself: a declaration, or `export { … }` with or without `as` or `from`. */
-function exportsName(file: string, text: string, name: string) {
-  const exported = (node: ts.Node) => ts.canHaveModifiers(node) && ts.getModifiers(node)?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
-  return ts.createSourceFile(file, text, ts.ScriptTarget.Latest).statements.some((statement) =>
-    ts.isVariableStatement(statement) ? exported(statement) && statement.declarationList.declarations.some((d) => ts.isIdentifier(d.name) && d.name.text === name)
-    : ts.isFunctionDeclaration(statement) || ts.isClassDeclaration(statement) ? exported(statement) && statement.name?.text === name
-    : ts.isExportDeclaration(statement) && !statement.isTypeOnly && !!statement.exportClause && ts.isNamedExports(statement.exportClause)
-      && statement.exportClause.elements.some((e) => !e.isTypeOnly && e.name.text === name));
-}
-
-/** `spec tests [<directory>]` (vibestack/spec.ts), and this file run on its own. */
+/**
+ * `spec tests [<directory>]` (vibestack/spec.ts) and `project()` (vitest.ts): generate, say what was skipped, and
+ * throw, listing them, when a whole module gets no test, so that a package's tests fail rather than miss it.
+ */
 export async function main(packageDir = ".") {
   const { written, unchanged, removed, skipped } = await generateTests(packageDir);
-  console.log(`generated tests: ${written.length} written, ${unchanged.length} unchanged, ${removed.length} removed, ${skipped.length} skipped${skipped.length ? ", which get no test:" : ""}`);
-  for (const s of skipped) console.log(`  ${s.file}, ${s.export}: ${s.reason}`);
+  const said = (s: Skipped) => `  ${s.file}${s.export === "*" ? "" : `, ${s.export}`}: ${s.reason}`;
+  const modules = skipped.filter((s) => s.export === "*"), exports = skipped.filter((s) => s.export !== "*");
+  if (modules.length) throw new Error(`generated tests: ${modules.length} ${modules.length === 1 ? "module gets" : "modules get"} no test; make each declare what can be tested, or rename it:\n${modules.concat(exports).map(said).join("\n")}`);
+  console.log(`generated tests: ${written.length} written, ${unchanged.length} unchanged, ${removed.length} removed, ${exports.length} skipped${exports.length ? ", which get no test:" : ""}`);
+  for (const s of exports) console.log(said(s));
 }
-
-if (import.meta.main) await main(process.argv[2]);

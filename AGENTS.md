@@ -51,7 +51,7 @@ Every project built here uses this, and nothing beside it:
 | User interface | React, in `.tsx`, built with Vite | Vue, Svelte, Angular, hand-built DOM |
 | UI state | React hooks over the generated machine's `Machine` service | state kept in a component that the spec owns |
 | Styling | Tailwind CSS v4 with the project's design tokens, shadcn/ui conventions on Radix primitives | hard-coded colors, a second token set, global CSS beyond the token file |
-| Tests | Vitest with `@effect/vitest`, on `test/**/*.test.vibe` | Jest, `node --test` for a new test |
+| Tests | Vitest with `@effect/vitest`, on `test/**/*.test.{vibe,tsx}`; a driver for a shell that keeps a machine's state | Jest, `node --test` for a new test |
 
 - **Every interface is React**: an application's, an example's and Studio's.
 - **Reuse before adding.** Find the component, token or service that exists
@@ -128,7 +128,7 @@ and nothing else would catch it.
 | Earns a test | Never a test |
 |---|---|
 | A whole user journey, or an integration with a real service, through the real shell: input parsing, storage, HTTP, UI wiring | A guard, transition, rule or law the spec already proves, except as a step of a journey |
-| Hand-written code that touches the outside world, through the journey that uses it. Pure logic becomes a `pure def` or gets a `//@` contract instead | Strings, labels, page titles, markup, styles, snapshots |
+| Hand-written code that touches the outside world, through the journey that uses it. Pure logic becomes a `pure def` or gets a `//@` contract instead | Strings, labels, page titles, markup, styles, snapshots and screenshots: no test compares pictures |
 | A shell bug that was found: one more step in the journey it broke | That a function was called; what the `types` stage already checks |
 
 - **Journeys.** A test walks a story end to end, is named after it, and cites
@@ -140,9 +140,11 @@ and nothing else would catch it.
   mode. Fake only a service that costs money, cannot
   be undone, or cannot be run and reset locally; fake it once, at its network
   boundary, shared by every test. No mocks of your own code.
-- **Extend before adding.** A step or assertion in an existing journey before
-  a new test; a new test before a new file. A test that repeats another's
-  setup to assert one more thing belongs inside it.
+- **Search, then extend before adding.** Search the tests for the citation of
+  the story or rule first, and extend the journey that has it: a step or
+  assertion in an existing journey before a new test; a new test before a new
+  file. A test that repeats another's setup to assert one more thing belongs
+  inside it.
 - **Compact.** Shared helpers over repeated setup, one assertion of a whole
   value over one per field, no comment that restates the test's name.
 - **One command.** `pnpm check` runs the package's `test` script, which
@@ -155,24 +157,43 @@ and nothing else would catch it.
   something else, change the assertion and name it and its rule in your
   report. Propose deleting a test; never delete one yourself.
 
-How `pnpm check` runs them:
+How `pnpm check` runs them, in its `tests` stage:
 
-- **Any runner.** It runs the package's `test` script with the package
-  manager named by `packageManager` in `package.json`, or else by the lock file
-  in the package or a directory above it: `node --test`, Vitest, Jest,
-  `bun test` and Playwright all work. Without a `test` script it runs
-  `node --test` on `test/**/*.test.ts`. The exit code decides; a failure shows
-  the runner's summary of failures, or its last 80 lines.
-- **VibeLang.** A package's `test` script is `vitest run`, on
-  `test/**/*.test.vibe` ([shell skill](.claude/skills/shell/SKILL.md)).
+- **The run.** It runs the package's `test` script in the package's directory,
+  with the package manager `packageManager` or the nearest lock file names.
+  The exit code decides; a failure shows the runner's list of failures, at
+  most 200 lines of it. A pass is remembered until something the tests read
+  changes, and a `check` that Turborepo runs straight after the package's
+  `test` task does not run the script again.
+- **One configuration.** The `test` script is `vitest run`, on
+  `project({ root: import.meta.dirname })` from `vibestack/testing/vitest`, as
+  `spec init` writes it; a package with `test/` and no `test` script gets
+  both from `check`. It runs `test/**/*.test.{ts,tsx,vibe}` in Node (a test
+  that needs a DOM says `// @vitest-environment happy-dom`), and
+  `*.browser.test.*` in Chromium, by `vitest run --project browser` (the
+  `test:browser` script). Before each run it writes the
+  [generated property tests](docs/architecture.md#which-test-for-what) of
+  every `src/**/*.schema.*` and `src/**/*.contract.*`; a module that yields
+  none fails the run, with why. A package with no tests passes.
 - **Citations.** A test, or a shell file in `src/`, in VibeLang or
   TypeScript, names the story or rule it serves by its heading, on one line:
   `// spec/index.md, "A payment never exceeds the balance"`, or
   `// spec/index.md, "Story: Check out"` for a story; several may share a line,
   separated by `;`. The path is the spec's from the root of the spec tree,
-  in an owner's code too: `// spec/app/index.md, "…"`. `check` fails on a
-  citation whose heading the spec no longer has, so a renamed or removed rule
-  brings its tests up for review.
+  in an owner's code too: `// spec/app/index.md, "…"`. Each `it` or `test`
+  needs one: on its line or in it, on the `describe` or layer around it, or
+  in the file's header. `check` fails on an uncited test, and on a citation
+  whose heading the spec no longer has, so a renamed or removed rule brings
+  its tests up for review; `review` lists the code that cites a changed rule.
+- **Past the generated code.** A test that reaches nothing but `gen/` and
+  test libraries, through the helpers of its own file, fails: it restates
+  what the spec proves. Route it through `src/`, or propose deleting it.
+- **Drivers are not tests.** `test/drivers/` is run by the `traces` stage
+  ([SPEC.md, Conformance](SPEC.md#conformance)), and imports `gen/` as types only; `check`
+  fails on a driver that imports its code.
+- **Notes**, never failures: two test files for one runner and language, a
+  test file of 15,000 lines, and a spec of the package that no test cites and
+  no driver, trace or `driver:` script checks.
 - **Monorepos.** The root's `check` runs the tests of the root and of each
   owner (SPEC.md, "One spec tree"), each in its own directory; a package with its own
   `spec/` runs its own `check` and tests (`pnpm test:models` for all;
@@ -185,6 +206,7 @@ How `pnpm check` runs them:
 - `pnpm check` is where step 3 of the sync skill's loop stops: what is
   left waits on the user.
 - In the vibestack repository, if you changed `vibestack/`, `pnpm selftest`
-  passes, with a new case for each new kind of mistake the change catches.
+  passes, with a new case for each new kind of mistake the change catches,
+  and each new kind of `✗` has its row in the sync skill.
 - What you wrote has had its passes under "Writing code".
 - Your summary follows "When you stop" in the sync skill.

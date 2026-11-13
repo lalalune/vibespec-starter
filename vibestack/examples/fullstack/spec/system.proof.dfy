@@ -94,30 +94,58 @@ lemma serve_ensures(sys: System, i: int)
       {
         if j < |rest| { OnTheWire(sys, rest[j]); }
       }
-    } else if server_allows(sys.server, m.client, m.seq_, m.op) {
-      var s := server_commit(m.client, sys.server, m.seq_, m.op);
-      assert after == applyRequest(m, rest, sys);
-      server_lawACommitKeepsTheRules_ensures(sys.server, m.client, m.seq_, m.op);
-      todo_lawAListIsTheSameAsItself_ensures(s.todos);
-      assert pastAt(after.history, s.version) == s.todos;
-      PastExtends(sys.history, s.todos, sys.a.seen, sys.a.confirmed);
-      PastExtends(sys.history, s.todos, sys.b.seen, sys.b.confirmed);
-      forall j | 0 <= j < |after.net|
-        ensures isRequest(after.net[j]) || isPast(after.history, after.net[j].version, after.net[j].todos)
-      {
-        if j < |rest| {
-          OnTheWire(sys, rest[j]);
-          if !isRequest(rest[j]) { PastExtends(sys.history, s.todos, rest[j].version, rest[j].todos); }
+    } else {
+      ServeCases(sys, i);
+      var s := server_request(sys.server, m.client, m.seq_, m.op);
+      server_lawARequestKeepsTheRules_ensures(sys.server, m.client, m.seq_, m.op);
+      if server_allows(sys.server, m.client, m.seq_, m.op) {
+        assert after == accepted(m, rest, s, sys);
+        todo_lawAListIsTheSameAsItself_ensures(s.todos);
+        assert pastAt(after.history, s.version) == s.todos;
+        PastExtends(sys.history, s.todos, sys.a.seen, sys.a.confirmed);
+        PastExtends(sys.history, s.todos, sys.b.seen, sys.b.confirmed);
+        forall j | 0 <= j < |after.net|
+          ensures isRequest(after.net[j]) || isPast(after.history, after.net[j].version, after.net[j].todos)
+        {
+          if j < |rest| {
+            OnTheWire(sys, rest[j]);
+            if !isRequest(rest[j]) { PastExtends(sys.history, s.todos, rest[j].version, rest[j].todos); }
+          }
+        }
+      } else {
+        assert after == refused(m, rest, s, sys);
+        assert s.version == sys.server.version && s.todos == sys.server.todos;
+        forall j | 0 <= j < |after.net|
+          ensures isRequest(after.net[j]) || isPast(after.history, after.net[j].version, after.net[j].todos)
+        {
+          if j < |rest| { OnTheWire(sys, rest[j]); }
         }
       }
-    } else {
-      assert after == refuseRequest(m, rest, sys);
-      server_lawARefusalKeepsTheRules_ensures(sys.server, m.client, m.seq_, m.op);
-      forall j | 0 <= j < |after.net|
-        ensures isRequest(after.net[j]) || isPast(after.history, after.net[j].version, after.net[j].todos)
-      {
-        if j < |rest| { OnTheWire(sys, rest[j]); }
-      }
+    }
+  }
+}
+
+// A new request is the server's own `request`: accepted exactly when its edit makes sense.
+lemma ServeCases(sys: System, i: int)
+  requires !server_answered(sys.server, msgAt(sys.net, i).client, msgAt(sys.net, i).seq_)
+  ensures var m := msgAt(sys.net, i); var s := server_request(sys.server, m.client, m.seq_, m.op);
+    server_acceptedAs(s, m.client, m.seq_, m.op) == server_allows(sys.server, m.client, m.seq_, m.op)
+  ensures var m := msgAt(sys.net, i); var s := server_request(sys.server, m.client, m.seq_, m.op);
+    serve(sys, i) == (if server_allows(sys.server, m.client, m.seq_, m.op) then accepted(m, dropAt(sys.net, i), s, sys) else refused(m, dropAt(sys.net, i), s, sys))
+{
+  var m := msgAt(sys.net, i);
+  var s := server_request(sys.server, m.client, m.seq_, m.op);
+  var x := s.log[|s.log| - 1];
+  assert x in s.log;
+  if server_allows(sys.server, m.client, m.seq_, m.op) {
+    assert x.client == m.client && x.seq_ == m.seq_ && x.ok && x.op == m.op;
+    assert server_acceptedAs(s, m.client, m.seq_, m.op);
+  } else {
+    assert s.log == sys.server.log + [x] && !x.ok;
+    forall h | h in s.log
+      ensures !(h.client == m.client && h.seq_ == m.seq_ && h.ok)
+    {
+      if h != x { assert h in sys.server.log; }
     }
   }
 }
@@ -423,6 +451,7 @@ lemma ServeWire(sys: System, i: int)
   var after := serve(sys, i);
   WireProperties(sys, m);
   DropAtSubset(sys.net, i);
+  if !server_answered(sys.server, m.client, m.seq_) { ServeCases(sys, i); }
   assert after.a == sys.a && after.b == sys.b;
   assert forall h :: h in sys.server.log ==> h in after.server.log;
   if sys.forged == 0 {
@@ -764,6 +793,7 @@ lemma ServeInStep(sys: System, i: int, owner: string)
     assert m.kind.Request?;
     assert m.client == owner;
     if !server_answered(s, owner, m.seq_) {
+      ServeCases(sys, i);
       assert |c.pending| > 0 && m.seq_ == oldest(c).seq_;
       OldestFacts(sys, owner);
       assert todo_sameOp(oldest(c).op, m.op);

@@ -1,9 +1,9 @@
 name: ci
 
-# Every run asks for the same tasks; Turborepo and spec skip what the change
-# does not reach, from the cache of the last run. What is headed for main, and
-# every push to develop or main, also gets larger property budgets and the
-# tools' own self-test. Standalone examples are checked manually.
+# Every run is `pnpm verify`, the tools' own self-test included; Turborepo and
+# spec skip what the change does not reach, from the cache of the last run.
+# What is headed for main, and every push to develop or main, also gets larger
+# property budgets. Standalone examples are checked manually.
 on:
   pull_request:
     branches: [develop, main]
@@ -25,7 +25,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
-      - run: pnpm exec turbo run build typecheck test test:browser check //#lint:js //#lint:css //#analyze --continue
+      - run: pnpm verify --continue
         env:
           FUZZ_RUNS: ${{ env.FULL == 'true' && '1000' || '100' }}
       - if: always()
@@ -39,17 +39,9 @@ jobs:
       - if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: browser-failures
+          name: failures
           path: |
-            **/__screenshots__/
+            **/test/counterexamples/
             **/test/__traces__/
             !**/node_modules/**
           if-no-files-found: ignore
-
-  selftest:
-    if: github.event_name == 'push' || github.base_ref == 'main'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup
-      - run: pnpm selftest

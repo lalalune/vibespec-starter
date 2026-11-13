@@ -73,9 +73,9 @@ export function standIn(domain: any, trace: Step[]) {
 
 /**
  * The simulator's seed, derived from what is simulated, so that the same harness always gives the same traces and a
- * counterexample can be had again.
+ * counterexample can be had again; and from `FUZZ_SEED` where it is set, so that a nightly run tries other traces.
  */
-const seedFor = (...what: string[]) => String(parseInt(digest(what.join("\0")).slice(0, 12), 16));
+const seedFor = (...what: string[]) => String(parseInt(digest([...what, ...process.env.FUZZ_SEED ? [process.env.FUZZ_SEED] : []].join("\0")).slice(0, 12), 16));
 
 /**
  * Quint installs its evaluator the first time it simulates, and runs started together would race to. Until it is
@@ -126,7 +126,7 @@ export async function simulate(root: string, model: Model, invariant: string, tr
     const broken = r.out.includes("[violation]");
     // In the order Quint wrote them, so that the same simulation always gives the traces in the same order.
     const files = fs.readdirSync(out).filter((f) => f.endsWith(".itf.json")).sort((x, y) => parseInt(x, 10) - parseInt(y, 10) || x.localeCompare(y));
-    const again = `seed ${seed}; to simulate again: pnpm exec quint ${args.join(" ")}`;
+    const again = `seed ${seed}${process.env.FUZZ_SEED ? ` (FUZZ_SEED=${process.env.FUZZ_SEED})` : ""}; to simulate again: pnpm exec quint ${args.join(" ")}`;
     // Anything other than "held" or "violated", each with a trace, is Quint failing to run.
     if ((!r.ok && !broken) || !files.length) throw new Error(`quint run did not complete (${again}):\n${r.out.trim()}`);
     return { broken, traces: files.map((f) => readTrace(path.join(out, f), model)).filter((t) => t.length), again };

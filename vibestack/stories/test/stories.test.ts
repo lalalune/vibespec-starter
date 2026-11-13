@@ -76,7 +76,7 @@ it("reports a required prop it cannot give a value, and writes that component no
   expect(readdirSync(out)).not.toContain("kit-table.stories.tsx");
 });
 
-it("uses a metadata file's args, examples, states, bounds, schema, decorator, play and snapshot", () => {
+it("uses a metadata file's args, examples, states, bounds, schema, decorator and play", () => {
   expect(stories("Meter")).toEqual([
     "default kit-meter--default",
     "example kit-meter--half-full",
@@ -97,10 +97,21 @@ it("uses a metadata file's args, examples, states, bounds, schema, decorator, pl
     "const base = { ...samples[0], ...given.args };",
     "decorators: [(Story) => given.decorator(() => <Story />)]",
     'export const HalfFull = { args: { ...base, ...given.examples["Half full"] }, play: given.play["Half full"] };',
-    'export const Failed = { args: { ...given.states["Failed"] }, tags: ["snapshot"] };',
+    'export const Failed = { args: { ...given.states["Failed"] } };',
     "export const Sample2 = { args: { ...base, ...samples[2] } };",
   ])
     expect(file).toContain(line);
+});
+
+it("plays a disabled or loading story to check that a click, Enter or Space calls none of its spies", () => {
+  const file = read("kit-meter.stories.tsx");
+  for (const line of [
+    'import { expect, fn, isMockFunction, userEvent } from "storybook/test";',
+    "const refuses = async ({ args, canvasElement }) => {",
+    "export const Loading = { args: { ...base, loading: true, onClick: fn() }, play: refuses };",
+  ])
+    expect(file).toContain(line);
+  expect(read("kit-kinds.stories.tsx")).not.toContain("refuses");
 });
 
 it("links a component to its spec model and renders it from the generated initial state", () => {
@@ -115,12 +126,13 @@ it("leaves a story to the hand-written file that has one of its name", () => {
   expect(read("kit-chip.stories.tsx")).not.toContain("export const Default");
 });
 
-it("writes the catalog Studio reads, and tests that run every generated story in a simulated DOM and in a browser", () => {
+it("writes the catalog Studio reads, and tests that run every generated and manual story in a simulated DOM and in a browser", () => {
   const catalog = JSON.parse(read("catalog.json"));
   expect(catalog).toEqual(JSON.parse(JSON.stringify(first.index)));
   expect(Object.keys(catalog)).toEqual(["version", "storybook", "components"]);
   expect(Object.keys(catalog.components[4])).toEqual(["id", "name", "package", "title", "description", "source", "props", "stories", "model", "design", "diagnostics"]);
-  const files = ["chip", "kinds", "many", "meter", "receipt", "tag"].map((name, i) => `import * as s${i} from "./kit-${name}.stories.tsx";`);
+  const files = ["../../src/Chip.stories.tsx", ...["chip", "kinds", "many", "meter", "receipt", "tag"].map((name) => `./kit-${name}.stories.tsx`)]
+    .map((file, i) => `import * as s${i} from "${file}";`);
   expect(read("stories.test.tsx").match(/import \* as .*/g)).toEqual(files);
   expect(read("stories.browser.test.tsx").match(/import \* as .*/g)).toEqual(['import * as a11y from "@storybook/addon-a11y/preview";', ...files]);
 });
@@ -152,11 +164,17 @@ it("rewrites only what a change touches, and removes what a deleted component le
 
   // Args that are not all written out may give a required prop; a bound that is not a pair is reported, not thrown.
   edit("src/Table.meta.ts", (text) => text.replace("rows: [{ id: 1 }],", "...{ rows: [{ id: 1 }] },"));
-  edit("src/Meter.meta.ts", (text) => text.replace("[0, full]", "full"));
-  expect(run().diagnostics).toEqual(['Meter: `bounds` of "value" must be written out as two numbers, `[least, greatest]`, in Meter.meta.ts']);
+  // A field ComponentMeta does not have, such as the `snapshot` it once had, is reported, not ignored.
+  edit("src/Meter.meta.ts", (text) => text.replace("[0, full]", "full").replace("decorator:", 'snapshot: ["Failed"],\n  decorator:'));
+  expect(run().diagnostics).toEqual([
+    'Meter: `bounds` of "value" must be written out as two numbers, `[least, greatest]`, in Meter.meta.ts',
+    "Meter: `snapshot` is no field of ComponentMeta (vibestack/stories/meta.ts) and is not read; remove it from Meter.meta.ts",
+  ]);
 
   rmSync(join(root, "src/Chip.tsx"));
   const gone = run();
   expect(gone).toMatchObject({ removed: ["kit-chip.stories.tsx"], analyzed: 0 });
   expect(gone.index.components.map((c) => c.name)).not.toContain("Chip");
+  expect(read("stories.test.tsx")).not.toContain("Chip.stories.tsx");
+  expect(read("stories.browser.test.tsx")).not.toContain("Chip.stories.tsx");
 });

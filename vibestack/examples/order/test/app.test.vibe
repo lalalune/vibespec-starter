@@ -1,6 +1,4 @@
 import { assert, it, layer } from "@effect/vitest"
-import { conformance } from "../gen/index.conformance.ts"
-import { type Event, Rejected } from "../gen/index.effect.vibe"
 import { OrderBook, OrderBookMemory } from "../src/app.vibe"
 
 /** Sends `input` to order A1 of the journey's book. */
@@ -9,14 +7,10 @@ effect function send(input: unknown) { return try (try OrderBook).dispatch("A1",
 effect function refusal(input: unknown) {
   return effect { try send(input); return "accepted" } catch (error) => error._tag
 }
-effect function submitted(qty: number) {
-  try send({ type: "addItem", qty })
-  try send({ type: "submit" })
-}
 effect function owed() { return try (try OrderBook).balance("A1") }
-effect function order() { return try (try OrderBook).get("A1") }
 
-// Each journey has a book of its own. An assertion may throw, so it runs in `Effect.try`.
+// The journey has a book of its own; the traces stage of `pnpm check` runs the rest of the spec through the same
+// book (test/drivers/index.ts). An assertion may throw, so it runs in `Effect.try`.
 layer(OrderBookMemory, { buildPerTest: true })((it) => {
   // spec/index.md, "Story: Check out"; spec/index.md, "Story: Change my mind"; spec/index.md, "Story: Take back a payment"; spec/index.md, "Story: Cancel"; spec/index.md, "Story: Reopen a cancelled order"
   it.effect("an order is filled, paid in part, cancelled with a refund, reopened and paid off", () => effect {
@@ -41,49 +35,4 @@ layer(OrderBookMemory, { buildPerTest: true })((it) => {
       ["Pending", 6, "Paid", 0],
     ]))
   })
-
-  // spec/index.md, "Only a non-empty draft can be submitted"; spec/index.md, "A payment never exceeds the balance"
-  it.effect("events the rules do not allow are rejected and not stored", () => effect {
-    const empty = try refusal({ type: "submit" })
-    try submitted(1)
-    const seen = [empty, try refusal({ type: "pay", amount: 6 }), try order()]
-    try Effect.try(() => assert.deepStrictEqual(seen, ["Rejected", "Rejected", { status: "Pending", units: 1, due: 5, paid: 0 }]))
-  })
-
-  it.effect("malformed input never reaches the verified core", () => effect {
-    const refused = [try refusal({ type: "addItem", qty: 1.5 }), try refusal({ type: "refund" }), try order()]
-    let reads = 0
-    const sly = { type: "pay", get amount() { return reads++ === 0 ? 1 : 1_000_000 }, extra: "ignored" }
-    try submitted(2)
-    const seen = [...refused, try send(sly)]
-    try Effect.try(() => assert.deepStrictEqual(seen, [
-      "NotAnEvent", "NotAnEvent", { status: "Draft", units: 0, due: 0, paid: 0 }, { status: "Pending", units: 2, due: 10, paid: 1 },
-    ]))
-  })
-})
-
-/** What the book did with `event`, as gen/_conformance.ts asks: any failure but the rules refusing it stays a failure. */
-effect function outcome(id: string, event: Event) {
-  const book = try OrderBook
-  return effect {
-    try book.dispatch(id, event)
-    return "accepted" as const
-  } catch effect (error) => match (error) {
-    when Rejected: "refused" as const;
-    default: throw error;
-  }
-}
-
-// Every story of spec/index.md through the real order book: a journey per `sometimes` rule, then random walks over
-// two orders at once (SPEC.md, "Conformance").
-it("the order book does what spec/index.md says", () => {
-  let app = ManagedRuntime.make(OrderBookMemory)
-  return conformance({
-    reset: async () => {
-      await app.dispose()
-      app = ManagedRuntime.make(OrderBookMemory)
-    },
-    dispatch: (id, event) => app.runPromise(outcome(id, event)),
-    observe: (id) => app.runPromise(effect { return try (try OrderBook).get(id) }),
-  }).finally(() => app.dispose())
 })

@@ -1,11 +1,10 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { exec, run } from "./run.ts";
-import { heading, type Spec } from "./parse.ts";
+import { exec } from "./run.ts";
+import { heading, isStd, type Spec } from "./parse.ts";
 import type { Result } from "./spec.ts";
 import ts from "typescript";
-import { FAILURES } from "./gen/vibe.ts";
 
 export const digest = (text: string) => createHash("sha256").update(text).digest("hex");
 /** A hash of several texts, in which no two lists of texts give the same input. */
@@ -86,167 +85,302 @@ function manifest(dir: string) {
 /** A package's scripts. */
 export const packageScripts = (root: string): Record<string, string> => manifest(root).scripts ?? {};
 
-/** The tests stage of one of `codeDirs`: citations that name nothing, then the package's own tests, run in its directory. */
-export async function tests(checking: string, dir: string, specs: Spec[]): Promise<Reported<"tests">[]> {
+/** The configuration every package shares (vibestack/testing/vitest.ts): `spec init` writes it, and `check` where test/ has nothing to run it. */
+export const VITEST_CONFIG = `import { project } from "vibestack/testing/vitest";\n\nexport default project({ root: import.meta.dirname });\n`;
+
+/** `run()`, or what it returned the last time for the same fingerprint, if `keep` kept it then (cache.ts). */
+export type Remember = <T>(fingerprint: string, run: () => Promise<T>, keep: (result: T) => boolean) => Promise<T>;
+
+/**
+ * The tests stage of one of `codeDirs`: the rules its tests are held to, then its own `test` script, run in its
+ * directory. A pass is remembered until something the tests read changes; in a `check` that Turborepo runs, which
+ * waits for the package's `test`, the script has just run and is not run again.
+ */
+export async function tests(checking: string, dir: string, specs: Spec[], remember: Remember): Promise<Reported<"tests">[]> {
   const said: Reported<"tests">[] = [];
   const root = path.join(checking, dir);
   try {
-    const scripts = packageScripts(root);
     const dangling = danglingCitations(checking, specs, dir);
     if (dangling.length) said.push([false, "tests", `${dangling.length} citations name no story or rule of the spec`, indent(dangling.join("\n"))]);
-    const directOracle = (await conformanceImports(root)).map((problem) => dir + problem);
-    if (directOracle.length) said.push([false, "tests", "conformance drivers must reach the application, not call the generated oracle", indent(directOracle.join("\n"))]);
-    // The package's own tests, in whatever runner it chose (AGENTS.md, "Tests"): its `test` script, or else
-    // Node's on test/**/*.test.ts. The placeholder `npm init` writes is no script.
-    const script = /no test specified/.test(scripts.test ?? "") ? undefined : scripts.test;
-    const files = filesUnder(root, "test").filter((f) => f.endsWith(".test.ts"));
-    // A test in VibeLang cannot import node:test, so Node's runner below would pass over it without a word.
-    const unrun = script ? [] : filesUnder(root, "test").filter((f) => /\.test\.vibex?$/.test(f));
-    if (unrun.length) said.push([false, "tests", `${unrun.join(", ")}: a VibeLang test, and the package has no \`test\` script to run it; add one, such as \`vitest run\``, undefined, "test/"]);
-    // Without a script, Node's runner: tests in TypeScript may import the `.vibe` shell, which the loader compiles.
-    const [command, args] = script ? [packageManager(root), ["run", "test"]] : [process.execPath, ["--import", "vibelang/register", "--test", ...files]];
-    if (script || files.length) {
+    const oracle = driverImports(root).map((problem) => dir + problem);
+    if (oracle.length) said.push([false, "tests", "a driver imports gen/ as types only: it reaches the application, and the spec is the oracle the traces stage compares it with", indent(oracle.join("\n"))]);
+    said.push(...testRules(checking, dir, specs));
+    // The package's own tests, in whatever runner it chose (AGENTS.md, "Tests"). test/ with nothing to run it gets
+    // Vitest, as `spec init` sets it up; the placeholder `npm init` writes is no script.
+    const scripts = packageScripts(root);
+    let script = /no test specified/.test(scripts.test ?? "") ? undefined : scripts.test;
+    if (!script && fs.existsSync(path.join(root, "test"))) {
+      said.push([true, "tests", addVitest(root)]);
+      script = "vitest run";
+    }
+    if (!script) return said;
+    if (process.env.TURBO_HASH && process.env.npm_lifecycle_event === "check") {
+      said.push([true, "tests", "pass: Turborepo ran the test script just before this check"]);
+      return said;
+    }
+    const manager = packageManager(root);
+    said.push(await remember(testInputs(checking, dir, manager.lock), async (): Promise<Reported<"tests">> => {
       const { NODE_TEST_CONTEXT: _, ...env } = process.env;
       // The root that is checking: spec.ts refuses a check of it, or of a package below it, started from these tests.
-      const t = await exec(command, args, root, { ...env, SPEC_TESTS: fs.realpathSync(checking) });
-      const failures = t.stdout.includes("✖ failing tests:") ? t.stdout.slice(t.stdout.indexOf("✖ failing tests:")) : t.stdout.split("\n").slice(-80).join("\n");
+      const t = await exec(manager.name, ["run", "test"], root, { ...env, SPEC_TESTS: fs.realpathSync(checking) });
       const ok = t.status === 0 && !t.stopped;
-      said.push([ok, "tests", ok ? "pass" : "fail", indent((failures + t.stderr + (t.stopped ? `\n${t.stopped}` : "")).trim()), script ? `${command} run test` : "test/"]);
-    }
+      // From the runner's list of failures, Vitest's or Node's, at most 200 lines of it; else the end of what it said.
+      const lines = `${t.stdout}${t.stderr}`.split("\n");
+      const first = lines.findIndex((l) => /✖ failing tests:|⎯.*Failed (?:Suites|Tests) \d+/.test(l));
+      const shown = first < 0 ? t.stdout.split("\n").slice(-80).join("\n") + t.stderr
+        : [...lines.slice(first, first + 200), ...lines.length > first + 200 ? [`… ${lines.length - first - 200} more lines`] : []].join("\n");
+      return [ok, "tests", ok ? "pass" : "fail", indent((shown + (t.stopped ? `\n${t.stopped}` : "")).trim()), `${manager.name} run test`];
+    }, ([ok]) => ok));
   } catch (e) {
     said.push([false, "tests", (e as Error).message]);
   }
   return said;
 }
 
+/** Set a package up to run test/ with Vitest, as `spec init` does, and say what was added. */
+function addVitest(root: string): string {
+  const json = manifest(root);
+  fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ ...json, scripts: { ...json.scripts, test: "vitest run" } }, null, 2) + "\n");
+  const config = !fs.readdirSync(root).some((f) => /^vitest\.config\.[cm]?[jt]s$/.test(f));
+  if (config) fs.writeFileSync(path.join(root, "vitest.config.ts"), VITEST_CONFIG);
+  return `test/ had nothing to run it: added "test": "vitest run" to package.json${config ? ", and vitest.config.ts" : ""}, as \`spec init\` does`;
+}
+
 /**
- * Every `spec/<name>.md, "<heading>"` in a package's code whose heading is no story or rule of that spec, as
- * `file:line  citation`, both paths from the root. The package is one of `codeDirs`: an owner cites as the root does.
- * Build output and the packages nested inside it, which are checked on their own, are not read.
+ * A fingerprint of what a package's tests read: its files and the top of its gen/ (an owner's is mirrored from the
+ * root's), the workspace packages it depends on, the lock file and the fuzzing budget.
  */
+function testInputs(checking: string, dir: string, lock?: string): string {
+  const root = path.join(checking, dir);
+  const pkg = manifest(root);
+  const linked = Object.entries({ ...pkg.dependencies, ...pkg.devDependencies }).filter(([, v]) => String(v).startsWith("workspace:"))
+    .map(([name]) => path.join(root, "node_modules", name)).filter((d) => fs.existsSync(d)).map((d) => fs.realpathSync(d));
+  const hash = createHash("sha256").update(`${process.env.FUZZ_RUNS}\0${process.env.FUZZ_SEED}\0`);
+  for (const from of [root, ...linked]) {
+    const gen = path.join(from, "gen");
+    const top = fs.existsSync(gen) ? fs.readdirSync(gen, { withFileTypes: true }).filter((e) => e.isFile()).map((e) => `gen/${e.name}`) : [];
+    for (const file of [...packageFiles(from, () => true), ...top].map((f) => path.join(from, f)))
+      hash.update(`${path.relative(checking, file)}\0`).update(fs.readFileSync(file));
+  }
+  if (lock) hash.update(fs.readFileSync(lock));
+  return hash.digest("hex");
+}
+
+/** Where code cites a story or rule (AGENTS.md, "Tests"). */
+const CITATION = /(?<![\w/.-])(spec\/(?:[A-Za-z0-9]+\/)*[A-Za-z0-9]+\.md), "([^"]+)"/g;
+/** A citation of `heading` in `spec`; `at` is `file:line`, a path from the checking root. */
+export interface Citation { at: string; spec: string; heading: string }
+/** Every citation in the code of `dirs`, which are `codeDirs` (all of them unless given): an owner cites as the root does. */
+export const citations = (root: string, dirs = codeDirs(root)): Citation[] => dirs.flatMap((dir) => packageCode(path.join(root, dir)).map((f) => dir + f)
+  .flatMap((f) => fs.readFileSync(path.join(root, f), "utf8").split("\n").flatMap((line, i) => [...line.matchAll(CITATION)].map(([, spec, heading]) => ({ at: `${f}:${i + 1}`, spec, heading })))));
+
+/** Every citation in a package's code whose heading is no story or rule of that spec, as `file:line  citation`. */
 export function danglingCitations(root: string, specs: Spec[], dir = ""): string[] {
   const names = (s: Spec, h: string) => s.stories.some((t) => t.title === h) || s.rules.some((r) => heading(r) === h);
-  return packageCode(path.join(root, dir)).map((f) => dir + f).flatMap((f) =>
-    fs.readFileSync(path.join(root, f), "utf8").split("\n").flatMap((line, i) =>
-      [...line.matchAll(/(?<![\w/.-])(spec\/(?:[A-Za-z0-9]+\/)*[A-Za-z0-9]+\.md), "([^"]+)"/g)]
-        .filter(([, file, h]) => !specs.some((s) => s.file === file && names(s, h)))
-        .map(([cited]) => `${f}:${i + 1}  ${cited}`)));
+  return citations(root, [dir]).filter((c) => !specs.some((s) => s.file === c.spec && names(s, c.heading))).map((c) => `${c.at}  ${c.spec}, "${c.heading}"`);
 }
 
-function packageCode(root: string, dir = ""): string[] {
+/**
+ * A package's files that `keep` accepts, as paths from it: not gen/, build output, dependencies or hidden
+ * directories (such as `.cache/`), nor the packages nested in it, which are checked on their own.
+ */
+function packageFiles(root: string, keep: (name: string) => boolean, dir = ""): string[] {
   return fs.readdirSync(path.join(root, dir), { withFileTypes: true }).flatMap((e) => {
-    const rel = path.join(dir, e.name);
-    if (e.isFile()) return /\.(?:[cm]?[jt]sx?|vibex?)$/.test(e.name) && !SIDECAR.test(e.name) ? [rel] : [];
+    const rel = dir ? `${dir}/${e.name}` : e.name;
+    if (e.isFile()) return keep(e.name) ? [rel] : [];
     const skip = /^(node_modules|dist|build|out|coverage|\..*)$/.test(e.name) || rel === "gen" || fs.existsSync(path.join(root, rel, "package.json"));
-    return e.isDirectory() && !skip ? packageCode(root, rel) : [];
+    return e.isDirectory() && !skip ? packageFiles(root, keep, rel) : [];
   }).sort();
 }
+const packageCode = (root: string) => packageFiles(root, (name) => /\.(?:[cm]?[jt]sx?|vibex?)$/.test(name) && !SIDECAR.test(name));
 
-/** Only the driver's body is checked: other journeys in the same file may test generated parsers directly. */
-async function conformanceImports(root: string): Promise<string[]> {
-  const problems: string[] = [];
-  for (const file of packageCode(root)) {
-    const text = fs.readFileSync(path.join(root, file), "utf8");
-    if (!text.includes(".conformance.ts")) continue;
-    const original = ts.createSourceFile(path.resolve(root, file), text, ts.ScriptTarget.Latest, true);
-    let code = text;
-    let extension = "";
-    let mappings: [number, number, number, number, number][] = [];
-    if (/\.vibex?$/.test(file)) {
-      const projected = await run("vibelang", ["--ts-projection", path.resolve(root, file)], root, text);
-      if (!projected.ok) throw new Error(projected.out);
-      const projection = JSON.parse(projected.out);
-      code = projection.text;
-      extension = projection.extension;
-      mappings = projection.mappings;
+/** A package's tests: test/**\/*.test.*, but not its drivers, which the traces stage runs. */
+const testFiles = (root: string) => packageCode(root).filter((f) => /^test\/(?!drivers\/).*\.test\.[^/.]+$/.test(f));
+
+/** A token of a script, and how many brackets it sits in. */
+interface Token { text: string; pos: number; start: number; depth: number; fresh: boolean }
+/** A script's tokens, or nothing if its brackets do not balance; TypeScript's scanner reads VibeLang's too. */
+function tokenize(text: string): Token[] | undefined {
+  const K = ts.SyntaxKind;
+  const scanner = ts.createScanner(ts.ScriptTarget.Latest, true, ts.LanguageVariant.Standard, text);
+  const out: Token[] = [];
+  const open: boolean[] = []; // each bracket that is open: true for a template's `${`
+  for (let kind = scanner.scan(); kind !== K.EndOfFileToken; kind = scanner.scan()) {
+    // A slash after a value divides; anywhere else it starts a regular expression.
+    const last = out.at(-1)?.text ?? "";
+    if ((kind === K.SlashToken || kind === K.SlashEqualsToken) && !(/[\w$)\]}'"`]$/.test(last) && !/^(?:return|typeof|instanceof|in|of|new|delete|void|throw|case|do|else|yield|await)$/.test(last)))
+      kind = scanner.reScanSlashToken();
+    if (kind === K.CloseBraceToken && open.at(-1)) kind = scanner.reScanTemplateToken(false);
+    if (kind === K.CloseParenToken || kind === K.CloseBracketToken || kind === K.CloseBraceToken || kind === K.TemplateTail) {
+      if (!open.length) return undefined;
+      open.pop();
     }
-    const source = ts.createSourceFile(path.resolve(root, file) + extension, code, ts.ScriptTarget.Latest, true);
-    const line = (node: ts.Node) => {
-      const at = node.getStart(source);
-      const span = mappings.find(([start, length]) => start <= at && at < start + length);
-      const offset = span ? span[2] + Math.min(at - span[0], Math.max(0, span[3] - 1)) : at;
-      return original.getLineAndCharacterOfPosition(Math.max(0, Math.min(offset, text.length))).line + 1;
-    };
-    const options: ts.CompilerOptions = { noResolve: true, noLib: true };
-    const host = ts.createCompilerHost(options);
-    host.getSourceFile = (file) => file === source.fileName ? source : undefined;
-    const checker = ts.createProgram([source.fileName], options, host).getTypeChecker();
-    const calls = new Set<ts.Symbol>();
-    const namespaces = new Set<ts.Symbol>();
-    const oracle = new Set<ts.Symbol>();
-    const add = (set: Set<ts.Symbol>, name: ts.Node) => {
-      const symbol = checker.getSymbolAtLocation(name);
-      if (symbol) set.add(symbol);
-    };
-    for (const statement of source.statements) {
-      if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier) || !statement.importClause || statement.importClause.isTypeOnly) continue;
-      const module = statement.moduleSpecifier.text;
-      const bindings = statement.importClause.namedBindings;
-      if (/\.conformance\.[jt]s$/.test(module)) {
-        if (bindings && ts.isNamespaceImport(bindings)) add(namespaces, bindings.name);
-        if (bindings && ts.isNamedImports(bindings)) for (const element of bindings.elements)
-          if (!element.isTypeOnly && (element.propertyName?.text ?? element.name.text) === "conformance") add(calls, element.name);
-      } else if (/\bgen\/[^/]+\.(?:[jt]s|effect\.vibe)$/.test(module) && !/\/_conformance\.[jt]s$/.test(module)) {
-        // The Effect face of a generated module is the same oracle; its typed failures are not.
-        if (statement.importClause.name) add(oracle, statement.importClause.name);
-        if (bindings && ts.isNamespaceImport(bindings)) add(oracle, bindings.name);
-        if (bindings && ts.isNamedImports(bindings)) for (const element of bindings.elements)
-          if (!element.isTypeOnly && !FAILURES.includes(element.propertyName?.text ?? element.name.text)) add(oracle, element.name);
-      }
+    out.push({ text: scanner.getTokenText(), pos: scanner.getTokenFullStart(), start: scanner.getTokenStart(), depth: open.length, fresh: scanner.hasPrecedingLineBreak() });
+    if (kind === K.OpenParenToken || kind === K.OpenBracketToken || kind === K.OpenBraceToken || kind === K.TemplateHead) open.push(kind === K.TemplateHead);
+  }
+  return open.length ? undefined : out;
+}
+
+/** What a module import reaches: generated code, a test library, or anything else (the shell, a service, a helper). */
+const reaches = (quoted: string) => {
+  const module = quoted.replace(/^["'`]|["'`]$/g, "");
+  return /(?:^|\/)gen\//.test(module) ? "gen" : /^(?:vitest|@vitest\/.+|@effect\/vitest|effect(?:\/.+)?|node:test|node:assert(?:\/strict)?|assert|@testing-library\/.+)$/.test(module) ? "library" : "outside";
+};
+
+/**
+ * The tests of one file, each as its line, whether it reaches only generated code and whether a citation covers it;
+ * `generated` when the file imports nothing but gen/ and test libraries. A test is a call of `it` or `test` and what
+ * it calls in the same file; it is covered by a citation in it, on the `describe` or layer around it, or in the
+ * file's header. Nothing, if the file cannot be read as tokens.
+ */
+function readTests(text: string): { generated: boolean; tests: { line: number; generatedOnly: boolean; cited: boolean }[] } | undefined {
+  const tokens = tokenize(text);
+  if (!tokens) return undefined;
+  const word = (i: number) => /^[A-Za-z_$][\w$]*$/.test(tokens[i]?.text ?? "");
+  /** The bracket that closes the one at `i`: the next token as deep. */
+  const close = (i: number) => tokens.findIndex((t, j) => j > i && t.depth === tokens[i].depth);
+  // Top-level statements: a word that starts a line outside every bracket, unless the line before ends in an operator.
+  const starts = tokens.flatMap((t, i) => t.depth === 0 && (i === 0 || t.fresh && word(i) && !/[=,.:?+\-*/%&|^<>!~]$/.test(tokens[i - 1].text)) ? [i] : []);
+  const statements = starts.map((from, n) => ({ from, to: (starts[n + 1] ?? tokens.length) - 1 }));
+  const bound = new Map<string, ReturnType<typeof reaches>>();
+  const helpers = new Map<string, { from: number; to: number }>();
+  let header = text.length;
+  for (const s of statements) {
+    let i = s.from;
+    if (tokens[i].text === "import" && tokens[i + 1]?.text !== "(") {
+      if (tokens[i + 1].text === "type") continue;
+      const fromAt = tokens.findIndex((t, j) => j > i && j <= s.to && t.text === "from");
+      const module = tokens[fromAt < 0 ? i + 1 : fromAt + 1].text;
+      for (let j = i + 1; j < (fromAt < 0 ? i : fromAt); j++)
+        if (word(j) && !["type", "as"].includes(tokens[j].text) && tokens[j - 1].text !== "type" && tokens[j + 1]?.text !== "as") bound.set(tokens[j].text, reaches(module));
+      if (fromAt < 0) bound.set(`import ${module}`, reaches(module));
+      continue;
     }
-    const symbolOf = (name: ts.Identifier) => ts.isShorthandPropertyAssignment(name.parent)
-      ? checker.getShorthandAssignmentValueSymbol(name.parent) : checker.getSymbolAtLocation(name);
-    const declaredValue = (declaration: ts.Declaration): ts.Node | undefined =>
-      ts.isVariableDeclaration(declaration) ? declaration.initializer
-      : ts.isFunctionDeclaration(declaration) ? declaration.body
-      : ts.isBindingElement(declaration) ? declaration.parent.parent
-      : undefined;
-    const conformanceCall = (node: ts.Node, seen = new Set<ts.Symbol>()): boolean => {
-      if (ts.isPropertyAccessExpression(node) && node.name.text === "conformance" && ts.isIdentifier(node.expression))
-        return namespaces.has(symbolOf(node.expression)!);
-      if (!ts.isIdentifier(node)) return false;
-      const symbol = symbolOf(node);
-      if (!symbol || seen.has(symbol)) return false;
-      if (calls.has(symbol)) return true;
-      seen.add(symbol);
-      return (symbol.declarations ?? []).some((d) => { const value = declaredValue(d); return !!value && conformanceCall(value, seen); });
-    };
-    const isReference = (name: ts.Identifier) => {
-      const p = name.parent;
-      return !((ts.isPropertyAccessExpression(p) || ts.isPropertyAssignment(p) || ts.isMethodDeclaration(p)
-        || ts.isPropertyDeclaration(p) || ts.isVariableDeclaration(p) || ts.isParameter(p) || ts.isBindingElement(p)
-        || ts.isFunctionDeclaration(p) || ts.isFunctionExpression(p)) && p.name === name);
-    };
-    const visit = (node: ts.Node) => {
-      if (ts.isCallExpression(node) && conformanceCall(node.expression)) {
-        const seen = new Set<ts.Node>();
-        const inspect = (inside: ts.Node) => {
-          if (seen.has(inside) || ts.isTypeNode(inside)) return;
-          seen.add(inside);
-          if (ts.isIdentifier(inside) && isReference(inside)) {
-            const symbol = symbolOf(inside);
-            if (symbol && oracle.has(symbol)) problems.push(`${file}:${line(inside)}: driver uses generated ${inside.text}`);
-            else for (const d of symbol?.declarations ?? []) { const value = declaredValue(d); if (value) inspect(value); }
+    header = Math.min(header, tokens[s.from].pos);
+    while (["export", "default", "declare", "async", "effect"].includes(tokens[i].text)) i++;
+    const declares = ["function", "class"].includes(tokens[i].text) ? [tokens[i + 1].text === "*" ? i + 2 : i + 1]
+      : !["const", "let", "var"].includes(tokens[i].text) ? [] : word(i + 1) ? [i + 1]
+      : ["{", "["].includes(tokens[i + 1]?.text) ? Array.from({ length: close(i + 1) - i - 2 }, (_, k) => i + 2 + k).filter(word) : [];
+    for (const d of declares) helpers.set(tokens[d].text, s);
+  }
+  const blocks: { from: number; to: number }[] = [];
+  tokens.forEach((t, i) => {
+    if (!["it", "test"].includes(t.text) || [".", "function"].includes(tokens[i - 1]?.text)) return;
+    let j = i + 1;
+    while (tokens[j]?.text === "." && word(j + 1)) j += 2;
+    if (tokens[j]?.text !== "(") return;
+    let to = close(j);
+    while (tokens[to + 1]?.text === "(") to = close(to + 1);
+    blocks.push({ from: i, to });
+  });
+  const ranges = [...statements, ...blocks];
+  /** Where the code of a statement or test that comes before the first test inside it ends. */
+  const inner = (r: { from: number; to: number }) => Math.min(r.to + 1, ...blocks.filter((b) => b !== r && b.from >= r.from && b.to <= r.to).map((b) => b.from));
+  const textOf = (from: number, to: number) => text.slice(tokens[from].pos, to < tokens.length ? tokens[to].pos : text.length);
+  const cites = (s: string) => new RegExp(CITATION.source).test(s);
+  const outsideNamed = (from: number, to: number) => tokens.slice(from, to).some((t, k) => t.text === "import" && tokens[from + k + 1]?.text === "(" && reaches(tokens[from + k + 2]?.text ?? "") === "outside");
+  const imported = [...bound.values()];
+  return {
+    generated: imported.includes("gen") && !imported.includes("outside") && !outsideNamed(0, tokens.length),
+    tests: blocks.map((b) => {
+      const around = ranges.filter((r) => r !== b && r.from <= b.from && b.to <= r.to);
+      // The names the test reaches, through the helpers of the file it calls.
+      const named = new Set<string>();
+      const seen = new Set<object>();
+      const visit = (from: number, to: number) => {
+        if (outsideNamed(from, to)) named.add("import()");
+        for (let i = from; i < to; i++) {
+          const helper = word(i) && helpers.get(tokens[i].text);
+          if (word(i)) named.add(tokens[i].text);
+          if (helper && !seen.has(helper)) {
+            seen.add(helper);
+            visit(helper.from, helper.to + 1);
           }
-          inside.forEachChild(inspect);
-        };
-        if (node.arguments[0]) inspect(node.arguments[0]);
-      }
+        }
+      };
+      visit(b.from, b.to + 1);
+      for (const r of around) visit(r.from, inner(r));
+      const kinds = [...named].map((n) => n === "import()" ? "outside" : bound.get(n));
+      return {
+        line: text.slice(0, tokens[b.from].start).split("\n").length,
+        generatedOnly: kinds.includes("gen") && !kinds.includes("outside"),
+        cited: cites(text.slice(0, header)) || cites(textOf(b.from, b.to + 1)) || around.some((r) => cites(textOf(r.from, inner(r)))),
+      };
+    }),
+  };
+}
+
+/**
+ * The rules a package's tests are held to (AGENTS.md, "Tests"): each reaches past generated code, which the spec
+ * proves, and cites what it serves. Beside them, notes: test files to consolidate, and specs of this package that
+ * its src/ may shell but that no test or driver checks.
+ */
+function testRules(checking: string, dir: string, specs: Spec[]): Reported<"tests">[] {
+  const root = path.join(checking, dir);
+  const files = testFiles(root);
+  const generatedOnly: string[] = [];
+  const uncited: string[] = [];
+  const said: Reported<"tests">[] = [];
+  for (const file of files) {
+    const text = fs.readFileSync(path.join(root, file), "utf8");
+    const read = readTests(text);
+    if (read?.generated) generatedOnly.push(`${dir}${file}: imports nothing but gen/ and test libraries`);
+    for (const t of read?.tests ?? []) {
+      if (t.generatedOnly && !read!.generated) generatedOnly.push(`${dir}${file}:${t.line}`);
+      if (!t.cited) uncited.push(`${dir}${file}:${t.line}`);
+    }
+    const lines = text.split("\n").length;
+    if (lines >= 15_000) said.push([true, "tests", `note: ${dir}${file} has ${lines} lines; at 15,000, consolidate and simplify it`]);
+  }
+  if (generatedOnly.length) said.push([false, "tests", `${generatedOnly.length} tests touch only generated code, which the spec proves: route each through src/, or propose deleting it`, indent(generatedOnly.join("\n"))]);
+  if (uncited.length) said.push([false, "tests", `${uncited.length} tests cite no story or rule: cite the one each serves, fold it into the journey that does, or propose deleting it`, indent(uncited.join("\n"))]);
+  // One file per package and runner is the norm: a browser test is another runner, a .vibe test another language.
+  const groups = new Map<string, string[]>();
+  for (const f of files) {
+    const key = `${/\.browser\.test\./.test(f)} ${/\.vibex?$/.test(f)}`;
+    groups.set(key, [...groups.get(key) ?? [], dir + f]);
+  }
+  for (const group of groups.values()) if (group.length > 1) said.push([true, "tests", `note: ${group.join(", ")} run in one runner, in one language; one test file each is the norm, so consolidate them`]);
+  if (fs.existsSync(path.join(root, "src"))) {
+    const scripts = packageScripts(root);
+    const checked = new Set(citations(checking, [dir]).filter((c) => c.at.startsWith(`${dir}test/`)).map((c) => c.spec));
+    const unchecked = specs.filter((s) => s.stories.length && !isStd(s.file) && (owner(checking, s.file) ?? "") === dir.slice(0, -1) && !checked.has(s.file)
+      && !fs.existsSync(path.join(root, "test/drivers", `${s.name}.ts`)) && !fs.existsSync(path.join(root, "test/traces", `${s.name}.jsonl`)) && !(`driver:${s.name}` in scripts));
+    if (unchecked.length) said.push([true, "tests", `note: no test or driver checks ${unchecked.map((s) => s.file).join(", ")}; a story that leaves the verified core needs a journey that cites it`]);
+  }
+  return said;
+}
+
+/** Each place a `test/drivers/` module of the package `root` imports or re-exports `gen/` as a value, as `file:line: module`. */
+function driverImports(root: string): string[] {
+  return packageCode(root).filter((file) => file.startsWith("test/drivers/")).flatMap((file) => {
+    const source = ts.createSourceFile(file, fs.readFileSync(path.join(root, file), "utf8"), ts.ScriptTarget.Latest, true);
+    const typesOnly = (node: ts.ImportDeclaration | ts.ExportDeclaration) => ts.isImportDeclaration(node)
+      ? !!node.importClause && (node.importClause.isTypeOnly || !node.importClause.name && !!node.importClause.namedBindings
+        && ts.isNamedImports(node.importClause.namedBindings) && node.importClause.namedBindings.elements.every((e) => e.isTypeOnly))
+      : node.isTypeOnly || !!node.exportClause && ts.isNamedExports(node.exportClause) && node.exportClause.elements.every((e) => e.isTypeOnly);
+    const found: string[] = [];
+    const visit = (node: ts.Node) => {
+      const module = (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && !typesOnly(node) ? node.moduleSpecifier
+        : ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword ? node.arguments[0] : undefined;
+      if (module && ts.isStringLiteral(module) && /(?:^|\/)gen\//.test(module.text))
+        found.push(`${file.split(path.sep).join("/")}:${source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1}: ${module.text}`);
       node.forEachChild(visit);
     };
     visit(source);
-  }
-  return [...new Set(problems)];
+    return found;
+  });
 }
 
 /** The package manager a package declares, or whose lock file sits in it or a directory above it, up to the repository or workspace root. */
-function packageManager(root: string): string {
+function packageManager(root: string): { name: string; lock?: string } {
   const locks: Record<string, string> = { "pnpm-lock.yaml": "pnpm", "bun.lock": "bun", "bun.lockb": "bun", "yarn.lock": "yarn", "package-lock.json": "npm" };
+  let declared: string | undefined;
   for (let dir = path.resolve(root); ; dir = path.dirname(dir)) {
     const pkg = manifest(dir);
-    if (pkg.packageManager) return pkg.packageManager.split("@")[0];
+    declared ??= pkg.packageManager?.split("@")[0];
     const lock = Object.keys(locks).find((f) => fs.existsSync(path.join(dir, f)));
-    if (lock) return locks[lock];
-    if (pkg.workspaces || fs.existsSync(path.join(dir, ".git")) || path.dirname(dir) === dir) return "npm";
+    if (lock) return { name: declared ?? locks[lock], lock: path.join(dir, lock) };
+    if (pkg.workspaces || fs.existsSync(path.join(dir, ".git")) || path.dirname(dir) === dir) return { name: declared ?? "npm" };
   }
 }

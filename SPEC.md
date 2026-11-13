@@ -8,7 +8,8 @@ is [AGENTS.md](AGENTS.md); the agent's loop is the
 In the vibestack repository, "the order example" is
 `vibestack/examples/order/spec/index.md` and "the tracker example" is
 `vibestack/examples/dashboard/spec/tracker.md`. The root `spec/index.md` links to
-`spec/app/index.md`, blank and ready for the application in `apps/app`.
+`spec/app/index.md`, the hello world in `apps/app` that uses one of each thing
+Vibestack offers (`apps/app/README.md`), to be replaced by your application.
 
 ## Stages of `pnpm check`
 
@@ -23,8 +24,8 @@ with the reason.
 | `replay` | the generated TypeScript agrees with Quint on the simulated traces | as `sometimes` |
 | `types` | the `vibelang` compiler checks `src/`, the tests and `gen/` ([shell skill](.claude/skills/shell/SKILL.md)) | a stage above failed; without a `tsconfig.json` it passes as skipped only when there is no `src/` or `test/` |
 | `proof` | Dafny proves each unit's obligations, or `spec/lock.json` records them as simulated only | model, simulation or replay failed |
-| `tests` | the package's [tests](AGENTS.md#tests) pass, and their citations name a story or rule the spec has | model, simulation or replay failed |
-| `traces` | recorded traces and `driver:` programs agree with the spec ([Conformance](#conformance)) | model, simulation or replay failed |
+| `tests` | the package's [tests](AGENTS.md#tests) pass, each cites a story or rule the spec has and reaches past `gen/`, and its drivers import `gen/` as types only | model, simulation or replay failed |
+| `traces` | the application, through its drivers, `driver:` programs and recorded traces, agrees with the spec ([Conformance](#conformance)) | model, simulation or replay failed |
 | `review` | every story, rule and contract changed since `spec/lock.json` was accepted ([Review](#review)) | never |
 
 Types and proofs run concurrently. Tests and traces still report their own
@@ -193,12 +194,13 @@ it does for the root's own `src/` and `test/`:
 - **`gen/`.** The modules of the owner's specs, and of every spec they
   import, are also written to `<owner>/gen/` under the names they have in the
   root's: `spec/app/index.md` is `apps/app/gen/app.ts`, with
-  `app.effect.vibe` and `app.conformance.ts`; `spec/app/cart.md` is
+  `app.effect.vibe` and `app.conformance.ts` (its driver's types); `spec/app/cart.md` is
   `app__cart.ts`; a library `spec/shared/money.md` it imports is
   `shared__money.ts`. A package imports only from its own `gen/`. `pnpm gen`
   and `pnpm install` write it too.
 - **Stages.** `types`, `tests` and `traces` run in the owner's directory, on
-  its `tsconfig.json`, `test` script, `test/traces/` and `driver:` scripts;
+  its `tsconfig.json`, `test` script, `test/drivers/`, `test/traces/` and
+  `driver:` scripts;
   its `//@` files under `src/` are proved and their contracts reviewed. Each
   result names the package: `apps/app: pass`.
 - **Citations** in an owner's code are written from the root, as everywhere:
@@ -453,27 +455,47 @@ line.
 
 ### Conformance
 
-Three ways to run the real application against a state machine's spec:
+The `traces` stage runs the real application against each state machine's
+spec, in the package whose code it is, with the events the simulator found.
+`gen/<name>.ts` is the oracle; the application is reached three ways:
 
-| | How | Checked by |
+| | Is | Runs |
 |---|---|---|
-| `gen/<name>.conformance.ts` | `conformance(driver, options)` in a test: a journey per `sometimes` rule, then random walks | the test |
-| `test/traces/<name>.jsonl` | recorded lines: `{state}` starts, `{event, by?, state?, out?}` steps; at least one state observed | `check`, `traces` |
-| `driver:<name>` script | a program that answers each `{}` (reset) or `{event, by?}` line with one `{state, out?}` line | `check`, `traces`, on the simulated traces |
+| `test/drivers/<name>.ts` | exports `driver` and, if it chooses, `options`, typed by `gen/<name>.conformance.ts`; imports `gen/` as types only | in a Node of its own that runs VibeLang: the saved counterexamples, a journey to each `sometimes` rule, malformed inputs, then random walks |
+| `test/traces/<name>.jsonl` | recorded lines: `{state}` starts, `{event, by?, state?, out?}` steps; at least one state observed | compared line by line |
+| `driver:<name>` script | a program, in any language, that answers each `{}` (reset) or `{event, by?}` line with one `{state, out?}` line | on the simulated traces |
 
 `<name>` is the module's name in the root's `gen/`, and the paths are the
-package's own: an owner of `spec/app/cart.md` imports
-`gen/app__cart.conformance.ts`, records `test/traces/app__cart.jsonl` and
-names its script `driver:app__cart`, all in `apps/app`.
+package's own: an owner of `spec/app/cart.md` writes
+`test/drivers/app__cart.ts` on `gen/app__cart.conformance.ts`, records
+`test/traces/app__cart.jsonl` or names its script `driver:app__cart`, all in
+`apps/app`. `vibestack/examples/order/test/drivers/index.ts` is a worked
+driver; `effectDriver` from `vibestack/testing` builds one from a `Layer`.
 
-A `Driver` has `reset`, `dispatch` (returns `"accepted"` or `"refused"`),
-`observe` and, for a spec that emits effects, `observeOutput`.
+A `Driver` has `reset`, `dispatch` (sends an event through the
+application's own entry point and returns `"accepted"` or `"refused"`),
+`observe` and, for a spec that emits effects, `observeOutput`. With
+`receive(key, raw, by?)`, which sends an untrusted value through the
+decoding `dispatch` skips, the check also sends each kind of event with an
+unknown type, a field of `1.5` or `2^53`, or a field missing, each of which
+must be refused and change nothing; and with an extra field and fields that
+change when read again, which must do what the clean event does. `options`
+are `view` (what of the state `observe` shows), `keys` (the entities walks
+interleave), `walks` (at most this many; `0` for a slow driver) and `steps`.
+The walks take `FUZZ_RUNS` and `FUZZ_SEED`
+([budgets](docs/architecture.md#seeds-and-budgets)).
 
-A disagreement throws `ConformanceError`: its `trace` is the shrunk list of
-`[key, event]` pairs that shows it, `seed` the seed of its walks and `origin`
-the journey or walk that found it. Save the trace as a counterexample;
-`replay(driver, trace)`, from the same module, runs exactly it again, and
-`conformance(driver, { seed })` repeats the walks.
+- **A disagreement is saved.** A journey or walk that disagrees is shrunk
+  and written to `test/counterexamples/<name>/<hash>.json`, which every
+  later run replays first. Decide which side is wrong, fix it, and commit the
+  file: it is a regression test. A saved trace with an event the spec no
+  longer has fails with "the spec has outgrown" it: bring it up to date, or
+  delete it.
+- **A shell that keeps state gets a driver.** When the package's `src/`
+  imports `apply` from `gen/<name>.effect.vibe`, it keeps the machine's
+  state itself, and `check` writes a `test/drivers/<name>.ts` that fails
+  until its `reset`, `dispatch` and `observe` are filled in. It never
+  replaces a driver. A shell on the generated `machine()` needs none.
 
 ## Large applications
 
@@ -496,7 +518,8 @@ the journey or walk that found it. Save the trace as a counterexample;
 
 ## Checking harder
 
-Simulation is seeded from what it simulates, so a run repeats exactly. A
+Simulation is seeded from what it simulates, and from `FUZZ_SEED` where it
+is set, so a run repeats exactly and a nightly run tries other traces. A
 failing `always` rule or an unreached `sometimes` goal prints its seed and the
 `pnpm exec quint run` command that replays it.
 

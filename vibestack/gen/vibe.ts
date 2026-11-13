@@ -5,8 +5,8 @@ import { fail } from "./types.ts";
 
 /** Helpers the generated module exports for its own use (typescript.ts), and the proof obligation of `initial`. */
 const INTERNAL = /^(?:exact|equal|quotient|remainder|lookup\d+)_|^initialHolds$/;
-/** The adapter's typed failures. A conformance driver may name them, to tell a refusal from a crash (util.ts). */
-export const FAILURES = ["Rejected", "NotAnEvent", "NotAState", "NotASender"];
+/** The adapter's typed failures. */
+const FAILURES = ["Rejected", "NotAnEvent", "NotAState", "NotASender"];
 /** What the adapter itself exports for a state machine; a spec that binds one of these cannot have an adapter. */
 const OWN = [...FAILURES, "Machine", "machine", "apply", "decodeEvent", "decodeState", "decodeSender"];
 

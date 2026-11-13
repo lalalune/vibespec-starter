@@ -1,5 +1,5 @@
 // Properties of an Effect Schema, and of a function under a declared contract, checked by Effect's own Arbitrary
-// runner. generate.ts writes a test for each from `src/**/*.schema.ts` and `src/**/*.contract.ts`.
+// runner. generate.ts writes a test for each from `src/**/*.schema.{ts,vibe}` and `src/**/*.contract.{ts,vibe}`.
 import { expect, it } from "@effect/vitest";
 import { Arbitrary, Effect, Equal, Schema } from "effect";
 import { Base64 } from "effect/encoding";

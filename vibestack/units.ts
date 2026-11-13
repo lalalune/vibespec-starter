@@ -81,8 +81,9 @@ function namespace(dir: string): string {
 
 /**
  * Each owner's gen/, written anew from the root's: the modules of its specs and of every spec they import, under the
- * root's module names, with their conformance helpers, so that a package imports only from its own gen/. An Effect
- * adapter is written for the owner, whose name its `Machine` key carries: that is the package the service runs in.
+ * root's module names, with the types their drivers are written to, so that a package imports only from its own gen/.
+ * An Effect adapter is written for the owner, whose name its `Machine` key carries: that is the package the service
+ * runs in.
  * A module not generated, because its spec is not valid, is not there.
  */
 export function mirrorGen(root: string, specs: Spec[]) {

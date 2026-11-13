@@ -1,46 +1,9 @@
-// The program's side of the trust boundary: who sent an event comes from the
-// session it arrived on, never from the event (spec/assistant.md, "Who sends an event").
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { assert, it } from "@effect/vitest"
-import { conformance } from "../gen/assistant.conformance.ts"
-import { decodeEvent, decodeSender, Machine, machine, Rejected } from "../gen/assistant.effect.vibe"
-import type * as T from "../gen/assistant.effect.vibe"
+import { Machine } from "../gen/assistant.effect.vibe"
 import { NoAnswer, World, deliver, hear, remember } from "../src/agent.vibe"
 import { durable } from "../src/durable.vibe"
 import { type Scene, scriptedModel, scriptedWorld } from "../src/scripted.vibe"
-
-/** The tag of the failure `by` gets for `event`; the state is as it was. */
-effect function refusal(event: T.Event, by: T.Actor) {
-  return (try flip((try Machine).send(event, by)))._tag
-}
-
-it.effect("an event cannot say who sent it", () => effect {
-  const event = try decodeEvent({ type: "confirm", by: "Person" })
-  try Effect.try(() => assert.deepStrictEqual(event, { type: "confirm" }))
-})
-
-it.effect("only the person starts a turn and confirms a payment", () => effect {
-  provide machine() {
-    const assistant = try Machine
-    const borrowed = try assistant.get()
-    borrowed.bill.amount = 99
-    const unchanged = try assistant.get()
-    const agentBegins = try refusal({ type: "begin" }, "Agent")
-    try assistant.send({ type: "begin" }, "Person")
-    try assistant.send({ type: "choose", choice: "Lookup" }, "Agent")
-    try assistant.send({ type: "reply", request: 1, amount: 5 }, "World")
-    try assistant.send({ type: "choose", choice: "Review" }, "Agent")
-    try assistant.send({ type: "load", page: "Genuine" }, "World")
-    const asking = try assistant.send({ type: "choose", choice: "Pay" }, "Agent")
-    const agentConfirms = try refusal({ type: "confirm" }, "Agent")
-    const afterAgent = try assistant.get()
-    const afterPerson = try assistant.send({ type: "confirm" }, "Person")
-    try Effect.try(() => assert.deepStrictEqual(
-      [unchanged.bill.amount, agentBegins, asking.state.phase, agentConfirms, afterAgent.charged, afterPerson.state.charged],
-      [0, "Rejected", "Asking", "Rejected", 0, 1]
-    ))
-  }
-})
 
 /** The state of the assistant kept in `file`, opened again as after a crash. */
 effect function reopened(file: string) {
@@ -55,6 +18,11 @@ it.effect("take a turn, look up the bill and pay it once, whatever the model say
   try fs.writeFileString(unrelated, "keep")
   try fs.symlink(unrelated, `${file}.tmp`)
   const scene: Scene = { page: "Lookalike", bills: [], done: [], receipts: new Set() }
+  // spec/assistant.md, "Who sends an event": a payload cannot claim to be the person.
+  const spoofed = try effect {
+    provide durable(file) { return try flip((try Machine).receive({ type: "begin", by: "Person" }, "Agent")) }
+  }
+  try Effect.try(() => assert.strictEqual(spoofed._tag, "Rejected"))
   // The first crash comes while request 1 waits for a biller that has not answered.
   const waiting = try effect {
     provide durable(file), scriptedWorld(scene), scriptedModel(["Lookup"]) { return (try hear("begin")).state }
@@ -195,47 +163,3 @@ it.effect("take a turn, look up the bill and pay it once, whatever the model say
     )
   })
 }).pipe(Effect.provide(NodeServices.layer)))
-
-/** What the machine did with `event` from `by`, as gen/_conformance.ts asks, and what it output. */
-effect function outcome(event: T.Event, by: unknown) {
-  const assistant = try Machine
-  return effect {
-    return { did: "accepted" as const, out: (try assistant.send(event, try decodeSender(by))).out }
-  } catch effect (error) => match (error) {
-    when Rejected: { did: "refused" as const, out: [] };
-    default: throw error;
-  }
-}
-
-// Every story of spec/assistant.md through the durable machine on a real file: a journey per `sometimes` rule, then
-// random walks; an accepted restart is a real one, the machine dropped and opened again from its file (AGENTS.md, "Conformance").
-it("the durable machine does what spec/assistant.md says", async () => {
-  const onDisk = <A, E>(use: (fs: FileSystem.FileSystem) => A!E) =>
-    runPromise(Effect.provide(effect { return try use(try FileSystem.FileSystem) }, NodeServices.layer))
-  const directory = await onDisk((fs) => fs.makeTempDirectory())
-  const file = `${directory}/assistant.json`
-  const open = () => ManagedRuntime.make(Layer.provide(durable(file), NodeServices.layer))
-  let app = open()
-  let out: unknown = []
-  return conformance({
-    reset: async () => {
-      await app.dispose()
-      await onDisk((fs) => fs.remove(file, { force: true }))
-      app = open()
-    },
-    dispatch: async (_, event, by) => {
-      const done = await app.runPromise(outcome(event, by))
-      out = done.out
-      if (done.did === "accepted" && event.type === "restart") {
-        await app.dispose()
-        app = open()
-      }
-      return done.did
-    },
-    observe: () => app.runPromise(effect { return try (try Machine).get() }),
-    observeOutput: () => out,
-  }, { keys: ["assistant"], walks: 50 }).finally(async () => {
-    await app.dispose()
-    await onDisk((fs) => fs.remove(directory, { recursive: true }))
-  })
-}, 60_000)

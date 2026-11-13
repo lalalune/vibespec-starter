@@ -64,7 +64,7 @@ repository they are `@repo/ui`; a standalone project keeps its own.
 | | Source, kept in Git | Generated, never committed | Command, in the project |
 |---|---|---|---|
 | Tokens | `tokens.json`, and `design.md` describing them | `generated/tokens.css`, `generated/theme.css` (the Tailwind v4 entry) | `spec tokens build`, `check` |
-| Stories | the component, and `<Name>.meta.tsx` where its types are not enough | `generated/stories/`: Storybook stories, `catalog.json`, and a mount test and a browser test (accessibility, marked snapshots) of every story | `spec stories gen [--watch] [--check]` |
+| Stories | the component, and `<Name>.meta.tsx` where its types are not enough | `generated/stories/`: Storybook stories, `catalog.json`, and a mount test and a browser test (accessibility) of every story; a disabled or loading story is played to check that it refuses clicks and keys | `spec stories gen [--watch] [--check]` |
 
 `spec` is the tool's command: `pnpm exec spec` in a project that installed
 it, `node ../../spec.ts` in an example. In `@repo/ui`: `pnpm gen` (the stories),
@@ -80,8 +80,9 @@ it, `node ../../spec.ts` in an example. In `@repo/ui`: `pnpm gen` (the stories),
 - **`<Name>.meta.tsx`** exports `meta: ComponentMeta<Props>` (from
   `vibestack/stories`): `args` every story starts from, named `examples` and
   `states`, `bounds` of a numeric prop, a `schema` to sample, a `decorator`,
-  `play` interactions and the stories worth a `snapshot`. Stories, tests and
-  Studio read the same object. A required prop the generator cannot give a
+  and `play` interactions, which is where a component's behaviour is tested:
+  no test compares screenshots. Stories, tests and Studio read the same
+  object; a field it does not have is reported. A required prop the generator cannot give a
   value is reported, with the field to add; it never invents data.
 - **A component that shows a model** says so: `@model spec/index.md` in its
   JSDoc links it to that spec's state and events, and `@design design.md#…`

@@ -1,34 +1,13 @@
 // spec/server.md, "The log tells which requests were answered, and with which edit each was accepted"
 // Shared by src/server.vibe and src/web/sync.vibe.
 import type { Event } from "../gen/server.ts"
-import type { Op, Todo } from "../gen/todo.ts"
+import type { Todo } from "../gen/todo.ts"
 
-/** What a client may ask the server to do: every event but `refuse`. */
-export type Request = Exclude<Event, { type: "refuse" }>
+/** What a client asks the server to do: one queued edit, under the client's name and number for it. */
+export type Request = Event
 
 /** The server's answer to one request: was it applied, and the list as it now is. */
 export interface Answer { ok: boolean; seq: number; version: number; todos: Todo[] }
 
 /** The list at a version, as `GET /api/snapshot` returns it and `GET /api/stream` pushes it. */
 export interface Snapshot { version: number; todos: Todo[] }
-
-/** The request that asks the server to apply one queued edit of a client. */
-export function toRequest(client: string, seq: number, op: Op): Request | undefined {
-  return match (op.kind) {
-    when "create": { type: "create", client, seq, id: op.id, title: op.title };
-    when "done": { type: "setDone", client, seq, id: op.id, done: op.done };
-    when "rename": { type: "rename", client, seq, id: op.id, title: op.title };
-    when "remove": { type: "remove", client, seq, id: op.id };
-    default: undefined;
-  }
-}
-
-/** The edit a request asks for, as the server's log records it. */
-export function opOf(r: Request): Op {
-  return match (r.type) {
-    when "create": { kind: "create", id: r.id, title: r.title, done: false };
-    when "setDone": { kind: "done", id: r.id, title: "", done: r.done };
-    when "rename": { kind: "rename", id: r.id, title: r.title, done: false };
-    when "remove": { kind: "remove", id: r.id, title: "", done: false };
-  }
-}

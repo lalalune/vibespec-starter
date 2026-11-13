@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 import { readSpecs, isStd, bareQuint as bare, heading, type Import, type Spec, type Story, type Rule } from "./parse.ts";
-import { short, readSrc, indent } from "./util.ts";
+import { short, readSrc, indent, citations, type Citation } from "./util.ts";
 import { DECLASSIFY } from "./gen/secrecy.ts";
 
 /**
@@ -124,8 +124,11 @@ export function dependencies(spec: Spec, rule: Rule, specs: Spec[]): Dependency[
 const dependencyFingerprint = (deps: Dependency[]) =>
   deps.length ? short(deps.map((d) => `${d.spec.name} / ${d.rule.key}: ${fingerprint(d.rule)[1]}`).sort().join("\n")) : undefined;
 
-/** Something a person has to reconcile before the spec can be accepted. `lines` are a story's rules, or a contract's `//@` lines. */
-export interface Pending { where: string; rule?: Rule; story?: Story; lines?: string[]; status: keyof typeof ASKS; note?: string }
+/**
+ * Something a person has to reconcile before the spec can be accepted. `lines` are a story's rules, or a contract's
+ * `//@` lines; `cited` is where code cites a changed rule, to read again against it.
+ */
+export interface Pending { where: string; rule?: Rule; story?: Story; lines?: string[]; status: keyof typeof ASKS; note?: string; cited?: string[] }
 const ASKS = {
   "document changed": "confirm the title, introduction and spec links",
   "story has no rules": "write one ### rule for each thing the story requires",
@@ -141,7 +144,7 @@ const ASKS = {
   "contract changed": "confirm its //@ annotations still say what the code must guarantee",
   "contract removed": "confirm the file is no longer meant to be proved",
 };
-export const showPending = (p: Pending) => `${p.where}\n      ${p.status}${p.note ?? ""}: ${ASKS[p.status]}`;
+export const showPending = (p: Pending) => `${p.where}\n      ${p.status}${p.note ?? ""}: ${ASKS[p.status]}${p.cited?.length ? `\n      cited by ${p.cited.join(", ")}: read them again against it` : ""}`;
 
 export type Lock = Record<string, string[]>;
 /** A spec's ledger. `locks` remembers the ones read, for a caller that reads many in a row while none of them changes. */
@@ -165,6 +168,7 @@ export const pendingKey = (p: Pending) => p.rule?.key ?? (p.story ? storyKey(p.s
 export function pending(root: string, spec: Spec, specs: Spec[] = readSpecs(root), locks = new Map<string, Lock>()): Pending[] {
   const lock = readLock(root, spec, locks);
   const out: Pending[] = [];
+  let cites: Citation[] | undefined;
   const document = proseFingerprint(spec.preamble);
   if (lock["@document"]?.[0] !== document && (spec.preamble.trim() || lock["@document"]))
     out.push({ where: spec.file, status: "document changed", lines: [spec.preamble.trim()] });
@@ -192,7 +196,9 @@ export function pending(root: string, spec: Spec, specs: Spec[] = readSpecs(root
     // A way out for a secret is named whenever it is new or changed (gen/secrecy.ts).
     const outlet = rule.defs.filter((d) => DECLASSIFY.test(d));
     if (status && outlet.length) note = `${note ?? ""}, and declassifies a secret through ${outlet.join(", ")}`;
-    if (status) out.push({ where: `${spec.file}:${rule.line}  ${rule.key}`, rule, status, note });
+    // A rule whose meaning moved is read again with the tests and shell code that cite it, in every package.
+    const cited = status?.includes("changed") ? (cites ??= citations(root)).filter((c) => c.spec === spec.file && c.heading === heading(rule)).map((c) => c.at) : [];
+    if (status) out.push({ where: `${spec.file}:${rule.line}  ${rule.key}`, rule, status, note, ...cited.length ? { cited } : {} });
   }
   for (const key of Object.keys(lock))
     if (key !== "@document" && !spec.rules.some((r) => r.key === key) && !spec.stories.some((s) => storyKey(s) === key)) out.push({ where: `${spec.file}  ${key}`, status: "removed or renamed" });

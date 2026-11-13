@@ -57,18 +57,26 @@ effect function client(url: string) {
   }
 }
 
+/** A wait that ran out, with what was last seen. */
+error TimedOut { last: unknown }
+
+/** What `get` gives once `ok` holds of it, asking every 50 ms; after 45 seconds it fails with what `show` makes of the last answer. */
+effect function until<A>(get: () => A!unknown, ok: (a: A) => boolean, show: (a: A) => unknown) {
+  let last = try get()
+  for (let waited = 0; !ok(last); waited += 50) {
+    if (waited >= 45_000) throw new TimedOut({ last: show(last) })
+    try sleep("50 millis")
+    last = try get()
+  }
+  return last
+}
+
 /** The studio on one project, and how to talk to it as its page does. */
 effect function studioOn(root: string) {
   const { url } = try startStudio({ projects: [{ id: ".", name: "Door", root }], port: 0, agents })
   const page = try client(url.replace("localhost", "127.0.0.1"))
   /** The project once no job runs. */
-  effect function settled() {
-    for (;;) {
-      const p = try page.project()
-      if (p.session.job === "Idle") return p
-      try sleep("50 millis")
-    }
-  }
+  const settled = () => until(page.project, (p) => p.session.job === "Idle", (p) => ({ session: p.session, jobs: p.jobs }))
   return { ...page, url, settled }
 }
 
@@ -94,18 +102,17 @@ it.live("a spec is published with its origins, checked, synced by an agent, and 
     (try get("/api/project", { host: "untrusted.example" })).status,
     (try post("check", {}, { "content-type": "text/plain" })).status,
   ]
-  try check(() => {
-    assert.deepStrictEqual([assets.some((a) => a.endsWith(".js")), assets.some((a) => a.endsWith(".css")), loaded.every((s) => s === 200)], [true, true, true])
-    assert.deepStrictEqual(hidden, [404, 404, 404, 404, 404])
-    assert.deepStrictEqual(refused, [403, 403, 415])
-  })
+  try check(() => assert.deepStrictEqual(
+    { assets: [assets.some((a) => a.endsWith(".js")), assets.some((a) => a.endsWith(".css")), loaded.every((s) => s === 200)], hidden, refused },
+    { assets: [true, true, true], hidden: [404, 404, 404, 404, 404], refused: [403, 403, 415] },
+  ))
 
   // spec/index.md, "A new session has nothing to do"; spec/outline.md, "A story and its rules"
   const first = try project()
-  try check(() => {
-    assert.deepStrictEqual(first.session, { unpublished: false, waiting: 0, job: "Idle", verdict: "Unknown", previewing: false })
-    assert.deepStrictEqual(first.specs[0].outline.stories.map((s) => s.title), ["Domain", "Story: Use the door"])
-  })
+  try check(() => assert.deepStrictEqual(
+    { session: first.session, stories: first.specs[0].outline.stories.map((s) => s.title) },
+    { session: { unpublished: false, waiting: 0, job: "Idle", verdict: "Unknown", previewing: false }, stories: ["Domain", "Story: Use the door"] },
+  ))
 
   // spec/index.md, "Only edits can be published, and not while a job runs"; spec/index.md, "Publishing always starts a check"
   const door = first.specs[0]
@@ -125,62 +132,57 @@ it.live("a spec is published with its origins, checked, synced by an agent, and 
   const checking = try project()
   const whileChecking: number[] = []
   for (const route of ["publish", "agent", "accept", "check"]) whileChecking.push((try post(route, route === "publish" ? body : { agent: "fake" })).status)
-  try check(() => {
-    assert.equal(published.status, 200, published.text)
-    assert.ok(published.body.manifest.changes.some((c: { kind: string; what: string[] }) => c.kind === "rule" && c.what.includes("prose")))
-    assert.equal(written, text)
-    assert.deepStrictEqual(impacted, ["src/app.vibe", "test/app.test.vibe"])
-    assert.deepStrictEqual([checking.session.job, checking.session.waiting], ["Checking", 1])
-    assert.deepStrictEqual(whileChecking, [409, 409, 409, 409])
-  })
+  try check(() => assert.deepStrictEqual({
+    published: published.status === 200 || published.text,
+    prose: published.body?.manifest.changes.some((c: { kind: string; what: string[] }) => c.kind === "rule" && c.what.includes("prose")),
+    written: written === text,
+    impacted,
+    checking: [checking.session.job, checking.session.waiting],
+    whileChecking,
+  }, { published: true, prose: true, written: true, impacted: ["src/app.vibe", "test/app.test.vibe"], checking: ["Checking", 1], whileChecking: [409, 409, 409, 409] }))
 
   // spec/index.md, "A finished check gives its verdict": the door's rules are new, so only review is left.
   const checked = try settled()
   // spec/index.md, "Sign-off needs a check that left only review, nothing unpublished and nothing waiting"
   const signOff = try post("accept", {})
-  try check(() => {
-    assert.equal(checked.session.verdict, "Reviewable")
-    assert.match(checked.check!.next, /pnpm accept/)
-    assert.equal(signOff.status, 409)
-  })
+  try check(() => assert.deepStrictEqual(
+    { verdict: checked.session.verdict, next: /pnpm accept/.test(checked.check!.next), signOff: signOff.status },
+    { verdict: "Reviewable", next: true, signOff: 409 },
+  ))
 
   // spec/index.md, "A sync that ends well leaves nothing waiting and checks again"
   const started = try post("agent", { agent: "fake" })
   const synced = try settled()
   const prompt = try fs.readFileString(`${root}/prompt.txt`)
   const manifestLeft = try fs.exists(`${root}/.studio/manifest.json`)
-  try check(() => {
-    assert.equal(started.status, 200)
-    assert.deepStrictEqual([synced.jobs.agent!.status, synced.jobs.agent!.log, synced.session.waiting], ["passed", ["synced"], 0])
-    assert.match(prompt, /~ rule spec\/door\.md: .*\(prose\)/)
-    assert.ok(!manifestLeft)
-    assert.equal(synced.session.verdict, "Reviewable")
-  })
+  try check(() => assert.deepStrictEqual({
+    started: started.status,
+    agent: [synced.jobs.agent!.status, synced.jobs.agent!.log, synced.session.waiting, synced.session.verdict],
+    prompt: /~ rule spec\/door\.md: .*\(prose\)/.test(prompt),
+    manifestLeft,
+  }, { started: 200, agent: ["passed", ["synced"], 0, "Reviewable"], prompt: true, manifestLeft: false }))
 
   // spec/index.md, "The app can be started and stopped whenever, beside any job": the project's start script runs,
   // says where it serves, and keeps serving while a check runs.
   const startedApp = (try post("app", { start: true })).status
-  let serving = try project()
-  while (!serving.app.url) { try sleep("100 millis"); serving = try project() }
-  const page = try send(HttpClientRequest.get(serving.app.url))
+  const serving = try until(project, (p) => Boolean(p.app.url), (p) => p.app)
+  const page = try send(HttpClientRequest.get(serving.app.url!))
   const checkBeside = (try post("check", {})).status
+  // spec/index.md, "Running the app changes nothing else"
   const beside = try project()
   const stopped = (try post("app", { start: false })).status
   const gone = (try settled()).session
-  try check(() => {
-    assert.deepStrictEqual([startedApp, serving.app.script, page.text, checkBeside, stopped], [200, "start", "door app", 200, 200])
-    // spec/index.md, "Running the app changes nothing else"
-    assert.deepStrictEqual([beside.session.previewing, beside.session.job], [true, "Checking"])
-    assert.equal(gone.previewing, false)
-  })
-
   // spec/index.md, "Story: Build the app": the project's build script runs as a job, and the session is idle after.
   const building = (try post("build", {})).status
   const builtState = try settled()
   const output = try fs.readFileString(`${root}/built.txt`)
-  try check(() => {
-    assert.deepStrictEqual([building, builtState.app.buildable, builtState.jobs.build!.status, builtState.session.job, output], [200, true, "passed", "Idle", "door"])
-  })
+  try check(() => assert.deepStrictEqual(
+    {
+      app: [startedApp, serving.app.script, page.text, checkBeside, stopped], beside: [beside.session.previewing, beside.session.job], gone: gone.previewing,
+      build: [building, builtState.app.buildable, builtState.jobs.build!.status, builtState.session.job, output],
+    },
+    { app: [200, "start", "door app", 200, 200], beside: [true, "Checking"], gone: false, build: [200, true, "passed", "Idle", "door"] },
+  ))
 }) } })
 
 // spec/index.md, "Story: Edit, then publish"; spec/outline.md, "Story: Group rules under stories"
@@ -223,12 +225,11 @@ it.live("a rule is edited, a story added and both published from the page", () =
   try on(() => page.getByText("Published").waitFor())
   const written = try fs.readFileString(`${root}/spec/door.md`)
   const published = try settled()
-  try check(() => {
-    assert.match(written, /### Anyone can switch the alarm whenever they like\n/)
-    assert.match(written, /## Story: Ring the bell\n[^]*$/)
-    assert.deepStrictEqual(published.specs[0].outline.stories.map((s) => s.title), ["Domain", "Story: Use the door", "Story: Ring the bell"])
-    assert.equal(published.session.waiting, 2)
-  })
+  try check(() => assert.deepStrictEqual({
+    written: [/### Anyone can switch the alarm whenever they like\n/.test(written), /## Story: Ring the bell\n[^]*$/.test(written)],
+    stories: published.specs[0].outline.stories.map((s) => s.title),
+    waiting: published.session.waiting,
+  }, { written: [true, true], stories: ["Domain", "Story: Use the door", "Story: Ring the bell"], waiting: 2 }))
   const kept = try on(() => page.getByLabel("Story: As a … I want …").inputValue())
   const unpublished = try on(() => page.getByRole("button", { name: "Publish 1", exact: true }).count())
   const conflicts = try on(() => page.getByRole("button", { name: "Keep mine", exact: true }).count())
@@ -311,13 +312,13 @@ it.live("new and nested specs are published, deleted specs leave their ledger fo
   const nested = try settled()
   // spec/index.md, "What is waiting can be marked as synced by hand, when no job runs"
   const marked = [(try post("synced", {})).status, (try project()).session.waiting, (try post("synced", {})).status]
-  try check(() => {
-    assert.equal(linked.status, 200, linked.text)
-    assert.ok(linked.body.manifest.changes.some((c: { action: string; spec: string }) => c.action === "added" && c.spec === "spec/nested/child/index.md"))
-    assert.deepStrictEqual(nested.specs.map((s) => s.file), ["spec/index.md", "spec/nested/child/index.md"])
-    assert.equal(nested.session.waiting, 2)
-    assert.deepStrictEqual(marked, [200, 0, 409])
-  })
+  try check(() => assert.deepStrictEqual({
+    linked: linked.status === 200 || linked.text,
+    added: linked.body?.manifest.changes.some((c: { action: string; spec: string }) => c.action === "added" && c.spec === "spec/nested/child/index.md"),
+    specs: nested.specs.map((s) => s.file),
+    waiting: nested.session.waiting,
+    marked,
+  }, { linked: true, added: true, specs: ["spec/index.md", "spec/nested/child/index.md"], waiting: 2, marked: [200, 0, 409] }))
 
   // Paths that would leave spec/, or follow a link out of it, are refused.
   const escaped = try post("publish", { files: [{ file: "spec/../outside.md", base: null, text: "x" }], origins: [] })
@@ -336,12 +337,12 @@ it.live("new and nested specs are published, deleted specs leave their ledger fo
   // A prose line that would become a heading is refused.
   const index = (try project()).specs[0]
   const stray = try post("publish", { files: [{ file: index.file, base: index.hash, text: `${index.text}\n## Not meant as a heading\n` }], origins: [] })
-  try check(() => {
-    assert.deepStrictEqual([escaped.status, linkedOut.status, outside], [400, 400, ""])
-    assert.deepStrictEqual([elsewhere, untouched], [[400, 400], [true, false]])
-    assert.match(problem ?? "", /symbolic links/)
-    assert.match(stray.body.error, /"Not meant as a heading" would be a heading/)
-  })
+  try check(() => assert.deepStrictEqual({
+    escaped: [escaped.status, linkedOut.status, outside],
+    elsewhere: [elsewhere, untouched],
+    problem: /symbolic links/.test(problem ?? ""),
+    stray: /"Not meant as a heading" would be a heading/.test(stray.body?.error ?? ""),
+  }, { escaped: [400, 400, ""], elsewhere: [[400, 400], [true, false]], problem: true, stray: true }))
 
   // A deleted spec takes its proof file with it and leaves the review ledger, so its removal is reviewed.
   const child = (try Effect.try(() => readSpecs(root))).find((s) => s.file === "spec/nested/child/index.md")!
@@ -355,13 +356,13 @@ it.live("new and nested specs are published, deleted specs leave their ledger fo
   const childLeft = try fs.exists(`${root}/${child.file}`)
   const ledgerAfter = try fs.readFileString(`${root}/spec/lock.json`)
   const final = try settled()
-  try check(() => {
-    assert.equal(deleted.status, 200, deleted.text)
-    assert.ok(!childLeft)
-    assert.equal(ledgerAfter, ledger)
-    assert.ok(final.check!.results.some((r: Result) => r.stage === "review" && /removed spec/.test(r.summary)))
-    assert.equal(final.session.waiting, 2)
-  })
+  try check(() => assert.deepStrictEqual({
+    deleted: deleted.status === 200 || deleted.text,
+    childLeft,
+    ledgerKept: ledgerAfter === ledger,
+    reviewed: final.check!.results.some((r: Result) => r.stage === "review" && /removed spec/.test(r.summary)),
+    waiting: final.session.waiting,
+  }, { deleted: true, childLeft: false, ledgerKept: true, reviewed: true, waiting: 2 }))
 
   // spec/index.md, "A sync that ends well leaves nothing waiting and checks again": a sync that wrote the review
   // ledger, or broke Studio's state, does not end well, and what was waiting still waits.
@@ -374,16 +375,20 @@ it.live("new and nested specs are published, deleted specs leave their ledger fo
   const manifest = manifestKept ? try fs.readFileString(`${root}/.studio/manifest.json`) : ""
   const stateSync = (try post("agent", { agent: "invalidState" })).status
   const broken = try settled()
-  try check(() => {
-    assert.deepStrictEqual([inherited, afterInherited], [400, "Idle"])
-    assert.deepStrictEqual([ledgerSync, stateSync], [200, 200])
-    assert.equal(ledgerEdited.jobs.agent!.status, "failed")
-    assert.match(ledgerEdited.jobs.agent!.log.join("\n"), /spec\/lock.json: not marked synced/)
-    assert.ok(manifestKept)
-    assert.deepStrictEqual([ledgerEdited.session.waiting, ledgerEdited.session.verdict], [2, "Unknown"])
-    assert.equal(broken.jobs.agent!.status, "failed")
-    assert.match(broken.jobs.agent!.log.join("\n"), /ENOTDIR/)
-  })
+  try check(() => assert.deepStrictEqual({
+    inherited: [inherited, afterInherited],
+    started: [ledgerSync, stateSync],
+    ledgerEdited: [
+      ledgerEdited.jobs.agent!.status, /spec\/lock.json: not marked synced/.test(ledgerEdited.jobs.agent!.log.join("\n")),
+      manifestKept, ledgerEdited.session.waiting, ledgerEdited.session.verdict,
+    ],
+    broken: [broken.jobs.agent!.status, /ENOTDIR/.test(broken.jobs.agent!.log.join("\n"))],
+  }, {
+    inherited: [400, "Idle"],
+    started: [200, 200],
+    ledgerEdited: ["failed", true, true, 2, "Unknown"],
+    broken: ["failed", true],
+  }))
 
   // spec/index.md, "The app is built from published specs, when no job runs": at a workspace root, every app is built.
   const building = (try post("build", {})).status
@@ -398,12 +403,13 @@ it.live("new and nested specs are published, deleted specs leave their ledger fo
   const again = try studioOn(root)
   const resumed = (try again.project()).session
   const markedAgain = (try again.post("synced", {})).status
-  try check(() => {
-    assert.deepStrictEqual(resumed, { unpublished: false, waiting: 2, job: "Idle", verdict: "Unknown", previewing: false })
-    assert.equal(markedAgain, 200)
-  })
+  try check(() => assert.deepStrictEqual(
+    { resumed, markedAgain },
+    { resumed: { unpublished: false, waiting: 2, job: "Idle", verdict: "Unknown", previewing: false }, markedAgain: 200 },
+  ))
 }) } })
 
+// spec/index.md, "Story: Edit, then publish": the specs a person edits are those of the project they opened, and only those.
 it.live("the studio opens only the current project or the requested project path", effect () => { provide services { try scoped(effect {
   const fs = try FileSystem.FileSystem
   const path = try Path.Path
@@ -430,12 +436,10 @@ it.live("the studio opens only the current project or the requested project path
     const specs: string[][] = []
     for (const s of try Effect.try(() => readSpecs(root))) if (s.file.startsWith("spec/")) specs.push([s.file, try fs.readFileString(path.join(root, s.file))])
     const other = (try page.get("/api/project?project=vibestack/examples/order")).status
-    try check(() => {
-      assert.deepStrictEqual(projects, { projects: [{ id: ".", name }], open: "." })
-      assert.deepStrictEqual(current.project, { id: ".", name, root })
-      assert.deepStrictEqual(current.specs.map((s) => [s.file, s.text]).sort(), specs.sort())
-      assert.equal(other, 404)
-    })
+    try check(() => assert.deepStrictEqual(
+      { projects, current: current.project, specs: current.specs.map((s) => [s.file, s.text]).sort(), other },
+      { projects: { projects: [{ id: ".", name }], open: "." }, current: { id: ".", name, root }, specs: specs.sort(), other: 404 },
+    ))
   })
   const failures: unknown[] = []
   for (const args of [["missing"], ["spec/index.md"]]) failures.push(try Effect.flip(serve(repo, [...args, "--port", "0"])))
