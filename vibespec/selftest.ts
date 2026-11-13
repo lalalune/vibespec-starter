@@ -20,7 +20,8 @@ const EXAMPLE = path.join(project, "vibespec/examples/order");
 const read = (file: string): string => {
   const example = file === "spec/order.md" ? "spec/index.md" : /^(src|test)\//.test(file) || file === "tsconfig.json" ? file : undefined;
   return fs.readFileSync(example ? path.join(EXAMPLE, example) : path.join(project, file), "utf8")
-    .replaceAll("gen/index.ts", "gen/order.ts").replaceAll("spec/index.md", "spec/order.md");
+    .replaceAll("gen/index.ts", "gen/order.ts").replaceAll("gen/index.conformance.ts", "gen/order.conformance.ts")
+    .replaceAll("spec/index.md", "spec/order.md");
 };
 const F = "`".repeat(3);
 const roots: string[] = [];
@@ -1063,8 +1064,10 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     };
     try {
       await waitFor(() => output.includes("watching spec/"));
-      fs.writeFileSync(path.join(watchedRoot, "spec/index.md"), `# Watched\n\n## Story\n\n### Value\n\n${F}quint\npure val value = 1\n${F}\n`);
-      await waitFor(() => fs.existsSync(path.join(watchedRoot, "gen/index.ts")));
+      fs.writeFileSync(path.join(watchedRoot, "spec/index.md"), `# Watched\n\n## Story\n\n### Value\n\n${F}quint\npure val watchedValue = 1\n${F}\n`);
+      const generated = path.join(watchedRoot, "gen/index.ts");
+      await waitFor(() => fs.existsSync(generated) && fs.readFileSync(generated, "utf8").includes("export const watchedValue"));
+      assert.equal((await import(generated)).watchedValue, 1);
       assert.ok(!fs.existsSync(path.join(parent, "gen")));
     } finally {
       if (watcher.exitCode === null && watcher.signalCode === null) {
