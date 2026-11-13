@@ -5,9 +5,10 @@ import ts from "typescript";
 import { generate, type Model, type Origin } from "./gen.ts";
 import { fail } from "./gen/types.ts";
 import { run, type Unit } from "./prove.ts";
-import { readSpecs, type Spec } from "./parse.ts";
+import { readSpecs, originalColumn, type Spec } from "./parse.ts";
+import { defines } from "./review.ts";
 import { entry, recall, store, type Memory } from "./cache.ts";
-import { srcUnits } from "./util.ts";
+import { plainText, readSrc, type SrcFile } from "./util.ts";
 
 const ANNOTATIONS = ["backend", "pure", "requires", "ensures", "invariant", "decreases", "type", "ghost", "assert"];
 
@@ -27,8 +28,9 @@ function genDir(root: string): string {
 function typeErrors(spec: Spec, ir: any, out: string, specs: Spec[]): Error {
   const errors = (ir?.errors ?? []).map((e: any) => {
     const at = e.locs?.[0];
-    const file = specs.find((s) => s.name === path.basename(at?.source ?? "", ".qnt"))?.file ?? spec.file;
-    return at ? `${file}:${at.start.line + 1}:${at.start.col + 1}  ${e.explanation}` : e.explanation;
+    const source = specs.find((s) => s.name === path.basename(at?.source ?? "", ".qnt")) ?? spec;
+    const col = at && originalColumn(source.tangled, source.qnt, at.start.line, at.start.col);
+    return at ? `${source.file}:${at.start.line + 1}${col === undefined ? "" : `:${col + 1}`}  ${e.explanation}` : e.explanation;
   });
   return new Error(errors.join("\n") || out);
 }
@@ -36,6 +38,14 @@ function typeErrors(spec: Spec, ir: any, out: string, specs: Spec[]): Error {
 /** The model of a spec, from Quint's typed IR: gen/<name>.ts and its simulation harness. `models` receives it. */
 export function generated(root: string, spec: Spec, ir: any, models: Map<string, Model>): Model {
   const dir = genDir(root);
+  const top = new Set<string>((ir.modules?.find((m: any) => m.name === spec.name)?.declarations ?? [])
+    .filter((d: any) => d.kind === "def" || d.kind === "typedef").map((d: any) => d.name));
+  const assigned = new Set(spec.rules.flatMap(defines));
+  const untracked = [...top].find((name) => !assigned.has(name));
+  if (untracked) {
+    const rule = spec.rules.find((r) => r.locals.includes(untracked));
+    throw new Error(`${spec.file}:${rule?.line ?? 1}: \`${untracked}\` is a top-level definition with no rule assignment; start it on its own line in the same column as the definition above it`);
+  }
   const origins = new Map<string, Origin>();
   for (const r of spec.rules) for (const d of r.defs) origins.set(d, { rule: r.key, line: r.line });
   const model = generate(ir, spec.name, spec.file, (d) => origins.get(d), models);
@@ -105,7 +115,7 @@ export function typecheckAll(memory: Memory, specs: Spec[]): Map<string, Promise
  * A unit may have a proof file: spec/<name>.proof.dfy for a spec,
  * src/<path>.proof.dfy for src/<path>.ts.
  */
-export async function proofUnits(root: string, models: Model[]): Promise<Unit[]> {
+export async function proofUnits(root: string, models: Model[], srcFiles: SrcFile[] = readSrc(root)): Promise<Unit[]> {
   const byName = new Map(models.map((m) => [m.name, m]));
   const withoutImports = (text: string) => {
     const file = ts.createSourceFile("unit.ts", text, ts.ScriptTarget.Latest, true);
@@ -136,9 +146,9 @@ export async function proofUnits(root: string, models: Model[]): Promise<Unit[]>
   }));
 
   const src = path.join(root, "src");
-  const other = srcUnits(root, true)[0];
+  const other = srcFiles.find((u) => !u.ts);
   if (other) throw new Error(`src/${other.file}: \`//@\` appears in it, but only .ts files under src/ are proved; rename it to .ts or remove the annotations`);
-  for (const { file: f, code } of srcUnits(root)) {
+  for (const { file: f, code } of srcFiles.filter((u) => u.ts)) {
     // Wherever `//@` appears, even after other text on the line, LemmaScript may read it.
     const used = [...code.matchAll(/\/\/@\s*([\w-]*)/g)].map((m) => m[1]);
     const refused = used.find((k) => !ANNOTATIONS.includes(k));
@@ -181,7 +191,7 @@ export async function proofUnits(root: string, models: Model[]): Promise<Unit[]>
 export function checkVerifiedSource(file: string, code: string) {
   const sf = ts.createSourceFile(file, code, ts.ScriptTarget.Latest, true);
   const refuse = (at: number, why: string): never => { throw new Error(`${file}:${sf.getLineAndCharacterOfPosition(at).line + 1}: ${why}`); };
-  if (code.includes("\0")) refuse(code.indexOf("\0"), "NUL characters are not allowed");
+  plainText(file, code);
   for (const s of sf.statements) {
     const modifier = (ts.canHaveModifiers(s) ? ts.getModifiers(s) ?? [] : []).find((m) => m.kind !== ts.SyntaxKind.ExportKeyword);
     if (modifier) refuse(modifier.getStart(), `\`${modifier.getText()}\` is not allowed in verified code`);

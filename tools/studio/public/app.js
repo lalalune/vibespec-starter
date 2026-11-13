@@ -11,11 +11,18 @@ const writeBody = (items) => items.filter((i) => i.text.trim()).map((i) => {
   return `\n${f}quint\n${i.text.replace(/\s+$/, "")}\n${f}\n`;
 }).join("") + "\n";
 const writeText = (text) => (text.trim() ? `\n${text.trim()}\n\n` : "\n");
-const writeDoc = (doc) => {
-  const text = (doc.title === null ? "" : `# ${doc.title}\n`) + doc.body
-    + doc.sections.map((s) => (s.title === null ? "" : `## ${s.title}\n`) + s.body + s.rules.map((r) => `### ${r.title}\n${r.body}`).join("")).join("");
+/** The spec's text. `tidy` puts a blank line before every heading, for a spec that was edited: a story or rule moved
+ * to the end of another may have had nothing after it. */
+function writeDoc(doc, tidy = false) {
+  let text = (doc.title === null ? "" : `# ${doc.title}\n`) + doc.body;
+  const heading = (line) => { if (tidy && text && !text.endsWith("\n\n")) text += text.endsWith("\n") ? "\n" : "\n\n"; text += line; };
+  for (const s of doc.sections) {
+    if (s.title !== null) heading(`## ${s.title}\n`);
+    text += s.body;
+    for (const r of s.rules) { heading(`### ${r.title}\n`); text += r.body; }
+  }
   return text;
-};
+}
 const storyKey = (title) => (title === null ? "" : `## ${title.trim()}`);
 const ruleKey = (section, title) => `${section?.trim() ?? ""} / ${title.trim()}`;
 const nodeId = (file, key) => `${file}\0${key}`;
@@ -34,6 +41,7 @@ const S = {
   attention: false,
   history: [],
   conflicts: [],
+  publishing: false,
 };
 let uidCount = 0;
 const uid = () => `n${++uidCount}`;
@@ -58,7 +66,12 @@ function remember(spec) {
     s.rules.forEach((r, j) => (r.was = { title: r.title, body: r.body, file: spec.file, section: s.origin, index: j }));
   });
 }
-const textOf = (spec) => (spec.deleted ? null : writeDoc(spec.doc));
+/** The text a spec would be published as; one that was edited ends in a single newline. */
+const textOf = (spec) => {
+  if (spec.deleted) return null;
+  const text = writeDoc(spec.doc);
+  return text === spec.orig ? text : writeDoc(spec.doc, true).replace(/\n\n+$/, "\n");
+};
 const isDirty = (spec) => spec.deleted || spec.orig === null || textOf(spec) !== spec.orig;
 const dirtySpecs = () => S.specs.filter(isDirty);
 const sectionChanged = (spec, s, i) => !s.was || s.title !== s.was.title || s.body !== s.was.body || s.was.file !== spec.file || s.was.index !== i;
@@ -77,8 +90,8 @@ function loadDraft() {
 
 /** The specs on disk, with the specs this page changed kept and any that changed on disk underneath them noted. */
 function merge(snap, mine) {
-  // A story or rule keeps its place on the page (open, being edited) across a reload, by what it was on disk.
-  const uids = new Map(mine.flatMap((d) => d.doc.sections.flatMap((s) => [[s.origin, s.uid], ...s.rules.map((r) => [r.origin, r.uid])])).filter(([o]) => o));
+  // A story or rule keeps its place on the page (open, being edited) across a reload, by what it is called now.
+  const uids = new Map(mine.flatMap((d) => d.doc.sections.flatMap((s) => [[nodeId(d.file, storyKey(s.title)), s.uid], ...s.rules.map((r) => [nodeId(d.file, ruleKey(s.title, r.title)), r.uid])])));
   const fresh = snap.specs.map(working);
   for (const f of fresh) for (const s of f.doc.sections) for (const n of [s, ...s.rules]) if (uids.has(n.origin)) n.uid = uids.get(n.origin);
   const out = [];
@@ -106,17 +119,20 @@ async function api(path, body) {
   return json;
 }
 
-async function refresh() {
+async function refresh(force = false) {
+  if (S.publishing) return; // publishing refreshes once it is done
   const snap = await api("project");
+  if (S.publishing) return;
+  // Keep the working objects that the active editor's handlers close over until typing stops.
+  const typing = document.getElementById("doc").contains(document.activeElement) && /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName);
   const first = !S.snap;
   S.snap = snap;
+  if (typing && !force && !first) { renderRail(); renderBuild(); return; }
   const draft = first ? loadDraft() : null;
   S.specs = merge(snap, first ? draft?.specs ?? [] : S.specs);
   if (first && draft?.specs?.some(isDirty)) toast("Unpublished changes restored");
   if (!S.specs.some((s) => s.file === S.sel)) S.sel = draft?.sel && S.specs.some((s) => s.file === draft.sel) ? draft.sel : S.specs[0]?.file ?? null;
-  // Never redraw the document under someone typing in it; its marks catch up on the next redraw.
-  const typing = document.getElementById("doc").contains(document.activeElement) && /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName);
-  if (typing) { renderRail(); renderBuild(); } else render();
+  render();
 }
 
 // --- small helpers -----------------------------------------------------------------------------------
@@ -295,7 +311,10 @@ function edited() {
   renderBuild();
   document.querySelectorAll("[data-uid]").forEach((el) => {
     const f = find(el.dataset.uid);
-    if (f) el.classList.toggle("changed", f.rule ? ruleChanged(f.spec, f.section, f.rule, f.index) : sectionChanged(f.spec, f.section, f.index));
+    if (!f) return;
+    el.classList.toggle("changed", f.rule ? ruleChanged(f.spec, f.section, f.rule, f.index) : sectionChanged(f.spec, f.section, f.index));
+    const title = el.querySelector(":scope > .row .title");
+    if (title) title.textContent = (f.rule ?? f.section).title?.trim() || "Untitled";
   });
 }
 
@@ -344,7 +363,12 @@ function nudge(uidWanted, by) {
   change(() => list.splice(to, 0, list.splice(f.index, 1)[0]));
   focusLater(`[data-uid="${uidWanted}"] > .row`);
 }
-const focusLater = (selector) => requestAnimationFrame(() => document.querySelector(selector)?.focus());
+/** Focus after the next redraw, with the caret at the end of any text already there. */
+const focusLater = (selector) => setTimeout(() => {
+  const el = document.querySelector(selector);
+  el?.focus();
+  if (el && "selectionStart" in el && el.value !== undefined) el.selectionStart = el.selectionEnd = el.value.length;
+}, 0);
 
 // --- rendering ------------------------------------------------------------------------------------------
 
@@ -434,14 +458,18 @@ function textBox(value, set, { code = false, placeholder = "", label } = {}) {
       ta.dispatchEvent(new Event("input"));
     }
   });
-  requestAnimationFrame(grow);
+  setTimeout(grow, 0);
   return ta;
 }
 
 function headingInput(value, set, label) {
   const input = h("input", { class: "heading", value, "aria-label": label, placeholder: label });
   input.addEventListener("input", () => { set(input.value); input.classList.toggle("invalid", !input.value.trim()); edited(); });
-  input.addEventListener("keydown", (e) => e.key === "Enter" && input.closest(".edit")?.querySelector("textarea")?.focus());
+  input.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    input.closest(".edit")?.querySelector("textarea")?.focus();
+  });
   return input;
 }
 
@@ -574,7 +602,7 @@ function renderRuleEditor(r) {
   const draw = () => {
     items.replaceChildren(
       headingInput(r.title, (v) => (r.title = v), "One checkable sentence"),
-      r.items.map((item, k) => h("div", { class: "item" },
+      ...r.items.map((item, k) => h("div", { class: "item" },
         textBox(item.text, (v) => { item.text = v; set(); }, { code: item.quint, placeholder: item.quint ? "pure def …" : "Prose (optional)", label: item.quint ? "Quint" : "Prose" }),
         h("div", { class: "side" },
           k > 0 && iconButton("up", "Move up", () => { r.items.splice(k - 1, 0, r.items.splice(k, 1)[0]); set(); draw(); edited(); }),
@@ -776,7 +804,7 @@ function problems(spec) {
 
 function openPublish() {
   const dirty = dirtySpecs();
-  if (!dirty.length || S.snap?.job?.status === "running") return;
+  if (S.publishing || !dirty.length || S.snap?.job?.status === "running") return;
   const bad = dirty.flatMap(problems);
   const dialog = document.getElementById("dialog");
   dialog.replaceChildren(h("form", { method: "dialog" },
@@ -792,24 +820,29 @@ function openPublish() {
 }
 
 async function publish(force = false) {
+  if (S.publishing) return;
   const dirty = dirtySpecs();
   const origins = [];
   for (const spec of dirty) if (!spec.deleted) for (const s of spec.doc.sections) {
     if (s.title !== null) origins.push([nodeId(spec.file, storyKey(s.title)), s.origin]);
     for (const r of s.rules) origins.push([nodeId(spec.file, ruleKey(s.title, r.title)), r.origin]);
   }
+  S.publishing = true;
   try {
     await api("publish", { files: dirty.map((s) => ({ file: s.file, base: s.base, text: textOf(s) })), origins, force });
   } catch (e) {
+    S.publishing = false;
     if (e.status === 409 && confirm(`${e.body.conflicts.join(", ")} changed on disk since you loaded it. Overwrite with your version?`)) return publish(true);
     return toast(e.message);
   }
-  try { localStorage.removeItem(draftKey()); } catch { /* nothing saved */ }
+  // What was published is what is on disk now; the reload takes each spec from there.
+  for (const spec of dirty) spec.orig = textOf(spec);
+  S.specs = S.specs.filter((s) => !s.deleted);
   S.editing.clear();
   S.history = [];
-  S.snap = null;
-  S.specs = [];
-  await refresh();
+  S.publishing = false;
+  try { localStorage.removeItem(draftKey()); } catch { /* nothing saved */ }
+  await refresh(true);
   toast("Published");
 }
 
@@ -831,6 +864,10 @@ document.addEventListener("click", (e) => {
   e.preventDefault();
   S.sel = link.dataset.spec;
   render();
+});
+document.addEventListener("focusout", (e) => {
+  if (document.getElementById("doc").contains(e.target) && /^(INPUT|TEXTAREA)$/.test(e.target.tagName))
+    setTimeout(() => refresh().catch((error) => toast(error.message)), 0);
 });
 window.addEventListener("beforeunload", (e) => { if (dirtySpecs().length) saveDraft(); });
 

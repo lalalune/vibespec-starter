@@ -142,6 +142,7 @@ function readable(line: string): string | undefined {
   if (e.type === "item.completed" && item?.type === "agent_message") return clip(item.text ?? "");
   if (e.type === "item.started" && item?.type === "command_execution") return `▸ ${clip(item.command ?? "", 200)}`;
   if (e.type === "item.completed" && item?.type === "file_change") return `▸ edit ${(item.changes ?? []).map((c: any) => c.path).join(", ")}`;
+  if (e.type === "item.completed" && item?.type === "error") return `! ${clip(item.message ?? "")}`;
   if (e.type === "turn.failed" || e.type === "error") return `✗ ${clip(e.error?.message ?? e.message ?? line)}`;
 }
 

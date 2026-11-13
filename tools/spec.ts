@@ -10,7 +10,7 @@ import { contracts, pending, pendingContracts, acceptAllReviews, pendingSpecs, m
 import { entry, remembered, collectGarbage, dafnyVersion, type Memory } from "./cache.ts";
 import { gen, generated, typecheckAll, proofUnits, strayProofFiles } from "./units.ts";
 import { SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, STEPS, DEPTHS, SEARCHED, simulate, search, firstBreak, showTrace, replay, type Step } from "./simulate.ts";
-import { sha, indent, tests } from "./util.ts";
+import { sha, indent, tests, readSrc, type SrcFile } from "./util.ts";
 
 export { readSpecs, badSpecName, parseSpec, scanSpec, expandListHelpers, type Spec, type Rule, type Story } from "./parse.ts";
 export { pending, pendingContracts, acceptReviews, acceptContracts, fingerprint, dependencies, type Pending } from "./review.ts";
@@ -101,7 +101,13 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
   /** The cache entries this run read or wrote; after a run in which every stage ran, the others are deleted. */
   const memory: Memory = { root, fresh: !!accept, used: new Set() };
   let specs: Spec[];
+  let srcFiles: SrcFile[];
+  const proofInputs = () => strayProofFiles(root, []).sort().map((file) => [file, fs.readFileSync(path.join(root, file), "utf8")]);
+  let proofFiles: string[][];
+  let pendingLedger: { ledger: Record<string, Accepted>; accepted: Record<string, Accepted | undefined> } | undefined;
   try {
+    srcFiles = readSrc(root);
+    proofFiles = proofInputs();
     specs = readSpecs(root);
     pendingSpecs(root, specs); // Validate the ledger before running any stages.
   } catch (e) {
@@ -257,7 +263,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
       const ledger: Record<string, Accepted> = {};
       let recordable = true;
       fs.rmSync(path.join(root, "gen/proof"), { recursive: true, force: true });
-      const units = await proofUnits(root, [...models.values()]);
+      const units = await proofUnits(root, [...models.values()], srcFiles);
       for (const f of strayProofFiles(root, units))
         said(false, "proof", `${f} belongs to no proof unit: spec/<name>.proof.dfy belongs to spec/<name>.md, and src/<path>.proof.dfy to src/<path>.ts if that file contains //@`, "", f);
       const lib = fs.readFileSync(LIB_FILE, "utf8");
@@ -321,17 +327,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
             + (stale.length && accept !== "unproved" ? `; ${stale.length} accepted earlier now prove, run \`npm run accept -- unproved\` to tighten the ledger` : ""), "", u.unit);
         }
       }
-      if (accept === "unproved" && recordable) {
-        writeLedger(root, ledger);
-        // What was recorded, against what was there: an entry recorded for another text of its unit is replaced.
-        const entries = (l: Record<string, Accepted | undefined>) => Object.entries(l).flatMap(([unit, a]) => (a?.unproved ?? []).map((x) => `${unit}: ${x}  [${a!.text}]`));
-        const [before, after] = [entries(accepted), entries(ledger)];
-        const added = after.filter((x) => !before.includes(x));
-        const removed = before.filter((x) => !after.includes(x));
-        const line = (sign: string) => (x: string) => `    ${sign} ${x.replace(/  \[[^\]]*\]$/, "")}`;
-        report(true, "proof", `${path.relative(root, ledgerFile(root))}: ${added.length} added, ${removed.length} removed`,
-          [...added.map(line("+")), ...removed.map(line("-"))].join("\n"), undefined, true);
-      }
+      if (accept === "unproved" && recordable) pendingLedger = { ledger, accepted };
       proofsRan = true;
     } catch (e) {
       said(false, "proof", (e as Error).message);
@@ -341,14 +337,20 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
     // The typecheck runs while the proofs do; it is reported first.
     const typecheck = fs.existsSync(path.join(root, "tsconfig.json")) ? run("tsc", ["--noEmit", "-p", "."], root) : undefined;
     const proofsDone = provingAll();
+    // A missing or unexecutable compiler must not release the project lock while proofs still write into gen/.
+    const [typesResult, proofsResult] = await Promise.allSettled([typecheck, proofsDone]);
     if (typecheck) {
-      const tsc = await typecheck;
-      report(tsc.ok, "types", tsc.ok ? "application typechecks against the generated contract" : "application does not fit the generated contract", indent(tsc.out.trim()), "src/ and test/");
+      if (typesResult.status === "rejected") report(false, "types", "the TypeScript checker could not run", indent(String(typesResult.reason)));
+      else {
+        const tsc = typesResult.value!;
+        report(tsc.ok, "types", tsc.ok ? "application typechecks against the generated contract" : "application does not fit the generated contract", indent(tsc.out.trim()), "src/ and test/");
+      }
     } else {
       const code = ["src", "test"].filter((d) => fs.existsSync(path.join(root, d)));
       report(!code.length, "types", code.length ? `${code.join(" and ")} exist but there is no tsconfig.json, so nothing checks them against the generated contract; run \`spec init\` to add one` : "skipped: there is no tsconfig.json and no src/ or test/");
     }
-    for (const r of await proofsDone) report(...r);
+    if (proofsResult.status === "rejected") report(false, "proof", "the prover could not run", indent(String(proofsResult.reason)));
+    else for (const r of proofsResult.value) report(...r);
     for (const r of await tests(root, specs)) report(...r);
     if (complete && proofsRan) collectGarbage(memory);
   }
@@ -356,11 +358,31 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
 
   // A spec that is not a valid model has nothing to reconcile yet. Everything is recorded at once, or nothing is.
   const todos = valid.map((spec) => ({ spec, todo: pending(root, spec, specs) }));
-  const contractsToDo = pendingContracts(root);
+  const contractsToDo = pendingContracts(root, srcFiles);
+  if (accept) {
+    try {
+      if (JSON.stringify(readSpecs(root)) !== JSON.stringify(specs) || JSON.stringify(readSrc(root)) !== JSON.stringify(srcFiles)
+        || JSON.stringify(proofInputs()) !== JSON.stringify(proofFiles))
+        report(false, "review", "sources changed while the check ran; nothing was accepted", "      Run `npm run check` again on the files now on disk.");
+    } catch (e) {
+      report(false, "review", "sources changed while the check ran; nothing was accepted", indent((e as Error).message));
+    }
+  }
+  if (accept === "unproved" && allOk && pendingLedger) {
+    const { ledger, accepted } = pendingLedger;
+    writeLedger(root, ledger);
+    const entries = (l: Record<string, Accepted | undefined>) => Object.entries(l).flatMap(([unit, a]) => (a?.unproved ?? []).map((x) => `${unit}: ${x}  [${a!.text}]`));
+    const [before, after] = [entries(accepted), entries(ledger)];
+    const added = after.filter((x) => !before.includes(x));
+    const removed = before.filter((x) => !after.includes(x));
+    const line = (sign: string) => (x: string) => `    ${sign} ${x.replace(/  \[[^\]]*\]$/, "")}`;
+    report(true, "proof", `${path.relative(root, ledgerFile(root))}: ${added.length} added, ${removed.length} removed`,
+      [...added.map(line("+")), ...removed.map(line("-"))].join("\n"), undefined, true);
+  }
   const removedSpecs = pendingSpecs(root, specs);
   const formal = todos.every(({ todo }) => !todo.some((t) => t.status === "story has no rules" || t.status === "not formalized"));
   const record = accept === "reviews" && allOk && formal;
-  if (record) acceptAllReviews(root, specs);
+  if (record) acceptAllReviews(root, specs, srcFiles);
   const why = accept !== "reviews" ? "then run `npm run accept`" : !allOk ? "nothing was accepted: fix the stages above first" : "every story needs rules and every rule a quint block before anything can be accepted";
   const items = (todo: Pending[], heading: string) => {
     const shown = moved(todo);
@@ -374,7 +396,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
   }
   if (removedSpecs.length) report(record, "review", record ? "removed specs recorded as reconciled" : `${removedSpecs.length} removed spec(s) to reconcile, ${why}`,
     removedSpecs.map((p) => "    " + showPending(p)).join("\n"));
-  const proved = contracts(root).size;
+  const proved = contracts(root, srcFiles).size;
   if (record && contractsToDo.length) {
     report(true, "review", `src/: recorded as reconciled: ${contractsToDo.map((t) => t.where).join("; ")}`, "", "src/");
   } else if (contractsToDo.length) report(false, "review", `src/: ${contractsToDo.length} contract(s) to reconcile, ${why}`, items(contractsToDo, "The contracts, in full"), "src/");
@@ -384,7 +406,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
 
 // --- init ----------------------------------------------------------------------------
 
-/** Give a project what it needs to use the package. Nothing that is already there is replaced. */
+/** Set up a project, preserving its content outside the marked Vibespec instructions. */
 export function init(root: string): string[] {
   const pkg = path.join(import.meta.dirname, "..");
   const done: string[] = [];
@@ -394,7 +416,30 @@ export function init(root: string): string[] {
     fs.writeFileSync(path.join(root, file), content());
     done.push(file);
   };
-  for (const doc of [".claude/skills/sync/SKILL.md", ".claude/skills/design/SKILL.md", "AGENTS.md", "CONTRIBUTING.md"]) add(doc, () => fs.readFileSync(path.join(pkg, doc), "utf8"));
+  for (const doc of [".claude/skills/sync/SKILL.md", ".claude/skills/design/SKILL.md", "CONTRIBUTING.md"]) add(doc, () => fs.readFileSync(path.join(pkg, doc), "utf8"));
+  const agents = path.join(root, "AGENTS.md");
+  const procedure = fs.readFileSync(path.join(pkg, "AGENTS.md"), "utf8").trim();
+  const previous = fs.existsSync(agents) ? fs.readFileSync(agents, "utf8") : "";
+  const eol = previous.includes("\r\n") ? "\r\n" : "\n";
+  const section = `<!-- vibespec:start -->${eol}${procedure.replace(/\r?\n/g, eol)}${eol}<!-- vibespec:end -->`;
+  const starts = [...previous.matchAll(/<!-- (vibespec|onespec):start\b[^>]*-->/g)];
+  const ends = [...previous.matchAll(/<!-- (vibespec|onespec):end -->/g)];
+  if (starts.length !== ends.length || starts.length > 1 || (starts.length === 1 && (starts[0][1] !== ends[0][1] || starts[0].index! > ends[0].index!)))
+    throw new Error("AGENTS.md: repair the duplicated or incomplete Vibespec markers before running spec init");
+  const updated = starts.length ? previous.slice(0, starts[0].index) + section + previous.slice(ends[0].index! + ends[0][0].length)
+    : previous.trim() === procedure ? `${section}${eol}`
+    : `${previous.trimEnd()}${previous.trim() ? eol + eol : ""}${section}${eol}`;
+  if (updated !== previous) {
+    fs.writeFileSync(agents, updated);
+    done.push("AGENTS.md (Vibespec instructions)");
+  }
+  const claude = path.join(root, "CLAUDE.md");
+  const own = fs.existsSync(claude) ? fs.readFileSync(claude, "utf8") : "";
+  if (!/^@AGENTS\.md\s*$/m.test(own)) {
+    const eol = own.includes("\r\n") ? "\r\n" : "\n";
+    fs.writeFileSync(claude, `${own.trimEnd()}${own.trim() ? eol + eol : ""}@AGENTS.md${eol}`);
+    done.push("CLAUDE.md (imports AGENTS.md)");
+  }
   add("tsconfig.json", () => JSON.stringify({ compilerOptions: { target: "es2023", module: "nodenext", strict: true, noEmit: true, allowImportingTsExtensions: true, erasableSyntaxOnly: true, skipLibCheck: true, types: ["node"] }, include: ["src", "test", "gen/*.ts"] }, null, 2) + "\n");
   add("spec/index.md", () => "");
   const ignore = path.join(root, ".gitignore");

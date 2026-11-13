@@ -3,7 +3,7 @@
 A small full-stack application: a Node.js backend with an HTTP API and a
 React page, sharing one to-do list between browser tabs that may go offline.
 Both halves run the state machines generated from `spec/`, and a fourth spec
-puts the server, two tabs and an unreliable network together and proves the
+puts the server, two tabs and an unreliable network together and checks the
 rules only the whole system can state.
 
 ```sh
@@ -48,17 +48,18 @@ build step) and Dafny on the path. The page loads React 18 from esm.sh.
   oldest queued edit, and the next once that one is answered, also after
   coming back online. Sending the whole queue at once would let the network
   reorder a user's own edits, so that ticking off a to-do could arrive
-  before creating it and be refused; the system spec now proves that a user
+  before creating it and be refused; the system spec requires that a user
   editing alone is never refused.
 - **Ids.** A tab names a new to-do `<tab>-<n>`, so it can create and edit
   to-dos offline. Removing leaves a tombstone, so an id is never reused.
 
 ## What is proved, simulated and trusted
 
-- **Proved for all states and inputs** (124 obligations, none accepted as
-  simulated only): every transition of the server, the client and the
-  system keeps every `always` and `step` rule, every law holds, and `drain`
-  meets its contract. At the system level that includes: each part keeps its
+- **Proof obligations** (205, none accepted as simulated only): every
+  transition of the server, the client and the system must keep every
+  `always` and `step` rule, every law must hold, and `drain` must meet its
+  contract. `npm run check` reports the current proof result. At the system
+  level that includes: each part keeps its
   own rules, no tab is ahead of the server, and every copy of the list, in a
   tab or in flight, is exactly the list as it was at the version it carries.
 - **Simulated**: all of the above on 10,000 random traces per spec, and the
@@ -80,6 +81,13 @@ build step) and Dafny on the path. The page loads React 18 from esm.sh.
 - **Copies in flight need a rule of their own.** "A tab's copy is the list at
   its version" is only inductive together with the same statement for every
   answer on the network; the system spec states both.
+- **A request number does not identify its edit.** A retry must carry the
+  same edit before an earlier acceptance can acknowledge it.
+- **A user's dependent edits must arrive in order.** Sending the oldest
+  unanswered edit first prevents a later edit reaching the server before
+  the to-do it changes has been created.
+- **The forgery count is nonnegative.** Otherwise a forgery could change a
+  negative count to zero and incorrectly restore the lone-user guarantee.
 
 ## Limits of the spec language met here
 

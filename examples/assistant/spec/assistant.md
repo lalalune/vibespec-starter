@@ -110,7 +110,11 @@ pure def alwaysBudgetBounded(s: Assistant): bool =
   0 <= s.budget and s.budget <= maxActions and (s.phase == Planning implies s.budget > 0)
 ```
 
-### Every choice spends the budget, so every turn ends
+### Every choice spends the budget
+
+At most four model choices occur between turns. Waiting for the person or
+the outside world has no time bound; this is a bound on model actions, not a
+proof that every participant eventually responds.
 
 ```quint
 pure def stepChoicesSpendBudget(before: Assistant, via: str, after: Assistant): bool =
@@ -198,6 +202,16 @@ pure def stepPaidOnlyOnGenuine(before: Assistant, via: str, after: Assistant): b
 
 ```quint
 pure def alwaysPaidOnlyReviewed(s: Assistant): bool = s.bill.paid implies s.bill.reviewed
+```
+
+### A reviewed bill has a positive amount
+
+Discovered by the proof: a paid bill with a zero amount otherwise satisfies
+the rules, but reviewing it again would erase its reviewed status.
+
+```quint
+pure def alwaysReviewedHasPositiveAmount(s: Assistant): bool =
+  s.bill.reviewed implies s.bill.amount > 0
 ```
 
 ### A bill is charged once, and only when the person confirms

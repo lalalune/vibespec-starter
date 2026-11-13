@@ -18,8 +18,8 @@ import { acceptContracts, acceptReviews, check, checkVerifiedSource, expandListH
 const project = path.join(import.meta.dirname, "..");
 const read = (file: string): string => {
   const example = file === "spec/order.md" ? "spec/index.md" : /^(src|test)\//.test(file) || file === "tsconfig.json" ? file : undefined;
-  return fs.readFileSync(path.join(project, ...(example ? ["examples/order", example] : [file])), "utf8")
-    .replaceAll("gen/index.ts", "gen/order.ts").replaceAll("spec/index.md", "spec/order.md");
+  const text = fs.readFileSync(path.join(project, ...(example ? ["examples/order", example] : [file])), "utf8");
+  return example ? text.replaceAll("gen/index.ts", "gen/order.ts").replaceAll("spec/index.md", "spec/order.md") : text;
 };
 const F = "`".repeat(3);
 const roots: string[] = [];
@@ -259,6 +259,12 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.ok(fence.includes("model"), fence.join());
   });
 
+  test("duplicate story headings are rejected instead of sharing review state", async () => {
+    const text = `# Duplicate\n\n## Story\n\n### First\n\n${F}quint\npure val first = 1\n${F}\n\n## Story\n\n### Second\n\n${F}quint\npure val second = 2\n${F}\n`;
+    const { said, text: result } = await run(scratch({ "spec/duplicate.md": text }));
+    assert.equal(said("model", /duplicate story/)?.ok, false, result);
+  });
+
   test("a story whose title starts another story's title still needs rules of its own", async () => {
     const story = "\n## Story: Wrap\n\n> As a shopper, I want my order wrapped.\n\n## Story: Wrap / gifts\n\n### Gifts are wrapped\n\n```quint\npure def lawWrapped(n: int): bool = true\n```\n";
     const { said, text } = await run(copyOfProject("spec/order.md", (s) => s + story));
@@ -292,6 +298,7 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     const cases: [string, string, RegExp][] = [
       ["identical record shapes", "type A = { n: int }\ntype B = { n: int }\npure def convert(a: A): B = { n: a.n }", /have the same fields/],
       ["a definition with no parameters", "pure def one(): int = 1", /parameter/],
+      ["two declarations on one line", "pure val first = 1 pure val second = 2", /declaration|own line|rule/],
       ["an initial state without a transition", "pure val initial: int = 0", /transition/],
       ["a set of records", "type A = { n: int }\npure def count(xs: Set[A]): int = xs.size()", /set|Set/],
       ["a map into records", "pure def records(xs: Set[int]): Set[{ n: int }] = xs.map(x => { n: x })", /set|Set|record/],
@@ -306,6 +313,12 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.deepEqual(failed, ["review"], text);
   });
 
+  test("a locally chosen enum keeps its Quint type in the generated proof", async () => {
+    const root = oneRule("choice", "Choose", "type Choice = Left | Right\npure def use(c: Choice): int = if (c == Left) 1 else 2\npure def chosen(b: bool): int =\n  val c = if (b) Left else Right\n  use(c)\npure def lawChosen(b: bool): bool = chosen(b) == (if (b) 1 else 2)");
+    const { failed, text } = await run(root);
+    assert.deepEqual(failed, ["review"], text);
+  });
+
   test("a transition and its guard bind a second state-shaped parameter identically during replay", async () => {
     const root = oneRule("copy", "Copy", "pure val initial: int = 0\npure def canCopy(n: int, source: int): bool = n <= source\npure def copy(n: int, source: int): int = source\npure def alwaysNonnegative(n: int): bool = n >= 0");
     const { failed, text } = await run(root);
@@ -315,7 +328,8 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
   test("a law over a reachable state is checked beyond the initial state", async () => {
     const root = fixtures(["lamp"], (f) => { f["spec/lamp.md"] += `\n### No flips\n\n${F}quint\npure def lawZero(l: Lamp): bool = l.flips == 0\n${F}\n`; });
     const { said, text } = await run(root);
-    assert.equal(said("always", /law.*false/)?.ok, false, text);
+    assert.equal(said("always", /^the law .* is false/)?.ok, false, text);
+    assert.ok(!text.includes("the simulator could not run"), text);
   });
 
   test("a quint block indented inside a list is still part of the model", async () => {
@@ -558,14 +572,35 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.ok(failed.includes("review"), failed.join());
   });
 
-  test("init adds what a project lacks and replaces nothing", () => {
+  test("init preserves local instructions and refreshes its marked procedure", () => {
     const root = scratch({ "AGENTS.md": "mine\n", "package.json": `{"scripts":{"check":"mine"}}` });
     const added = init(root);
-    assert.equal(fs.readFileSync(path.join(root, "AGENTS.md"), "utf8"), "mine\n");
+    const agents = path.join(root, "AGENTS.md");
+    const expected = `mine\n\n<!-- vibespec:start -->\n${read("AGENTS.md").trim()}\n<!-- vibespec:end -->\n`;
+    assert.equal(fs.readFileSync(agents, "utf8"), expected);
     assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).scripts.check, "mine");
     assert.ok(["sync", "design"].every((s) => fs.existsSync(path.join(root, `.claude/skills/${s}/SKILL.md`))) && added.includes("tsconfig.json"), added.join());
     assert.equal(fs.readFileSync(path.join(root, "spec/index.md"), "utf8"), "");
+    assert.match(fs.readFileSync(path.join(root, "CLAUDE.md"), "utf8"), /^@AGENTS\.md$/m);
     assert.deepEqual(init(root), []);
+    fs.writeFileSync(path.join(root, "CLAUDE.md"), "My existing instructions.\n");
+    init(root);
+    assert.equal(fs.readFileSync(path.join(root, "CLAUDE.md"), "utf8"), "My existing instructions.\n\n@AGENTS.md\n");
+    assert.equal(fs.readFileSync(agents, "utf8"), expected);
+    assert.deepEqual(init(root), []);
+    fs.writeFileSync(agents, "before\r\n<!-- onespec:start -->\r\nold instructions\r\n<!-- onespec:end -->\r\nafter\r\n");
+    init(root);
+    assert.equal(fs.readFileSync(agents, "utf8"), `before\r\n<!-- vibespec:start -->\r\n${read("AGENTS.md").trim().replace(/\r?\n/g, "\r\n")}\r\n<!-- vibespec:end -->\r\nafter\r\n`);
+    assert.deepEqual(init(root), []);
+    for (const invalid of [
+      "<!-- vibespec:start -->\nincomplete\n",
+      "<!-- vibespec:start -->\n<!-- onespec:end -->\n",
+      "<!-- vibespec:start -->\n<!-- vibespec:end -->\n<!-- vibespec:start -->\n<!-- vibespec:end -->\n",
+    ]) {
+      fs.writeFileSync(agents, invalid);
+      assert.throws(() => init(root), /repair.*markers/);
+      assert.equal(fs.readFileSync(agents, "utf8"), invalid);
+    }
   });
 
   test("nested specs link to children and reuse a machine through its directory index", async () => {
@@ -721,8 +756,7 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
       for (const response of concurrent) assert.equal(response.status, 400, await response.text());
       assert.ok(!fs.existsSync(path.join(root, "spec/parallel.md")));
       let current = await (await fetch(`${url}/api/project`)).json();
-      const deadline = Date.now() + 120_000;
-      while (current.job?.status === "running" && Date.now() < deadline) {
+      while (current.job?.status === "running") {
         await new Promise((resolve) => setTimeout(resolve, 50));
         current = await (await fetch(`${url}/api/project`)).json();
       }
@@ -745,8 +779,7 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
       assert.equal(linked.status, 200, await linked.clone().text());
       const waitForCheck = async () => {
         let snap = await (await fetch(`${url}/api/project`)).json();
-        const until = Date.now() + 120_000;
-        while (snap.job?.status === "running" && Date.now() < until) {
+        while (snap.job?.status === "running") {
           await new Promise((resolve) => setTimeout(resolve, 50));
           snap = await (await fetch(`${url}/api/project`)).json();
         }
@@ -796,16 +829,23 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.deepEqual(first.failed, ["review"], first.text);
     fs.writeFileSync(path.join(root, "spec/lib.md"), wrap("pure val price = 2"));
     const after = await run(root);
-    assert.equal(after.said("always", /lawPrice.*false/)?.ok, false, after.text);
+    assert.equal(after.said("always", /the law .* is false/)?.ok, false, after.text);
   });
 
-  test("a changed proof library invalidates proofs that use it", async () => {
+  test("proof caching follows library changes and compiler failure waits for proof completion", async () => {
     const root = fixtures(["highest"], (f) => {
       f["package.json"] = '{"type":"module"}';
       f["spec/highest.proof.dfy"] = "lemma lawTheHighestIsAtLeastTheStart_ensures(xs: seq<int>, start: int)\n  ensures (lawTheHighestIsAtLeastTheStart(xs, start) == true)\n{\n  ProofLib.FoldLeftMax((top: int, x: int) => (if (x > top) then x else top), start, xs);\n}\n";
     });
     fs.cpSync(path.join(project, "tools"), path.join(root, "tools"), { recursive: true });
-    fs.symlinkSync(nodeModules, path.join(root, "node_modules"), "dir");
+    const modules = path.join(root, "node_modules");
+    fs.mkdirSync(path.join(modules, ".bin"), { recursive: true });
+    for (const entry of fs.readdirSync(nodeModules).filter((f) => f !== ".bin"))
+      fs.symlinkSync(path.join(nodeModules, entry), path.join(modules, entry), fs.statSync(path.join(nodeModules, entry)).isDirectory() ? "dir" : "file");
+    for (const tool of ["quint", "lsc"]) {
+      const executable = process.platform === "win32" ? `${tool}.cmd` : tool;
+      fs.symlinkSync(path.join(nodeModules, ".bin", executable), path.join(modules, ".bin", executable), "file");
+    }
     const script = path.join(root, "tools/spec.ts");
     const first = await runCli(script, root, "check", "--json");
     const checked = JSON.parse(first.stdout);
@@ -816,6 +856,19 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     const again = JSON.parse(second.stdout);
     assert.ok(again.results.some((r: Result) => r.stage === "proof" && r.ok), second.stdout + second.stderr);
     assert.ok(fs.readFileSync(path.join(root, "gen/proof/highest/highest.dfy"), "utf8").includes(marker));
+    fs.writeFileSync(path.join(root, "tsconfig.json"), '{"compilerOptions":{"noEmit":true},"include":["gen/*.ts"]}');
+    if (process.platform !== "win32") {
+      const compiler = path.join(modules, ".bin/tsc");
+      fs.writeFileSync(compiler, "#!/bin/sh\nexit 1\n");
+      fs.chmodSync(compiler, 0o644);
+    }
+    fs.appendFileSync(path.join(root, "spec/highest.proof.dfy"), "// Recheck the proof beside the failed compiler.\n");
+    const failed = await runCli(script, root, "check", "--json");
+    const result = JSON.parse(failed.stdout);
+    assert.equal(failed.status, 1, failed.stdout + failed.stderr);
+    assert.ok(result.results.some((r: Result) => r.stage === "types" && !r.ok), failed.stdout);
+    assert.ok(result.results.some((r: Result) => r.stage === "proof" && r.ok), failed.stdout);
+    assert.ok(!fs.existsSync(path.join(root, ".spec-cache/lock")));
   });
 
   test("a story's text, a definition a rule relies on, here or in an imported spec, and a src contract are each reviewed", () => {
@@ -850,6 +903,52 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     edit("src/ledger.ts", (s) => s.replace(/^.*\/\/@.*\n/gm, ""));
     fs.rmSync(path.join(root, "src/extra.ts"));
     assert.deepEqual(contract(), ["src/extra.ts: contract removed", "src/ledger.ts: contract removed"]);
+  });
+
+  test("a namespaced dependency remains reviewed when a local definition has the same name", () => {
+    const wrap = (text: string) => `# Names\n\n## Rules\n\n### Identity\n\n${F}quint\n${text}\n${F}\n`;
+    const root = scratch({
+      "spec/lib.md": wrap("pure def identity(n: int): int = n"),
+      "spec/use.md": wrap('import lib as L from "./lib"\npure def identity(n: int): int = 0\npure def lawIdentity(n: int): bool = L::identity(n) == n'),
+    });
+    for (const spec of readSpecs(root)) acceptReviews(root, spec);
+    fs.writeFileSync(path.join(root, "spec/lib.md"), wrap("pure def identity(n: int): int = n + 0"));
+    assert.ok(pendingItems(root).some((item) => item.includes("model changed through") && item.includes("identity")), pendingItems(root).join("\n"));
+  });
+
+  test("a comment cannot hide an imported rule's dependency from review", () => {
+    const wrap = (text: string) => `# Names\n\n## Rules\n\n### Imported\n\n${F}quint\n${text}\n${F}\n`;
+    const lib = wrap("pure def value(n: int): int = n + 1");
+    const use = `# Use\n\n## Rules\n\n### Local\n\n${F}quint\nimport lib.* from "./lib"\n/*\npure def value(n: int): int = 0\n*/\npure def other(n: int): int = n\n${F}\n\n### Uses imported value\n\n${F}quint\npure def lawValue(n: int): bool = value(n) > n\n${F}\n`;
+    const root = scratch({ "spec/lib.md": lib, "spec/use.md": use });
+    for (const spec of readSpecs(root)) acceptReviews(root, spec);
+    fs.writeFileSync(path.join(root, "spec/lib.md"), lib.replace("n + 1", "n + 2"));
+    assert.ok(pendingItems(root).some((item) => item.startsWith("Rules / Uses imported value: model changed through") && item.includes("value")), pendingItems(root).join("\n"));
+  });
+
+  test("source edited by a test cannot be accepted with a proof of its earlier contents", async () => {
+    const source = "//@ pure\nexport function one(): number {\n  //@ ensures \\result === 1\n  return 1;\n}\n";
+    const changed = source.replace("return 1", "return 2");
+    const root = fixtures(["door"], (f) => {
+      f["src/count.ts"] = source;
+      f["test/change.test.ts"] = `import fs from "node:fs";\nimport { test } from "node:test";\ntest("an editor changes source", () => fs.writeFileSync("src/count.ts", ${JSON.stringify(changed)}));\n`;
+    });
+    for (const spec of readSpecs(root)) acceptReviews(root, spec);
+    acceptContracts(root);
+    const ledger = fs.readFileSync(path.join(root, "spec/src.lock.json"), "utf8");
+    const result = await run(root, "reviews");
+    assert.ok(result.failed.length > 0, result.text);
+    assert.match(result.text, /source.*changed|changed.*source|changed during|changed while/i);
+    assert.equal(fs.readFileSync(path.join(root, "spec/src.lock.json"), "utf8"), ledger);
+  });
+
+  test("moving an unchanged contract to another function requires review", () => {
+    const text = "//@ pure\nexport function one(): number {\n  //@ ensures \\result === 1\n  return 1;\n}\n//@ pure\nexport function two(): number {\n  return 2;\n}\n";
+    const root = scratch({ "src/count.ts": text });
+    fs.mkdirSync(path.join(root, "spec"));
+    acceptContracts(root);
+    fs.writeFileSync(path.join(root, "src/count.ts"), text.replace("  //@ ensures \\result === 1\n", "").replace("  return 2;", "  //@ ensures \\result === 1\n  return 2;"));
+    assert.deepEqual(pendingContracts(root).map((p) => p.status), ["contract changed"]);
   });
 
   test("accept records a changed story and a changed contract, after which nothing is left to reconcile", async () => {
@@ -1047,6 +1146,8 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
       ["an annotation in a string", 'export const note = "//@ ensures false";', /`\/\/@` here is not in a `\/\/` comment/],
       ["an annotation in a template", "export const note = `${1} //@ ensures false`;", /`\/\/@` here is not in a `\/\/` comment/],
       ["a NUL character", "export const x = 1; // \0", /NUL characters are not allowed/],
+      ["a carriage return in a comment", "export const x = 1; // \r hidden", /line break/],
+      ["a Unicode line break in a comment", "export const x = 1; // \u2028 hidden", /line break/],
     ];
     for (const [what, code, message] of refused) assert.throws(() => checkVerifiedSource("src/x.ts", `//@ backend dafny\n${code}\n`), message, what);
     checkVerifiedSource("src/ledger.ts", read("src/ledger.ts"));

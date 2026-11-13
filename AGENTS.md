@@ -203,13 +203,19 @@ is generated. The role of a definition comes from its name and signature:
 | `type Order = { … }`, `type Status = A \| B` | the vocabulary | `interface Order`, `type Status = "A" \| "B"` |
 | `pure val initial: Order = …` | the initial state; its type is *the state type*. A spec without one is a library | `initial`, `parseState`, and a proof that it satisfies every `always` rule |
 | `pure def pay(o: Order, amount: int): Order` | a transition: any `pure def` whose first parameter is the state and that returns the state | `pay(o, amount)`, an `Event` variant `{ type: "pay", amount }`, a case in `step`, `enabled` and `parseEvent`, and proofs that it preserves every rule |
-| `pure def canPay(o: Order, amount: int): bool` | the guard of `pay` (same parameters); optional | `canPay`, used by `enabled` and `step`. What is proved about `pay` is proved for the cases the guard allows. A guard may call its own transition to look at the result |
+| `pure def canPay(o: Order, amount: int): bool` | the guard of `pay`; takes the state and any subset of its other parameters, matched by name and type | `canPay`, used by `enabled` and `step`. What is proved about `pay` is proved for the cases the guard allows. A guard may call its own transition to look at the result |
 | `pure def alwaysPaidWithinDue(o: Order): bool` | a rule that holds in every reachable state | a conjunct of `inv`; simulated and proved |
 | `pure def stepNeverGoesBack(before: Order, after: Order): bool` | a rule about every single step | a postcondition on every transition; simulated and proved |
+| `pure def stepAuthorized(before: Order, via: str, after: Order): bool` | a step rule that also sees the transition name | a postcondition on every transition |
 | `pure def sometimesPaid(o: Order): bool` | a state that must be reachable | a reachability check with a witness trace |
 | `pure def lawTotalIsNotNegative(xs: List[int]): bool` | a law: true for every value of its parameters | a function proved to return `true`, and sampled by the simulator |
-| `pure val idValues = Set(1, 2, 3)` | what the simulator tries for a parameter named `id`. It must be a set; any Quint is allowed in it | nothing: it never reaches TypeScript |
+| `pure val idValues = Set(1, 2, 3)` | what the simulator tries for a parameter named `id`. It must be a set whose elements match the parameter type; any supported Quint is allowed in it | nothing: it never reaches TypeScript |
 | any other `pure val` or `pure def` | a constant or helper | the same constant or function |
+
+A transition parameter named `by` identifies its sender. All such parameters
+use the same type. It is supplied separately as `enabled(current, event, by)`
+and `step(current, event, by)`; it never comes from `parseEvent`. The shell
+must validate the authenticated sender before supplying it.
 
 A helper that takes the state first and returns the state would be taken for
 a transition. Give it the state as its second parameter, or return something
@@ -328,7 +334,7 @@ is in the [`sync` skill](.claude/skills/sync/SKILL.md).
 | document | `spec/lock.json`, `specs[<path>]["@document"]` | title, introduction and links before the first story, whitespace collapsed | `document changed` |
 | story | `spec/lock.json`, `specs[<path>]["## <title>"]` | its text, whitespace collapsed | `story has no rules`, `new story`, `story changed`, `removed or renamed` |
 | rule | `spec/lock.json`, `specs[<path>][<story> / <heading>]` | 1. its prose, whitespace collapsed<br>2. its Quint<br>3. the Quint of every rule it relies on | `not formalized` (no Quint), `new`, `prose changed`, `model changed`, `model changed through <names> (<rule>)`, `prose and model both changed`, `removed or renamed` |
-| contract | `spec/lock.json`, `contracts["src/<path>.ts"]` | its `//@` lines | `new contract`, `contract changed`, `contract removed` |
+| contract | `spec/lock.json`, `contracts["src/<path>.ts"]` | its `//@` lines and the declarations they belong to | `new contract`, `contract changed`, `contract removed` |
 
 ```mermaid
 flowchart LR
@@ -572,7 +578,7 @@ a tarball made with `npm pack`.
 
 ```sh
 npm install --save-dev /path/to/vibespec-0.1.0.tgz
-npx spec init          # adds what is missing; replaces nothing
+npx spec init          # adds what is missing; updates only its own marked instructions
 npx spec new           # fill an empty spec/index.md
 npx spec new <name>    # a starter spec/<name>/index.md
 npm run check
@@ -580,14 +586,15 @@ npm run check
 
 | `spec init` adds | |
 |---|---|
-| `.claude/skills/sync/`, `.claude/skills/design/`, `AGENTS.md`, `CONTRIBUTING.md` | the agent's procedure and this reference, and a pointer to them |
+| `.claude/skills/sync/`, `.claude/skills/design/`, `AGENTS.md`, `CONTRIBUTING.md` | the agent's procedure and this reference; existing AGENTS content is kept around a marked Vibespec section |
+| `CLAUDE.md` | imports `AGENTS.md`, preserving any existing instructions |
 | `tsconfig.json`, an empty `spec/index.md` | |
 | `.gitignore` | `gen/`, `.spec-cache/` |
 | `package.json` scripts | `check`, `gen`, `accept` |
 
 `spec` works on `spec/**/*.md`, and optionally `src/`, the package's
-[tests](#tests) and a `tsconfig.json`, in the directory it is run from. Without a `tsconfig.json`
-nothing is typechecked, and the check says so. To hand the generated code to another package, compile `gen/*.ts`
+[tests](#tests) and a `tsconfig.json`, in the directory it is run from. Without a `tsconfig.json`, a package containing `src/` or `test/` fails the
+types stage; a spec-only package reports that there is no code to typecheck. To hand the generated code to another package, compile `gen/*.ts`
 with `tsc`; it has no dependencies.
 
 ## Large applications
@@ -625,6 +632,10 @@ In the vibespec-starter repository:
 | File | Role |
 |---|---|
 | `tools/spec.ts` | the pipeline and the `spec` command |
+| `tools/parse.ts`, `tools/review.ts` | literate specs and the review ledgers |
+| `tools/cache.ts`, `tools/run.ts` | stage caches and bounded tool execution |
+| `tools/units.ts`, `tools/simulate.ts` | generation, proof units, simulation and replay |
+| `tools/util.ts` | source discovery, test execution and citations |
 | `tools/prove.ts` | proves one unit: checks and splices the proof file, runs LemmaScript and `dafny audit`, and rechecks alone every postcondition a failing one could hide |
 | `tools/proof/lib.dfy` | the library proof files call |
 | `tools/gen.ts` | the translator: reads what a module imports and defines |
