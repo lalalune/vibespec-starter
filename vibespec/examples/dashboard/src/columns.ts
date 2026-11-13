@@ -1,7 +1,4 @@
 //@ backend dafny
-// Hand-written because Quint has no loops; `npm run check` proves its contracts.
-
-/** A column as base-26 digits, most significant first: 0 is [0] (A), 26 is [0, 0] (AA). */
 export function columnDigits(col: number): number[] {
   //@ requires col >= 0
   //@ ensures \result.length >= 1
@@ -20,7 +17,6 @@ export function columnDigits(col: number): number[] {
   return digits;
 }
 
-/** The letters a person sees: 0 is "A", 27 is "AB". */
 export function columnName(col: number): string {
   //@ requires col >= 0
   return columnDigits(col).map((d) => String.fromCharCode(65 + d)).join("");

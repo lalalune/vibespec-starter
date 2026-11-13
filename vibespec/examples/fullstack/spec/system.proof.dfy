@@ -1,9 +1,3 @@
-// Proofs that the network, the server and the two tabs keep the system's
-// rules. What each part does to its own rules comes from the laws the server
-// and client specs state (and prove) about themselves; what is left is about
-// copies of the list: every copy in a tab or on the network is the list as it
-// was at its version.
-
 // Taking a message off the network leaves only messages that were on it.
 lemma DropFrom(net: seq<Msg>, i: int, rest: seq<Msg>, from: Cut)
   requires forall x :: x in from.out ==> x in net

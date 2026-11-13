@@ -1,9 +1,5 @@
-// spec/tracker.md, "One pass of the notifier sends everything that is due and records that it was sent"
-// The shell around `notify`: one chat message per person. It touches the outside world, so test/notify.test.ts
-// tests it; no proof. Duplicates are already ruled out by "Nothing is sent twice".
-import type { Note } from "../gen/tracker.ts";
-
-export interface Message { to: string; handle: string; text: string }
+// spec/tracker.md, "One pass of the notifier sends everything that is due and records that it was sent"; test/notify.test.ts
+import type { Note, Tracker } from "../gen/tracker.ts";
 
 const LINE: Record<Note["kind"], (n: Note) => string> = {
   Update: (n) => `✎ #${n.task} changed`,
@@ -11,16 +7,12 @@ const LINE: Record<Note["kind"], (n: Note) => string> = {
   Today: (n) => `⚠ #${n.task} due today`,
 };
 
-/** One message per person with a chat handle, in the order people first appear. */
-export function messages(notes: Note[], handles: Record<string, string>): Message[] {
-  const byPerson = new Map<string, string[]>();
-  for (const n of notes) if (handles[n.to]) byPerson.set(n.to, [...(byPerson.get(n.to) ?? []), LINE[n.kind](n)]);
-  return [...byPerson].map(([to, lines]) => ({ to, handle: handles[to]!, text: lines.join("\n") }));
-}
-
-/** Sends one pass's notes; returns how many messages went out. */
-export async function send(notes: Note[], handles: Record<string, string>, post: (handle: string, text: string) => Promise<void>): Promise<number> {
-  const out = messages(notes, handles);
-  for (const m of out) await post(m.handle, m.text);
-  return out.length;
+export async function send(before: Tracker, after: Tracker, handles: Map<string, string>, post: (handle: string, text: string) => Promise<void>): Promise<number> {
+  const byHandle = new Map<string, string[]>();
+  for (const n of after.sent.slice(before.sent.length)) {
+    const handle = handles.get(n.to);
+    if (handle) byHandle.set(handle, [...(byHandle.get(handle) ?? []), LINE[n.kind](n)]);
+  }
+  for (const [handle, lines] of byHandle) await post(handle, lines.join("\n"));
+  return byHandle.size;
 }

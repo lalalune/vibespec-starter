@@ -1,10 +1,9 @@
-// The unverified shell: storage and error reporting around the verified core.
+// spec/index.md, "Story: Check out"; spec/index.md, "Story: Cancel"
 import { type Event, type Order, enabled, parseEvent, step } from "../gen/index.ts";
 import { balance, replay } from "./ledger.ts";
 
 export class Rejected extends Error {}
 
-/** An event-sourced order book. Only events the rules allow are ever stored. */
 export class OrderBook {
   private logs = new Map<string, Event[]>();
 
@@ -12,7 +11,6 @@ export class OrderBook {
     return replay(this.logs.get(id) ?? []);
   }
 
-  /** `input` may come straight from the network: it is parsed into an event before the rules see it. */
   dispatch(id: string, input: unknown): Order {
     const event = parseEvent(input);
     if (!event) throw new Rejected("not a well-formed event");

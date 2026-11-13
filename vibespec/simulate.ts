@@ -6,8 +6,8 @@ import { pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import type { Model } from "./gen.ts";
 import { SENDER } from "./gen/classify.ts";
-import { run } from "./prove.ts";
-import { digest } from "./util.ts";
+import { run } from "./run.ts";
+import { sha } from "./util.ts";
 
 export const SAMPLES = 10000;
 export const WITNESS_SAMPLES = 20 * SAMPLES;
@@ -53,11 +53,8 @@ function readTrace(file: string, model: Model): Step[] {
   });
 }
 
-/**
- * The simulator's seed: SPEC_SEED if it is set, otherwise one derived from what is simulated, so that the same
- * harness always gives the same traces and a counterexample can be had again.
- */
-const seedFor = (...what: string[]) => process.env.SPEC_SEED?.trim() || String(parseInt(digest(what.join("\0")).slice(0, 12), 16));
+/** The simulator's seed, derived from what is simulated, so that the same harness always gives the same traces. */
+const seedFor = (...what: string[]) => String(parseInt(sha(...what).slice(0, 12), 16));
 
 /**
  * Quint installs its evaluator the first time it simulates, and runs started together would race to. Until it is
@@ -67,16 +64,14 @@ let evaluatorInstalled = false;
 let firstRun: Promise<void> | undefined;
 function evaluatorIsInstalled(root: string): boolean {
   if (evaluatorInstalled) return true;
-  try {
-    for (const from of [import.meta.url, pathToFileURL(path.join(root, "package.json")).href]) {
-      let manager: string;
-      try { manager = createRequire(from).resolve("@informalsystems/quint/dist/src/rust/binaryManager.js"); } catch { continue; }
-      const version = fs.readFileSync(manager, "utf8").match(/QUINT_EVALUATOR_VERSION = '([^']+)'/)?.[1];
-      const home = process.env.QUINT_HOME ?? path.join(os.homedir(), ".quint");
-      const exe = process.platform === "win32" ? "quint_evaluator.exe" : "quint_evaluator";
-      if (version && fs.existsSync(path.join(home, `rust-evaluator-${version}`, exe))) return (evaluatorInstalled = true);
-    }
-  } catch { /* not known to be installed */ }
+  for (const from of [import.meta.url, pathToFileURL(path.join(root, "package.json")).href]) {
+    let manager: string;
+    try { manager = createRequire(from).resolve("@informalsystems/quint/dist/src/rust/binaryManager.js"); } catch { continue; }
+    const version = fs.readFileSync(manager, "utf8").match(/QUINT_EVALUATOR_VERSION = '([^']+)'/)?.[1];
+    const home = process.env.QUINT_HOME ?? path.join(os.homedir(), ".quint");
+    const exe = process.platform === "win32" ? "quint_evaluator.exe" : "quint_evaluator";
+    if (version && fs.existsSync(path.join(home, `rust-evaluator-${version}`, exe))) return (evaluatorInstalled = true);
+  }
   return false;
 }
 async function simulating<T>(root: string, go: () => Promise<T>): Promise<T> {
@@ -95,17 +90,16 @@ const MAX_SHARDS = 4;
  * Simulate the harness until `invariant` breaks; returns the traces Quint wrote, and the command that runs the same
  * simulation again. One run of Quint uses one core, so with `split` a large budget is split among up to four runs of a
  * single thread, each with a seed of its own; how it is split depends only on the budget, so the same harness always gives
- * the same traces. With SPEC_SEED set, nothing is split, and the seed is the one given. When a run breaks the
- * invariant, the command is the one for that run.
+ * the same traces. When a run breaks the invariant, the command is the one for that run.
  */
 export async function simulate(root: string, model: Model, invariant: string, traces: number, samples: number, step = "step", split = false, steps = STEPS): Promise<{ broken: boolean; traces: Step[][]; again: string }> {
   const dir = path.join(root, "gen/traces", `${model.name}.${invariant}.${step}`);
   fs.rmSync(dir, { recursive: true, force: true });
-  const shards = !split || process.env.SPEC_SEED?.trim() ? 1 : Math.max(1, Math.min(MAX_SHARDS, Math.floor(samples / SHARD_SAMPLES)));
+  const shards = split ? Math.max(1, Math.min(MAX_SHARDS, Math.floor(samples / SHARD_SAMPLES))) : 1;
   const runs = Array.from({ length: shards }, async (_, k) => {
     const out = shards === 1 ? dir : path.join(dir, String(k));
     fs.mkdirSync(out, { recursive: true });
-    const seed = shards === 1 ? seedFor(model.harness, invariant, step, String(samples), String(steps)) : seedFor(model.harness, invariant, step, String(samples), String(steps), `${k} of ${shards}`);
+    const seed = seedFor(model.harness, invariant, step, String(samples), String(steps), ...(shards === 1 ? [] : [`${k} of ${shards}`]));
     const args = ["run", `gen/${model.name}.run.qnt`, "--main", `${model.name}_run`, "--step", step, "--invariant", invariant,
       "--max-samples", String(Math.ceil(samples / shards)), "--max-steps", String(steps), "--mbt", "--seed", seed, ...(shards === 1 ? [] : ["--n-threads", "1"])];
     const r = await simulating(root, () => run("quint", [...args, "--n-traces", String(Math.ceil(traces / shards)), "--out-itf", path.join(out, "{seq}.itf.json")], root));

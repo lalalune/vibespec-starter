@@ -1,12 +1,4 @@
-// Proofs that each transition of projects.md keeps a sheet to one project and
-// a key to one project, and that the admin screen never creates a shared
-// channel.
-//
-// The two `always` rules count with Std.Collections.Seq.Filter. The bridges
-// below restate the generated definitions with ProofLib.Filter, whose facts
-// meet the generated terms, and then as "no two entries have the same sheet"
-// (or key). Each transition is then argued on that plain form. Lambdas passed
-// to ProofLib are copied verbatim from gen/proof/projects/projects.dfy.
+// spec/projects.md, "A sheet is connected as at most one project"; spec/projects.md, "The admin screen never gives two projects the same channel"; ProofLib.Filter (vibespec/proof/lib.dfy)
 
 // ---- obligations ----
 

@@ -1,5 +1,4 @@
-// Proofs for spec/tracker.md. Every transition's body has the shape
-// `if inv(s) && can<X>(...) { var s2 := <x>(s, ...); ... }` and calls the helpers after it.
+// spec/tracker.md; ProofLib (vibespec/proof/lib.dfy)
 
 lemma create_ensures(s: Tracker, actor: string)
   ensures (inv(s) ==> canCreate(s, actor) ==> alwaysTheWarningListIsTheTruth(create(s, actor)))
@@ -640,7 +639,7 @@ lemma notify_ensures(s: Tracker)
   }
 }
 
-// ===== Task numbers are unique (F4) =====
+// ===== spec/tracker.md, "Task numbers are unique and never above the counter" =====
 
 // The rule, restated over ProofLib.Filter.
 lemma TUniqueBridge(s: Tracker)
@@ -703,7 +702,7 @@ lemma TFilterKeepsUnique(f: Task -> bool, xs: seq<Task>)
   }
 }
 
-// ===== The warning list is the truth, for every state (F6) =====
+// ===== spec/tracker.md, "The warning list is empty exactly when the data is well formed" =====
 
 // One task has no problem exactly when it is well formed.
 lemma TTaskClean(s: Tracker, t: Task)
@@ -728,7 +727,7 @@ lemma TWarningList(s: Tracker)
   }
 }
 
-// ===== No one is told twice in one pass, for every state (F10) =====
+// ===== spec/tracker.md, "A person named twice in a cell is told once" =====
 
 lemma TNoOneToldTwice(s: Tracker)
   ensures alwaysNoOneIsToldTwiceInOnePass(s)
@@ -744,7 +743,7 @@ lemma TNoOneToldTwice(s: Tracker)
   }
 }
 
-// ===== Problems depend only on the members and each task's number, owners and links (F5) =====
+// ===== Problems depend only on the members and each task's number, owners and links =====
 
 // Same task numbers and links, position by position: the same tasks exist, and link back alike.
 lemma TSameLinksHasTask(s: Tracker, s2: Tracker)
@@ -870,7 +869,7 @@ lemma TNoNewProblem(s: Tracker, s2: Tracker)
   }
 }
 
-// ===== Counter and bookkeeping when tasks are only removed (F11) =====
+// ===== Counter and bookkeeping when tasks are only removed =====
 
 lemma TFilterTasks(f: Task -> bool, xs: seq<Task>)
   ensures forall t :: t in ProofLib.Filter(f, xs) ==> t in xs
@@ -882,7 +881,7 @@ lemma TFilterTasks(f: Task -> bool, xs: seq<Task>)
   }
 }
 
-// ===== What was sent is recorded (the new rule) =====
+// ===== spec/tracker.md, "Every note sent is recorded on its task" =====
 
 // Every note sent before is still recorded when each remaining task is an old one that recorded at least as much, or a new number.
 lemma TOldNotesRecorded(s: Tracker, s2: Tracker)
@@ -912,7 +911,7 @@ lemma TSentRecordedKept(s: Tracker, s2: Tracker)
   TOldNotesRecorded(s, s2);
 }
 
-// ===== The notes of one notifier pass (F9) =====
+// ===== spec/tracker.md, "One pass of the notifier sends everything that is due and records that it was sent" =====
 
 // What a fold that appends h(x) for each x holds.
 lemma TFoldConcatMember<A, T>(f: (seq<A>, T) -> seq<A>, h: T -> seq<A>, init: seq<A>, xs: seq<T>, x: A)
@@ -1030,7 +1029,7 @@ lemma TMemberAddedSameProblems(s: Tracker, t: Task, t2: Task, owner: string)
   ProofLib.FilterAppend((o: string) => !((o in s.owners)), t.owners, owner);
 }
 
-// ===== Nothing is sent twice by a notifier pass =====
+// ===== spec/tracker.md, "Nothing is sent twice" =====
 
 // Two lists without repeated keys, and no key in both: their concatenation repeats no key.
 lemma TDistinctByConcat<T, K>(a: seq<T>, b: seq<T>, key: T -> K)
@@ -1156,7 +1155,7 @@ lemma TNotifyNothingSentTwice(s: Tracker)
   TSentDistinct(s2.sent);
 }
 
-// ===== Edits that only take owners away, or members away, add no problem (part of F7) =====
+// ===== Edits that only take owners away, or members away, add no problem =====
 
 // A problem is on the warning list exactly when it is a problem of one of the tasks.
 lemma TProblemsMember(s: Tracker, p: Problem)
@@ -1496,7 +1495,7 @@ lemma TUnrelateTask(s: Tracker, id: int, other: int, actor: string, i: int)
   TProblemsOfSubset(s, s2, t, t2);
 }
 
-// ===== Ancestors only shrink when links only shrink (part of F7) =====
+// ===== Ancestors only shrink when links only shrink =====
 
 // What the parent-collecting fold holds: every parent, other than the task itself, of a task it read.
 lemma TParentsFoldMember(init: seq<int>, ts: seq<Task>, x: int)
@@ -1872,7 +1871,7 @@ lemma TFixOneSided(s: Tracker, index: int, k: int)
   }
 }
 
-// ===== A fix shortens the warning list (F8) =====
+// ===== spec/tracker.md, "A one-click fix removes its problem and adds none" =====
 
 // A predicate that passes less often keeps no more, and fewer if it fails somewhere the other passes.
 lemma TFilterImpLen<T>(f: T -> bool, g: T -> bool, xs: seq<T>)
@@ -2139,10 +2138,10 @@ lemma TFixShortens(s: Tracker, index: int)
 }
 
 
-// ===== The ancestor search finds everything there is to find (F7) =====
+// ===== spec/tracker.md, "Everything a task depends on, however far back" =====
 // A list c is closed when it holds every parent (other than itself) of each task it names.
 
-// A subset is no larger. (General: belongs in tools/proof/lib.dfy.)
+// A subset is no larger.
 lemma TSubsetCard(a: set<int>, b: set<int>)
   requires a <= b
   ensures |a| <= |b|

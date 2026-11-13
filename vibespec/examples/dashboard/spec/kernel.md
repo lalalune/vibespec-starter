@@ -2,8 +2,8 @@
 
 The small calculations behind the dashboard's promises: the number a new task
 row receives, when a task's owners hear about a change, which due-date reminder
-is next, and where a page of a list begins. Whole numbers only. The other specs
-import this one.
+is next, and where a page of a list begins. Whole numbers only. tracker.md
+imports this one.
 
 ## Story: An ID is never issued twice
 

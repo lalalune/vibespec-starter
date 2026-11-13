@@ -1,21 +1,13 @@
 // The studio's view of a spec, and the manifest of what a publish changed since the agent last synced.
-// A spec is read losslessly: writeDoc(parseDoc(text)) === text, so a file nobody edited is written back unchanged.
+// A spec is read losslessly: writeDoc (public/doc.js) gives back the text parseDoc read, so a file nobody edited is written back unchanged.
 import fs from "node:fs";
 import path from "node:path";
 import { danglingCitations, dependencies, parseSpec, scanSpec, type Spec } from "../spec.ts";
 import { readSpecs, specName } from "../parse.ts";
-
-/** A run of prose, or the code of one quint block. */
-export interface Item { quint: boolean; text: string }
-/** A `###` rule: its heading text and everything up to the next heading, raw; `items` is the same body read for display. */
-export interface DocRule { title: string; body: string; items: Item[] }
-/** A `##` story or group of rules. `title` is null for rules that come before any `##`. */
-export interface DocSection { title: string | null; body: string; rules: DocRule[] }
-/** `title` is the `# ` line, if the file starts with one; `body` runs to the first heading. */
-export interface Doc { title: string | null; body: string; sections: DocSection[] }
+import { diffOps, nodeId, ruleKey, storyKey, type Doc, type DocRule, type DocSection, type Item } from "./public/doc.js";
 
 export function parseDoc(text: string): Doc {
-  const doc: Doc = { title: null, body: "", sections: [] };
+  const doc: Doc = { title: null, body: "", sections: [], newline: text.endsWith("\n") };
   let section: DocSection | undefined;
   let rule: DocRule | undefined;
   const lines = scanSpec(text);
@@ -33,10 +25,6 @@ export function parseDoc(text: string): Doc {
   for (const s of doc.sections) for (const r of s.rules) r.items = itemsOf(r.body);
   return doc;
 }
-
-export const writeDoc = (doc: Doc) =>
-  (doc.title === null ? "" : `# ${doc.title}\n`) + doc.body
-  + doc.sections.map((s) => (s.title === null ? "" : `## ${s.title}\n`) + s.body + s.rules.map((r) => `### ${r.title}\n${r.body}`).join("")).join("");
 
 /** A rule's body as alternating prose and quint code, trimmed, empty runs dropped. */
 export function itemsOf(body: string): Item[] {
@@ -57,16 +45,13 @@ export function itemsOf(body: string): Item[] {
 
 /** A story or rule, in one spec, under the key the review ledger uses (spec.ts, `pending`). */
 export interface Node { id: string; file: string; key: string; kind: "story" | "rule"; parent?: string; heading: string; prose: string; quint: string }
-export const nodeId = (file: string, key: string) => `${file}\0${key}`;
-const storyKey = (title: string | null) => (title === null ? "" : `## ${title.trim()}`);
-const ruleKey = (section: string | null, title: string) => `${section?.trim() ?? ""} / ${title.trim()}`;
 const collapse = (s: string) => s.replace(/\s+/g, " ").trim();
 
 export function nodesOf(file: string, text: string): Node[] {
   return parseDoc(text).sections.flatMap((s) => {
     const story: Node = { id: nodeId(file, storyKey(s.title)), file, key: storyKey(s.title), kind: "story", heading: s.title?.trim() ?? "", prose: collapse(s.body), quint: "" };
     return [...(s.title === null ? [] : [story]), ...s.rules.map((r): Node => ({
-      id: nodeId(file, ruleKey(s.title, r.title)), file, key: ruleKey(s.title, r.title), kind: "rule", parent: story.id, heading: r.title.trim(),
+      id: nodeId(file, ruleKey(s.title, r.title)), file, key: ruleKey(s.title, r.title), kind: "rule", parent: s.title === null ? undefined : story.id, heading: r.title.trim(),
       prose: collapse(r.items.filter((i) => !i.quint).map((i) => i.text).join("\n")),
       quint: r.items.filter((i) => i.quint).map((i) => i.text.split("\n").map((l) => l.trimEnd()).join("\n").trim()).join("\n\n"),
     }))];
@@ -114,19 +99,8 @@ const TODO = {
   ruleDeleted: "Check that no story still depends on it",
 };
 
-/** Longest common subsequence of two lists of ids; what is not in it moved. */
-function moved(before: string[], after: string[]): Set<string> {
-  const n = before.length, m = after.length;
-  const t = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
-  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) t[i][j] = before[i] === after[j] ? t[i + 1][j + 1] + 1 : Math.max(t[i + 1][j], t[i][j + 1]);
-  const kept = new Set<string>();
-  for (let i = 0, j = 0; i < n && j < m; ) {
-    if (before[i] === after[j]) { kept.add(before[i]); i++; j++; }
-    else if (t[i + 1][j] >= t[i][j + 1]) i++;
-    else j++;
-  }
-  return new Set(after.filter((id) => !kept.has(id)));
-}
+/** The ids of `after` that are out of their order in `before`. */
+const moved = (before: string[], after: string[]) => new Set(diffOps(before, after).filter(([op]) => op === "+").map(([, id]) => id));
 
 const specsOf = (root: string, texts: Record<string, string>): Spec[] => {
   try { return readSpecs(root, texts); } catch {
@@ -221,10 +195,12 @@ export function manifestOf(root: string, baseline: Record<string, string>, curre
   for (const s of specs) if (edited.includes(s.file)) visit(s, "edited");
   const modules = new Set(regenerate.map((r) => r.gen.slice(4)).concat(Object.keys(baseline).filter((f) => !(f in current)).map((f) => `${specName(f)}.ts`)));
   const code = ["src", "test"].flatMap((dir) => fs.existsSync(path.join(root, dir)) ? (fs.readdirSync(path.join(root, dir), { recursive: true }) as string[]).map((f) => path.join(dir, f)) : [])
-    .filter((f) => /\.[cm]?tsx?$/.test(f) && [...modules].some((m) => fs.readFileSync(path.join(root, f), "utf8").includes(`gen/${m}`))).map((f) => f.split(path.sep).join("/")).sort();
-  let citations: string[] = [];
-  try { citations = danglingCitations(root, specs); } catch { /* no code to read */ }
-  return { published: new Date().toISOString(), changes, regenerate, code, citations };
+    .filter((f) => {
+      if (!/\.[cm]?tsx?$/.test(f)) return false;
+      const text = fs.readFileSync(path.join(root, f), "utf8");
+      return [...modules].some((m) => text.includes(`gen/${m}`));
+    }).map((f) => f.split(path.sep).join("/")).sort();
+  return { published: new Date().toISOString(), changes, regenerate, code, citations: danglingCitations(root, specs) };
 }
 
 // --- the prompt ---------------------------------------------------------------------------------

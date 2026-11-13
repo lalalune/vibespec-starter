@@ -1,16 +1,11 @@
 {
+  "extends": "./tsconfig.json",
   "compilerOptions": {
-    "target": "es2023",
-    "module": "nodenext",
-    "strict": true,
+    "noEmit": false,
+    "allowImportingTsExtensions": false,
     "outDir": "dist",
     "rootDir": "vibespec",
-    "rewriteRelativeImportExtensions": true,
-    "erasableSyntaxOnly": true,
-    "skipLibCheck": true,
-    "types": [
-      "node"
-    ]
+    "rewriteRelativeImportExtensions": true
   },
   "include": [
     "vibespec/spec.ts",

@@ -24,6 +24,3 @@ Written by hand here, with no help from the tools yet:
 | The model and the world as adversaries | their choices are event parameters; the simulator tries every sender |
 | Secrets | effects tagged `secret` |
 | Effects | an outbox in the state |
-
-This example models a trusted sender and a durable outbox. It does not
-implement authentication, a browser, payment execution or durable storage.

@@ -1,20 +1,15 @@
-// spec/server.md, "A request is answered only once"
-// The wire format shared by the backend (src/server.ts) and the frontend
-// (src/web/). A request is an event of the generated server machine other
-// than `refuse`, which is the server's own decision; an answer and a push
-// carry the list and its version, which the generated client machine takes as
-// `receiveAck`, `receiveRefusal` or `receiveSnapshot`.
+// spec/server.md, "A request is answered only once"; src/server.ts; src/web/sync.ts
 import type { Op, Todo } from "../gen/todo.ts";
 import type { Event } from "../gen/server.ts";
 
 /** What a client may ask the server to do: every event but `refuse`. */
 export type Request = Exclude<Event, { type: "refuse" }>;
 
-/** The server's answer to one request: was it applied, and the list as it now is. */
-export interface Answer { ok: boolean; seq: number; version: number; todos: Todo[] }
-
-/** The list at a version, as `GET /api/snapshot` returns it and `GET /api/stream` pushes it. */
+/** The list at a version, as `GET /api/stream` pushes it. */
 export interface Snapshot { version: number; todos: Todo[] }
+
+/** The server's answer to one request. */
+export interface Answer extends Snapshot { ok: boolean; seq: number }
 
 /** The request that asks the server to apply one queued edit of a client. */
 export function toRequest(client: string, seq: number, op: Op): Request | undefined {
@@ -34,5 +29,15 @@ export function opOf(r: Request): Op {
     case "setDone": return { kind: "done", id: r.id, title: "", done: r.done };
     case "rename": return { kind: "rename", id: r.id, title: r.title, done: false };
     case "remove": return { kind: "remove", id: r.id, title: "", done: false };
+  }
+}
+
+/** `text` as a JSON object, or undefined. */
+export function parseJson(text: string): Record<string, unknown> | undefined {
+  try {
+    const v: unknown = JSON.parse(text);
+    return typeof v === "object" && v !== null ? (v as Record<string, unknown>) : undefined;
+  } catch {
+    return undefined;
   }
 }

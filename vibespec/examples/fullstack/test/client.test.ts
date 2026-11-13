@@ -1,10 +1,7 @@
 // spec/client.md, "Story: Edit the list in the browser"; spec/client.md, "Story: Hear back from the server"
-// The page's reducer is the generated client `step`; these tests drive it the
-// way the page does.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { type Client, type Event, initial, inv, step, view, visible } from "../gen/client.ts";
-import { drain } from "../src/inbox.ts";
 
 const run = (events: Event[], from: Client = initial) => events.reduce(step, from);
 const milk = { id: "x", title: "milk", done: false, deleted: false };
@@ -63,8 +60,8 @@ test("a confirmed copy that already holds a queued edit shows it once", () => {
   assert.deepEqual(view(c), [milk]);
 });
 
-test("a batch of pushes is drained in order and keeps the client's rules", () => {
-  const c = drain(initial, [
+test("a batch of pushes is taken in order and keeps the client's rules", () => {
+  const c = run([
     { type: "receiveSnapshot", version: 1, todos: [milk] },
     { type: "receiveSnapshot", version: 3, todos: [] },
     { type: "receiveSnapshot", version: 2, todos: [milk] },

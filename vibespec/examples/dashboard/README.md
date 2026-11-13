@@ -1,13 +1,9 @@
 # Team task dashboard, modelled
 
-A synthesized team task dashboard: tasks live in a shared spreadsheet people
-also edit by hand, a chat app carries commands and notifications, a web
-dashboard shows the state. A separate package that depends on the toolchain
-like any project would.
+A team's tasks in a shared spreadsheet, chat notifications and a web dashboard.
 
 ```sh
-npm install
-npm run check
+npm run check --workspace dashboard-model
 ```
 
 | Path | Kind | Covers |
@@ -19,8 +15,6 @@ npm run check
 | `src/columns.ts` | hand-written, proved | Spreadsheet column letters (needs a loop) |
 | `src/notify.ts` | hand-written, tested | One notifier pass → one chat message per person |
 
-Not modelled: the chat app, HTTP, spreadsheet access, the web dashboard.
-
 ## What the checks found
 
 - **A name typed twice was notified twice.** A cell is a list, not a set
@@ -31,6 +25,3 @@ Not modelled: the chat app, HTTP, spreadsheet access, the web dashboard.
   whenever the dashboard writes a cell.
 - **A missing precondition.** `columnName` called `columnDigits` without
   showing the column is not negative; the proof refused it.
-
-Obligations that hold in simulation only are listed in
-`spec/unproved.lock.json`; `npm run check` shows where each stands.

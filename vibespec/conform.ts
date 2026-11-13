@@ -3,16 +3,22 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
-import { compareObservation, departure, transition, type Found, type Line, type Oracle } from "./conformance.ts";
+import { compareObservation, departure, transition, type Found, type Line, type Oracle, type Sent } from "./conformance.ts";
 import type { Model } from "./gen.ts";
 import type { Spec } from "./parse.ts";
 import type { Step } from "./simulate.ts";
 import { indent } from "./util.ts";
 
-export interface Machine { domain: Oracle<any, any>; model: Model; found: Found<any> }
+/** What `driver:` scripts replay besides the journeys: the simulator's own traces, kept out of the generated Found. */
+export interface Tested { found: Found<any>; traces: Sent<any>[][] }
+export interface Machine extends Tested { domain: Oracle<any, any>; model: Model }
+type Reported = [ok: boolean, stage: "traces", summary: string, detail: string, where: string];
+
+const header = (model: Model) => ({ spec: model.name, source: model.source, sender: !!model.sender, shape: model.shape!, outputShape: model.outputShape });
+const eventsOf = (trace: Step[]) => trace.flatMap((step) => step.event ? [step.event] : []);
 
 /** The events and witnessed journeys already examined by the simulator. */
-export function conformanceFound(domain: any, model: Model, spec: Spec, traces: Step[][], witnesses: { w: string; trace: Step[] }[]): Found<any> {
+export function conformanceFound(model: Model, spec: Spec, traces: Step[][], witnesses: { w: string; trace: Step[] }[]): Tested {
   const events = new Map<string, any>();
   for (const { event } of traces.flat()) if (event) events.set(JSON.stringify(event), event);
   for (const { evaluated } of traces.flat()) {
@@ -25,14 +31,15 @@ export function conformanceFound(domain: any, model: Model, spec: Spec, traces: 
     }
   }
   return {
-    spec: model.name, source: model.source, sender: !!model.sender, shape: model.shape!, outputShape: model.outputShape,
-    events: [...events.values()].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
-    journeys: witnesses.map(({ w, trace }) => {
-      const rule = spec.rules.find((rule) => rule.defs.includes(w))!;
-      const story = rule.story;
-      return { story, rule: rule.key.slice(story.length + 3), events: trace.flatMap((step) => step.event ? [step.event] : []) };
-    }),
-    traces: traces.slice(0, 100).map((trace) => trace.flatMap((step) => step.event ? [step.event] : [])),
+    found: {
+      ...header(model),
+      events: [...events.values()].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
+      journeys: witnesses.map(({ w, trace }) => {
+        const { story, key } = spec.rules.find((rule) => rule.defs.includes(w))!;
+        return { story, rule: key.slice(story.length + 3), events: eventsOf(trace) };
+      }),
+    },
+    traces: traces.slice(0, 100).map(eventsOf),
   };
 }
 
@@ -41,15 +48,14 @@ export function writeConformance(root: string, model: Model, found?: Found<any>)
   if (!model.stateType || !model.transitions.length) return;
   const dir = path.join(root, "gen");
   fs.copyFileSync(path.join(import.meta.dirname, "conformance.ts"), path.join(dir, "_conformance.ts"));
-  const data: Found<any> = found ?? { spec: model.name, source: model.source, sender: !!model.sender, events: [], journeys: [], shape: model.shape!, outputShape: model.outputShape };
-  const { traces: _, ...publicData } = data;
+  const data: Found<any> = found ?? { ...header(model), events: [], journeys: [] };
   fs.writeFileSync(path.join(dir, `${model.name}.conformance.ts`), [
     `// Generated from ${model.source}; do not edit.`,
     `import * as oracle from "./${model.name}.ts";`,
     `import { check, type Driver, type Found, type Options } from "./_conformance.ts";`,
     `type State = typeof oracle.initial;`,
     `type Event = Parameters<typeof oracle.step>[1];`,
-    `export const found: Found<Event> = ${JSON.stringify(publicData)};`,
+    `export const found: Found<Event> = ${JSON.stringify(data)};`,
     `export const conformance = <V = State>(driver: Driver<Event, V>, options?: Options<State, V>) => check(oracle, found, driver, options);`,
     "",
   ].join("\n"));
@@ -91,10 +97,12 @@ function driver(root: string, command: string) {
 
 async function drive(root: string, machine: Machine, command: string): Promise<string | undefined> {
   const { domain, model, found } = machine;
+  // Journeys first, as `check` in conformance.ts runs them; `departure` needs an event in each trace.
+  const traces = [...found.journeys.map((journey) => journey.events), ...machine.traces].filter((events) => events.length);
+  if (!traces.length) return "the simulator produced no traces for this driver";
+  const request = ({ by, ...event }: any): Line => model.sender ? { event, by } : { event };
   const program = driver(root, command);
   try {
-    const traces = found.traces ?? found.journeys.map((journey) => journey.events);
-    if (!traces.length) return "the simulator produced no traces for this driver";
     for (const [n, events] of traces.entries()) {
       const initial = await program.ask({});
       const lines: Line[] = [{ state: initial.state }];
@@ -102,7 +110,6 @@ async function drive(root: string, machine: Machine, command: string): Promise<s
       if (resetProblem) return `trace ${n + 1}: reset ${resetProblem}`;
       let current = domain.initial;
       for (const sent of events) {
-        const request = ({ by, ...event }: any): Line => model.sender ? { event, by } : { event };
         const next = request(sent);
         const refused = found.events.map(request).filter((line) => !domain.enabled(current, line.event, line.by)).slice(0, 2);
         for (const input of [...refused, next]) lines.push({ ...input, ...await program.ask(input) });
@@ -117,8 +124,8 @@ async function drive(root: string, machine: Machine, command: string): Promise<s
 }
 
 /** Every configured trace and program is run afresh; outside service state is not part of a source-code cache key. */
-export async function conformance(root: string, machines: Map<string, Machine>): Promise<[boolean, "traces", string, string, string][]> {
-  const results: [boolean, "traces", string, string, string][] = [];
+export async function conformance(root: string, machines: Map<string, Machine>): Promise<Reported[]> {
+  const results: Reported[] = [];
   const add = (where: string, problem: string | undefined, summary: string) => results.push([!problem, "traces", problem ? `${where}: the program departs from the spec` : `${where}: ${summary}`, problem ? indent(problem) : "", where]);
   const dir = path.join(root, TRACES);
   for (const file of fs.existsSync(dir) ? fs.readdirSync(dir).filter((file) => file.endsWith(".jsonl")).sort() : []) {

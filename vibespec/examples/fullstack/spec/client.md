@@ -17,17 +17,11 @@ uses to recognise a retry. `made` counts the edits the client has numbered.
 ```quint
 import todo.* from "./todo"
 
-type Pending = { seq: int, op: { kind: str, id: str, title: str, done: bool } }
+type Pending = { seq: int, op: Op }
 type Client = {
-  confirmed: List[{ id: str, title: str, done: bool, deleted: bool }],
-  seen: int, pending: List[Pending], online: bool, made: int, refusals: int,
+  confirmed: List[Todo], seen: int, pending: List[Pending], online: bool, made: int, refusals: int,
 }
 ```
-
-The to-do and the edit are written out in full rather than as `Todo` and
-`Op`, because the system spec imports this one under a name, and the tools
-can only follow a type of an imported machine back to that machine's own
-types. They are the same types.
 
 ### A new client is online, has seen version 0 and has nothing queued
 

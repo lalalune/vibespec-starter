@@ -9,8 +9,5 @@
     "check": "node ../../spec.ts check",
     "gen": "node ../../spec.ts gen",
     "accept": "node ../../spec.ts accept"
-  },
-  "devDependencies": {
-    "@types/node": "^24.0.0"
   }
 }
