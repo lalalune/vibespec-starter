@@ -4,7 +4,7 @@
     "module": "nodenext",
     "strict": true,
     "outDir": "dist",
-    "rootDir": "vibespec",
+    "rootDir": "vibestack",
     "rewriteRelativeImportExtensions": true,
     "erasableSyntaxOnly": true,
     "skipLibCheck": true,
@@ -18,8 +18,8 @@
     ]
   },
   "include": [
-    "vibespec/spec.ts",
-    "vibespec/studio/src/server.ts",
-    "vibespec/studio/src/page.ts"
+    "vibestack/spec.ts",
+    "vibestack/studio/src/server.ts",
+    "vibestack/studio/src/page.ts"
   ]
 }

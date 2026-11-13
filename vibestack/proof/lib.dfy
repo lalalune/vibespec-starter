@@ -14,7 +14,7 @@
 //   that says the same thing in other words, or captures other variables, is not.
 //
 // Dafny makes the module's import visible as ProofLib.Seq; proof files may not
-// use it (vibespec/prove.ts refuses any ProofLib.<name> this file does not declare),
+// use it (vibestack/prove.ts refuses any ProofLib.<name> this file does not declare),
 // since the standard library holds axioms.
 module ProofLib {
   import Std.Collections.Seq

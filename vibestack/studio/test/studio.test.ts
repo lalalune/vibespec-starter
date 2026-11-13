@@ -61,13 +61,13 @@ test("a spec is published with its origins, checked, synced by an agent, and ref
   const { studio, url, post, project, settled } = await studioOn(root);
   try {
     // The page and the modules it imports load; nothing else under the tools does.
-    for (const file of ["/", "/style.css", "/vibespec/studio/src/page.js", "/vibespec/studio/src/markdown.js", "/vibespec/studio/gen/outline.js", "/vibespec/studio/gen/index.js", "/vibespec/scan.js"]) {
+    for (const file of ["/", "/style.css", "/vibestack/studio/src/page.js", "/vibestack/studio/src/markdown.js", "/vibestack/studio/gen/outline.js", "/vibestack/studio/gen/index.js", "/vibestack/scan.js"]) {
       const asset = await fetch(url + file);
       assert.equal(asset.status, 200, file);
       assert.ok((await asset.text()).length > 0, file);
     }
-    assert.match(await (await fetch(`${url}/vibespec/studio/src/page.js`)).text(), /from "\.\.\/gen\/outline\.js"/);
-    for (const file of ["/vibespec/spec.js", "/vibespec/studio/src/server.js", "/vibespec/studio/gen/index.conformance.js"]) assert.equal((await fetch(url + file)).status, 404, file);
+    assert.match(await (await fetch(`${url}/vibestack/studio/src/page.js`)).text(), /from "\.\.\/gen\/outline\.js"/);
+    for (const file of ["/vibestack/spec.js", "/vibestack/studio/src/server.js", "/vibestack/studio/gen/index.conformance.js"]) assert.equal((await fetch(url + file)).status, 404, file);
 
     // Only this machine's pages may act.
     assert.equal((await post("check", {}, { origin: "https://untrusted.example" })).status, 403);
@@ -184,13 +184,13 @@ test("new and nested specs are published, deleted specs leave their ledger for r
 
 test("the studio opens only the current project or the requested project path", async () => {
   const script = path.join(tools, "spec.ts");
-  const repo = scratch({ "spec/index.md": "", "vibespec/examples/order/spec/index.md": "# Order\n" });
+  const repo = scratch({ "spec/index.md": "", "vibestack/examples/order/spec/index.md": "# Order\n" });
   const outside = scratch({ "a project/spec/index.md": "# Outside\n", "a project/package.json": '{"name":"order"}' });
-  const example = path.join(repo, "vibespec/examples/order");
+  const example = path.join(repo, "vibestack/examples/order");
   const external = path.join(outside, "a project");
   const cases: [string, string | undefined, string][] = [
-    [repo, undefined, repo], [repo, ".", repo], [repo, "vibespec/examples/order", example], [repo, example, example],
-    [repo, external, external], [repo, path.relative(repo, external), external], [path.join(tools, ".."), "vibespec/studio", path.join(tools, "studio")],
+    [repo, undefined, repo], [repo, ".", repo], [repo, "vibestack/examples/order", example], [repo, example, example],
+    [repo, external, external], [repo, path.relative(repo, external), external], [path.join(tools, ".."), "vibestack/studio", path.join(tools, "studio")],
   ];
   for (const [cwd, target, expected] of cases) {
     const child = spawn(process.execPath, [script, "studio", ...(target === undefined ? [] : [target]), "--port", "0"], { cwd, stdio: ["ignore", "pipe", "pipe"] });
@@ -214,7 +214,7 @@ test("the studio opens only the current project or the requested project path", 
       assert.deepEqual(current.project, { id: ".", name, root });
       assert.deepEqual(current.specs.map((s: { file: string; text: string }) => [s.file, s.text]).sort(),
         readSpecs(root).filter((s) => s.file.startsWith("spec/")).map((s) => [s.file, fs.readFileSync(path.join(root, s.file), "utf8")]).sort());
-      assert.equal((await fetch(`${url}/api/project?project=vibespec/examples/order`)).status, 404);
+      assert.equal((await fetch(`${url}/api/project?project=vibestack/examples/order`)).status, 404);
     } finally {
       child.kill("SIGTERM");
       await closed;
