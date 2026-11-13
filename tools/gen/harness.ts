@@ -39,16 +39,13 @@ export function harness(
   const evals: Eval[] = funs.flatMap((d): Eval[] => {
     try {
       const { params, result } = sig(d);
-      const onStates = params.filter((p) => shape(p.type) === stateShape).length;
+      const onState = (p: Param) => shape(p.type) === stateShape;
+      const onStates = params.filter(onState).length;
       if (onStates > 2) return [];
-      let seen = 0;
-      const sources = params.map((p) => {
-        if (stateType && shape(p.type) === stateShape) return onStates === 2 && seen++ === 0 ? "prev" as const : "state" as const;
-        sample(p);
-        return "pick" as const;
-      });
+      const prevAt = onStates === 2 ? params.findIndex(onState) : -1; // of two states, the first is the one before the event
+      const from = (p: Param, i: number): Eval["params"][number]["from"] => (onState(p) ? (i === prevAt ? "prev" : "state") : (sample(p), "pick"));
       qType(result);
-      return [{ name: d.name, params: params.map((p, i) => ({ ...p, from: sources[i] })), result }];
+      return [{ name: d.name, params: params.map((p, i) => ({ ...p, from: from(p, i) })), result }];
     } catch {
       uncompared.push(d.name); // its arguments cannot be sampled, or its result has no name: it is compared only where events use it
       return [];

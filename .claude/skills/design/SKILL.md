@@ -5,13 +5,11 @@ description: Design or review anything a person looks at, built from a spec in t
 
 # Design from the spec
 
-The spec decides what is on screen. Design decides how little it takes to show it.
-
 ## Before you draw
 
 1. **Inventory.** For each story in `spec/<name>.md`, write down what the user
    must see or do, and the rule behind it. That list is the whole content:
-   nothing off it ships, everything on it does.
+   everything on it ships; no page, section, setting or sample content off it does.
 2. **Cut.** For each item ask: does the user need to see this, here, now? What
    do they need that is not on the list? Remove what fails; add what is missing.
 3. **Three directions.** Sketch three different approaches (layout, hierarchy,
@@ -22,25 +20,23 @@ The spec decides what is on screen. Design decides how little it takes to show i
 
 | Instead of | Use |
 |---|---|
-| A number inside a sentence | The number alone, large, or a bar, meter or chart |
+| Text a visual can carry | A chart, icon, color, shape or SVG |
+| A number inside a sentence | The number alone, large, or a bar or meter |
 | A status word | Color, shape or icon, with the word as its accessible name |
 | A paragraph explaining a flow | A diagram |
 | A label repeating what the element shows | Nothing |
-| A chip, pill, badge or eyebrow | Position, weight or color, or nothing |
-| A filled gap | Whitespace |
+| A chip, pill, badge, eyebrow or divider | Position, weight or color, or nothing |
+| Filler in empty space | Whitespace |
 
-- **Visual first.** A chart, icon, color, shape or SVG before text. Keep
-  `aria-label` and `alt` so the meaning survives without sight.
 - **Few words.** No explanations, disclaimers, helper text, sub-headers,
-  eyebrows, taglines or detail lines under titles. One heading per view at most.
-- **Calm.** No cards in cards, dividers or decorative icons unless a story needs
-  the distinction they draw. Empty space is not a slot to fill.
-- **Brand, then usability.** One type pairing, a small palette with one accent,
-  one spacing scale, all as shared tokens. Text contrast meets WCAG AA.
-- **The spec is the scope.** No page, section, setting, onboarding or sample
-  content the spec does not ask for, and no story left without its visible part.
-- **One component system.** Search existing components, tokens and types first;
-  extend a shared one before adding a one-off.
+  taglines or detail lines under titles. One heading per view at most.
+- **Accessible.** Every visual keeps its meaning in `aria-label` or `alt`. Text
+  contrast meets WCAG AA.
+- **Untested.** Words, layout and styles get no tests. A journey test through
+  the UI asserts what the user can do and what the state became, not what the
+  page says (AGENTS.md, "Tests").
+- **One system.** One type pairing, a small palette with one accent and one
+  spacing scale, as shared tokens. Extend an existing component before adding one.
 
 ## Review: two or three passes
 

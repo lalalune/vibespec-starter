@@ -60,6 +60,8 @@ export function typescript({ header, typedefs, vals, funs, sig, typeOf, doc, loc
   }
   const call = (t: Transition, fn: string) => `${L(fn)}(${["current", ...t.params.map((p) => `event.${p.name}`)].join(", ")})`;
   const when = (t: Transition) => `event.type === ${JSON.stringify(t.name)}`;
+  // A copy through JSON drops what JSON cannot hold; a value it cannot copy at all is not one the program accepts.
+  const cloned = [`  let raw: any;`, `  try {`, `    raw = JSON.parse(JSON.stringify(x));`, `  } catch {`, `    return undefined;`, `  }`];
   const parsed = (t: Transition) => `{ ${[`type: ${JSON.stringify(t.name)}`, ...t.params.map((p) => `${p.name}: ${copy(`raw.${p.name}`, p.type)}`)].join(", ")} }`;
   if (state) out.push(
     ``,
@@ -86,12 +88,7 @@ export function typescript({ header, typedefs, vals, funs, sig, typeOf, doc, loc
     ` */`,
     `//@ skip`,
     `export function ${L("parseEvent")}(x: unknown): ${L("Event")} | undefined {`,
-    `  let raw: any;`,
-    `  try {`,
-    `    raw = JSON.parse(JSON.stringify(x));`,
-    `  } catch {`,
-    `    return undefined;`,
-    `  }`,
+    ...cloned,
     `  if (typeof raw !== "object" || raw === null) return undefined;`,
     ...transitions.map((t) => `  if (raw.type === ${JSON.stringify(t.name)}${t.params.map((p) => ` && ${wellFormed(`raw.${p.name}`, p.type)}`).join("")}) return ${parsed(t)};`),
     `  return undefined;`,
@@ -105,12 +102,7 @@ export function typescript({ header, typedefs, vals, funs, sig, typeOf, doc, loc
     ` */`,
     `//@ skip`,
     `export function ${L("parseState")}(x: unknown): ${state} | undefined {`,
-    `  let raw: any;`,
-    `  try {`,
-    `    raw = JSON.parse(JSON.stringify(x));`,
-    `  } catch {`,
-    `    return undefined;`,
-    `  }`,
+    ...cloned,
     `  if (!(${wellFormed("raw", roles.stateType, 0, true)})) return undefined;`,
     `  const parsed: ${state} = ${copy("raw", roles.stateType)};`,
     `  return ${L("inv")}(parsed) ? parsed : undefined;`,

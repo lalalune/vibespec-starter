@@ -8,7 +8,7 @@
 //   a different heap than in a lemma, so a fact proved about it in a lemma never
 //   meets the term in the rule. ProofLib.Filter has no reads clause: state facts
 //   about it, and bridge to the generated term with an `assert` that unfolds
-//   the generated function (see CONTRIBUTING.md, "Proof files").
+//   the generated function (see AGENTS.md, "Proof files").
 // - Dafny has no function extensionality. A lambda copied verbatim from
 //   gen/proof/<unit>/<unit>.dfy is the same term as the generated one; a lambda
 //   that says the same thing in other words, or captures other variables, is not.
@@ -272,30 +272,6 @@ module ProofLib {
   }
 
   // --- FoldLeft -------------------------------------------------------------
-
-  /** A fold whose step never lowers the accumulator ends at or above where it started. */
-  lemma FoldLeftInflationary<T>(f: (int, T) -> int, init: int, xs: seq<T>)
-    requires forall a, x :: f(a, x) >= a
-    ensures Seq.FoldLeft(f, init, xs) >= init
-    decreases |xs|
-  {
-    if |xs| > 0 {
-      FoldLeftInflationary(f, f(init, xs[0]), xs[1..]);
-    }
-  }
-
-  /** A fold whose step never lowers the accumulator and never ends below key(x) ends at or above every key. */
-  lemma FoldLeftAboveEach<T>(f: (int, T) -> int, key: T -> int, init: int, xs: seq<T>)
-    requires forall a, x :: f(a, x) >= a && f(a, x) >= key(x)
-    ensures forall i :: 0 <= i < |xs| ==> Seq.FoldLeft(f, init, xs) >= key(xs[i])
-    decreases |xs|
-  {
-    if |xs| > 0 {
-      FoldLeftAboveEach(f, key, f(init, xs[0]), xs[1..]);
-      FoldLeftInflationary(f, f(init, xs[0]), xs[1..]);
-      assert forall i :: 1 <= i < |xs| ==> xs[i] == xs[1..][i - 1];
-    }
-  }
 
   /** A running maximum is at least its start and every element. */
   lemma FoldLeftMax(f: (int, int) -> int, init: int, xs: seq<int>)
