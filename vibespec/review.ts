@@ -3,6 +3,7 @@ import path from "node:path";
 import ts from "typescript";
 import { readSpecs, bareQuint as bare, type Import, type Spec, type Story, type Rule } from "./parse.ts";
 import { short, readSrc, indent } from "./util.ts";
+import { DECLASSIFY } from "./gen/secrecy.ts";
 
 export interface Accepted { text: string; unproved: string[] }
 interface ReviewLock { version: 1; specs: Record<string, Lock>; contracts: Record<string, string>; unproved: Record<string, Accepted> }
@@ -179,6 +180,9 @@ export function pending(root: string, spec: Spec, specs: Spec[] = readSpecs(root
       note = changed.length ? ` through ${changed.map((d) => `${[...d.names].join(", ")} (${d.spec === spec ? "" : `${d.spec.file}: `}${d.rule.key})`).join("; ")}`
         : was[1] === code ? (was.length < 3 ? " (what it relies on was not recorded before)" : " through a definition it relies on") : undefined;
     }
+    // A way out for a secret is named in review whenever it is new or changed (gen/secrecy.ts).
+    const outlet = rule.defs.filter((d) => DECLASSIFY.test(d));
+    if (status && outlet.length) note = `${note ?? ""}, and declassifies a secret through ${outlet.join(", ")}`;
     if (status) out.push({ where: `${spec.file}:${rule.line}  ${rule.key}`, rule, status, note });
   }
   for (const key of Object.keys(lock))

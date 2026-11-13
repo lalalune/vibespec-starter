@@ -20,11 +20,11 @@ type Actor = Person | Agent | World
 ### A turn
 
 A turn is idle, planning its next action, asking the person, or done. The
-model chooses among seven actions, and a turn may take at most four.
+model chooses among six actions, and a turn may take at most four.
 
 ```quint
 type Phase = Idle | Planning | Asking | Done
-type Choice = Lookup | Review | Fill | Pay | Speak | Recite | Finish
+type Choice = Lookup | Review | Fill | Pay | Speak | Finish
 pure val maxActions = 4
 ```
 
@@ -41,27 +41,27 @@ type Bill = { amount: int, reviewed: bool, paid: bool }
 ### What the program carries out
 
 The assistant does not speak or type itself. It puts what should happen in
-an outbox that the program carries out. A spoken sentence says whether it
-holds a secret; a filled form says which page it went to.
+an outbox that the program carries out: a sentence to say, or the saved card
+typed into a page.
 
 ```quint
-type Effect = Said({ secret: bool }) | Filled({ page: Page })
+type Effect = Said({ text: str }) | Filled({ page: Page, card: SecretCard })
 ```
 
 ### The assistant
 
-What is saved survives a restart: the bill, what was charged, the last request
-and the one last answered, and the outbox. The rest is in memory.
+What is saved survives a restart: the card, the bill, what was charged, the
+last request and the one last answered, and the outbox. The rest is in memory.
 
 ```quint
 type Assistant = {
   phase: Phase, budget: int, page: Page, waiting: bool,
-  bill: Bill, charged: int, request: int, answered: int, outbox: List[Effect],
+  card: SecretCard, bill: Bill, charged: int, request: int, answered: int, outbox: List[Effect],
 }
 
 pure val initial: Assistant = {
   phase: Idle, budget: 0, page: Unknown, waiting: false,
-  bill: { amount: 0, reviewed: false, paid: false }, charged: 0, request: 0, answered: 0, outbox: List(),
+  card: "", bill: { amount: 0, reviewed: false, paid: false }, charged: 0, request: 0, answered: 0, outbox: List(),
 }
 ```
 
@@ -83,22 +83,22 @@ pure def begin(s: Assistant, by: Actor): Assistant =
 ### The model chooses each action, and each costs one from the turn
 
 Looking the bill up sends a new request. Reviewing checks an amount that has
-arrived. Filling types saved card details, and only into the biller's own
-page. Paying asks the person. Reciting would read the saved card aloud, so it
-is refused. The turn ends when the model finishes or the budget runs out.
+arrived. Filling types the saved card, and only into the biller's own page.
+Paying asks the person. Speaking says how far the turn has got. The turn ends
+when the model finishes or the budget runs out.
 
 ```quint
 pure def canChoose(s: Assistant, choice: Choice, by: Actor): bool =
-  by == Agent and s.phase == Planning and s.budget > 0 and choice != Recite
+  by == Agent and s.phase == Planning and s.budget > 0
 
 pure def choose(s: Assistant, choice: Choice, by: Actor): Assistant =
   val t = { ...s, budget: s.budget - 1 }
   val chosen =
     if (choice == Lookup) { ...t, request: t.request + 1, waiting: true }
     else if (choice == Review) { ...t, bill: { ...t.bill, reviewed: t.bill.amount > 0 } }
-    else if (choice == Fill) (if (t.page == Genuine) { ...t, outbox: t.outbox.append(Filled({ page: t.page })) } else t)
+    else if (choice == Fill) (if (t.page == Genuine) { ...t, outbox: t.outbox.append(Filled({ page: t.page, card: t.card })) } else t)
     else if (choice == Pay) (if (t.bill.reviewed and not(t.bill.paid)) { ...t, phase: Asking } else t)
-    else if (choice == Speak or choice == Recite) { ...t, outbox: t.outbox.append(Said({ secret: choice == Recite })) }
+    else if (choice == Speak) { ...t, outbox: t.outbox.append(Said({ text: if (t.bill.paid) "paid" else "working" })) }
     else { ...t, phase: Done }
   if (chosen.phase == Planning and chosen.budget == 0) { ...chosen, phase: Done } else chosen
 ```
@@ -243,9 +243,11 @@ pure def alwaysFilledOnlyGenuine(s: Assistant): bool =
 
 ### Nothing secret is said aloud
 
+The card is secret, so `check` refuses the model if the card, or anything
+decided by it, can reach what is said, or any other place that is not secret.
+
 ```quint
-pure def alwaysNothingSecretSaid(s: Assistant): bool =
-  s.outbox.every(e => match e { | Said(x) => not(x.secret) | _ => true })
+type SecretCard = str
 ```
 
 ### The program carries out the outbox, then empties it

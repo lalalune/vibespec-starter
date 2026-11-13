@@ -11,7 +11,7 @@ import { readSpecs, badSpecName, specFiles, specName, isStd, located, type Spec 
 import { contracts, pending, pendingContracts, acceptAllReviews, pendingSpecs, migrateLocks, moved, showPending, ledgerFile, readLedger, writeLedger, type Pending, type Accepted } from "./review.ts";
 import { entry, remembered, collectGarbage, dafnyVersion, type Memory } from "./cache.ts";
 import { gen, generated, typecheckAll, proofUnits, strayProofFiles } from "./units.ts";
-import { SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, LASSO_TRACES, STEPS, DEPTHS, SEARCHED, simulate, search, firstBreak, lasso, showTrace, replay, type Step } from "./simulate.ts";
+import { SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, LASSO_TRACES, STEPS, DEPTHS, SEARCHED, simulate, search, firstBreak, lasso, showTrace, replay, standIn, type Step } from "./simulate.ts";
 import { sha, indent, tests, readSrc, projectRoot, type SrcFile } from "./util.ts";
 
 export { readSpecs, badSpecName, parseSpec, scanSpec, expandListHelpers, type Spec, type Rule, type Story } from "./parse.ts";
@@ -145,7 +145,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
       continue;
     }
     valid.push(spec);
-    const parts = [[model.transitions.length, "transitions"], [model.always.length, "always"], [model.steps.length, "step"], [model.leadsTo.length, "leadsTo"], [model.sometimes.length, "sometimes"], [model.laws.length, "laws"]];
+    const parts = [[model.transitions.length, "transitions"], [model.always.length, "always"], [model.steps.length, "step"], [model.leadsTo.length, "leadsTo"], [model.sometimes.length, "sometimes"], [model.laws.length, "laws"], [model.opaques.length, "opaque"]];
     report(true, "model", `${spec.file}: ${parts.filter(([n]) => n).map((p) => p.join(" ")).join(", ") || "definitions only"}`, "", spec.file);
     if (!model.stateType && !model.laws.length && !model.evals.length) continue;
 
@@ -168,6 +168,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
           const lastEvent = bad.t.findLast((s) => s.event)?.event?.type;
           const guard = model.transitions.find((t) => t.name === lastEvent)?.guard;
           // One repair is always available: refuse the event when its result would break the rule. A reason is better.
+          standIn(domain, bad.t);
           const brokenRule = lastEvent ? model.always.find((a) => !domain[a](bad.t[bad.t.length - 1].state)) : undefined;
           const hint = lastEvent && !bad.why.startsWith("the law") ? `\n      the last event is ${cite(lastEvent)}${guard ? `; its guard ${guard} let it through` : "; it has no guard"}`
             + (brokenRule ? `\n      if no better reason can be found: refuse ${lastEvent} when its result would break ${brokenRule}` : "") : "";
@@ -190,6 +191,10 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
         const runs = [sim, probe, ...searches.filter((run) => run.broken)];
         if (broke(runs)) return { said, tested };
         if (sim.broken || probe.broken) throw new Error(`the simulator reports a broken rule that no trace shows (${sim.again})`);
+        if (!sim.traces.length && !probe.traces.length) {
+          say(false, "always", `no table the simulator chose for ${model.opaques.map((o) => o.name).join(", ")} satisfies the laws stated with them, for every value tried: the laws may contradict each other, or define <name>Values to try results that satisfy them`, `      ${sim.again}`);
+          return { said, tested };
+        }
         const traces = runs.flatMap((run) => run.traces);
         // Each guard should allow its event in some reachable state and refuse it in another. One that never allows it
         // makes the event impossible, and every rule then holds of it trivially, so nothing else would notice: that
@@ -241,7 +246,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
         say(true, "always", `no rule broken in ${SAMPLES + COMPARED_SAMPLES} simulated traces`
           + (model.leadsTo.length ? `, and no fair run that stops or loops in ${sim.traces.length} of them breaks a \`leadsTo\` rule (${loops} loops found)` : ""));
         for (const { w, run } of witnesses) {
-          const reached = run.broken && run.traces.some((t) => domain[w](t.at(-1)?.state));
+          const reached = run.broken && run.traces.some((t) => (standIn(domain, t), domain[w](t.at(-1)?.state)));
           say(reached, "sometimes", reached ? `${w} is reachable`
             : `${cite(w)} was not reached in ${SEARCHED()}: a guard is too strict, a transition is missing, or the goal needs values the simulator does not try`, reached ? "" : `      ${run.again}`);
         }
@@ -259,7 +264,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
         say(true, "replay", `generated TypeScript agrees with Quint on ${traces.length} traces: every state${model.laws.length ? ", every law" : ""}, and ${compared.size} definitions evaluated on them`
           + (missed.length ? `; not compared on their own, because the simulator had no arguments for them: ${missed.join(", ")}` : ""));
         if (model.stateType) tested = conformanceFound(domain, model, spec, traces, witnesses.flatMap(({ w, run }) =>
-          run.traces.filter((trace) => domain[w](trace.at(-1)?.state)).sort((a, b) => a.length - b.length).slice(0, 1).map((trace) => ({ w, trace }))));
+          run.traces.filter((trace) => (standIn(domain, trace), domain[w](trace.at(-1)?.state))).sort((a, b) => a.length - b.length).slice(0, 1).map((trace) => ({ w, trace }))));
       } catch (e) {
         const mismatch = (e as Error).message.startsWith("TypeScript and Quint disagree");
         say(false, mismatch ? "replay" : "always", mismatch ? "this is a bug in the generator (vibespec/gen.ts, vibespec/gen/), not in the spec" : "the simulator could not run", indent((e as Error).message));

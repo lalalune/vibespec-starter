@@ -585,6 +585,9 @@ export interface Unit {
   laws: { fn: string; law: string; from: string }[];
   /** The units whose assurance this one's rests on. */
   rests: string[];
+  /** Opaque functions, which the Dafny declares without a body, and the laws assumed of them, which a proof file may call as `<law>_ensures`. */
+  externs: string[];
+  assumed: string[];
   /** The generated code without comments naming the source rules. */
   meaning: string;
   /** The caller preconditions of hand-written code. */
@@ -658,9 +661,9 @@ export async function prove(root: string, u: Unit, offered: { proof?: { file: st
     definition = line.match(DEFINITION)?.[1] ?? definition;
     if (/^\s*ensures\b/.test(line) && !(definition && prelude.has(definition))) total++;
   }
-  // Laws proved elsewhere, and the library, are only of use to a proof file.
-  const axioms = offered.proof ? offered.laws.flatMap((fn) => lawAxiom(gen, fn) ?? []) : [];
-  const axiomNames = new Set(axioms.map((a) => a.match(/^lemma \{:axiom\} (\w+)/)![1]));
+  // Laws proved elsewhere or assumed of opaque functions, and the library, are only of use to a proof file.
+  const axioms = offered.proof ? [...offered.laws, ...u.assumed].flatMap((fn) => lawAxiom(gen, fn) ?? []) : [];
+  const axiomNames = new Set([...axioms.map((a) => a.match(/^lemma \{:axiom\} (\w+)/)![1]), ...u.externs]);
   let spliced: Spliced;
   try {
     spliced = splice(gen, { proof: offered.proof, lib: offered.proof && offered.lib, axioms, stepBody: u.transitions && stepBody(gen, u.transitions) }, `gen/proof/${base}/${file}`, prelude);

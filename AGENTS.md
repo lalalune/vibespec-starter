@@ -194,9 +194,10 @@ Quint errors are reported at the source file's path and `line:col`.
 
 ### What goes in the Quint blocks
 
-Only types, imports, `pure val` and `pure def`. There is no `var`, no
-`action`, and no `init` or `step`: the state machine around your definitions
-is generated. The role of a definition comes from its name and signature:
+Only types, imports, `pure val`, `pure def` and the `const` of an opaque
+function. There is no `var`, no `action`, and no `init` or `step`: the state
+machine around your definitions is generated. The role of a definition comes
+from its name and signature:
 
 | You write | It is | Generated from it |
 |---|---|---|
@@ -210,8 +211,10 @@ is generated. The role of a definition comes from its name and signature:
 | `pure def sometimesPaid(o: Order): bool` | a state that must be reachable | a reachability check with a witness trace |
 | `pure def leadsToPaid(o: Order, later: Order): bool` | a liveness rule: from every reachable state `o`, every fair run reaches a state `later` that it relates to `o` (`o` itself counts) | a search of simulated traces for a fair run that breaks it ("Liveness", below) |
 | `pure def lawTotalIsNotNegative(xs: List[int]): bool` | a law: true for every value of its parameters | a function proved to return `true`, and sampled by the simulator |
+| `const hash: (str) => int` | an opaque function: a type and no body. The laws in its rule are assumed of it | see [Opaque functions](#opaque-functions) |
+| `type SecretCard = str` | a secret: a type named `Secret…` | nothing new; `check` keeps its values out of every other place ([Secrets](#secrets)) |
+| `pure def declassifyLast4(c: SecretCard): str` | the one way out for a secret | a function whose result is public; review names it |
 | `pure val idValues = Set(1, 2, 3)` | what the simulator tries for a parameter named `id`. It must be a set whose elements match the parameter type; any supported Quint is allowed in it | nothing: it never reaches TypeScript |
-
 | `pure val weight_pay = 5` | how often the simulator tries `pay`: a whole number from 1 to 100, times as often as an event of weight 1 (the default). For deep interleavings, such as a message lost, repeated and reordered | nothing |
 | `pure val fair_pay = "weak"` or `"strong"` | an assumption for `leadsTo` rules: a fair run does not put `pay` off for ever while its guard keeps allowing it (`"weak"`), or while it allows it again and again (`"strong"`) | nothing |
 | any other `pure val` or `pure def` | a constant or helper | the same constant or function |
@@ -269,6 +272,51 @@ A spec is imported once, one way or the other, and imports cannot form a
 circle. Navigation links may point back to a parent. In the generated
 TypeScript a name from another module is spelled
 `<module>_<name>`, for example `lamp_toggle`.
+
+### Opaque functions
+
+`const f: (A, B) => R`, on one line under a rule, declares a function with no
+body: a hash, a check the spec does not model, a model's judgement. What the
+spec knows of it is the laws in the same rule; they are assumed, not proved,
+and review shows them with it. A law about `f` in another rule is proved as
+any law is. `vibespec/fixtures/badge.md` in the vibespec-starter repository is the
+example.
+
+- **Simulated** as a table chosen for each trace: for each argument the
+  simulator tries (the values of its type), a result from the values of `R`,
+  or from `fValues` if the spec defines it. A trace starts only with a table
+  on which every law of `f` holds for every value tried, so a rule that holds
+  only for some tables is broken in simulation. If no table satisfies the
+  laws, the laws may contradict each other, and `always` fails.
+- **Proved** with `f` uninterpreted (`function {:axiom} f` in the Dafny) and
+  each of its laws as a lemma `<law>_ensures(args)` that a proof file calls.
+- **In TypeScript** the program gives it before anything calls it:
+  `opaque.f = hashName`, from `gen/<name>.ts`; until then `f` throws. Its
+  parameters are `p0`, `p1`, …
+- **Bound to `src/`**: a verified file that imports `gen/<name>.ts` and
+  defines `function f` with the same parameter and result types is proved to
+  keep the laws. In its unit the module calls that `f`, and each law is an
+  obligation instead of an assumption; a proof goes in its
+  `src/<path>.proof.dfy`. The program then sets `opaque.f = f` from that file.
+  What the program sets otherwise is not checked against the laws.
+- Only simple values (`int`, `bool`, `str`, a plain variant) are tried as
+  arguments, and a spec with an opaque function cannot be imported.
+
+### Secrets
+
+A type whose name starts with `Secret` (`type SecretCard = str`, or a record)
+is secret. `model` refuses a spec in which a secret value can reach a place
+whose type is not secret: a field, a variant's field such as the text of
+something said, an element of a list, set or map, or the result of a
+transition, a guard or a helper. A value computed from a secret, or chosen by a
+condition on one, is secret too, through calls to helpers as well. Rules only
+check, so they may read secrets freely.
+
+The one way out is a definition named `declassify…`: what it returns is
+public. Review marks a rule that defines one, whenever it is new or changed,
+`and declassifies a secret through <name>`; confirm that what it lets out may
+be public. `vibespec/fixtures/card.md` in the vibespec-starter repository is the
+example, and `vibespec/examples/assistant` keeps a saved card out of speech this way.
 
 ### Supported Quint
 
@@ -508,6 +556,8 @@ a body.
   neither simulated only nor resting on an obligation that is:
   `<module>_<law>_ensures(args)` gives `<module>_<law>(args) == true`. (In a
   `src` unit, the laws of the module it imports are `<law>_ensures`.)
+- The laws of the unit's [opaque functions](#opaque-functions), assumed:
+  `<law>_ensures(args)`.
 - The generated `_ensures` lemmas, and Dafny's standard library by the names
   the generated code uses.
 
@@ -690,6 +740,7 @@ In the vibespec-starter repository:
 | `vibespec/gen/types.ts` | everything decided by a type |
 | `vibespec/gen/print.ts` | expressions |
 | `vibespec/gen/classify.ts` | which definition is a transition, a guard or a rule |
+| `vibespec/gen/secrecy.ts` | where a secret may go |
 | `vibespec/gen/typescript.ts`, `vibespec/gen/harness.ts` | the two outputs |
 
 Node runs all of it directly; `npm run build` compiles it for the packaged
