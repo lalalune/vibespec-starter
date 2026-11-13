@@ -16,6 +16,7 @@ model in step; you sign off.
 [![check](https://github.com/lalalune/vibespec-starter/actions/workflows/check.yml/badge.svg)](https://github.com/lalalune/vibespec-starter/actions/workflows/check.yml)
 
 [Quick start](#quick-start) ·
+[Project setup](#set-up-a-new-project) ·
 [Tutorial](#tutorial) ·
 [How it works](#what-npm-run-check-checks) ·
 [Guarantees](#what-is-and-is-not-guaranteed) ·
@@ -92,9 +93,8 @@ npm run demo
 ```
 
 `npm install` builds the `spec` command and generates `gen/` when every spec
-is valid. `npm run check` checks the root specification, ending with a
-`next:` line naming what to do first. Run `npm run check --workspaces --if-present`
-to check the examples.
+is valid. `npm run check` checks the current project and ends with a `next:` line.
+Run `npm run check --workspaces --if-present` to check every example.
 `npm run demo` generates and runs `vibespec/examples/order`, driving the verified checkout
 through a scripted session; every `✗` is a rule refusing an event:
 
@@ -108,6 +108,38 @@ through a scripted session; every `✗` is a rule refusing an event:
 ✗ {"type":"cancel"}              cancel is not allowed for a Paid order
 balance 0
 ```
+
+## Set up a new project
+
+This repository keeps its examples so people can try the template. When you
+use it for a new project, finish this cleanup before feature work:
+
+1. **Remove the examples.** Delete `vibespec/examples/`, including the order
+   example. Remove their workspace entries, npm scripts and CI steps, such
+   as `demo` and `check:dashboard`, and replace the package metadata and
+   repository links with the new project's.
+2. **Keep the toolchain guide with the toolchain.** Move this README to
+   `vibespec/README.md` (the toolchain directory formerly called `tools/`).
+   Update its relative links and the guide references in `AGENTS.md` and the
+   skills. Keep the original template license in `vibespec/LICENSE` alongside
+   the retained Vibespec code.
+3. **Write the project's own files.** Create a new root `README.md` describing
+   what the project does and how to install, run and check it. Rewrite the root
+   `LICENSE` for the project's chosen terms and copyright holder. Add the
+   project's initial stories and rules under `spec/`.
+4. **Check and sign off.** Run `npm install` and `npm run check`, resolve what
+   they report, and have the project owner review and accept the new spec with
+   `npm run accept`.
+5. **Commit the starting point.** Commit all setup changes, including the
+   deletions and reviewed spec ledgers, then confirm the working tree is clean:
+
+   ```bash
+   git add -A
+   git commit -m "Initialize project"
+   git status --short
+   ```
+
+An empty status means the project is ready for its first feature.
 
 ## Studio
 
@@ -217,6 +249,9 @@ module names reflect paths: `spec/index.md` → `gen/index.ts`,
 `spec/billing/index.md` → `gen/billing.ts`, and
 `spec/billing/payments/index.md` → `gen/billing__payments.ts`.
 All paths stay inside `spec/`; see the [spec reference](AGENTS.md#writing-a-spec).
+
+For a repository created from the template, follow [project setup](#set-up-a-new-project)
+to remove the examples and establish the project's own documentation and license.
 
 ### 3. Write a story; let the agent write the rules
 
@@ -413,7 +448,6 @@ Keep `spec/`, `src/`, `test/` and `vibespec/` in git, lock files included.
 | `vibespec/examples/order/test/app.test.ts` | Tests of the shell, run by the `tests` stage |
 | `vibespec/examples/order/` | Complete checkout example, with its own spec, shell and tests |
 | `vibespec/examples/dashboard/` | A larger, synthesized example, as a separate package |
-| `writeup.html` | A narrative explainer of the approach |
 | `.github/workflows/check.yml` | Continuous integration: `npm run check` without the cache |
 | **Derived** (not in git) | |
 | `gen/<name>.ts`, `gen/<name>.qnt` | Generated TypeScript, and the tangled Quint model |

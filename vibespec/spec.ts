@@ -426,7 +426,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
   };
   for (const { spec, todo } of todos) {
     if (record && todo.length) {
-      report(true, "review", `${spec.file}: recorded as reconciled: ${todo.map((t) => t.rule?.key ?? t.story?.title ?? t.where.slice(t.where.indexOf("  ") + 2)).join("; ")}`, "", spec.file);
+      report(true, "review", `${spec.file}: recorded as reconciled: ${todo.map((t) => t.rule?.key ?? t.story?.title ?? (t.where.includes("  ") ? t.where.slice(t.where.indexOf("  ") + 2) : t.where)).join("; ")}`, "", spec.file);
     } else report(!todo.length, "review", todo.length ? `${spec.file}: ${todo.length} item(s) to reconcile, ${why}` : `${spec.file}: prose and model reconciled for all ${spec.rules.length} rules and ${spec.stories.length} stories`,
       items(todo, "What moved, in full"), spec.file);
   }
