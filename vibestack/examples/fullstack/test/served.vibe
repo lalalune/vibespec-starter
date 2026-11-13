@@ -1,4 +1,5 @@
 // The real server on a free port with the page test/page.ts built, and an HttpClient that reaches it.
+import * as NodeServices from "@effect/platform-node/NodeServices"
 import { listening, server } from "../src/server.vibe"
 
 module node {
@@ -16,4 +17,14 @@ module node {
 import { create, dropConnections } from node
 
 export { dropConnections }
-export const Served = Layer.provideMerge(Layer.provide(HttpServer.layerTestClient, FetchHttpClient.layer), server("dist/web", listening(0, create)))
+
+/** The server over the list kept in `file`. */
+export function served(file: string) {
+  return Layer.provideMerge(Layer.provide(HttpServer.layerTestClient, FetchHttpClient.layer), server("dist/web", listening(0, create), file))
+}
+
+/** The server over a list of its own, in a temporary directory removed when the server stops. */
+export const Served = Layer.provide(Layer.unwrap(effect {
+  const dir = try (try FileSystem.FileSystem).makeTempDirectoryScoped()
+  return served((try Path.Path).join(dir, "todos.json"))
+}), NodeServices.layer)

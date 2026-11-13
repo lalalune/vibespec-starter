@@ -158,8 +158,9 @@ pure def resend(sys: System, who: str): System =
 
 A request with a number it has answered before is acknowledged again only
 if it carries the edit that was accepted under that number, and refused
-otherwise. A new request is applied if its edit makes sense and refused
-otherwise. A change is pushed to the other tab. The answer to a forged
+otherwise. A new request is taken by the server's own `request`, which applies
+its edit or refuses it; the system reads the verdict back from the log, as the
+HTTP shell does. A change is pushed to the other tab. The answer to a forged
 request goes to whoever forged it, not onto the network.
 
 ```quint
@@ -169,22 +170,22 @@ pure def repeatAnswer(m: Msg, rest: List[Msg], sys: System): System =
   val kind = if (S::acceptedAs(sys.server, m.client, m.seq, m.op)) Ack else Refusal
   { ...sys, net: reply(m, answer(kind, m.client, m.seq, sys.server), rest) }
 
-pure def applyRequest(m: Msg, rest: List[Msg], sys: System): System =
-  val s = S::commit(m.client, sys.server, m.seq, m.op)
+pure def accepted(m: Msg, rest: List[Msg], s: S::Server, sys: System): System =
   { ...sys, server: s, history: sys.history.append(s.todos),
     net: reply(m, answer(Ack, m.client, m.seq, s), rest).append(answer(Push, other(m.client), 0, s)) }
 
-pure def refuseRequest(m: Msg, rest: List[Msg], sys: System): System =
-  { ...sys, server: S::refuse(sys.server, m.client, m.seq, m.op),
-    net: reply(m, answer(Refusal, m.client, m.seq, sys.server), rest) }
+pure def refused(m: Msg, rest: List[Msg], s: S::Server, sys: System): System =
+  { ...sys, server: s, net: reply(m, answer(Refusal, m.client, m.seq, s), rest) }
+
+pure def answerNew(m: Msg, rest: List[Msg], sys: System): System =
+  val s = S::request(sys.server, m.client, m.seq, m.op)
+  if (S::acceptedAs(s, m.client, m.seq, m.op)) accepted(m, rest, s, sys) else refused(m, rest, s, sys)
 
 pure def canServe(sys: System, i: int): bool = isRequest(msgAt(sys.net, i))
 pure def serve(sys: System, i: int): System =
   val m = msgAt(sys.net, i)
   val rest = dropAt(sys.net, i)
-  if (S::answered(sys.server, m.client, m.seq)) repeatAnswer(m, rest, sys)
-  else if (S::allows(sys.server, m.client, m.seq, m.op)) applyRequest(m, rest, sys)
-  else refuseRequest(m, rest, sys)
+  if (S::answered(sys.server, m.client, m.seq)) repeatAnswer(m, rest, sys) else answerNew(m, rest, sys)
 ```
 
 ### An online tab takes any answer off the network
