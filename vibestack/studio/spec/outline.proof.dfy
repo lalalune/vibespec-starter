@@ -44,14 +44,10 @@ lemma FoldInsert<T>(f: (seq<T>, T) -> seq<T>, at: int, x: T, acc: seq<T>, ys: se
   var k := at - |acc|;
   var t := ys[1..];
   assert ys == [ys[0]] + t;
+  // One step of the fold, stated so the solver need not find it.
+  assert Std.Collections.Seq.FoldLeft(f, acc, ys) == Std.Collections.Seq.FoldLeft(f, f(acc, ys[0]), t);
   if k == 0 {
-    assert f(acc, ys[0]) == acc + [x, ys[0]];
-    FoldPast(f, at, x, acc + [x, ys[0]], t);
-    assert ys[..0] == [];
-    assert acc + ys[..0] == acc;
-    assert ys[0..] == ys;
-    assert acc + [x, ys[0]] == acc + [x] + [ys[0]];
-    assert acc + [x] + [ys[0]] + t == acc + [x] + ([ys[0]] + t);
+    FoldInsertHere(f, at, x, acc, ys);
   } else {
     var a := acc + [ys[0]];
     assert f(acc, ys[0]) == a;
@@ -61,6 +57,21 @@ lemma FoldInsert<T>(f: (seq<T>, T) -> seq<T>, at: int, x: T, acc: seq<T>, ys: se
     assert ys[k..] == t[k - 1..];
     assert a + t[..k - 1] == acc + ys[..k];
   }
+}
+
+// FoldInsert where `x` goes at the front of what is left: placed, then the rest follows unchanged.
+lemma FoldInsertHere<T>(f: (seq<T>, T) -> seq<T>, at: int, x: T, acc: seq<T>, ys: seq<T>)
+  requires forall a: seq<T>, y: T :: f(a, y) == (if |a| == at then a + [x, y] else a + [y])
+  requires |acc| == at && |ys| > 0
+  ensures Std.Collections.Seq.FoldLeft(f, f(acc, ys[0]), ys[1..]) == acc + ys[..0] + [x] + ys[0..]
+{
+  var t := ys[1..];
+  assert f(acc, ys[0]) == acc + [x, ys[0]];
+  FoldPast(f, at, x, acc + [x, ys[0]], t);
+  assert ys[..0] == [];
+  assert ys[0..] == ys;
+  assert ys == [ys[0]] + t;
+  assert acc + [x, ys[0]] + t == acc + [] + [x] + ys;
 }
 
 lemma StoriesWithIs(xs: seq<Story>, at: int, x: Story)

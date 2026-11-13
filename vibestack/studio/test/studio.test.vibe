@@ -208,7 +208,12 @@ it.live("a rule is edited, a story added and both published from the page", () =
 // spec/index.md, "Story: Edit, then publish"
 it.live("new and nested specs are published, deleted specs leave their ledger for review, and paths stay inside spec/", effect () => { provide services { try scoped(effect {
   const fs = try FileSystem.FileSystem
-  const root = try scratch({ "spec/index.md": "# Home\n", "outside.md": "" })
+  const root = try scratch({
+    "spec/index.md": "# Home\n", "outside.md": "",
+    // A workspace whose one app has a build script: what Studio builds at a workspace root.
+    "pnpm-workspace.yaml": "packages:\n  - apps/*\n",
+    "apps/one/package.json": JSON.stringify({ name: "one", scripts: { build: "node -e \"require('node:fs').writeFileSync('built.txt', 'one')\"" } }),
+  })
   const { post, project, settled } = try studioOn(root)
 
   // A new spec is a file published with no base; its parent links to it.
@@ -292,6 +297,12 @@ it.live("new and nested specs are published, deleted specs leave their ledger fo
     assert.equal(broken.jobs.agent!.status, "failed")
     assert.match(broken.jobs.agent!.log.join("\n"), /ENOTDIR/)
   })
+
+  // spec/index.md, "The app is built from published specs, when no job runs": at a workspace root, every app is built.
+  const building = (try post("build", {})).status
+  const builtState = try settled()
+  const builtApp = try fs.readFileString(`${root}/apps/one/built.txt`)
+  try check(() => assert.deepStrictEqual([building, builtState.jobs.build!.status, builtApp], [200, "passed", "one"]))
 
   // spec/index.md, "A studio that starts again picks up what was waiting"
   try fs.remove(`${root}/.studio`, { recursive: true, force: true })
