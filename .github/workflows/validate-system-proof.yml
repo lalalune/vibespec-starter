@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 4d9651a9f9a9cda2afeb8b6c6181c8e0f07129ec
+          ref: 2e0fcc3
       - uses: dafny-lang/setup-dafny-action@v1
         with:
           dafny-version: '4.11.0'
@@ -19,6 +19,16 @@ jobs:
           node-version: 26
           cache: npm
       - run: npm ci
+      - name: Install the locked Quint evaluator
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          evaluator_version="$(node -p 'require("./node_modules/@informalsystems/quint/dist/src/rust/binaryManager.js").QUINT_EVALUATOR_VERSION')"
+          evaluator_dir="$(node -p 'require("./node_modules/@informalsystems/quint/dist/src/config.js").rustEvaluatorDir(require("./node_modules/@informalsystems/quint/dist/src/rust/binaryManager.js").QUINT_EVALUATOR_VERSION)')"
+          gh release download "evaluator/$evaluator_version" --repo quint-co/quint --pattern quint_evaluator-x86_64-unknown-linux-gnu.tar.gz --dir "$RUNNER_TEMP/quint-evaluator"
+          mkdir -p "$evaluator_dir"
+          tar -xzf "$RUNNER_TEMP/quint-evaluator/quint_evaluator-x86_64-unknown-linux-gnu.tar.gz" -C "$evaluator_dir"
+          chmod +x "$evaluator_dir/quint_evaluator"
       - run: node ../../spec.ts accept
         working-directory: vibespec/examples/fullstack
       - if: always()
