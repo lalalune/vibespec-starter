@@ -20,6 +20,6 @@ Run those commands from the repository root. This package can also run
 | `src/demo.ts` | Scripted checkout session |
 | `test/app.test.ts` | Checkout journeys through the real shell |
 
-The model has 10 transitions, six `always` rules, one `step` rule and three
+The model has 10 transitions, six `always` rules, one `step` rule and four
 `sometimes` goals. The shell parses external events, stores allowed events
 and replays them through the generated core.
