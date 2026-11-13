@@ -1,8 +1,12 @@
 // spec/server.md, "Story: Change the list over HTTP"
-import { assert, layer } from "@effect/vitest"
-import { Machine } from "../gen/server.effect.vibe"
+import { assert, it } from "@effect/vitest"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { conformance } from "../gen/server.conformance.ts"
+import { type Event, type Server, Machine, initial } from "../gen/server.effect.vibe"
+import type { Op } from "../gen/todo.ts"
 import type { Answer } from "../src/protocol.vibe"
-import { Served } from "./served.vibe"
+import { NotAStateFile } from "../src/server.vibe"
+import { served } from "./served.vibe"
 
 effect function send(body: string, type = "application/json") {
   return try HttpClient.execute(HttpClientRequest.bodyText(HttpClientRequest.post("/api/events"), body, type))
@@ -13,88 +17,169 @@ effect function post(body: unknown) {
   return { status: response.status, body: (try response.json) as unknown as Answer }
 }
 
-layer(Served, { excludeTestServices: true })((it) => {
-  it.effect("Story: Change the list over HTTP", () => effect {
-    const store = try Machine
+const request = (client: string, seq: number, op: Op) => ({ type: "request", client, seq, op })
+const create = (id: string, title: string): Op => ({ kind: "create", id, title, done: false })
 
-    // spec/server.md, "A new request whose edit makes sense is applied, raising the version by one"; spec/server.md, "No request is answered twice"
-    const create = { type: "create", client: "ann", seq: 1, id: "ann-1", title: "milk" }
-    const first = try post(create)
-    const again = try post(create)
+it.live("Story: Change the list over HTTP", () => effect {
+  provide NodeServices.layer {
+    try scoped(effect {
+      const path = try Path.Path
+      const file = path.join(try (try FileSystem.FileSystem).makeTempDirectoryScoped(), "todos.json")
+      const milk = request("ann", 1, create("ann-1", "milk"))
+      const forged = request("dan", 1, create("dan-x", "forged"))
 
-    // spec/server.md, "A new request can be refused, which is logged with its edit and changes nothing else"
-    const tick = { type: "setDone", client: "ann", seq: 2, id: "nobody", done: true }
-    const refused = try post(tick)
-    const refusedAgain = try post(tick)
-    const logged = (try store.get()).log.length
+      let saved = initial
+      provide served(file) {
+        const store = try Machine
 
-    // spec/server.md, "A to-do is never taken out of the list, and a removed one stays removed"; spec/server.md, "A to-do can be removed, leaving a tombstone"
-    const removed = try post({ type: "remove", client: "ben", seq: 1, id: "ann-1" })
-    const recreate = try post({ type: "create", client: "ben", seq: 2, id: "ann-1", title: "milk" })
+        // spec/server.md, "A new request whose edit makes sense is applied, raising the version by one"; spec/server.md, "No request is answered twice"
+        const first = try post(milk)
+        const again = try post(milk)
 
-    // spec/server.md, "No request is answered twice"
-    const forged = { type: "create", client: "dan", seq: 1, id: "dan-x", title: "forged" }
-    const squatted = try post(forged)
-    const real = try post({ type: "create", client: "dan", seq: 1, id: "dan-1", title: "milk" })
-    const retried = try post(forged)
+        // spec/server.md, "A new request whose edit does not make sense is refused, which is logged with its edit and changes nothing else"
+        const tick = request("ann", 2, { kind: "done", id: "nobody", title: "", done: true })
+        const refused = try post(tick)
+        const refusedAgain = try post(tick)
+        const logged = (try store.get()).log.length
 
-    // spec/server.md, "A new request can be refused, which is logged with its edit and changes nothing else"
-    const refuse = try post({ type: "refuse", client: "eve", seq: 1, op: { kind: "create", id: "eve-1", title: "milk", done: false } })
-    const created = try post({ type: "create", client: "eve", seq: 1, id: "eve-1", title: "milk" })
+        // spec/server.md, "A to-do is never taken out of the list, and a removed one stays removed"; spec/server.md, "A to-do can be removed, leaving a tombstone"
+        const removed = try post(request("ben", 1, { kind: "remove", id: "ann-1", title: "", done: false }))
+        const recreate = try post(request("ben", 2, create("ann-1", "milk")))
 
-    const fraction = try post({ type: "create", client: "ann", seq: 1.5, id: "x", title: "y" })
-    const unknown = try post({ type: "explode" })
-    const notJson = try send("{not json")
-    const { version } = try store.get()
-    const notSentAsJson = try send(JSON.stringify({ type: "remove", client: "zed", seq: 1, id: "eve-1" }), "text/plain")
-    const after = (try store.get()).version
+        // spec/server.md, "No request is answered twice"
+        const squatted = try post(forged)
+        const real = try post(request("dan", 1, create("dan-1", "milk")))
+        const retried = try post(forged)
 
-    const s = (try (try HttpClient.get("/api/snapshot")).json) as { version: number; todos: unknown[] }
+        // spec/server.md, "Every new request is answered by applying its edit if it makes sense and refusing it if not"
+        const refuse = try post({ type: "refuse", client: "eve", seq: 1, op: create("eve-1", "milk") })
+        const created = try post(request("eve", 1, create("eve-1", "milk")))
 
-    // The page names the script Vite built for it.
-    const index = try (try HttpClient.get("/")).text
-    const response = try HttpClient.get(/<script type="module"[^>]* src="([^"]+)"/.exec(index)?.[1] ?? "/")
-    const js = try response.text
-    const outside = try HttpClient.get("/src/../package.json")
+        const fraction = try post(request("ann", 1.5, create("x", "y")))
+        const unknown = try post({ type: "explode" })
+        const notJson = try send("{not json")
+        const { version } = try store.get()
+        const notSentAsJson = try send(JSON.stringify(request("zed", 1, { kind: "remove", id: "eve-1", title: "", done: false })), "text/plain")
+        const after = (try store.get()).version
 
-    try Effect.try(() => {
-      assert.strictEqual(first.status, 200)
-      assert.strictEqual(first.body.ok, true)
-      assert.strictEqual(first.body.version, 1)
-      assert.strictEqual(again.body.ok, true)
-      assert.strictEqual(again.body.version, 1)
-      assert.strictEqual(again.body.todos.length, 1)
+        const s = (try (try HttpClient.get("/api/snapshot")).json) as { version: number; todos: unknown[] }
 
-      assert.strictEqual(refused.body.ok, false)
-      assert.strictEqual(refused.body.version, 1)
-      assert.strictEqual(refusedAgain.body.ok, false)
-      assert.strictEqual(logged, 2)
+        // The page names the script Vite built for it.
+        const index = try (try HttpClient.get("/")).text
+        const response = try HttpClient.get(/<script type="module"[^>]* src="([^"]+)"/.exec(index)?.[1] ?? "/")
+        const js = try response.text
+        const outside = try HttpClient.get("/src/../package.json")
 
-      assert.strictEqual(removed.body.ok, true)
-      assert.strictEqual(recreate.body.ok, false)
-      assert.deepStrictEqual(recreate.body.todos.map((t) => [t.id, t.deleted]), [["ann-1", true]])
+        try Effect.try(() => {
+          assert.strictEqual(first.status, 200)
+          assert.strictEqual(first.body.ok, true)
+          assert.strictEqual(first.body.version, 1)
+          assert.strictEqual(again.body.ok, true)
+          assert.strictEqual(again.body.version, 1)
+          assert.strictEqual(again.body.todos.length, 1)
 
-      assert.strictEqual(squatted.body.ok, true)
-      assert.strictEqual(real.body.ok, false)
-      assert.isFalse(real.body.todos.some((t) => t.id === "dan-1"))
-      assert.strictEqual(retried.body.ok, true)
+          assert.strictEqual(refused.body.ok, false)
+          assert.strictEqual(refused.body.version, 1)
+          assert.strictEqual(refusedAgain.body.ok, false)
+          assert.strictEqual(logged, 2)
 
-      assert.strictEqual(refuse.status, 400)
-      assert.strictEqual(created.body.ok, true)
+          assert.strictEqual(removed.body.ok, true)
+          assert.strictEqual(recreate.body.ok, false)
+          assert.deepStrictEqual(recreate.body.todos.map((t) => [t.id, t.deleted]), [["ann-1", true]])
 
-      assert.strictEqual(fraction.status, 400)
-      assert.strictEqual(unknown.status, 400)
-      assert.strictEqual(notJson.status, 400)
-      assert.strictEqual(notSentAsJson.status, 415)
-      assert.strictEqual(after, version)
+          assert.strictEqual(squatted.body.ok, true)
+          assert.strictEqual(real.body.ok, false)
+          assert.isFalse(real.body.todos.some((t) => t.id === "dan-1"))
+          assert.strictEqual(retried.body.ok, true)
 
-      assert.strictEqual(s.version, version)
-      assert.strictEqual(s.todos.length, 3)
+          assert.strictEqual(refuse.status, 400)
+          assert.strictEqual(created.body.ok, true)
 
-      assert.strictEqual(response.status, 200)
-      assert.match(response.headers["content-type"] ?? "", /javascript/)
-      assert.isNotEmpty(js)
-      assert.strictEqual(outside.status, 404)
+          assert.strictEqual(fraction.status, 400)
+          assert.strictEqual(unknown.status, 400)
+          assert.strictEqual(notJson.status, 400)
+          assert.strictEqual(notSentAsJson.status, 415)
+          assert.strictEqual(after, version)
+
+          assert.strictEqual(s.version, version)
+          assert.strictEqual(s.todos.length, 3)
+
+          assert.strictEqual(response.status, 200)
+          assert.match(response.headers["content-type"] ?? "", /javascript/)
+          assert.isNotEmpty(js)
+          assert.strictEqual(outside.status, 404)
+        })
+        saved = try store.get()
+      }
+
+      // Stopped and started again on the same file: spec/server.md, "The server holds the list, its version and a log of every request it answered";
+      // a retry is still answered from the log: spec/server.md, "The log tells which requests were answered, and with which edit each was accepted"
+      provide served(file) {
+        const restarted = try (try Machine).get()
+        const retried = [try post(milk), try post(forged), try post(request("dan", 1, create("dan-1", "milk")))]
+        const after = try (try Machine).get()
+        try Effect.try(() => {
+          assert.deepStrictEqual(restarted, saved)
+          assert.deepStrictEqual(retried.map((a) => [a.body.ok, a.body.version]), [[true, saved.version], [true, saved.version], [false, saved.version]])
+          assert.deepStrictEqual(after, saved)
+        })
+      }
+
+      // A file that holds no state the server saved stops it from starting, naming the file: spec/server.md, "The server holds the list, its version and a log of every request it answered"
+      const fs = try FileSystem.FileSystem
+      const notJson = `${file}.notjson`
+      const notAState = `${file}.empty`
+      try fs.writeFileString(notJson, "not json")
+      try fs.writeFileString(notAState, "{}")
+      const unreadable = path.dirname(file)
+      const refusals = try Effect.forEach([notJson, notAState, unreadable], (f) => Effect.flip(Layer.build(served(f))))
+      try Effect.try(() => assert.deepStrictEqual(refusals.map((e) => e instanceof NotAStateFile && e.file), [notJson, notAState, unreadable]))
     })
-  })
+  }
+})
+
+/** The state the server saved in `file`, read back as a restarted server would find it: an empty list before the first save. */
+effect function savedIn(file: string) {
+  const fs = try FileSystem.FileSystem
+  if (!(try fs.exists(file))) return { todos: [], version: 0, log: [] } as Server
+  const text = try fs.readFileString(file)
+  return (try Effect.try(() => JSON.parse(text))) as Server
+}
+
+const sameEdit = (a: Op, b: Op) => a.kind === b.kind && a.id === b.id && a.title === b.title && a.done === b.done
+
+/**
+ * What the server did with `event`, posted over HTTP: "accepted" if it saved the request in its log, "refused" if it
+ * answered it from the log. Its verdict must be what the log says: accepted only if the log holds this edit as accepted.
+ */
+effect function outcome(file: string, event: Event) {
+  const before = (try savedIn(file)).log.length
+  const { status, body } = try post(event)
+  if (status !== 200) return try die(new Error(`POST /api/events answered ${status}`))
+  const { log } = try savedIn(file)
+  const ok = log.some((h) => h.client === event.client && h.seq === event.seq && h.ok && sameEdit(h.op, event.op))
+  if (body.ok !== ok) return try die(new Error(`POST /api/events answered ok: ${body.ok}, but the log says ${ok}`))
+  return log.length > before ? "accepted" as const : "refused" as const
+}
+
+// The real HTTP server against spec/server.md, as saved in its file: a journey per `sometimes` rule, then random walks (SPEC.md, "Conformance").
+it.live("the HTTP server does what spec/server.md says", () => effect {
+  provide NodeServices.layer {
+    try scoped(effect {
+      const dir = try (try FileSystem.FileSystem).makeTempDirectoryScoped()
+      const path = try Path.Path
+      let runs = 0
+      const file = () => path.join(dir, `${runs}.json`)
+      let app = ManagedRuntime.make(served(file()))
+      try tryPromise(() => conformance({
+        reset: async () => {
+          await app.dispose()
+          runs++
+          app = ManagedRuntime.make(served(file()))
+        },
+        dispatch: (_, event) => app.runPromise(outcome(file(), event)),
+        observe: () => app.runPromise(savedIn(file())),
+      }, { keys: ["server"], walks: 20, steps: 12 }).finally(() => app.dispose()))
+    })
+  }
 })
