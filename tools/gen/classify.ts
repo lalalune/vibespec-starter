@@ -46,6 +46,7 @@ export function classify(funs: Json[], stateType: Json | undefined, sig: (d: Jso
     .map((d) => {
       const guard = funs.find((g) => g.name === `can${d.name[0].toUpperCase()}${d.name.slice(1)}`);
       if (guard && spelled(guard) !== spelled(d)) fail(`${guard.name} must take the same parameters as ${d.name}`);
+      if (guard && !isBool(guard)) fail(`${guard.name}: a guard returns bool`);
       return { name: d.name, params: sig(d).params.slice(1), guard: guard?.name };
     });
   // In a library, `withdraw` and `canWithdraw` are a component's functions for a machine elsewhere to build on.

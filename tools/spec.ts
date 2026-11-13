@@ -2,10 +2,12 @@
 // spec/*.md -> Quint -> TypeScript -> proofs (README, "What `npm run check` checks").
 //
 //   spec check [--json]     run every stage, report what is out of step
+//   spec watch              check, then check again on every change to spec/, src/ or test/
 //   spec gen [--if-valid]   generate gen/ only
 //   spec accept [unproved]  check afresh, then record the reviews (or the obligations simulated only)
 //   spec new <name>         write a starter spec/<name>.md
-//   spec init               add the sync skill, AGENTS.md, CONTRIBUTING.md and scripts to a project
+//   spec init               add the sync and design skills, AGENTS.md's section on specs, CLAUDE.md's import of it,
+//                           CONTRIBUTING.md and scripts to a project
 
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -17,20 +19,23 @@ import { generate, LIST_HELPERS, type Model, type Origin } from "./gen.ts";
 import { fail } from "./gen/types.ts";
 import { exec, LIB_FILE, prove, run, type Proof, type Unit } from "./prove.ts";
 
-const SAMPLES = 10000; // simulated traces per check
-const WITNESS_SAMPLES = 20 * SAMPLES; // traces tried when looking for a state a `sometimes` rule says is reachable
-const COMPARED_SAMPLES = 2000; // traces simulated with definitions evaluated along the way
-const REPLAYED = 200; // traces of each kind replayed through the generated TypeScript
+// How much is simulated. SPEC_QUICK=1 simulates a tenth as much, for iterating; `accept` never does (checkLocked).
+let SAMPLES = 10000; // simulated traces per check
+let WITNESS_SAMPLES = 20 * SAMPLES; // traces tried when looking for a state a `sometimes` rule says is reachable
+let COMPARED_SAMPLES = 2000; // traces simulated with definitions evaluated along the way
+let REPLAYED = 200; // traces of each kind replayed through the generated TypeScript
+let QUICK = false;
 const STEPS = 20; // events per trace
 /** The annotations hand-written verified code may use. Ones that tell the prover to trust or skip something are not proofs. */
 const ANNOTATIONS = ["backend", "pure", "requires", "ensures", "invariant", "decreases", "type", "ghost", "assert"];
 
 // --- the spec file -----------------------------------------------------------
 
-export interface Rule { key: string; line: number; prose: string; code: string; defs: string[] }
+export interface Rule { key: string; story: string; line: number; prose: string; code: string; defs: string[] }
 /** A `##` heading: a story or another group of rules. Its prose is the text between the heading and its first rule. */
 export interface Story { title: string; line: number; prose: string }
-export interface Spec { name: string; file: string; rules: Rule[]; stories: Story[]; imports: string[]; qnt: string }
+/** `meaning` is the Quint as written, with every line of prose blank: what a cache key may depend on. */
+export interface Spec { name: string; file: string; rules: Rule[]; stories: Story[]; imports: string[]; qnt: string; meaning: string }
 
 /** Why a name cannot name a spec, or undefined if it can. */
 export function badSpecName(name: string): string | undefined {
@@ -52,15 +57,29 @@ export function parseSpec(root: string, file: string): Spec {
   const rules: Rule[] = [];
   const stories: Story[] = [];
   const qnt: string[] = [];
+  const meaning: string[] = [];
   const imports: string[] = [];
   let story: Story | undefined;
   let rule: Rule | undefined;
   let fence: { mark: string; quint: boolean } | undefined;
-  fs.readFileSync(path.join(root, file), "utf8").split("\n").forEach((text, i) => {
+  // The Quint of the block in progress, to check that no comment or string runs on past its end.
+  let block = "";
+  const source = fs.readFileSync(path.join(root, file), "utf8").replace(/\r\n/g, "\n");
+  // Quint and Markdown may not agree on where a line ends at these, and prose could then end a comment early.
+  const odd = source.search(/[\r\v\f\u0085\u2028\u2029]/);
+  if (odd >= 0) throw new Error(`${file}:${source.slice(0, odd).split("\n").length}: a line break other than \\n; save the file with plain line endings`);
+  source.split("\n").forEach((text, i) => {
     const marker = text.match(/^\s*(`{3,}|~{3,})(.*)$/);
     const closes = fence && marker && marker[1][0] === fence.mark[0] && marker[1].length >= fence.mark.length && !marker[2].trim();
-    if (closes) fence = undefined;
-    else if (fence?.quint) {
+    if (closes) {
+      // Prose is tangled as `//` comments, which is only safe if no comment or string runs on into it from the code.
+      const open = fence!.quint ? scan(block).mode : "";
+      if (open) throw new Error(`${file}:${i + 1}: a ${open === '"' ? "string" : "comment"} is still open at the end of this quint block; close it inside the block`);
+      fence = undefined;
+      block = "";
+    } else if (fence?.quint) {
+      block += text + "\n";
+      meaning.push(text);
       rule!.code += text + "\n";
       const def = text.match(/^\s*(?:pure\s+)?(?:def|val|type)\s+(\w+)/);
       if (def) rule!.defs.push(def[1]);
@@ -77,18 +96,38 @@ export function parseSpec(root: string, file: string): Spec {
       stories.push(story);
       rule = undefined;
     } else if (!fence && text.startsWith("### ")) {
-      rule = { key: `${story?.title ?? ""} / ${text.slice(4).trim()}`, line: i + 1, prose: "", code: "", defs: [] };
+      rule = { key: `${story?.title ?? ""} / ${text.slice(4).trim()}`, story: story?.title ?? "", line: i + 1, prose: "", code: "", defs: [] };
       if (rules.some((r) => r.key === rule!.key)) throw new Error(`${file}:${i + 1}: duplicate rule "${rule.key}"`);
       rules.push(rule);
     } else if (rule) rule.prose += text + "\n";
     else if (story) story.prose += text + "\n";
     qnt.push(i === 0 ? `module ${name} { // ${text}` : text ? `// ${text}` : "");
+    meaning.push(i === 0 ? `module ${name} {` : "");
   });
+  if (fence?.quint && scan(block).mode) throw new Error(`${file}: a quint block is never closed, and a comment or string in it is still open`);
   try {
-    return { name, file, rules, stories, imports, qnt: expandListHelpers(qnt.join("\n")) + "\n}\n" };
+    return { name, file, rules, stories, imports, qnt: expandListHelpers(qnt.join("\n")) + "\n}\n", meaning: meaning.join("\n") };
   } catch (e) {
     throw new Error(`${file}:${(e as Error).message}`);
   }
+}
+
+/** Which characters of Quint are code, as opposed to part of a string or a comment, and what is still open at the end. */
+function scan(text: string): { code: boolean[]; mode: "" | '"' | "//" | "/*" } {
+  const code: boolean[] = [];
+  let mode: "" | '"' | "//" | "/*" = "";
+  for (let i = 0; i < text.length; i++) {
+    const two = text.slice(i, i + 2);
+    if (mode === "" && text[i] === '"') mode = '"';
+    else if (mode === "" && two === "//") mode = "//";
+    else if (mode === "" && two === "/*") { i++; mode = "/*"; }
+    else if (mode === "") { code[i] = true; continue; }
+    else if (mode === '"' && text[i] === "\\") i++;
+    else if (mode === '"' && text[i] === '"') mode = "";
+    else if (mode === "//" && text[i] === "\n") mode = "";
+    else if (mode === "/*" && two === "*/") { i++; mode = ""; }
+  }
+  return { code, mode: mode === "//" ? "" : mode };
 }
 
 /**
@@ -97,19 +136,7 @@ export function parseSpec(root: string, file: string): Spec {
  * gen.ts for why). Strings and comments are left alone.
  */
 export function expandListHelpers(text: string): string {
-  // Which characters are code, as opposed to part of a string or a comment.
-  const code: boolean[] = [];
-  for (let i = 0, mode = ""; i < text.length; i++) {
-    const two = text.slice(i, i + 2);
-    if (mode === "" && text[i] === '"') mode = '"';
-    else if (mode === "" && two === "//") mode = "//";
-    else if (mode === "" && two === "/*") mode = "/*";
-    else if (mode === "") { code[i] = true; continue; }
-    else if (mode === '"' && text[i] === "\\") i++;
-    else if (mode === '"' && text[i] === '"') mode = "";
-    else if (mode === "//" && text[i] === "\n") mode = "";
-    else if (mode === "/*" && two === "*/") { i++; mode = ""; }
-  }
+  const { code } = scan(text);
   let count = 0;
   const expand = (from: number, to: number): string => {
     const call = /\.(every|some|includes|listMap)\(/g;
@@ -150,7 +177,7 @@ const proseFingerprint = (prose: string) => short(prose.replace(/\s+/g, " ").tri
 export const fingerprint = (r: Rule): [string, string] => [proseFingerprint(r.prose), short(r.code.split("\n").map((l) => l.trimEnd()).join("\n").trim())];
 /** A story is recorded under its heading, which no rule's key can be. */
 const storyKey = (s: Story) => `## ${s.title}`;
-const rulesOf = (spec: Spec, s: Story) => spec.rules.filter((r) => r.key.startsWith(`${s.title} / `) && r.line > s.line);
+const rulesOf = (spec: Spec, s: Story) => spec.rules.filter((r) => r.story === s.title && r.line > s.line);
 
 /** The identifiers a piece of Quint mentions, outside comments and strings. */
 const mentions = (code: string) => new Set(code.replace(/\/\*[\s\S]*?\*\/|\/\/.*|"(?:[^"\\\n]|\\.)*"/g, " ").match(/[A-Za-z_]\w*/g) ?? []);
@@ -220,7 +247,7 @@ type Status = "story has no rules" | "new story" | "story changed" | "not formal
 const showPending = ({ where, rule, story, lines, status, note }: Pending) => {
   const half = (label: string, text: string) => `\n${indent(label, 8)}\n${indent(text || "(only the heading)", 10)}`;
   return `    ${where}\n      ${status}${note ?? ""}${
-    rule && status.includes("changed") ? half("prose:", rule.prose.trim()) + half("quint:", rule.code.trim())
+    rule && (status === "new" || status.includes("changed")) ? half("prose:", rule.prose.trim()) + half("quint:", rule.code.trim())
     : story && lines?.length ? half("text:", story.prose.trim()) + half("rules:", lines.join("\n"))
     : !story && lines ? `\n${indent(lines.join("\n"), 8)}`
     : ""}`;
@@ -343,12 +370,15 @@ const dafnyVersion = () => (dafny ??= run("dafny", ["--version"], import.meta.di
   return { version, problem: problem && `${problem}: the proof stage needs Dafny 4.11 on the PATH (see README, "Quick start")` };
 }, (e: Error): { version?: string; problem?: string } => ({ problem: `${e.message} (see README, "Quick start")` })));
 
-/** `produce()`, or what it returned for the same key before if `keep` said so. `used` collects every entry touched, so a full check can delete the rest. */
+/**
+ * `produce()`, or what it returned for the same key before if `keep` said so. `accept` (`fresh`) and SPEC_NO_CACHE=1
+ * read nothing from the cache. `used` collects every entry touched, so a full check can delete the rest.
+ */
 async function remembered<T>(root: string, fresh: boolean, used: Set<string>, key: string[], produce: () => Promise<T>, keep: (result: T) => boolean): Promise<T> {
   const name = `${sha(await toolchainId(), ...key).slice(0, 24)}.json`;
   const file = path.join(root, ".spec-cache", name);
   used.add(name);
-  if (!fresh && fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, "utf8"));
+  if (!fresh && !process.env.SPEC_NO_CACHE && fs.existsSync(file)) return JSON.parse(fs.readFileSync(file, "utf8"));
   const result = await produce();
   if (keep(result)) {
     fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -424,8 +454,8 @@ async function settled<T>(work: Promise<T>[]): Promise<T[]> {
   return all.map((r) => (r as PromiseFulfilledResult<T>).value);
 }
 
-/** AGENTS.md, "Large applications". */
-const seedFor = (...what: string[]) => String(parseInt(digest(what.join("\0")).slice(0, 12), 16));
+/** SPEC_SEED, or a seed derived from what is simulated, so a run repeats exactly (AGENTS.md, "Checking harder"). */
+const seedFor = (...what: string[]) => process.env.SPEC_SEED?.trim() || String(parseInt(digest(what.join("\0")).slice(0, 12), 16));
 
 /**
  * Simulate the harness until `invariant` breaks; returns the traces Quint wrote, and the command that runs the same
@@ -500,7 +530,8 @@ function proofUnits(root: string, models: Model[]): Unit[] {
   const byName = new Map(models.map((m) => [m.name, m]));
   const withoutImports = (text: string) => {
     const file = ts.createSourceFile("unit.ts", text, ts.ScriptTarget.Latest, true);
-    const imports = file.statements.filter(ts.isImportDeclaration);
+    // `export … from` loads a module as surely as `import` does.
+    const imports = file.statements.filter((d): d is ts.ImportDeclaration | ts.ExportDeclaration => ts.isImportDeclaration(d) || (ts.isExportDeclaration(d) && !!d.moduleSpecifier));
     const kept = imports.reduceRight((rest, d) => rest.slice(0, d.getFullStart()) + rest.slice(d.getEnd()), text);
     return { kept, from: imports.map((d) => (d.moduleSpecifier as ts.StringLiteral).text) };
   };
@@ -510,13 +541,14 @@ function proofUnits(root: string, models: Model[]): Unit[] {
     for (const dep of m.imports) if (!seen.includes(dep)) { needs(byName.get(dep)!, seen); seen.push(dep); }
     return seen;
   };
-  const asDependency = (name: string) => withoutObligations(withoutImports(byName.get(name)!.render(`${name}_`)).kept);
+  const asDependency = (name: string, docs = true) => withoutObligations(withoutImports(byName.get(name)!.render(`${name}_`, docs)).kept);
   /** The laws of modules placed beside a unit, as the unit spells them. */
   const lawsOf = (names: string[], spelled: (dep: string) => string) =>
     names.flatMap((dep) => byName.get(dep)!.laws.map((l) => ({ fn: `${spelled(dep)}${l.name}`, law: l.name, from: `${dep}.ts` })));
   const units: Unit[] = models.map((m) => ({
     unit: `${m.name}.ts`,
-    text: [...needs(m).map(asDependency), withoutImports(m.ts).kept].join("\n"),
+    text: [...needs(m).map((n) => asDependency(n)), withoutImports(m.ts).kept].join("\n"),
+    meaning: [...needs(m).map((n) => asDependency(n, false)), withoutImports(m.render("", false)).kept].join("\n"),
     src: false,
     proofFile: `spec/${m.name}.proof.dfy`,
     laws: lawsOf(needs(m), (dep) => `${dep}_`),
@@ -542,10 +574,13 @@ function proofUnits(root: string, models: Model[]): Unit[] {
     if (new Set(deps).size > 1) throw new Error(`src/${f}: verified code may import one generated module; put what it needs from the others into that module's spec`);
     // The module it imports sits beside it under its own names, as the code refers to them.
     const d = deps[0];
-    const beside = d ? [...needs(byName.get(d)!).map(asDependency), withoutObligations(withoutImports(byName.get(d)!.ts).kept)] : [];
+    const beside = (docs: boolean) => d ? [...needs(byName.get(d)!).map((n) => asDependency(n, docs)), withoutObligations(withoutImports(byName.get(d)!.render("", docs)).kept)] : [];
     units.push({
+      requires: used.filter((k) => k === "requires").length,
       unit: `src-${f.replaceAll(path.sep, "-")}`,
-      text: [...beside, `// ---- src/${f} ----`, kept].join("\n"),
+      text: [...beside(true), `// ---- src/${f} ----`, kept].join("\n"),
+      // The hand-written code exactly as it is: only what the tools generated is read without its citations.
+      meaning: [...beside(false), `// ---- src/${f} ----`, kept].join("\n"),
       src: true,
       proofFile: `src/${f.replace(/\.ts$/, ".proof.dfy")}`,
       laws: d ? [...lawsOf(needs(byName.get(d)!), (dep) => `${dep}_`), ...lawsOf([d], () => "")] : [],
@@ -704,6 +739,9 @@ export async function check(root: string, accept: false | "reviews" | "unproved"
 }
 
 async function checkLocked(root: string, accept: false | "reviews" | "unproved", log: (result: Result) => void): Promise<boolean> {
+  QUICK = !accept && !!process.env.SPEC_QUICK && process.env.SPEC_QUICK !== "0";
+  [SAMPLES, COMPARED_SAMPLES, REPLAYED] = QUICK ? [1000, 200, 50] : [10000, 2000, 200];
+  WITNESS_SAMPLES = 20 * SAMPLES;
   let allOk = true;
   const report = (ok: boolean, stage: Result["stage"], summary: string, detail = "", where?: string, keepDetail = false) => {
     allOk &&= ok;
@@ -755,16 +793,25 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
     if (!model.stateType && !model.laws.length && !model.evals.length) continue;
 
     // A spec whose model and harness are unchanged, and that passed, is not simulated again.
-    const closure = (names: string[]): string => names.map((n) => { const dep = specs.find((x) => x.name === n)!; return closure(dep.imports) + dep.qnt; }).join("");
-    const found = remembered<Result[]>(root, !!accept, used, ["simulate", closure(spec.imports), spec.qnt, model.harness, String([SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, STEPS])], async () => {
+    const closure = (names: string[]): string => names.map((n) => { const dep = specs.find((x) => x.name === n)!; return closure(dep.imports) + dep.meaning; }).join("");
+    const found = remembered<Result[]>(root, !!accept, used, ["simulate", closure(spec.imports), spec.meaning, model.harness, String([SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, STEPS]), process.env.SPEC_SEED ?? ""], async () => {
       const said: Result[] = [];
       const say = (ok: boolean, stage: Result["stage"], summary: string, detail = "") => said.push({ ok, stage, summary, detail });
       try {
-        const sim = await simulate(root, model, "inv", REPLAYED);
-        // Of the traces that break a rule, show the shortest, and only up to the break.
-        const bad = sim.traces.flatMap((t) => { const b = firstBreak(domain, model, t, cite); return b ? [{ t: t.slice(0, b.steps), why: b.why }] : []; })
+        // Of the traces that break a rule, the shortest, and only up to the break.
+        const shortestBreak = (traces: Step[][]) => traces.flatMap((t) => { const b = firstBreak(domain, model, t, cite); return b ? [{ t: t.slice(0, b.steps), why: b.why }] : []; })
           .sort((x, y) => x.t.length - y.t.length)[0];
-        if (sim.broken || bad) {
+        // The first run goes alone: Quint installs its evaluator on first use, and runs started together would race to.
+        // The rest are independent and overlap. The probe, in which the simulator also evaluates every definition it
+        // can, supplies more traces to replay. Each witness search stops at its goal or at a broken rule, whichever
+        // comes first (see the harness). All of them finish before anything is reported, failures included.
+        const sim = await simulate(root, model, "inv", REPLAYED);
+        const [probe, ...goals] = await settled([simulate(root, model, "inv", REPLAYED, COMPARED_SAMPLES, "probe"),
+          ...model.sometimes.map((w) => simulate(root, model, `never_${w}`, 1, WITNESS_SAMPLES))]);
+        const witnesses = model.sometimes.map((w, i) => ({ w, search: goals[i] }));
+        const traces = [...sim.traces, ...probe.traces, ...witnesses.flatMap(({ search }) => (search.broken ? search.traces : []))];
+        const bad = shortestBreak(traces);
+        if (sim.broken || probe.broken || bad) {
           const lastEvent = bad?.t.findLast((s) => s.event)?.event?.type;
           const guard = model.transitions.find((t) => t.name === lastEvent)?.guard;
           // One repair is always available: refuse the event when its result would break the rule. A reason is better.
@@ -774,17 +821,12 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
           say(false, "always", bad?.why ?? "a rule is broken", `${bad ? showTrace(bad.t) + hint + "\n" : ""}      ${sim.again}`);
           return said;
         }
-        say(true, "always", `no rule broken in ${SAMPLES} traces`);
-        // A second run, in which the simulator also evaluates every definition it can, supplies more traces to replay.
-        // The witness searches stop at the first witness, so a large budget is cheap.
-        const [probe, ...witnesses] = await settled([simulate(root, model, "inv", REPLAYED, COMPARED_SAMPLES, "probe"),
-          ...model.sometimes.map((w) => simulate(root, model, `never_${w}`, 1, WITNESS_SAMPLES))]);
-        const traces = [...sim.traces, ...probe.traces];
+        say(true, "always", `no rule broken in ${SAMPLES + COMPARED_SAMPLES} traces${QUICK ? " (SPEC_QUICK: a tenth of a full check; `npm run accept` simulates in full)" : ""}`);
+        // A witness search ends at its goal or at a broken rule, so only a final state that meets the goal reaches it.
         const reached: string[] = [];
-        for (const [i, w] of model.sometimes.entries()) {
-          const found = witnesses[i];
-          if (found.broken) { reached.push(w); traces.push(...found.traces); }
-          else say(false, "sometimes", `${cite(w)} not reached in ${WITNESS_SAMPLES} traces of ${STEPS} events`, `      ${found.again}`);
+        for (const { w, search } of witnesses) {
+          if (search.broken && search.traces.some((t) => domain[w](t.at(-1)?.state))) reached.push(w);
+          else say(false, "sometimes", `${cite(w)} not reached in ${WITNESS_SAMPLES} traces of ${STEPS} events`, `      ${search.again}`);
         }
         // A guard must allow its event in some reachable state; one never seen to refuse it is listed (AGENTS.md,
         // "Writing good rules"). The simulator searches only for the side the traces so far do not show.
@@ -855,9 +897,10 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
       for (const u of units) {
         const deps = u.laws.flatMap(({ from }) => (proving.has(from) ? [[from, proving.get(from)!] as const] : []));
         const unitProof = (async () => {
-          const proved = new Map(await Promise.all(deps.map(async ([d, p]) => [d, (await p).proof] as const)));
           const proofPath = path.join(root, u.proofFile);
           const proofText = fs.existsSync(proofPath) ? fs.readFileSync(proofPath, "utf8") : undefined;
+          // Laws are offered only to a proof file, so a unit without one waits for nothing.
+          const proved = new Map(proofText === undefined ? [] : await Promise.all(deps.map(async ([d, p]) => [d, (await p).proof] as const)));
           // A law of an imported module is offered only if its own unit proved it, in this run: not simulated only, and
           // not resting on an obligation that is (a law that does is among the unit's obligations not proved).
           const laws = u.laws.filter(({ law, from }) => {
@@ -865,7 +908,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
             return p && !p.errors.length && !p.unproved.some((x) => x.startsWith(`${law}: `));
           }).map((l) => l.fn);
           const offered = { proof: proofText === undefined ? undefined : { file: u.proofFile, text: proofText }, lib, laws };
-          const proof = await remembered(root, !!accept, used, ["prove", u.unit, u.text, proofText ?? "", proofText === undefined ? "" : laws.join(" ")], () => prove(root, u, offered), (p) => !p.errors.length);
+          const proof = await remembered(root, !!accept, used, ["prove", u.unit, u.meaning, proofText ?? "", proofText === undefined ? "" : laws.join(" ")], () => prove(root, u, offered), (p) => !p.errors.length);
           return { proof, proofText };
         })();
         unitProof.catch(() => {});
@@ -877,7 +920,11 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
     if (typing) {
       const tsc = await typing;
       report(tsc.ok, "types", tsc.ok ? "fit the generated contract" : "do not fit the generated contract", indent(tsc.out.trim()), "src/ and test/");
-    } else skip("types", "no tsconfig.json");
+    } else {
+      const code = ["src", "test"].filter((d) => fs.existsSync(path.join(root, d)));
+      if (code.length) report(false, "types", `${code.join(" and ")} exist but there is no tsconfig.json, so nothing checks them against the generated contract; run \`spec init\` to add one`);
+      else skip("types", "no tsconfig.json, and no src/ or test/");
+    }
     let proofsRan = false;
     try {
       const { accepted, units } = await starting;
@@ -909,7 +956,9 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
           + (proof.resting?.[x] ? `   [rests on ${proof.resting[x]}]` : "")).join("\n"));
         // Hand-written code proved against a module that is only partly proved rests on what is not.
         const assumed = u.rests.flatMap((r) => (proved.get(r)?.unproved ?? []).map((x) => `${r}: ${x}`));
-        const assuming = assumed.length ? `, assuming the obligations that are simulated only (${u.rests.flatMap((r) => (proved.get(r)?.unproved.length ? [`${proved.get(r)!.unproved.length} of ${r}`] : [])).join(", ")})` : "";
+        const assuming = (assumed.length ? `, assuming the obligations that are simulated only (${u.rests.flatMap((r) => (proved.get(r)?.unproved.length ? [`${proved.get(r)!.unproved.length} of ${r}`] : [])).join(", ")})` : "")
+          // A precondition is assumed by the proof and checked by no one: callers outside verified code must meet it.
+          + (u.requires ? `, under ${u.requires} //@ requires that its unverified callers must meet` : "");
         if (proof.errors.length) {
           recordable = false;
           report(false, "proof", `${u.unit}: Dafny could not check it (full output in ${logFile}, final Dafny in gen/proof/${base}/${base}.dfy)`, indent(proof.errors.join("\n")), u.unit);
@@ -957,7 +1006,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
   for (const { spec, todo } of todos) {
     if (record && todo.length) {
       acceptReviews(root, spec, specs);
-      report(true, "review", `${spec.file}: recorded ${todo.map((t) => t.where.split("  ")[1]).join("; ")}`, "", spec.file);
+      report(true, "review", `${spec.file}: recorded ${todo.map((t) => t.rule?.key ?? t.story?.title ?? t.where.slice(t.where.indexOf("  ") + 2)).join("; ")}`, "", spec.file);
     } else report(!todo.length, "review", todo.length ? `${spec.file}: ${todo.length} to reconcile${refused}` : `${spec.file}: ${spec.rules.length} rules and ${spec.stories.length} stories reconciled`, items(todo), spec.file);
   }
   const proved = contracts(root).size;
@@ -979,10 +1028,12 @@ async function tests(root: string, specs: Spec[]): Promise<[boolean, "tests", st
     // Node's on test/**/*.test.ts. The placeholder `npm init` writes is no script.
     const pkg = fs.existsSync(path.join(root, "package.json")) ? JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) : {};
     const script = /no test specified/.test(pkg.scripts?.test ?? "") ? undefined : pkg.scripts?.test;
-    const files = fs.existsSync(path.join(root, "test")) ? (fs.readdirSync(path.join(root, "test"), { recursive: true }) as string[]).filter((f) => f.endsWith(".test.ts")).map((f) => `test/${f}`) : [];
+    const files = fs.existsSync(path.join(root, "test")) ? (fs.readdirSync(path.join(root, "test"), { recursive: true }) as string[]).filter((f) => f.endsWith(".test.ts")).sort().map((f) => `test/${f}`) : [];
     const [command, args] = script ? [packageManager(root), ["run", "test"]] : [process.execPath, ["--test", ...files]];
     if (script || files.length) {
-      const t = await exec(command, args, root, { ...process.env, SPEC_TESTS: "1" });
+      // Inside another test run (NODE_TEST_CONTEXT set), `node --test` would report to that run and always exit 0.
+      const { NODE_TEST_CONTEXT: _, ...env } = process.env;
+      const t = await exec(command, args, root, { ...env, SPEC_TESTS: "1" });
       const failures = t.stdout.includes("✖ failing tests:") ? t.stdout.slice(t.stdout.indexOf("✖ failing tests:")) : t.stdout.split("\n").slice(-80).join("\n");
       const ok = t.status === 0 && !t.stopped;
       said.push([ok, "tests", ok ? "pass" : "fail", indent((failures + t.stderr + (t.stopped ? `\n${t.stopped}` : "")).trim()), script ? `${command} run test` : "test/"]);
@@ -1048,7 +1099,13 @@ export function readSpecs(root: string): Spec[] {
 
 // --- init ----------------------------------------------------------------------------
 
-/** Give a project what it needs to use the package. Nothing that is already there is replaced. */
+const AGENTS_START = "<!-- onespec:start";
+const AGENTS_END = "<!-- onespec:end -->";
+
+/**
+ * Give a project what it needs to use the package. Nothing that is already there is replaced, except the marked
+ * section of AGENTS.md, which is the package's own and is brought up to date.
+ */
 export function init(root: string): string[] {
   const pkg = path.join(import.meta.dirname, "..");
   const done: string[] = [];
@@ -1058,7 +1115,38 @@ export function init(root: string): string[] {
     fs.writeFileSync(path.join(root, file), content());
     done.push(file);
   };
-  for (const doc of [".claude/skills/sync/SKILL.md", ".claude/skills/design/SKILL.md", "AGENTS.md", "CONTRIBUTING.md"]) add(doc, () => fs.readFileSync(path.join(pkg, doc), "utf8"));
+  for (const doc of [".claude/skills/sync/SKILL.md", ".claude/skills/design/SKILL.md", "CONTRIBUTING.md"]) add(doc, () => fs.readFileSync(path.join(pkg, doc), "utf8"));
+  // AGENTS.md is read by Claude Code, Codex and others, so a project often has one already. Its section on specs is
+  // added to it, or brought up to date, between markers; everything else in the file is the project's own.
+  const section = fs.readFileSync(path.join(pkg, "AGENTS.md"), "utf8").match(new RegExp(`${AGENTS_START}[\\s\\S]*?${AGENTS_END}`))?.[0]
+    ?? fail(`${path.join(pkg, "AGENTS.md")} has no section between ${AGENTS_START} and ${AGENTS_END}`);
+  const agents = path.join(root, "AGENTS.md");
+  const existing = fs.existsSync(agents) ? fs.readFileSync(agents, "utf8") : undefined;
+  const eol = existing?.includes("\r\n") ? "\r\n" : "\n";
+  const ours = section.replace(/\r?\n/g, eol);
+  const starts = existing?.split(AGENTS_START).length ?? 1;
+  const ends = existing?.split(AGENTS_END).length ?? 1;
+  if (existing !== undefined && !(starts === 1 && ends === 1) && !(starts === 2 && ends === 2 && existing.indexOf(AGENTS_START) < existing.indexOf(AGENTS_END)))
+    fail(`AGENTS.md: its section on specs should be one ${AGENTS_START} … ${AGENTS_END} pair; fix the markers by hand, then run spec init again`);
+  // A copy installed whole by an earlier version, without markers, would otherwise end up in the file twice.
+  if (existing !== undefined && starts === 1 && /npm run accept/.test(existing))
+    fail("AGENTS.md already holds a copy of the procedure without markers (from an earlier `spec init`); delete that copy, keep what is your own, then run spec init again");
+  const merged = existing === undefined ? `# Operating procedure for agents\n\n${section}\n`
+    : starts === 2 ? existing.replace(new RegExp(`${AGENTS_START}[\\s\\S]*?${AGENTS_END}`), () => ours)
+    : `${existing.trimEnd()}${eol}${eol}${ours}${eol}`;
+  if (merged !== existing) {
+    fs.writeFileSync(agents, merged);
+    done.push(existing === undefined ? "AGENTS.md" : "AGENTS.md (its section on specs)");
+  }
+  // Claude Code reads AGENTS.md only when there is no CLAUDE.md (and only from v2.1.277), so CLAUDE.md imports it:
+  // then it loads once, in every version, whether or not the project had a CLAUDE.md of its own.
+  const claude = path.join(root, "CLAUDE.md");
+  const own = fs.existsSync(claude) ? fs.readFileSync(claude, "utf8") : undefined;
+  if (own === undefined || !/^@AGENTS\.md\s*$/m.test(own)) {
+    const ceol = own?.includes("\r\n") ? "\r\n" : "\n";
+    fs.writeFileSync(claude, own === undefined ? "@AGENTS.md\n" : `${own.trimEnd()}${ceol}${ceol}@AGENTS.md${ceol}`);
+    done.push(own === undefined ? "CLAUDE.md (imports AGENTS.md)" : "CLAUDE.md (an import of AGENTS.md)");
+  }
   add("tsconfig.json", () => JSON.stringify({ compilerOptions: { target: "es2023", module: "nodenext", strict: true, noEmit: true, allowImportingTsExtensions: true, erasableSyntaxOnly: true, skipLibCheck: true, types: ["node"] }, include: ["src", "test", "gen/*.ts"] }, null, 2) + "\n");
   if (!fs.existsSync(path.join(root, "spec"))) { fs.mkdirSync(path.join(root, "spec")); done.push("spec/"); }
   const ignore = path.join(root, ".gitignore");
@@ -1068,7 +1156,7 @@ export function init(root: string): string[] {
   const manifest = path.join(root, "package.json");
   if (fs.existsSync(manifest)) {
     const json = JSON.parse(fs.readFileSync(manifest, "utf8"));
-    const scripts = { check: "spec check", gen: "spec gen", accept: "spec accept" };
+    const scripts = { check: "spec check", watch: "spec watch", gen: "spec gen", accept: "spec accept", new: "spec new" };
     const added = Object.entries(scripts).filter(([name]) => !json.scripts?.[name]);
     if (added.length) {
       json.scripts = { ...json.scripts, ...Object.fromEntries(added) };
@@ -1132,7 +1220,43 @@ export function newSpec(root: string, name: string): string {
 
 const script = process.argv[1];
 const isMain = !!script && fs.existsSync(script) && fs.realpathSync(script) === fs.realpathSync(import.meta.filename);
-const USAGE = "usage: spec check [--json] | gen [--if-valid] | accept [unproved] | new <name> | init";
+const USAGE = "usage: spec check [--json] | watch | gen [--if-valid] | accept [unproved] | new <name> | init";
+
+/**
+ * Check, then check again whenever spec/, src/, test/ or tsconfig.json changes. One process stays warm between runs
+ * (the compiler, the toolchain's fingerprint and the cache are already loaded), edits that arrive during a run start
+ * one more run after it, and what is unchanged comes from the cache as in any check.
+ */
+async function watch(root: string) {
+  let running = false;
+  let again = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const once = async () => {
+    if (running) { again = true; return; }
+    running = true;
+    do {
+      again = false;
+      const started = Date.now();
+      console.log(`\n--- ${new Date().toLocaleTimeString()} ---`);
+      try {
+        const { next } = await check(root, false, (r) => console.log(show(r)));
+        console.log(`\n${styleText("bold", "next:")} ${next}\n(${((Date.now() - started) / 1000).toFixed(1)}s; watching spec/, src/, test/ and tsconfig.json; Ctrl-C to stop)`);
+      } catch (e) {
+        console.error((e as Error).message);
+      }
+    } while (again);
+    running = false;
+  };
+  const changed = (file?: string | null) => {
+    // Editors write temporary files beside the real one; only sources matter.
+    if (file && !/\.(md|ts|dfy|json)$/.test(file)) return;
+    clearTimeout(timer);
+    timer = setTimeout(once, 200);
+  };
+  for (const dir of ["spec", "src", "test"]) if (fs.existsSync(path.join(root, dir))) fs.watch(path.join(root, dir), { recursive: true }, (_, f) => changed(f));
+  if (fs.existsSync(path.join(root, "tsconfig.json"))) fs.watch(path.join(root, "tsconfig.json"), () => changed());
+  await once();
+}
 
 if (isMain) {
   const root = process.cwd();
@@ -1158,6 +1282,8 @@ if (isMain) {
     } else if (command === "init" && takes([])) {
       const done = init(root);
       console.log(done.length ? `added ${done.join(", ")}` : "nothing to add");
+    } else if (command === "watch" && takes([])) {
+      await watch(root);
     } else if (command === "new" && takes(["*"])) {
       console.log(`wrote ${newSpec(root, args[0])}`);
     } else {

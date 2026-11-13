@@ -1,11 +1,22 @@
 ---
 name: sync
-description: Bring the stories, rules, Quint model and generated TypeScript of this repository back into step. Use after any change to spec/*.md or src/, when the user adds or edits a story or rule, when they edit Quint by hand, or when `npm run check` shows a ✗.
+description: Bring the stories, rules, Quint model and generated TypeScript of this repository back into step. Use when the user asks for new or changed behaviour of an application that has a spec/ directory, after any change to spec/*.md or src/, when the user adds or edits a story or rule, when they edit Quint by hand, or when `npm run check` shows a ✗.
 ---
 
 # Sync the spec
 
-Read AGENTS.md and README.md in full first, once per session.
+## Before you start
+
+- Read AGENTS.md and README.md in full, once per session. AGENTS.md, "Spec
+  reference", covers every construct and name the checks refuse.
+- **A request for new behaviour starts as a story.** Add it in the user's
+  words, as a `## Story: …` with a `>` quote, to the spec it belongs to; a new
+  application or area gets a new `spec/<name>.md` (the name is a plain
+  identifier and becomes `gen/<name>.ts`). Then run the loop: the check asks
+  for the rules, and you write them.
+- Code that only touches the outside world (HTTP, storage, UI) goes in `src/`
+  and calls the generated `parseEvent`, `enabled` and `step`; logic goes in
+  the spec.
 
 ## The loop
 
@@ -19,27 +30,37 @@ Read AGENTS.md and README.md in full first, once per session.
    a story you formalized leaves the verified core: then extend its journey,
    AGENTS.md "Tests").
 3. Run `npm run check` again. Repeat until the only `✗` lines are `review`
-   items other than **story has no rules** and **not formalized**, and `proof`
-   obligations you could not prove (see below).
-4. Stop and report (see "When you stop").
+   items other than **story has no rules** and **not formalized** (those two
+   are yours to fix; every other review item waits for the user's sign-off
+   once you have checked it as the table says), and `proof` obligations you
+   could not prove (see below).
+4. Stop and report (see "When you stop"). Do not accept anything.
 
 Give up and report after five rounds on the same failure.
+
+The check remembers what passed, keyed on what each spec and proof means:
+editing prose costs nothing, and editing one spec re-checks only it and the
+specs that import it. Do not set `SPEC_NO_CACHE=1` while iterating; the
+user's `npm run accept` always checks afresh. `SPEC_QUICK=1` simulates a
+tenth as much for a fast first pass on a large spec; run once without it
+before you stop. In this repository's examples, run `npm run check:dashboard`
+or `npm run check:fullstack` from the root.
 
 ## What each failure asks of you
 
 | Report says | Translate |
 |---|---|
 | `review` … **story has no rules** | Story → rules. Under the story, write one `###` rule for each thing the story requires: a sentence a product owner would call true or false. Then write each rule's Quint. If the story makes a new kind of state possible, add a `sometimes` rule for it. |
-| `review` … **new story** or **story changed** | Story → rules. Check that the story's rules, listed under it, say everything it asks for; write the missing ones. |
+| `review` … **new story** or **story changed** | Story → rules. Read the story's text and the rules listed under it, and add or change rules until they say everything the story asks for. |
 | `review` … **not formalized** | Rule → model. Write Quint that says exactly what the sentence says and no more. If that model then breaks a rule, the trace shows what the sentence left out. |
 | `review` … **prose changed** | Rule → model. If the meaning changed, change the Quint to match. If only the wording changed, leave the Quint. |
 | `review` … **model changed** | Model → rule. Someone edited the Quint. Rewrite the sentence so that a reader of the prose alone is not misled. |
-| `review` … **model changed through** … | Model → rule. The Quint of a rule this one relies on changed; the report names its definitions and rule when it can. Check that this rule's sentence is still true of them; rewrite it if not. |
+| `review` … **model changed through** *names* | Model → rule. Your rule's own Quint did not change; a definition it relies on did (the report names the definitions and their rules when it can). Check that the sentence is still true with the new definition; rewrite it only if it no longer is. |
 | `review` … **prose and model both changed** | Read both halves and make sure they moved to the same place. |
 | `review` … **new** | Read the rule's prose and Quint in the spec and make sure they say the same. |
 | `review` … **removed or renamed** | A rule: check that no story still depends on it. A story: check that its rules moved with it or went too. |
-| `review` … **new contract** or **contract changed** | Read the `//@` lines printed under `src/`. Check they say what the code must do, and no less than the rules it serves. |
-| `review` … **contract removed** | A `src/` file lost its last `//@` or was deleted. Check that nothing still relies on what it proved. |
+| `review` … **new contract** or **contract changed** | Read the `//@` lines printed under `src/`. Check they say what the code must guarantee, and no less than the rules it serves: a weaker `ensures` or a new `requires` changes what callers can rely on. List the file for the user's sign-off. |
+| `review` … **contract removed** | A `src/` file lost its last `//@` or was deleted. Check that nothing still relies on what it proved, and list the file for the user's sign-off. |
 | `model` | Fix at the reported `spec/…:line:col`. AGENTS.md lists what Quint is supported and which names are refused. |
 | `always` with a trace | Model → rule. The trace reaches a state that breaks the named rule; its last lines name the event and its guard. Decide whether the user would want that trace forbidden. If so, write the **reason** as a new rule and guard, such as "a payment may not exceed the balance". Only if you cannot find the reason, use the fallback the report offers: refuse the event when its result would break the rule. If the trace is fine and the `always` rule is wrong, fix the rule and say so. |
 | `always` … "the law … is false for" | The law or the function is wrong for those arguments. Fix whichever does not say what the prose says. |
@@ -48,13 +69,15 @@ Give up and report after five rounds on the same failure.
 | `sometimes` … **never happened** | The guard refused its event in every state reached, so every rule holds of it trivially and the story behind it may be impossible. Find which clause never holds: loosen the guard, add the transition that leads to the states it needs, or define `<param>Values` that it allows. If the event can only happen after more than 20 events, say so in your report; do not remove the event or weaken the guard to make the check pass. |
 | `sometimes` ✓ … **never seen to refuse** | Not a failure. For each guard listed, check that it refuses what its rule says. If it only restates an `always` rule, keep it when it protects `enabled` from outside input; if it was meant to refuse something, write what, or define `<param>Values` that it refuses. List these guards in your report. |
 | `replay` | Generated TypeScript and Quint disagree. That is a bug in the tools, not in the spec. Stop and report it. |
-| `types` | Update `src/` and the tests to the new generated contract. |
-| `- skipped types: no tsconfig.json` | Not a failure: the package has no TypeScript to check against `gen/`. |
+| `types` | Update `src/` and the tests to the new generated contract. If it says there is no `tsconfig.json`, run `npx spec init`. |
+| `- skipped types: no tsconfig.json` | Not a failure: the package has no `src/` or tests to check against `gen/`. |
 | `proof` … "not proved" | It holds in simulation; it is yours to prove. First decide whether it is true for every state that satisfies all the rules. If it is not (you can name such a state), no proof can help: the missing fact about reachable states becomes a new `always` rule, a discovered rule. If it is, prove it in the unit's proof file, `spec/<name>.proof.dfy` or `src/<path>.proof.dfy`: copy the obligation's `lemma …_ensures` header from `gen/proof/<unit>/<unit>.dfy` and write its body, calling `ProofLib` lemmas and your own helper lemmas (AGENTS.md, "Proof files"). Only what you cannot prove goes in your report, with what you tried; recording it as simulated only is the user's last resort, not yours. |
 | `proof` … "Dafny could not check it" | The generated or hand-written code is not something Dafny accepts (an unguarded lookup, index or division, or a wrong annotation), or the proof file is refused or does not verify: a stale header, a forbidden construct, a helper lemma that fails. The lines under it say which, with the file and line. |
 | `proof` … "belongs to no proof unit" | A stray proof file. Rename it to `spec/<name>.proof.dfy` for `spec/<name>.md`, or `src/<path>.proof.dfy` for a `src/<path>.ts` that contains `//@`; or delete it. |
 | `proof` … "the proof stage needs Dafny 4.11 on the PATH" | Dafny is missing or not 4.11.x. Tell the user; do not work around it. |
-| `proof`, a `src-…` unit | Fix the hand-written code, its `//@` annotation, or its proof file. The full output is in `gen/proof/<unit>.log`. |
+| `proof`, a `src-…` unit | Fix the hand-written code, its `//@` annotation, or its proof file. The full output is in `gen/proof/<unit>.log`. A line saying it holds "under N //@ requires" is not a failure, but report each precondition: unverified callers must meet it. |
+| `proof` … "accepted earlier … no longer count" | The unit or its proof file changed since the user accepted those obligations as simulated only. Treat them as "not proved" above; whatever you cannot prove, report for the user to accept again. |
+| `proof` … "accepted earlier now prove" | Good news: report it; the user may tighten the ledger with `npm run accept -- unproved`. |
 | `tests` … citations name no story or rule | Cite the story or rule by its heading as the spec now has it. If it was removed, the test that cites it is yours to review: does any rule still ask for what it checks? |
 | `tests` … fail | Fix the application in `src/`. Change an assertion only where the spec now asks for something else, and name the assertion and its rule in your report. A test that only restates what the spec proves, or breaks AGENTS.md "Tests", you propose for deletion in your report; never delete one to make it pass. |
 | "another check or accept is running" | Wait for that process and run again. If it no longer exists, delete the lock file the message names. |

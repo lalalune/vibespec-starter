@@ -1,5 +1,6 @@
 # Operating procedure for agents
 
+<!-- onespec:start (installed and kept up to date by `spec init`; edit outside these markers) -->
 Each application has one source of truth, `spec/<name>.md`: its stories, rules
 and Quint model. `gen/` is derived from it. Keep the spec true to what the user
 wants and `npm run check` green.
@@ -11,15 +12,32 @@ The spec format, naming rules and everything the tools accept are in
 ## Who does what
 
 `npm run check` detects; you translate: story → rules, rule → Quint, changed
-Quint → prose, counterexample → rule. That is your work in this session; it
-needs no other program or account.
+Quint → prose, counterexample → rule, unproved obligation → proof. That is
+your work in this session; it needs no other program or account.
 
-**Whenever `spec/` or `src/` has changed, follow
-[.claude/skills/sync/SKILL.md](.claude/skills/sync/SKILL.md)**: the loop, what
-each failure asks of you, and what to report. Claude Code loads it as the
-`sync` skill; other agents read the file.
+**Whenever the user asks for new or changed behaviour, or `spec/` or `src/`
+has changed, follow [.claude/skills/sync/SKILL.md](.claude/skills/sync/SKILL.md)**:
+the loop, what each failure asks of you, and what to report. Claude Code loads
+it as the `sync` skill; other agents read the file.
 
 The user signs off with `npm run accept`.
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `npm run check` | Every stage, cheapest first; remembers what passed, so a re-run costs only what changed |
+| `npm run watch` | `check` again on every change to `spec/`, `src/` or `test/`, in one warm process; for a person iterating |
+| `npm run gen` | Only regenerate `gen/` from the specs |
+| `npm run new -- <name>` | A starter `spec/<name>.md` ("Writing a spec", below) |
+| `npm run accept` | The user's sign-off on reconciled rules. Not yours to run |
+| `npm run accept -- unproved` | The user's decision to accept obligations as simulated only. Not yours to run |
+| `SPEC_QUICK=1 npm run check` | Simulate a tenth as much, for fast iteration on a large spec; say so in your report, since `npm run accept` simulates in full |
+| `SPEC_NO_CACHE=1 npm run check` | Everything afresh, nothing remembered; for CI, not for iterating. Traces are seeded from what is simulated, so a run repeats exactly; `SPEC_SEED=<n>` tries other traces |
+
+Where to look: Dafny's full output for a unit is `gen/proof/<unit>.log` and
+what it verified is `gen/proof/<unit>/<unit>.dfy`; simulated traces are in
+`gen/traces/`.
 
 ## Hard rules
 
@@ -37,7 +55,9 @@ The user signs off with `npm run accept`.
   never get past it: no trust or skip annotations, no edits to the tools or
   what they generate, no workaround for what a proof file may not contain.
 - Verified logic belongs in the spec as `pure def`. Hand-write TypeScript in
-  `src/` only for what Quint cannot express or what touches the outside world.
+  `src/` only for what Quint cannot express or what touches the outside world,
+  and pass everything that arrives from outside through `parseEvent` or
+  `parseState`.
 
 ## Writing code
 
@@ -539,21 +559,24 @@ a tarball made with `npm pack`.
 
 ```sh
 npm install --save-dev /path/to/vibespec-0.1.0.tgz
-npx spec init          # adds what is missing; replaces nothing
+npx spec init          # adds what is missing; replaces nothing of the project's own
 npx spec new <name>    # a starter spec/<name>.md
 npm run check
 ```
 
 | `spec init` adds | |
 |---|---|
-| `.claude/skills/sync/`, `.claude/skills/design/`, `AGENTS.md`, `CONTRIBUTING.md` | the agent's procedure and this reference, and a pointer to them |
+| `.claude/skills/sync/`, `.claude/skills/design/`, `CONTRIBUTING.md` | the agent's procedure and design rules, and a pointer to this file |
+| `AGENTS.md` | the procedure and this reference, between `onespec:start` and `onespec:end` markers: created if missing, else added to the project's own file, or brought up to date on a later `spec init`; the rest of the file is the project's |
+| `CLAUDE.md` | one line, `@AGENTS.md`, added to the project's own if it has one: Claude Code reads `AGENTS.md` only when there is no `CLAUDE.md` (and only from v2.1.277), so with the import it loads once, in every version |
 | `tsconfig.json`, `spec/` | |
 | `.gitignore` | `gen/`, `.spec-cache/` |
-| `package.json` scripts | `check`, `gen`, `accept` |
+| `package.json` scripts | `check`, `watch`, `gen`, `accept`, `new` |
 
 `spec` works on `spec/*.md`, and optionally `src/`, the package's
 [tests](#tests) and a `tsconfig.json`, in the directory it is run from. Without a `tsconfig.json`
-nothing is typechecked, and the check says so. To hand the generated code to another package, compile `gen/*.ts`
+nothing is typechecked, so the `types` stage fails if there is a `src/` or
+`test/` for it to check. To hand the generated code to another package, compile `gen/*.ts`
 with `tsc`; it has no dependencies.
 
 ## Large applications
@@ -565,8 +588,14 @@ with `tsc`; it has no dependencies.
   their proofs, so the cost of a proof grows with the spec, not with
   everything beneath it.
 - **Only what changed is checked again.** Each passing simulation and proof
-  result is kept in `.spec-cache/` under a fingerprint of the spec, everything it
-  imports and the versions of the tools.
+  result is kept in `.spec-cache/` under a fingerprint of what the spec means,
+  everything it imports and the versions of the tools. Prose and the line
+  numbers generated code cites are left out of the fingerprint, so editing
+  prose re-runs neither simulation nor proofs. Simulation runs overlap.
+  `npm run watch` keeps one process warm and checks again on every change.
+  `SPEC_QUICK=1` simulates a tenth as much while iterating on a large spec;
+  the result says so, and `accept` always simulates in full. Set
+  `SPEC_NO_CACHE=1` to run everything afresh; `accept` always does.
 - **The spec covers the rules, not the plumbing.** Chat, HTTP and storage stay
   hand-written around the generated core, as `examples/dashboard/src/notify.ts`
   does for sending messages.
@@ -575,7 +604,8 @@ with `tsc`; it has no dependencies.
 
 Simulation is seeded from what it simulates, so a run repeats exactly. A
 failing `always` rule or an unreached `sometimes` goal prints its seed and the
-`npx quint run` command that replays it.
+`npx quint run` command that replays it. Set `SPEC_SEED=<n>` to try other
+traces.
 
 To check a model exhaustively up to a depth with the Apalache model checker
 (needs Java 17+, downloads Apalache on first use):
@@ -583,6 +613,8 @@ To check a model exhaustively up to a depth with the Apalache model checker
 ```sh
 npx quint verify gen/order.run.qnt --main order_run --invariant inv --max-steps 10
 ```
+
+<!-- onespec:end -->
 
 ## Changing the tools
 
@@ -608,4 +640,5 @@ that object. Each result has `ok`, `stage` (a stage, or `skipped`),
 the command line ends with. `npm run selftest` builds scratch projects from
 this project's spec or from `tools/fixtures/`, breaks one thing at a time and
 asserts which stage catches each. Add a case for every new kind of mistake a
-change is meant to catch.
+change is meant to catch. `npm run check:dashboard` checks the larger example;
+it takes minutes when nothing is cached.

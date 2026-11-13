@@ -317,7 +317,8 @@ npm run accept
 
 | Command | Does |
 |---|---|
-| `npm run check` | Every stage below; ends with one `next:` line. `rm -rf .spec-cache` runs it afresh |
+| `npm run check` | Every stage below; ends with one `next:` line. `SPEC_NO_CACHE=1` runs it afresh; `SPEC_QUICK=1` simulates a tenth as much while iterating, and says so |
+| `npm run watch` | `check` again on every change to `spec/`, `src/` or `test/`, in one warm process |
 | `npm run -s check -- --json` | The same, as one JSON object ([shape](AGENTS.md#changing-the-tools)) |
 | `npm run gen` | Generates `gen/` only |
 | `npm run accept` | The user's sign-off: checks afresh and records what `review` lists, [all or nothing](AGENTS.md#review) |
@@ -325,6 +326,7 @@ npm run accept
 | `npm run new -- <name>` | Writes a [starter spec](AGENTS.md#writing-a-spec) |
 | `npm run demo` | A scripted session against the verified core |
 | `npm run check:dashboard` | `check` on `examples/dashboard` |
+| `npm run check:fullstack` | `check` on `examples/fullstack`, a React + Node app |
 | `npm run selftest` | Breaks the pipeline one way at a time and checks each break is caught |
 | `npm run build` | Compiles the tools into `dist/`, the packaged `spec` command |
 | `npx spec init` | Sets up another package; see [Using it from another package](AGENTS.md#using-it-from-another-package) |
@@ -343,8 +345,8 @@ Stages run cheapest first. `✓` passed, `✗` failed, `-` skipped: blocked by a
 | Stage | Question | Strength |
 |---|---|---|
 | `model` | Is the spec well-typed and inside the supported subset? | exact; anything unsupported is refused by name |
-| `always` | Does a reachable state break an `always` rule, a step break a `step` rule, or a sampled argument break a law? | 10,000 random traces; a failure comes with the shortest trace and its seed |
-| `sometimes` | Can each `sometimes` goal be reached? Does each guard allow its event in some reachable state? | a witness trace is a proof; a failure means 200,000 traces found none. [Guards never seen to refuse](AGENTS.md#writing-good-rules) are listed, not failed |
+| `always` | Does a reachable state break an `always` rule, a step break a `step` rule, or a sampled argument break a law? | 12,000 random traces, plus every witness search below, which stops at a broken rule too; a failure comes with the shortest trace and its seed |
+| `sometimes` | Can each `sometimes` goal be reached? Does each guard allow its event in some reachable state? | a witness trace is a proof; a failure means 200,000 traces of 20 events found none. [Guards never seen to refuse](AGENTS.md#writing-good-rules) are listed, not failed |
 | `replay` | Does the generated TypeScript mean what the Quint means? | 400 sampled traces and every witness: every state, every law, and every definition the simulator can evaluate. The rest are listed |
 | `types` | Does the application fit the generated contract? | exact |
 | `proof` | Does every transition preserve every `always` and `step` rule, does every law hold, and does hand-written logic meet its `//@` contract? | all states, all inputs, counted per obligation under a fixed resource limit. What Dafny cannot prove alone is proved in a proof file (`spec/<name>.proof.dfy`: lemmas only, checked to add nothing but proof), or listed; a listed obligation passes only once the user records it in `spec/unproved.lock.json`, for that text of the unit |
@@ -374,6 +376,8 @@ Keep `spec/`, `src/`, `test/` and `tools/` in git, lock files included.
 | `src/app.ts`, `src/demo.ts` | Unverified shell: storage, input parsing, error reporting; and the demo |
 | `test/app.test.ts` | Tests of the shell, run by the `tests` stage |
 | `examples/dashboard/` | A larger, synthesized example, as a separate package |
+| `examples/fullstack/` | A React frontend and a Node backend modelled together, network faults included, as a separate package |
+| `docs/roadmap.md`, `docs/research-report.md` | Review findings: what has been fixed, and what to do next for speed and for larger applications; and the file-by-file research pass behind them |
 | `writeup.html` | A narrative explainer of the approach |
 | `.github/workflows/check.yml` | Continuous integration: `npm run check` without the cache |
 | **Derived** (not in git) | |
@@ -381,6 +385,24 @@ Keep `spec/`, `src/`, `test/` and `tools/` in git, lock files included.
 | `gen/<name>.run.qnt` | The simulation harness that `npx quint run` and `quint verify` take |
 | `gen/traces/`, `gen/proof/` | The last simulated traces; the final Dafny and logs of each proof unit |
 | `dist/` | The built `spec` command, from `npm run build` |
+
+## A frontend and a backend together
+
+`examples/fullstack` is a shared to-do list: a `node:http` server, and a
+React page whose `useReducer` reducer is the generated client `step`.
+
+| Spec | Models |
+|---|---|
+| `todo.md` | The to-do library: the four edits, when each makes sense, how it is applied |
+| `server.md` | The backend: idempotent requests, a version that counts changes |
+| `client.md` | One browser tab: optimistic edits queued while offline, acknowledged, refused, rebased on snapshots |
+| `system.md` | The server, two tabs and a network that loses, duplicates and reorders messages |
+
+Its rules say every copy of the list, in a tab or in flight, is exactly the
+server's list at that version, and a `sometimes` rule shows two tabs that both
+edited converging. All 124 obligations are proved, including a hand-written
+loop that applies a batch of pushes; [its README](examples/fullstack/README.md)
+says how the halves fit and what the language could not yet say.
 
 ## A larger example
 
@@ -444,8 +466,9 @@ subset is refused by name ([supported Quint](AGENTS.md#supported-quint)).
 **What about I/O, HTTP and storage?** That is the shell, written by hand
 around the generated core and covered by tests.
 
-**Which agent?** Claude Code loads the skills in `.claude/skills/` directly.
-Any other agent reads [AGENTS.md](AGENTS.md).
+**Which agent?** Claude Code loads the skills in `.claude/skills/` directly,
+and [AGENTS.md](AGENTS.md) through `CLAUDE.md`, which imports it. Any other
+agent reads AGENTS.md.
 
 **Can I check harder than simulation?** Yes: run the Apalache model checker
 on the generated harness, exhaustively up to a depth

@@ -515,9 +515,16 @@ function restingOn({ dfy, regions }: Spliced, unproved: Map<string, string>): Ma
   return rests;
 }
 
-/** Findings of `dafny audit` in the unit's own file, other than the lemmas the tools add on purpose. */
+/**
+ * Findings of `dafny audit` in the unit's own file, other than the lemmas the tools add on purpose. It reads a copy
+ * of its own, so that it can run while LemmaScript checks the original.
+ */
 async function audit(dir: string, dfy: string, file: string, allowed: Set<string>): Promise<{ findings: string[]; log: string }> {
-  const { out } = await run("dafny", ["audit", ...dafnyFlags(dfy), file], dir);
+  const copy = file.replace(/\.dfy$/, ".audit.dfy");
+  fs.writeFileSync(path.join(dir, copy), dfy);
+  const { out: raw } = await run("dafny", ["audit", ...dafnyFlags(dfy), copy], dir);
+  // Read as if it had audited the original, which has the same text.
+  const out = raw.split(copy).join(file);
   const findings = out.split("\n").filter((l) => l.startsWith(`${file}(`) && /: (Warning|Error): /.test(l))
     .filter((l) => !/: Warning: (\w+): Declaration has explicit `\{:axiom\}` attribute/.test(l) || !allowed.has(l.match(/: Warning: (\w+):/)![1]));
   if (!/Dafny auditor completed/.test(out)) findings.push(`dafny audit gave no verdict: ${lastLines(out)}`);
@@ -552,6 +559,10 @@ export interface Unit {
   laws: { fn: string; law: string; from: string }[];
   /** The units whose assurance this one's rests on. */
   rests: string[];
+  /** The unit's text as far as its proof depends on it: generated code without the comments that cite the spec. */
+  meaning: string;
+  /** How many `//@ requires` hand-written code assumes of its callers. */
+  requires?: number;
   /** For a state machine: its transitions and how many parameters each takes after the state. */
   transitions?: { name: string; params: number }[];
 }
@@ -608,6 +619,8 @@ export async function prove(root: string, u: Unit, offered: { proof?: { file: st
   }
   const { dfy } = spliced;
   fs.writeFileSync(path.join(dir, file), dfy);
+  // Every unit, with or without a proof file: should LemmaScript ever emit something trusted, it fails here.
+  const audited = audit(dir, dfy, file, axiomNames);
   // LemmaScript keeps this .dfy, refuses it unless it is its own fresh output plus added lines, and runs Dafny.
   const checked = await run("lsc", ["check", "--backend=dafny", `--time-limit=${TIME_LIMIT}`, `--extra-flags=${DAFNY_FLAGS.join(" ")}`, u.unit], dir);
   let log = `${generated.out}${checked.out}`;
@@ -635,10 +648,8 @@ export async function prove(root: string, u: Unit, offered: { proof?: { file: st
       if (k && !v.unproved.has(k)) { v.unproved.set(k, def); resting[k] = on; }
     }
   }
-  if (offered.proof) {
-    const audited = await audit(dir, dfy, file, axiomNames);
-    log += `\n---- dafny audit ----\n${audited.log}`;
-    for (const f of audited.findings) v.errors.add(f);
-  }
+  const { findings, log: auditLog } = await audited;
+  log += `\n---- dafny audit ----\n${auditLog}`;
+  for (const f of findings) v.errors.add(f);
   return { total, unproved: [...v.unproved.keys()], exhausted: [...v.exhausted], resting, errors: [...v.errors], log, dfy };
 }

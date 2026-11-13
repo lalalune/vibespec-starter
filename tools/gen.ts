@@ -19,7 +19,8 @@ export interface Model {
   name: string;
   imports: string[]; // other specs this one imports, in order
   /** The TypeScript with every top-level name prefixed, for placing beside another module in one proof. */
-  render: (prefix: string) => string;
+  /** The module under a prefix; without `docs`, without the comments that cite the spec, which is what a cache key may see. */
+  render: (prefix: string, docs?: boolean) => string;
   stateType: Json | undefined; // undefined for a library: definitions and laws, no state machine
   transitions: Transition[];
   always: string[];
@@ -34,7 +35,8 @@ export interface Model {
   /** The same value with every set in a fixed order, so that two sets compare equal however they were built. */
   canon: (type: Json, value: any) => any;
   /** What importers may refer to. */
-  exports: { types: string[]; values: string[]; variants: string[]; typedefs: Json[] };
+  /** `typedefs` are the module's own types; `visible` are every type it can name, imported ones included, as it names them. */
+  exports: { types: string[]; values: string[]; variants: string[]; typedefs: Json[]; visible: Json[] };
   ts: string;
   harness: string;
 }
@@ -119,10 +121,15 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
     : Array.isArray(t) ? t.map((x) => requalify(x, alias))
     : t.kind === "const" ? { ...t, name: qualify(alias, t.name) }
     : Object.fromEntries(Object.entries(t).map(([k, v]) => [k, requalify(v, alias)]));
+  // Every type a module can name comes along with it, including what it imported itself: a machine whose state holds a
+  // library's type is imported under a name together with that type (as M::T), however deep the import.
+  const seen = new Set<string>();
   const typedefs = [
-    ...links.flatMap((l) => l.exports.typedefs.map((d) => ({ ...d, type: requalify(d.type, l.alias), name: qualify(l.alias, d.name), alias: l.alias, base: d.name }))),
+    ...links.flatMap((l) => l.exports.visible.map((d) => ({ ...d, type: requalify(d.type, l.alias), name: qualify(l.alias, d.name), alias: l.alias ?? d.alias, base: d.base ?? d.name }))),
     ...localTypedefs,
-  ];
+  ].filter((d) => !seen.has(d.name) && !!seen.add(d.name));
+  /** Modules whose types this one names without importing them itself; the harness and the TypeScript import them too. */
+  const typeOnly = [...new Set(typedefs.map((d) => d.module as string))].filter((m) => m !== name && !imports.includes(m)).sort();
   const types = typeWalks(typedefs, name);
 
   // --- definitions, by the naming convention ----------------------------------------
@@ -134,6 +141,8 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
   const bySpecOrder = (x: Json, y: Json) => (origin(x.name)?.line ?? 0) - (origin(y.name)?.line ?? 0);
   const vals = code.filter((d) => d.qualifier === "pureval");
   const funs = code.filter((d) => d.qualifier === "puredef").sort(bySpecOrder);
+  // A rule must be a definition: as a `pure val` it would be generated as a constant and never checked.
+  for (const v of vals) if (/^(always|sometimes|step|law|can)[A-Z]/.test(v.name) && typeOf(v.id).kind === "bool") fail(`${v.name}: a rule or guard is a \`pure def\` with parameters (CONTRIBUTING.md, "What goes in the Quint blocks"), not a \`pure val\`; if it is a constant, name it otherwise`);
   const initial = vals.find((d) => d.name === "initial");
   const roles = classify(funs, initial && typeOf(initial.id), sig, types);
 
@@ -148,24 +157,25 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
     `// GENERATED from ${source} by tools/spec.ts. Do not edit: change the spec and run \`npm run gen\`.`,
     `//@ backend dafny`,
     ...links.map(importLine),
+    ...typeOnly.map((m) => `import { ${[...new Set(typedefs.filter((d) => d.module === m).map((d) => d.base as string))].map((b) => `type ${b} as ${m}_${b}`).join(", ")} } from "./${m}.ts";`),
   ];
   /** The module's TypeScript with its own top-level names under a prefix, and the helper functions it turned out to need. */
-  const render = (prefix: string): { text: string; helpers: string[] } => {
+  const render = (prefix: string, docs = true): { text: string; helpers: string[] } => {
     const local = (n: string) => prefix + n;
     const helper = (which: string) => local(`${which}_${name}`);
     // A definition from another module is spelled <module>_<name>, however it was imported.
     const ref = (n: string) => (localNames.has(n) ? local(n) : cameFrom.has(n) ? `${cameFrom.get(n)}_${n.split("::").pop()}` : n);
     const scoped = typeWalks(typedefs, name, prefix);
     const print = printer({ types: scoped, inferred, ref, helper, bind, variants, definitions: new Set([...localNames, ...cameFrom.keys()]), sampleSets });
-    const text = typescript({ header, typedefs: [...localTypedefs].sort(bySpecOrder), vals, funs, sig, typeOf, doc, local }, roles, scoped, print, helper);
+    const text = typescript({ header, typedefs: [...localTypedefs].sort(bySpecOrder), vals, funs, sig, typeOf, doc: docs ? doc : () => "", local }, roles, scoped, print, helper);
     return { text, helpers: [...[...print.arithmetic].map(helper), ...print.lookups.map((_, i) => helper(`lookup${i}`))] };
   };
   const own = render("");
 
-  const run = harness(name, source, imports, funs, sig, sampleSets, roles, types);
+  const run = harness(name, source, [...imports, ...typeOnly], funs, sig, sampleSets, roles, types);
   return {
     name, imports, ...roles, evals: run.evals, uncompared: run.uncompared, harness: run.text,
-    ts: own.text, render: (prefix) => render(prefix).text, decode: types.decode, canon: types.canon,
-    exports: { types: localTypedefs.map((d) => d.name as string), values: [...localNames, ...own.helpers], variants: localVariants, typedefs: localTypedefs },
+    ts: own.text, render: (prefix, docs) => render(prefix, docs).text, decode: types.decode, canon: types.canon,
+    exports: { types: localTypedefs.map((d) => d.name as string), values: [...localNames, ...own.helpers], variants: localVariants, typedefs: localTypedefs, visible: typedefs },
   };
 }
