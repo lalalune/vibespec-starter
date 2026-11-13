@@ -1,0 +1,52 @@
+name: Review dashboard ledger
+
+on:
+  push:
+    branches: [codex/dashboard-review-lock]
+
+permissions:
+  contents: read
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dafny-lang/setup-dafny-action@v1
+        with:
+          dafny-version: "4.11.0"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: npm
+      - run: npm ci
+      - name: Confirm the reviewed prose is the only pending item
+        run: |
+          node --input-type=module - <<'JS'
+          import assert from 'node:assert/strict';
+          import { readSpecs } from './vibespec/parse.ts';
+          import { pending, pendingContracts, pendingSpecs } from './vibespec/review.ts';
+          const root = 'vibespec/examples/dashboard';
+          const specs = readSpecs(root);
+          const reviews = specs.flatMap(spec => pending(root, spec, specs));
+          assert.equal(reviews.length, 1);
+          assert.equal(reviews[0].status, 'prose changed');
+          assert.match(reviews[0].where, /Renaming or removing a person through the dashboard rewrites every cell that names them$/);
+          assert.deepEqual(pendingContracts(root), []);
+          assert.deepEqual(pendingSpecs(root, specs), []);
+          JS
+      - name: Recheck and accept the reviewed dashboard prose
+        run: node vibespec/spec.ts accept vibespec/examples/dashboard | tee dashboard-accept.log
+      - name: Check the generated ledger
+        run: node vibespec/spec.ts check vibespec/examples/dashboard | tee dashboard-check.log
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: dashboard-reviewed-lock
+          path: |
+            vibespec/examples/dashboard/spec/lock.json
+            dashboard-accept.log
+            dashboard-check.log
+            vibespec/examples/dashboard/gen/proof/
+          if-no-files-found: error
