@@ -1,5 +1,6 @@
 // What each definition of a spec is, read off its name and its signature.
-import { fail, type Json, type Types } from "./types.ts";
+import { fail } from "../util.ts";
+import type { Json, Types } from "./types.ts";
 
 export interface Param { name: string; type: Json }
 /** `guardParams`: the transition's parameters its guard takes, by name, after the state. */

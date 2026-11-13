@@ -8,18 +8,19 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { after, describe, test } from "node:test";
+import { expandListHelpers, gen, parseSpec, readSpecs } from "./parse.ts";
 import { parseProofFile, splice } from "./prove.ts";
-import { acceptContracts, acceptReviews, check, expandListHelpers, gen, init, parseSpec, pending, pendingContracts, readSpecs, replay, show, type Result } from "./spec.ts";
+import { acceptContracts, acceptReviews, pending, pendingContracts } from "./review.ts";
+import { replay } from "./simulate.ts";
+import { check, init } from "./spec.ts";
+import { findUp, show, type Result } from "./util.ts";
 
 const project = path.join(import.meta.dirname, "..");
 const read = (file: string) => fs.readFileSync(path.join(project, file), "utf8");
 const F = "`".repeat(3);
 const roots: string[] = [];
 /** The node_modules this project resolves from, wherever up the tree it is (a git worktree has none of its own). */
-const nodeModules = (function find(dir: string): string {
-  const here = path.join(dir, "node_modules");
-  return fs.existsSync(here) ? here : dir === path.dirname(dir) ? assert.fail("no node_modules: run npm install") : find(path.dirname(dir));
-})(project);
+const nodeModules = findUp(project, "node_modules") ?? assert.fail("no node_modules: run npm install");
 after(() => roots.forEach((root) => fs.rmSync(root, { recursive: true, force: true })));
 
 /** A scratch project holding the given files. */

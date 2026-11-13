@@ -11,11 +11,11 @@
 // failing postcondition assumes it, so every obligation of such a lemma is
 // counted as not proved too.
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { SENDER } from "./gen/classify.ts";
+import { runAsync, tail } from "./util.ts";
 
 /** The library of general lemmas that proof files call as ProofLib.<Name>. */
 export const LIB_FILE = path.join(import.meta.dirname, "proof", "lib.dfy");
@@ -35,68 +35,15 @@ export const RESOURCE_LIMIT = 30_000_000;
 const DAFNY_FLAGS = ["--isolate-assertions", "--error-limit", "0", "--resource-limit", String(RESOURCE_LIMIT), "--show-snippets:false"];
 const TIME_LIMIT = 600;
 
-// --- running tools -------------------------------------------------------------
-
-const WINDOWS = process.platform === "win32";
-/** The most output a tool may write before it is stopped. */
-const OUTPUT_LIMIT = 1 << 28;
-/** How long a tool may run before it is stopped: long enough that only a tool that hangs is stopped. */
-const TOOL_TIMEOUT = 60 * 60 * 1000;
-
-/** An executable from the toolchain's dependencies, wherever npm put it: beside the tools, or in the project. */
-export function bin(cmd: string, root: string): string {
-  // On Windows npm installs a `.cmd` shim beside the extensionless shell script, and only the shim runs there.
-  const name = WINDOWS ? `${cmd}.cmd` : cmd;
-  for (let dir of [path.join(import.meta.dirname, ".."), root]) {
-    for (;;) {
-      const candidate = path.join(dir, "node_modules/.bin", name);
-      if (fs.existsSync(candidate)) return candidate;
-      if (dir === path.dirname(dir)) break;
-      dir = path.dirname(dir);
-    }
-  }
-  throw new Error(`${cmd} is not installed; run npm install`);
-}
-
-/**
- * Run a tool to the end and return what it wrote. A tool that cannot be started is an error; one that writes too
- * much or runs too long is stopped, and its output says so.
- */
-export function run(cmd: string, args: string[], cwd: string): { ok: boolean; out: string } {
-  const exe = cmd === "dafny" ? cmd : bin(cmd, cwd);
-  // A .cmd shim needs a shell, and then every argument is quoted for cmd.exe.
-  const shell = WINDOWS && exe.endsWith(".cmd");
-  const quote = (a: string) => (a === "" || /[\s"&|<>^%()!,;=]/.test(a) ? `"${a.replace(/"/g, '""')}"` : a);
-  const r = shell
-    ? spawnSync(quote(exe), args.map(quote), { cwd, encoding: "utf8", maxBuffer: OUTPUT_LIMIT, timeout: TOOL_TIMEOUT, shell: true })
-    : spawnSync(exe, args, { cwd, encoding: "utf8", maxBuffer: OUTPUT_LIMIT, timeout: TOOL_TIMEOUT });
-  const code = (r.error as NodeJS.ErrnoException | undefined)?.code;
-  const stopped = code === "ENOBUFS" ? `${cmd} wrote more than ${OUTPUT_LIMIT / 2 ** 20} MB of output and was stopped`
-    : code === "ETIMEDOUT" ? `${cmd} ran for more than ${TOOL_TIMEOUT / 60_000} minutes and was stopped`
-    : undefined;
-  if (r.error && !stopped) throw new Error(`${cmd} could not be run (${exe}): ${r.error.message}${cmd === "dafny" ? "; the proof stage needs Dafny 4.11 on the PATH" : "; run npm install"}`);
-  return { ok: r.status === 0 && !stopped, out: `${r.stdout ?? ""}${r.stderr ?? ""}${stopped ? `\n${stopped}\n` : ""}` };
-}
-
-/** Overlapping runs, at most one per core across everything in this process (several checks at once included). */
-const slots = { free: Math.max(1, os.availableParallelism()), waiting: [] as (() => void)[] };
-const acquire = () => (slots.free > 0 ? (slots.free--, Promise.resolve()) : new Promise<void>((go) => slots.waiting.push(go)));
-const release = () => { const next = slots.waiting.shift(); if (next) next(); else slots.free++; };
-
-/** `run`, without blocking, so that independent runs can overlap. */
-export async function runAsync(cmd: string, args: string[], cwd: string): Promise<{ ok: boolean; out: string }> {
-  const exe = cmd === "dafny" ? cmd : bin(cmd, cwd);
-  await acquire();
-  return new Promise((resolve) => {
-    const child = spawn(exe, args, { cwd });
-    let out = "";
-    child.stdout.setEncoding("utf8").on("data", (d) => (out += d));
-    child.stderr.setEncoding("utf8").on("data", (d) => (out += d));
-    let done = false;
-    const finish = (r: { ok: boolean; out: string }) => { if (!done) { done = true; release(); resolve(r); } };
-    child.on("error", (e) => finish({ ok: false, out: out + e }));
-    child.on("close", (status) => finish({ ok: status === 0, out }));
-  });
+/** The version of Dafny on the PATH, read once, or why it could not be read. */
+let dafny: { version?: string; problem?: string } | undefined;
+export function dafnyVersion(): { version?: string; problem?: string } {
+  if (dafny) return dafny;
+  const r = spawnSync("dafny", ["--version"], { encoding: "utf8", timeout: 60_000 });
+  const version = r.status === 0 ? (r.stdout ?? "").match(/\d+\.\d+\.\d+/)?.[0] : undefined;
+  const problem = !version ? `Dafny could not be run (${r.error?.message ?? (`${r.stdout ?? ""}${r.stderr ?? ""}`.trim().split("\n")[0] || "it printed no version")})`
+    : !version.startsWith("4.11.") ? `this is Dafny ${version}, and LemmaScript targets Dafny 4.11.x` : undefined;
+  return (dafny = { version, problem: problem && `${problem}: the proof stage needs Dafny 4.11 on the PATH (see README, "Run it")` });
 }
 
 // --- proof files ---------------------------------------------------------------
@@ -435,7 +382,9 @@ function readVerdict(out: string, dfy: string, file: string, regions: Region[], 
   return v;
 }
 
-const verifyArgs = (dfy: string) => ["verify", ...(dfy.includes("Std.") ? ["--standard-libraries"] : []), "--unicode-char:true", ...DAFNY_FLAGS, "--verification-time-limit", String(TIME_LIMIT)];
+/** A Dafny command on `dfy`, with the options every run of it on a unit takes. */
+const dafnyArgs = (command: "verify" | "audit", dfy: string) => [command, ...(dfy.includes("Std.") ? ["--standard-libraries"] : []), "--unicode-char:true"];
+const verifyArgs = (dfy: string) => [...dafnyArgs("verify", dfy), ...DAFNY_FLAGS, "--verification-time-limit", String(TIME_LIMIT)];
 
 /**
  * A postcondition that fails is assumed while the later ones of the same
@@ -476,7 +425,7 @@ async function recheck(dir: string, { dfy, regions }: Spliced, file: string, fai
   fs.writeFileSync(path.join(dir, name), text);
   const { out } = await runAsync("dafny", [...verifyArgs(text), "--filter-symbol", prefix, name], dir);
   const verdict = readVerdict(out, text, name, derivedRegions, (n) => copyOf.get(n) ?? n);
-  if (!finished(out)) verdict.errors.add(`the postconditions checked one by one gave no verdict: ${out.trim().split("\n").slice(-3).join(" / ")}`);
+  if (!finished(out)) verdict.errors.add(`the postconditions checked one by one gave no verdict: ${tail(out)}`);
   return { verdict, log: out };
 }
 
@@ -518,12 +467,12 @@ function restingOn({ dfy, regions }: Spliced, unproved: Map<string, string>): Ma
 async function audit(dir: string, dfy: string, file: string, allowed: Set<string>): Promise<{ findings: string[]; log: string }> {
   const copy = file.replace(/\.dfy$/, ".audit.dfy");
   fs.writeFileSync(path.join(dir, copy), dfy);
-  const { out: raw } = await runAsync("dafny", ["audit", ...(dfy.includes("Std.") ? ["--standard-libraries"] : []), "--unicode-char:true", copy], dir);
+  const { out: raw } = await runAsync("dafny", [...dafnyArgs("audit", dfy), copy], dir);
   // Read as if it had audited the original, which has the same text.
   const out = raw.split(copy).join(file);
   const findings = out.split("\n").filter((l) => l.startsWith(`${file}(`) && /: (Warning|Error): /.test(l))
     .filter((l) => !/: Warning: (\w+): Declaration has explicit `\{:axiom\}` attribute/.test(l) || !allowed.has(l.match(/: Warning: (\w+):/)![1]));
-  if (!/Dafny auditor completed/.test(out)) findings.push(`dafny audit gave no verdict: ${out.trim().split("\n").slice(-3).join(" / ")}`);
+  if (!/Dafny auditor completed/.test(out)) findings.push(`dafny audit gave no verdict: ${tail(out)}`);
   return { findings: findings.map((f) => `dafny audit: ${f}`), log: out };
 }
 
@@ -605,7 +554,7 @@ export async function prove(root: string, u: Unit, offered: { proof?: { file: st
   const result = (errors: string[], log: string, dfy = ""): Proof => ({ total, unproved: [], exhausted: [], resting: {}, errors, log, dfy });
   const generated = await runAsync("lsc", ["gen", "--backend=dafny", u.unit], dir);
   const genFile = path.join(dir, `${file}.gen`);
-  if (!generated.ok || !fs.existsSync(genFile)) return result([generated.out.trim().split("\n").slice(-3).join(" / ") || "lsc generated nothing"], generated.out);
+  if (!generated.ok || !fs.existsSync(genFile)) return result([tail(generated.out) || "lsc generated nothing"], generated.out);
   const gen = fs.readFileSync(genFile, "utf8");
   // Every obligation is an `ensures` of what LemmaScript generated; the imported modules come without theirs.
   total = (gen.match(/^\s*ensures\b/gm) ?? []).length;
@@ -627,7 +576,7 @@ export async function prove(root: string, u: Unit, offered: { proof?: { file: st
   let log = `${generated.out}${checked.out}`;
   const v = readVerdict(checked.out, dfy, file, spliced.regions);
   // The verdict is Dafny's own summary; without it, or with anything left unexplained, the unit was not checked.
-  if (!v.errors.size && (!finished(checked.out) || (!checked.ok && !v.unproved.size))) v.errors.add(checked.out.trim().split("\n").slice(-3).join(" / ") || "lsc produced no verdict");
+  if (!v.errors.size && (!finished(checked.out) || (!checked.ok && !v.unproved.size))) v.errors.add(tail(checked.out) || "lsc produced no verdict");
   if (!v.errors.size && v.failing.size) {
     const again = await recheck(dir, spliced, file, v.failing);
     if (again) {

@@ -1,8 +1,9 @@
 // Quint types as the type checker reports them, and everything that is decided by walking one: how TypeScript and
 // the harness spell it, how an untrusted value is tested and copied, and how a value in a simulated trace is read.
 
+import { fail } from "../util.ts";
+
 export type Json = any;
-export const fail = (msg: string): never => { throw new Error(msg); };
 
 const PRIMITIVE: Record<string, string> = { int: "number", bool: "boolean", str: "string" };
 

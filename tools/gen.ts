@@ -13,7 +13,8 @@ import { classify, type Law, type Param, type StepRule, type Transition } from "
 import { harness, type Eval } from "./gen/harness.ts";
 import { printer } from "./gen/print.ts";
 import { typescript } from "./gen/typescript.ts";
-import { fail, typeWalks, type Json } from "./gen/types.ts";
+import { typeWalks, type Json } from "./gen/types.ts";
+import { fail } from "./util.ts";
 
 export interface Model {
   name: string;
@@ -45,21 +46,6 @@ export interface Model {
 
 /** Where a definition came from in the spec, for doc comments and ordering. */
 export interface Origin { rule: string; line: number }
-
-/**
- * `every`, `some`, `includes` and `listMap` are not Quint: the tangler expands
- * them into Quint's built-in `foldl` (see expandListHelpers in spec.ts), marking
- * the accumulator with one of these prefixes so that they come out here as the
- * native array methods. They cannot be Quint definitions that take a lambda,
- * because Quint evaluates such a definition wrongly when it is used inside its
- * own argument, as in `tasks.some(t => t.parents.some(...))`.
- */
-export const LIST_HELPERS: Record<string, { init: string; step: (acc: string, body: string) => string }> = {
-  every: { init: "true", step: (acc, body) => `${acc} and (${body})` },
-  some: { init: "false", step: (acc, body) => `${acc} or (${body})` },
-  listMap: { init: "List()", step: (acc, body) => `${acc}.append(${body})` },
-  includes: { init: "false", step: (acc, body) => `${acc} or ${body}` },
-};
 
 /** Names a spec may not bind: the generated code, the harness or the proof library (ProofLib) use them, or TypeScript reserves them. */
 const TAKEN = new Set(`
@@ -166,7 +152,7 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
     // A definition from another module is spelled <module>_<name>, however it was imported.
     const ref = (n: string) => (localNames.has(n) ? local(n) : cameFrom.has(n) ? `${cameFrom.get(n)}_${n.split("::").pop()}` : n);
     const scoped = typeWalks(typedefs, name, prefix);
-    const print = printer({ types: scoped, inferred, ref, helper, bind, variants, definitions: new Set([...localNames, ...cameFrom.keys()]), sampleSets });
+    const print = printer({ types: scoped, inferred, typeOf, ref, helper, bind, variants, definitions: new Set([...localNames, ...cameFrom.keys()]), sampleSets });
     const text = typescript({ header, typedefs: [...localTypedefs].sort(bySpecOrder), vals, funs, sig, typeOf, doc: docs ? doc : () => "", local }, roles, scoped, print, helper);
     return { text, helpers: [...[...print.arithmetic].map(helper), ...print.lookups.map((_, i) => helper(`lookup${i}`))] };
   };

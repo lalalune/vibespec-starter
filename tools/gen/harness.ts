@@ -1,7 +1,8 @@
 // The Quint module that drives a spec for simulation: one action per transition, per law, and per definition
 // whose arguments the simulator can supply.
 import type { Law, Param, Roles, Transition } from "./classify.ts";
-import { fail, type Json, type Types } from "./types.ts";
+import { fail } from "../util.ts";
+import type { Json, Types } from "./types.ts";
 
 /** A definition the simulator evaluates so that its result can be compared with TypeScript's. */
 export interface Eval { name: string; params: (Param & { from: "state" | "prev" | "pick" })[]; result: Json }

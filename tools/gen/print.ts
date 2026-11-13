@@ -1,5 +1,22 @@
 // Quint expressions as TypeScript. Anything outside the supported subset throws with the name of the construct.
-import { fail, type Json, type Types } from "./types.ts";
+import { fail } from "../util.ts";
+import type { Json, Types } from "./types.ts";
+
+/**
+ * `every`, `some`, `includes` and `listMap` are not Quint: the tangler expands
+ * them into Quint's built-in `foldl` (see expandListHelpers in parse.ts), marking
+ * the accumulator with one of these prefixes so that they come out here as the
+ * native array methods. They cannot be Quint definitions that take a lambda,
+ * because Quint evaluates such a definition wrongly when it is used inside its
+ * own argument, as in `tasks.some(t => t.parents.some(...))`.
+ */
+export const LIST_HELPERS: Record<string, { init: string; step: (acc: string, body: string) => string }> = {
+  every: { init: "true", step: (acc, body) => `${acc} and (${body})` },
+  some: { init: "false", step: (acc, body) => `${acc} or (${body})` },
+  listMap: { init: "List()", step: (acc, body) => `${acc}.append(${body})` },
+  includes: { init: "false", step: (acc, body) => `${acc} or ${body}` },
+};
+const LIST_HELPER = new RegExp(`^std_(${Object.keys(LIST_HELPERS).join("|")})_`);
 
 // Operator precedence, loosest first. Mixed `&&`/`||` is always parenthesised.
 const [ARROW, TERNARY, OR, AND, EQ, COMPARE, ADD, MULTIPLY, UNARY, ATOM] = [-1, 0, 1, 2, 3, 4, 5, 6, 7, 8];
@@ -29,6 +46,8 @@ export interface Scope {
   types: Types;
   /** The type the checker inferred for an expression or parameter, if it recorded one. */
   inferred: (id: number) => Json | undefined;
+  /** The same, for an expression the checker must have recorded one for. */
+  typeOf: (id: number) => Json;
   /** A reference to a definition, as TypeScript spells it. */
   ref: (name: string) => string;
   /** The name of a helper function the module carries for itself: quotient, remainder, lookup<n>. */
@@ -40,9 +59,8 @@ export interface Scope {
   sampleSets: Set<string>;
 }
 
-export function printer({ types, inferred, ref, helper, bind, variants, definitions, sampleSets }: Scope) {
+export function printer({ types, inferred, typeOf, ref, helper, bind, variants, definitions, sampleSets }: Scope) {
   const { resolve, tagged, isScalar, named, ownerOf, typeName, tsType } = types;
-  const typeOf = (id: number): Json => inferred(id) ?? fail(`no inferred type for expression ${id}`);
   /** Which arithmetic helpers the printed code needs, and the value types of the maps it looks things up in. */
   const arithmetic = new Set<string>();
   const lookups: string[] = [];
@@ -159,7 +177,7 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
       case "foldl": {
         // A fold whose accumulator is marked is one of the list helpers, expanded by the tangler.
         const [acc, item] = a[2].kind === "lambda" ? a[2].params : [];
-        const which = acc?.name.match(/^std_(every|some|listMap|includes)_/)?.[1];
+        const which = acc?.name.match(LIST_HELPER)?.[1];
         const inner = a[2].expr?.args?.[1];
         if (which === "every") return [`${recv()}.every(${arrow([item], inner)})`, ATOM];
         if (which === "some") return [`${recv()}.some(${arrow([item], inner)})`, ATOM];
