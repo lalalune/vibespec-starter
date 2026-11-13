@@ -237,7 +237,7 @@ Refused, each with a message saying why: the generated and harness names
 `current`, `event`, `state`, …) and `ProofLib`; JavaScript globals and
 keywords (`Number`, `delete`, …); Quint built-ins (`to`, `next`, `all`,
 `size`, …); a parameter named like a variant; a variant field called `tag`;
-and near-misses of the conventions above such as `alwayspaid` or `CanPay`.
+a record field called `__proto__`; an `initial` with no transition; and near-misses of the conventions above such as `alwayspaid` or `CanPay`.
 
 ### Using one spec from another
 
@@ -268,7 +268,8 @@ Generated code uses the imported spec's full module path.
 A spec is imported once, one way or the other, and imports cannot form a
 circle. Navigation links may point back to a parent. In the generated
 TypeScript a name from another module is spelled
-`<module>_<name>`, for example `lamp_toggle`.
+`<module>_<name>`, for example `lamp_toggle`, so a spec may not define a name
+beginning `<module>_` for any module beneath it, imported directly or not.
 
 ### Supported Quint
 

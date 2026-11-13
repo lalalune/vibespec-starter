@@ -281,6 +281,8 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       ["a definition named like a JavaScript global", "pure val initial: int = 0\npure def Number(n: int): int = n", /cannot be used as a name/],
       ["a set of two computed members", "pure val initial: int = 0\npure def pair(a: int, b: int): int = Set(a, b).size()", /could hold the same value twice/],
       ["a variant field called tag", "type P = A({ tag: int }) | B\npure val initial: int = 0\npure def tick(n: int): int = n", /cannot be called `tag`/],
+      ["a record field called __proto__", "type R = { __proto__: int }\npure val initial: R = { __proto__: 0 }\npure def tick(r: R): R = r", /cannot be called `__proto__`/],
+      ["a state with no transition", "pure val initial: int = 0\npure def alwaysZero(n: int): bool = n == 0", /defines `initial` but no transition/],
       ["a match binder used as a whole value", "type N = { n: int }\ntype P = A(N) | B\npure val initial: int = 0\npure def g(r: N): int = r.n\npure def f(p: P): int = match p { | A(x) => g(x) | _ => 0 }\npure def tick(n: int): int = n", /is what a match arm carries/],
       ["state declared by hand", "pure val initial: int = 0\nvar n: int", /only types, imports, `pure val` and `pure def` belong in a spec/],
     ];
@@ -288,6 +290,16 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       const { said, text } = await run(oneRule("t", "A rule", quint));
       assert.equal(said("model", message)?.ok, false, `${what}\n${text}`);
     }
+  });
+
+  test("a name spelled as the generated code spells one from a module beneath the spec, imported directly or not, is refused", async () => {
+    const library = (name: string, quint: string) => [`spec/${name}.md`, `# ${name}\n\n## Story\n\n### Defines ${name}\n\n${F}quint\n${quint}\n${F}\n`];
+    const { said, text } = await run(scratch(Object.fromEntries([
+      library("a", "pure def base(n: int): int = n + 1"),
+      library("b", 'import a.* from "./a"\npure def mid(n: int): int = base(n) * 2'),
+      library("c", 'import b.* from "./b"\npure def a_base(n: int): int = mid(n)'),
+    ])));
+    assert.equal(said("model", /`a_base` cannot be used as a name: names beginning a_/)?.ok, false, text);
   });
 
   test("a rule written as a `pure val` is refused rather than generated as a constant, and a constant named alike is not", async () => {
