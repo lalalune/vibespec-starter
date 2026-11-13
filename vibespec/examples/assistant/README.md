@@ -1,8 +1,7 @@
 # Assistant
 
 An illustrative agent turn driving a bill payment, in one spec:
-[spec/assistant.md](spec/assistant.md). `npm run check` simulates it, proves
-it and runs [the trust-boundary test](test/assistant.test.ts).
+[spec/assistant.md](spec/assistant.md). `npm run check` simulates and proves it.
 
 | Behaviour | Rule |
 |---|---|
@@ -13,17 +12,3 @@ it and runs [the trust-boundary test](test/assistant.test.ts).
 | Card details and payment go only to the biller's own page | `alwaysFilledOnlyGenuine`, `stepPaidOnlyOnGenuine` |
 | The model cannot have the card read aloud | `alwaysNothingSecretSaid` |
 | The program carries out effects from an outbox | `outbox`, `drain` |
-
-Written by hand here, with no help from the tools yet:
-
-| Need | How |
-|---|---|
-| Termination | a budget every choice spends |
-| Requests in flight | a request number, saved |
-| Crash and restart | `restart` resets what is not saved |
-| The model and the world as adversaries | their choices are event parameters; the simulator tries every sender |
-| Secrets | effects tagged `secret` |
-| Effects | an outbox in the state |
-
-This example models a trusted sender and a durable outbox. It does not
-implement authentication, a browser, payment execution or durable storage.

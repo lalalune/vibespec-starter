@@ -2,16 +2,7 @@
 // The tools add this module to every proof unit that has a proof file and
 // verify it there; call its lemmas as ProofLib.<Name>(...).
 //
-// Two facts about Dafny 4.11 shape it:
-// - Std.Collections.Seq.Filter is opaque and reads the heap. Inside a `->`
-//   lambda (such as the body of an All in a generated rule) it is evaluated in
-//   a different heap than in a lemma, so a fact proved about it in a lemma never
-//   meets the term in the rule. ProofLib.Filter has no reads clause: state facts
-//   about it, and bridge to the generated term with an `assert` that unfolds
-//   the generated function (see AGENTS.md, "Proof files").
-// - Dafny has no function extensionality. A lambda copied verbatim from
-//   gen/proof/<unit>/<unit>.dfy is the same term as the generated one; a lambda
-//   that says the same thing in other words, or captures other variables, is not.
+// How proof files use it: AGENTS.md, "Proof files".
 //
 // Dafny makes the module's import visible as ProofLib.Seq; proof files may not
 // use it (vibespec/prove.ts refuses any ProofLib.<name> this file does not declare),

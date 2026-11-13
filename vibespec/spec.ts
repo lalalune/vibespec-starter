@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Model } from "./gen.ts";
 import type { Found } from "./conformance.ts";
-import { conformance, conformanceFound, writeConformance, type Machine } from "./conform.ts";
+import { conformance, conformanceFound, writeConformance, type Machine, type Simulated } from "./conform.ts";
 import { LIB_FILE, dafnyVersion, proofPaths, prove, type Proof } from "./prove.ts";
 import { run } from "./run.ts";
 import { readSpecs, badSpecName, specFiles, specName, importedMeanings, isStd, located, type Spec } from "./parse.ts";
@@ -153,9 +153,9 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
 
     // A spec whose model and harness are unchanged, and that passed, is not simulated again.
     const simulationSteps = STEPS + Math.max(0, ...model.within.values());
-    const simulated = await remembered<{ said: Result[]; tested?: Found<any> }>(memory, entry(root, "simulate", [importedMeanings(spec, specs), spec.meaning, model.harness, String([SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, LASSO_TRACES, simulationSteps, ...DEPTHS])]), async () => {
+    const simulated = await remembered<{ said: Result[]; tested?: Simulated }>(memory, entry(root, "simulate", [importedMeanings(spec, specs), spec.meaning, model.harness, String([SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, LASSO_TRACES, simulationSteps, ...DEPTHS])]), async () => {
       const said: Result[] = [];
-      let tested: Found<any> | undefined;
+      let tested: Simulated | undefined;
       const say = (ok: boolean, stage: Result["stage"], summary: string, detail = "") => said.push({ ok, stage, summary, detail });
       try {
         type Run = Awaited<ReturnType<typeof simulate>>;
@@ -261,7 +261,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
         const missed = [...model.evals.map((v) => v.name).filter((n) => !compared.has(n)), ...model.uncompared];
         say(true, "replay", `generated TypeScript agrees with Quint on ${traces.length} traces: every state${model.laws.length ? ", every law" : ""}, and ${compared.size} definitions evaluated on them`
           + (missed.length ? `; not compared on their own, because the simulator had no arguments for them: ${missed.join(", ")}` : ""));
-        if (model.stateType) tested = conformanceFound(domain, model, spec, traces, witnesses.flatMap(({ w, run }) =>
+        if (model.stateType) tested = conformanceFound(model, spec, traces, witnesses.flatMap(({ w, run }) =>
           run.traces.filter((trace) => domain[w](trace.at(-1)?.state)).sort((a, b) => a.length - b.length).slice(0, 1).map((trace) => ({ w, trace }))));
       } catch (e) {
         const mismatch = (e as Error).message.startsWith("TypeScript and Quint disagree");

@@ -3,6 +3,26 @@
 Companion: [goal1.md](goal1.md) (component system, generated Storybook, design tokens, visual editor).
 This goal comes first: goal 1 builds on the package layout and testing infrastructure it establishes.
 
+## Decided
+
+These settle questions the text below leaves open; where they differ, they win.
+[AGENTS.md, "The stack"](AGENTS.md#the-stack) states them for every agent.
+
+* **VibeLang is the `vibelang` npm package**, a syntax for Effect 4 that
+  compiles to JavaScript. It was added to this repository as an optional
+  shell (commit `ee2adfa`: `vibespec/gen/vibe.ts`, `usesVibelang`, the
+  `vibelang` typecheck, `spec init`), and the examples were moved to it in
+  the snapshot `f4f37f5` (branch `codex/preserve-vibelang-migration-20261113`).
+  Neither is in `main`'s tree. Bring both back and make VibeLang required:
+  every package is a VibeLang package, and the plain-TypeScript shell path goes.
+* **Every interface is React**: the examples' and Studio's (today
+  `vibespec/studio/src/page.ts`, hand-built DOM) are rebuilt as React
+  components on Vite, Tailwind CSS v4 and shadcn/ui.
+* **pnpm workspaces, without Turborepo.** Use `pnpm -r`, `--filter` and the
+  tools' own result cache. Add Turborepo only if a measured need remains that
+  pnpm cannot meet, and say what it was.
+* **Node 26 is required** (`engines`, `.nvmrc`, CI).
+
 ## Mission
 
 Thoroughly research, design, implement, validate, and optimize the repository's core application architecture and development infrastructure.
@@ -52,7 +72,7 @@ Do not introduce unnecessary duplicate frameworks or workflows.
 
 ## 2. Standard monorepo architecture
 
-Use a pnpm workspace monorepo with Turborepo.
+Use a pnpm workspace monorepo. Turborepo only if pnpm alone cannot do the job ("Decided", above).
 
 Require:
 
@@ -91,7 +111,6 @@ Use this default directory structure:
 ├── package.json
 ├── pnpm-workspace.yaml
 ├── pnpm-lock.yaml
-├── turbo.json
 └── tsconfig.base.json
 ```
 
@@ -519,7 +538,7 @@ Eliminate real dead code and dependency cycles identified during integration.
 
 ## 15. Fast builds and caching
 
-Use Turborepo for task orchestration.
+Use pnpm (`-r`, `--filter`, `--filter "...[origin/develop]"` for affected packages) for task orchestration, with the tools' content-hashed result cache; Turborepo only if that proves insufficient.
 
 Define task dependencies correctly.
 
@@ -597,7 +616,7 @@ Add scheduled heavier fuzzing or extended trace exploration where useful.
 
 Research and implement GitHub Actions or the repository's existing CI platform.
 
-Use appropriate caching for pnpm and Turborepo.
+Use appropriate caching for pnpm and the tools' result cache.
 
 Configure concurrency cancellation for superseded runs.
 
@@ -644,7 +663,6 @@ They must use:
 * The monorepo structure
 * Node.js 26
 * pnpm
-* Turborepo
 * React
 * Vite
 * Tailwind CSS v4

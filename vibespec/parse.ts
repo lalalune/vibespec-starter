@@ -3,7 +3,7 @@ import path from "node:path";
 import { BUILTINS, LIST_HELPERS } from "./gen/print.ts";
 import { scanSpec } from "./scan.ts";
 import { plainText } from "./util.ts";
-export { scanSpec, type LineKind } from "./scan.ts";
+export { scanSpec } from "./scan.ts";
 
 /** `defs` are the rule's top-level definitions and types; `locals` the names it binds inside a definition (`val x = …` in a body). */
 export interface Rule { key: string; story: string; line: number; prose: string; code: string; defs: string[]; locals: string[] }
@@ -20,10 +20,10 @@ export interface SpecReference { target: string; line: number }
 interface SpecImport extends Import { target?: string; line: number; column: number; pathLine?: number; pathColumn?: number; pathLength?: number }
 const importSources = new WeakMap<Spec, SpecImport[]>();
 /**
- * `meaning` is the Quint as written, with every line of prose blank and every comment in the Quint reduced to a space:
- * what a cache key may depend on. `tangled` is `qnt` before the list helpers were expanded, to map Quint's columns back.
+ * `meaning` is the Quint as written, with every comment, prose included, reduced to a space: what a cache key may
+ * depend on. `tangled` is `qnt` before the list helpers were expanded, to map Quint's columns back.
  */
-export interface Spec { name: string; file: string; preamble: string; references: SpecReference[]; links: string[]; rules: Rule[]; stories: Story[]; imports: string[]; uses: Import[]; qnt: string; tangled: string; meaning: string; builtins?: string[] }
+export interface Spec { name: string; file: string; preamble: string; references: SpecReference[]; links: string[]; rules: Rule[]; stories: Story[]; imports: string[]; uses: Import[]; qnt: string; tangled: string; meaning: string; builtins: string[] }
 /** The Quint of a spec's imports, theirs first, as far as a cache key may depend on it. */
 export const importedMeanings = (spec: Spec, specs: Spec[]): string =>
   spec.imports.map((n) => { const dep = specs.find((x) => x.name === n)!; return importedMeanings(dep, specs) + dep.meaning; }).join("");
@@ -54,21 +54,19 @@ export function specName(file: string): string {
  * A spec is Markdown. `##` starts a story (or any grouping), `###` starts a
  * rule, and the ```quint blocks under a rule are its formal half. Tangling
  * keeps every line on its own line number, so Quint errors point into the
- * Markdown file. A fence of any other kind (``` or ~~~, of any length) is
- * prose, and closes only with a fence of the same character at least as long.
+ * Markdown file. A fence of any other kind is prose; scan.ts reads the fences.
  */
 export function parseSpec(root: string, file: string, text = fs.readFileSync(located(root, file), "utf8")): Spec {
   const name = specName(file);
   const rules: Rule[] = [];
   const stories: Story[] = [];
   const qnt: string[] = [];
-  const meaning: string[] = [];
   const references: SpecReference[] = [];
   let preamble = "";
   let story: Story | undefined;
   let rule: Rule | undefined;
-  let fence: { mark: string; quint: boolean } | undefined;
-  // The Quint of the block in progress, to check that no comment or string runs on past its end.
+  // Whether a quint block is open, and its Quint so far, to check that no comment or string runs on past its end.
+  let quint = false;
   let block = "";
   // How deeply the Quint so far nests in brackets of any kind, carried from block to block.
   let depth = 0;
@@ -95,41 +93,37 @@ export function parseSpec(root: string, file: string, text = fs.readFileSync(loc
     }
   };
   // Quint and Markdown may not agree on where a line ends at an odd line break, and prose could then end a comment early.
-  const source = plainText(file, text);
-  source.split("\n").forEach((text, i) => {
-    if (!story && !rule && (fence || !/^#{2,3} /.test(text))) preamble += text + "\n";
-    const marker = text.match(/^\s*(`{3,}|~{3,})(.*)$/);
-    const closes = fence && marker && marker[1][0] === fence.mark[0] && marker[1].length >= fence.mark.length && !marker[2].trim();
-    if (closes) {
-      // Prose is tangled as `//` comments, which is only safe if no comment or string runs on into it from the code.
-      const open = fence!.quint ? scan(block).mode : "";
-      if (open) throw new Error(`${file}:${i + 1}: a ${open === '"' ? "string" : "comment"} is still open at the end of this quint block; close it inside the block`);
-      if (fence!.quint) declare(block, rule!);
-      fence = undefined;
-      block = "";
-    } else if (fence?.quint) {
+  scanSpec(plainText(file, text)).forEach(({ text, kind }, i) => {
+    if (!story && !rule && kind !== "story" && kind !== "rule") preamble += text + "\n";
+    if (kind === "quint") {
       block += text + "\n";
-      meaning.push(text);
       rule!.code += text + "\n";
       qnt.push(text);
       return;
-    } else if (!fence && marker && (marker[1][0] === "~" || !marker[2].includes("`"))) {
-      const quint = marker[2].trim().split(/\s+/)[0] === "quint";
-      if (quint && !rule) throw new Error(`${file}:${i + 1}: a quint block must sit under a ### rule`);
-      fence = { mark: marker[1], quint };
-    } else if (!fence && text.startsWith("## ")) {
+    }
+    if (kind === "close" && quint) {
+      // Prose is tangled as `//` comments, which is only safe if no comment or string runs on into it from the code.
+      const open = scan(block).mode;
+      if (open) throw new Error(`${file}:${i + 1}: a ${open === '"' ? "string" : "comment"} is still open at the end of this quint block; close it inside the block`);
+      declare(block, rule!);
+      quint = false;
+      block = "";
+    } else if (kind === "open quint") {
+      if (!rule) throw new Error(`${file}:${i + 1}: a quint block must sit under a ### rule`);
+      quint = true;
+    } else if (kind === "story") {
       story = { title: text.slice(3).trim(), line: i + 1, prose: "" };
       // The ledger records a story under its title, so a second one would share its entry.
       const twin = stories.find((s) => s.title === story!.title);
       if (twin) throw new Error(`${file}:${i + 1}: duplicate story "${story.title}" (also at line ${twin.line}); give each ## heading its own title`);
       stories.push(story);
       rule = undefined;
-    } else if (!fence && text.startsWith("### ")) {
+    } else if (kind === "rule") {
       rule = { key: `${story?.title ?? ""} / ${text.slice(4).trim()}`, story: story?.title ?? "", line: i + 1, prose: "", code: "", defs: [], locals: [] };
       if (rules.some((r) => r.key === rule!.key)) throw new Error(`${file}:${i + 1}: duplicate rule "${rule.key}"`);
       rules.push(rule);
-    } else {
-      if (!fence) {
+    } else if (kind === "prose" || kind === "fenced") {
+      if (kind === "prose") {
         const prose = text.replace(/(`+).*?\1/g, "");
         for (const link of prose.matchAll(/(?<!!)\[[^\]]*\]\(\s*(?:<([^>]+)>|([^\s)]+))(?:\s+[^)]*)?\)/g)) {
           const target = link[1] ?? link[2];
@@ -141,23 +135,29 @@ export function parseSpec(root: string, file: string, text = fs.readFileSync(loc
       else if (story) story.prose += text + "\n";
     }
     qnt.push(i === 0 ? `module ${name} { // ${text}` : text ? `// ${text}` : "");
-    meaning.push(i === 0 ? `module ${name} {` : "");
   });
-  if (fence?.quint) {
+  if (quint) {
     if (scan(block).mode) throw new Error(`${file}: a quint block is never closed, and a comment or string in it is still open`);
     declare(block, rule!);
   }
   const tangled = qnt.join("\n");
   try {
     const sources = importsOf(tangled);
-    const expanded = expandBuiltins(expandListHelpers(tangled), name);
-    const spec: Spec = { name, file, preamble, references, links: [], rules, stories, imports: sources.map((i) => i.module), uses: sources,
-      qnt: expanded.text + "\n}\n", builtins: expanded.names, tangled, meaning: codeOnly(meaning.join("\n")) };
+    const spec: Spec = { name, file, preamble, references, links: [], rules, stories, imports: sources.map((i) => i.module), uses: sources, qnt: "", tangled, meaning: "", builtins: [] };
+    finish(spec, tangled);
     importSources.set(spec, sources);
     return spec;
   } catch (e) {
     throw new Error(`${file}:${(e as Error).message}`);
   }
+}
+
+/** Set what follows from a spec's final Quint: the text Quint reads, the definitions added for builtins, and its meaning. */
+function finish(spec: Spec, text: string) {
+  const expanded = expandBuiltins(expandListHelpers(text), spec.name);
+  spec.qnt = expanded.text + "\n}\n";
+  spec.builtins = expanded.names;
+  spec.meaning = codeOnly(text);
 }
 
 /** Which characters of Quint are code, as opposed to part of a string or a comment, which are comments, and what is still open at the end. */
@@ -285,7 +285,6 @@ export function originalColumn(tangled: string, qnt: string, line: number, col: 
   return col >= is.length - tail ? col - (is.length - was.length) : undefined;
 }
 
-
 /** Quint with every string and comment blanked out, line breaks kept. */
 export const bareQuint = (text: string) => { const { code } = scan(text); return text.replace(/[^\n]/g, (c, i) => (code[i] ? c : " ")); };
 
@@ -366,11 +365,7 @@ export function readSpecs(root: string, texts?: Record<string, string>): Spec[] 
     spec.imports = spec.uses.map((i) => i.module);
     for (const { line, column, length, value } of replacements.sort((a, b) => b.line - a.line || b.column - a.column))
       lines[line - 1] = lines[line - 1].slice(0, column) + value + lines[line - 1].slice(column + length);
-    const canonical = lines.join("\n");
-    const expanded = expandBuiltins(expandListHelpers(canonical), spec.name);
-    spec.qnt = expanded.text + "\n}\n";
-    spec.builtins = expanded.names;
-    spec.meaning = codeOnly(canonical);
+    if (replacements.length) finish(spec, lines.join("\n"));
     spec.links = [...new Set(spec.references.map(({ target, line }) => resolve(spec, target, line).file))];
   }
   const ordered: Spec[] = [];
