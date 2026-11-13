@@ -29,8 +29,11 @@ export function harness(
     };
     return byType(p.type);
   };
-  const picks = (ps: Param[]) => ps.map((p) => `nondet ${p.name} = ${sample(p)}.oneOf() `).join("");
-  const braces = (ps: Param[], inner: string) => (ps.length ? `{ ${picks(ps)}${inner} }` : inner);
+  /** A step rule's `via` is the name of a transition, so it is tried with those and nothing else. */
+  const takesVia = (name: string) => steps.some((r) => r.name === name && r.via);
+  const viaValues = `Set(${transitions.map((t) => JSON.stringify(t.name)).join(", ")})`;
+  const picks = (ps: Param[], of?: string) => ps.map((p) => `nondet ${p.name} = ${of && takesVia(of) ? viaValues : sample(p)}.oneOf() `).join("");
+  const braces = (ps: Param[], inner: string, of?: string) => (ps.length ? `{ ${picks(ps, of)}${inner} }` : inner);
 
   // Every definition whose arguments the simulator can supply is evaluated during simulation, on reachable states
   // and sampled values, so that TypeScript's result can be compared with Quint's. This is the main test of the
@@ -43,7 +46,7 @@ export function harness(
       const onStates = params.filter(onState).length;
       if (onStates > 2) return [];
       const prevAt = onStates === 2 ? params.findIndex(onState) : -1; // of two states, the first is the one before the event
-      const from = (p: Param, i: number): Eval["params"][number]["from"] => (onState(p) ? (i === prevAt ? "prev" : "state") : (sample(p), "pick"));
+      const from = (p: Param, i: number): Eval["params"][number]["from"] => (onState(p) ? (i === prevAt ? "prev" : "state") : (takesVia(d.name) || sample(p), "pick"));
       qType(result);
       return [{ name: d.name, params: params.map((p, i) => ({ ...p, from: from(p, i) })), result }];
     } catch {
@@ -52,22 +55,22 @@ export function harness(
     }
   });
 
-  // Harness variables: the state, the state before the last event, whether an event has happened, whether the
-  // last law tried held, and the result of the last definition evaluated.
-  const vars = [...(stateType ? ["state", "prev", "moved"] : []), "lawsHold", ...(evals.length ? ["out"] : [])];
+  // Harness variables: the state, the state before the last event, whether an event has happened and which, whether
+  // the last law tried held, and the result of the last definition evaluated.
+  const vars = [...(stateType ? ["state", "prev", "moved", "last"] : []), "lawsHold", ...(evals.length ? ["out"] : [])];
   /** An action body: the given conditions and assignments, with every other variable left as it is. */
   const frame = (conditions: string[], set: Record<string, string>) =>
     `all { ${[...conditions, ...vars.map((v) => `${v}' = ${set[v] ?? v}`)].join(", ")} }`;
-  const argsOf = (t: Transition) => ["state", ...t.params.map((p) => p.name)].join(", ");
-  const action = (t: Transition) =>
-    `  action ${t.name} = ${braces(t.params, frame(t.guard ? [`M::${t.guard}(${argsOf(t)})`] : [], { state: `M::${t.name}(${argsOf(t)})`, prev: "state", moved: "true" }))}`;
+  const call = (fn: string, params: string[]) => `M::${fn}(${["state", ...params].join(", ")})`;
+  const action = (t: Transition) => `  action ${t.name} = ${braces(t.params, frame(t.guard ? [call(t.guard, t.guardParams)] : [],
+    { state: call(t.name, t.params.map((p) => p.name)), prev: "state", moved: "true", last: JSON.stringify(t.name) }))}`;
   const lawAction = (l: Law) =>
     `  action ${l.name} = ${braces(l.params, frame([], { lawsHold: `M::${l.name}(${l.params.map((p) => p.name).join(", ")})` }))}`;
   const evalAction = (v: Eval) => {
     const args = v.params.map((p) => (p.from === "pick" ? p.name : p.from)).join(", ");
     // A transition is only evaluated where its guard allows it, as it would be in use.
-    const guard = transitions.find((t) => t.name === v.name)?.guard;
-    return `  action eval_${v.name} = ${braces(v.params.filter((p) => p.from === "pick"), frame(guard ? [`M::${guard}(${args})`] : [], { out: `Out_${v.name}(M::${v.name}(${args}))` }))}`;
+    const t = transitions.find((t) => t.name === v.name && t.guard);
+    return `  action eval_${v.name} = ${braces(v.params.filter((p) => p.from === "pick"), frame(t ? [call(t.guard!, t.guardParams)] : [], { out: `Out_${v.name}(M::${v.name}(${args}))` }), v.name)}`;
   };
   const events = [...transitions.map((t) => t.name), ...laws.map((l) => l.name)];
   const any = (actions: string[]) => `any { ${(actions.length ? actions : [frame([], {})]).join(", ")} }`;
@@ -77,24 +80,24 @@ export function harness(
     `  import ${module} as M from "./${module}"`,
     ...imports.map((i) => `  import ${i} as D_${i} from "./${i}"`),
     ...(evals.length ? [`  type Out = Nothing | ${evals.map((v) => `Out_${v.name}(${qType(v.result)})`).join(" | ")}`, `  var out: Out`] : []),
-    ...(stateType ? [`  var state: ${qType(stateType)}`, `  var prev: ${qType(stateType)}`, `  var moved: bool`] : []),
+    ...(stateType ? [`  var state: ${qType(stateType)}`, `  var prev: ${qType(stateType)}`, `  var moved: bool`, `  var last: str`] : []),
     `  var lawsHold: bool`,
-    `  action init = ${frame([], { state: "M::initial", prev: "M::initial", moved: "false", lawsHold: "true", out: "Nothing" })}`,
+    `  action init = ${frame([], { state: "M::initial", prev: "M::initial", moved: "false", last: '""', lawsHold: "true", out: "Nothing" })}`,
     ...transitions.map(action),
     ...laws.map(lawAction),
     ...evals.map(evalAction),
     `  action step = ${any(events)}`,
     // Half events, half evaluations, so that definitions are evaluated on states well into a trace and not just near its start.
     `  action probe = ${events.length && evals.length ? `any { step, ${any(evals.map((v) => `eval_${v.name}`))} }` : any([...events, ...evals.map((v) => `eval_${v.name}`)])}`,
-    `  val inv = and { lawsHold, ${[...always.map((a) => `M::${a}(state)`), ...steps.map((r) => `(not(moved) or M::${r}(prev, state))`), "true"].join(", ")} }`,
+    `  val inv = and { lawsHold, ${[...always.map((a) => `M::${a}(state)`), ...steps.map((r) => `(not(moved) or M::${r.name}(prev, ${r.via ? "last, " : ""}state))`), "true"].join(", ")} }`,
     // A witness search also stops at a broken rule, so that no run can step over one unreported.
     ...sometimes.map((w) => `  val never_${w} = inv and not(M::${w}(state))`),
     // A guard's witnesses, for the `probe` step: breaking `never_allows_X` shows a reachable state and values for
     // which X allows its event, breaking `never_refuses_X` one for which it refuses it. Each reads the result the
     // last evaluation recorded, so a state costs the same however many values a parameter could take.
     ...transitions.flatMap((t) => (t.guard && evals.some((v) => v.name === t.guard) ? [
-      `  val never_allows_${t.guard} = match out { | Out_${t.guard}(r) => not(r) | _ => true }`,
-      `  val never_refuses_${t.guard} = match out { | Out_${t.guard}(r) => r | _ => true }`,
+      `  val never_allows_${t.guard} = inv and match out { | Out_${t.guard}(r) => not(r) | _ => true }`,
+      `  val never_refuses_${t.guard} = inv and match out { | Out_${t.guard}(r) => r | _ => true }`,
     ] : [])),
     `}`,
     ``,

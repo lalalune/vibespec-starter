@@ -16,7 +16,8 @@
     "build": "node -e \"fs.rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json && node -e \"fs.mkdirSync('dist/proof', { recursive: true }); fs.copyFileSync('tools/proof/lib.dfy', 'dist/proof/lib.dfy')\"",
     "prepare": "npm run build && node tools/spec.ts gen --if-valid",
     "check:dashboard": "cd examples/dashboard && node ../../tools/spec.ts check",
-    "check:fullstack": "cd examples/fullstack && node ../../tools/spec.ts check"
+    "check:fullstack": "cd examples/fullstack && node ../../tools/spec.ts check",
+    "check:assistant": "cd examples/assistant && node ../../tools/spec.ts check"
   },
   "version": "0.1.0",
   "description": "Stories, rules and a Quint model in one Markdown file; verified TypeScript out.",
@@ -44,7 +45,6 @@
     ".claude/skills",
     "README.md",
     "AGENTS.md",
-    "CONTRIBUTING.md",
     "LICENSE"
   ],
   "dependencies": {

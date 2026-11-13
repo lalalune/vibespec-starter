@@ -205,9 +205,10 @@ is generated. The role of a definition comes from its name and signature:
 | `type Order = { … }`, `type Status = A \| B` | the vocabulary | `interface Order`, `type Status = "A" \| "B"` |
 | `pure val initial: Order = …` | the initial state; its type is *the state type*. A spec without one is a library | `initial`, `parseState`, and a proof that it satisfies every `always` rule |
 | `pure def pay(o: Order, amount: int): Order` | a transition: any `pure def` whose first parameter is the state and that returns the state | `pay(o, amount)`, an `Event` variant `{ type: "pay", amount }`, a case in `step`, `enabled` and `parseEvent`, and proofs that it preserves every rule |
-| `pure def canPay(o: Order, amount: int): bool` | the guard of `pay` (same parameters); optional | `canPay`, used by `enabled` and `step`. What is proved about `pay` is proved for the cases the guard allows. A guard may call its own transition to look at the result |
+| `pure def canPay(o: Order, amount: int): bool` | the guard of `pay`: the state, then any of `pay`'s parameters it uses, by the same names; optional | `canPay`, used by `enabled` and `step`. What is proved about `pay` is proved for the cases the guard allows. A guard may call its own transition to look at the result |
 | `pure def alwaysPaidWithinDue(o: Order): bool` | a rule that holds in every reachable state | a conjunct of `inv`; simulated and proved |
 | `pure def stepNeverGoesBack(before: Order, after: Order): bool` | a rule about every single step | a postcondition on every transition; simulated and proved |
+| `pure def stepPaidOnlyByPay(before: Order, via: str, after: Order): bool` | a step rule that also sees the name of the transition taken (`via == "pay"`), as in "the balance changes only when a payment arrives". The middle parameter must be called `via` | the same, with each transition's own name |
 | `pure def sometimesPaid(o: Order): bool` | a state that must be reachable | a reachability check with a witness trace |
 | `pure def lawTotalIsNotNegative(xs: List[int]): bool` | a law: true for every value of its parameters | a function proved to return `true`, and sampled by the simulator |
 | `pure val idValues = Set(1, 2, 3)` | what the simulator tries for a parameter named `id`. It must be a set; any Quint is allowed in it | nothing: it never reaches TypeScript |
@@ -219,10 +220,26 @@ smaller.
 
 Refused, each with a message saying why: the generated and harness names
 (`init`, `step`, `inv`, `enabled`, `parseEvent`, `parseState`, `Event`,
-`current`, `event`, `state`, …) and `ProofLib`; JavaScript globals and
+`current`, `event`, `state`, `last`, …) and `ProofLib`; JavaScript globals and
 keywords (`Number`, `delete`, …); Quint built-ins (`to`, `next`, `all`,
 `size`, …); a parameter named like a variant; a variant field called `tag`;
 and near-misses of the conventions above such as `alwayspaid` or `CanPay`.
+
+### Who sent an event
+
+A transition parameter named `by` is who sent the event: the person, an
+agent, a service. Give it a type of its own (`type Actor = Person | Agent |
+World`) and let guards decide who may do what (`by == Person`). Every
+transition that takes `by` takes the same type. The simulator sends every
+event from every sender, so a guard that lets the wrong one through breaks
+whatever rule its event can break; rules see states, so one about the sender
+itself needs it recorded in the state.
+
+The generated code keeps it out of the event: `Event` and `parseEvent` have
+no `by`, and `enabled(s, e, by)` and `step(s, e, by)` take it beside the
+event. The program passes who it knows sent the event, from the session it
+arrived on, so a message cannot claim to be from someone else.
+`examples/assistant` shows this.
 
 ### Using one spec from another
 
@@ -494,6 +511,9 @@ function step(current: Order, event: Event): Order       // apply event; unchang
 function inv(current: Order): boolean                    // every always-rule at once
 ```
 
+When transitions take `by` ("Who sent an event"), `enabled` and `step` take
+it too, as a third argument.
+
 Every definition from the spec carries a doc comment naming its rule and spec
 line.
 
@@ -566,7 +586,7 @@ npm run check
 
 | `spec init` adds | |
 |---|---|
-| `.claude/skills/sync/`, `.claude/skills/design/`, `CONTRIBUTING.md` | the agent's procedure and design rules, and a pointer to this file |
+| `.claude/skills/sync/`, `.claude/skills/design/` | the agent's procedure and design rules |
 | `AGENTS.md` | the procedure and this reference, between `onespec:start` and `onespec:end` markers: created if missing, else added to the project's own file, or brought up to date on a later `spec init`; the rest of the file is the project's |
 | `CLAUDE.md` | one line, `@AGENTS.md`, added to the project's own if it has one: Claude Code reads `AGENTS.md` only when there is no `CLAUDE.md` (and only from v2.1.277), so with the import it loads once, in every version |
 | `tsconfig.json`, `spec/` | |
@@ -591,7 +611,11 @@ with `tsc`; it has no dependencies.
   result is kept in `.spec-cache/` under a fingerprint of what the spec means,
   everything it imports and the versions of the tools. Prose and the line
   numbers generated code cites are left out of the fingerprint, so editing
-  prose re-runs neither simulation nor proofs. Simulation runs overlap.
+  prose re-runs neither simulation nor proofs. Simulation runs overlap. A
+  `sometimes` goal, or a guard's event, not found in traces of 20 events is
+  looked for again in traces of 40 and then 100, so a goal deep in a long
+  agent loop is still found; only a spec with such a goal pays for the longer
+  search.
   `npm run watch` keeps one process warm and checks again on every change.
   `SPEC_QUICK=1` simulates a tenth as much while iterating on a large spec;
   the result says so, and `accept` always simulates in full. Set

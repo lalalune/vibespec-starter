@@ -327,6 +327,7 @@ npm run accept
 | `npm run demo` | A scripted session against the verified core |
 | `npm run check:dashboard` | `check` on `examples/dashboard` |
 | `npm run check:fullstack` | `check` on `examples/fullstack`, a React + Node app |
+| `npm run check:assistant` | `check` on `examples/assistant`, an agent loop paying a bill |
 | `npm run selftest` | Breaks the pipeline one way at a time and checks each break is caught |
 | `npm run build` | Compiles the tools into `dist/`, the packaged `spec` command |
 | `npx spec init` | Sets up another package; see [Using it from another package](AGENTS.md#using-it-from-another-package) |
@@ -385,6 +386,7 @@ Keep `spec/`, `src/`, `test/` and `tools/` in git, lock files included.
 | `gen/<name>.run.qnt` | The simulation harness that `npx quint run` and `quint verify` take |
 | `gen/traces/`, `gen/proof/` | The last simulated traces; the final Dafny and logs of each proof unit |
 | `dist/` | The built `spec` command, from `npm run build` |
+| `examples/assistant/` | An agent loop paying a bill: who sent each event, late replies, restarts, secrets; and what such systems still need |
 
 ## A frontend and a backend together
 

@@ -224,7 +224,7 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
     }
     if (definitions.has(op)) return [`${ref(op)}(${a.map((x) => ex(x, TERNARY)).join(", ")})`, ATOM];
     if (sampleSets.has(op)) return fail(`${op} is a sample set for the simulator and cannot be used in a definition`);
-    return fail(`unsupported Quint operator \`${op}\`: extend print() in tools/gen/print.ts`);
+    return fail(`\`${op}\` is not in the Quint a spec may use (AGENTS.md, "Supported Quint"); write it with the operators listed there`);
   };
 
   /** A definition body: leading `val`s become `const`s, the rest is returned. */

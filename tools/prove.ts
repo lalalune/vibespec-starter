@@ -15,6 +15,7 @@ import { execFile } from "node:child_process";
 import fs from "node:fs";
 import { availableParallelism } from "node:os";
 import path from "node:path";
+import { SENDER } from "./gen/classify.ts";
 
 /** The library of general lemmas that proof files call as ProofLib.<Name>. */
 export const LIB_FILE = path.join(import.meta.dirname, "proof", "lib.dfy");
@@ -563,8 +564,8 @@ export interface Unit {
   meaning: string;
   /** How many `//@ requires` hand-written code assumes of its callers. */
   requires?: number;
-  /** For a state machine: its transitions and how many parameters each takes after the state. */
-  transitions?: { name: string; params: number }[];
+  /** For a state machine: its transitions and the names of the parameters each takes after the state. */
+  transitions?: { name: string; params: string[] }[];
 }
 
 /**
@@ -573,14 +574,19 @@ export interface Unit {
  * which spells a name that is a Dafny keyword differently; undefined if the
  * generated text is not as expected.
  */
-function stepBody(gen: string, transitions: { name: string; params: number }[]): string | undefined {
+export function stepBody(gen: string, transitions: { name: string; params: string[] }[]): string | undefined {
   const event = gen.match(/^datatype Event = (.*)$/m);
   const constructors = event ? event[1].split("|").map((c) => c.trim().match(/^(\w+)/)?.[1] ?? "") : [];
   if (constructors.length !== transitions.length) return undefined;
+  // `by` is a Dafny keyword, so LemmaScript renames it; take its spelling from step_ensures itself.
+  const sender = gen.match(/^lemma step_ensures\(current: \w+, event: Event, (\w+):/m)?.[1];
   const cases = transitions.map(({ name, params }, i) => {
     if (!new RegExp(`^lemma ${name}_ensures\\(`, "m").test(gen)) return undefined;
-    const bound = Array.from({ length: params }, (_, j) => `i_event_${j}`);
-    return `    case ${constructors[i]}${params ? `(${bound.join(", ")})` : ""} => ${name}_ensures(${["current", ...bound].join(", ")});`;
+    // The event carries every parameter but `by` (who sent it), which step_ensures takes beside it (gen/typescript.ts).
+    if (params.includes(SENDER) && !sender) return undefined;
+    const bound = params.filter((p) => p !== SENDER).map((p) => `i_${p}`);
+    const args = params.map((p) => (p === SENDER ? sender : `i_${p}`));
+    return `    case ${constructors[i]}${bound.length ? `(${bound.join(", ")})` : ""} => ${name}_ensures(${["current", ...args].join(", ")});`;
   });
   return cases.every(Boolean) ? ["  match event {", ...cases, "  }"].join("\n") : undefined;
 }
