@@ -298,6 +298,12 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.deepEqual(failed, ["review"], text);
   });
 
+  test("a locally chosen enum keeps its Quint type in the generated proof", async () => {
+    const root = oneRule("choice", "Choose", "type Choice = Left | Right\npure def use(c: Choice): int = if (c == Left) 1 else 2\npure def chosen(b: bool): int =\n  val c = if (b) Left else Right\n  use(c)\npure def lawChosen(b: bool): bool = chosen(b) == (if (b) 1 else 2)");
+    const { failed, text } = await run(root);
+    assert.deepEqual(failed, ["review"], text);
+  });
+
   test("a transition and its guard bind a second state-shaped parameter identically during replay", async () => {
     const root = oneRule("copy", "Copy", "pure val initial: int = 0\npure def canCopy(n: int, source: int): bool = n <= source\npure def copy(n: int, source: int): int = source\npure def alwaysNonnegative(n: int): bool = n >= 0");
     const { failed, text } = await run(root);
@@ -307,7 +313,8 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
   test("a law over a reachable state is checked beyond the initial state", async () => {
     const root = fixtures(["lamp"], (f) => { f["spec/lamp.md"] += `\n### No flips\n\n${F}quint\npure def lawZero(l: Lamp): bool = l.flips == 0\n${F}\n`; });
     const { said, text } = await run(root);
-    assert.equal(said("always", /law.*false/)?.ok, false, text);
+    assert.equal(said("always", /^the law .* is false/)?.ok, false, text);
+    assert.ok(!text.includes("the simulator could not run"), text);
   });
 
   test("a quint block indented inside a list is still part of the model", async () => {
@@ -550,13 +557,34 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.ok(failed.includes("review"), failed.join());
   });
 
-  test("init adds what a project lacks and replaces nothing", () => {
+  test("init preserves local instructions and refreshes its marked procedure", () => {
     const root = scratch({ "AGENTS.md": "mine\n", "package.json": `{"scripts":{"check":"mine"}}` });
     const added = init(root);
-    assert.equal(fs.readFileSync(path.join(root, "AGENTS.md"), "utf8"), "mine\n");
+    const agents = path.join(root, "AGENTS.md");
+    const expected = `mine\n\n<!-- vibespec:start -->\n${read("AGENTS.md").trim()}\n<!-- vibespec:end -->\n`;
+    assert.equal(fs.readFileSync(agents, "utf8"), expected);
     assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).scripts.check, "mine");
     assert.ok(["sync", "design"].every((s) => fs.existsSync(path.join(root, `.claude/skills/${s}/SKILL.md`))) && added.includes("tsconfig.json"), added.join());
+    assert.match(fs.readFileSync(path.join(root, "CLAUDE.md"), "utf8"), /^@AGENTS\.md$/m);
     assert.deepEqual(init(root), []);
+    fs.writeFileSync(path.join(root, "CLAUDE.md"), "My existing instructions.\n");
+    init(root);
+    assert.equal(fs.readFileSync(path.join(root, "CLAUDE.md"), "utf8"), "My existing instructions.\n\n@AGENTS.md\n");
+    assert.equal(fs.readFileSync(agents, "utf8"), expected);
+    assert.deepEqual(init(root), []);
+    fs.writeFileSync(agents, "before\r\n<!-- onespec:start -->\r\nold instructions\r\n<!-- onespec:end -->\r\nafter\r\n");
+    init(root);
+    assert.equal(fs.readFileSync(agents, "utf8"), `before\r\n<!-- vibespec:start -->\r\n${read("AGENTS.md").trim().replace(/\r?\n/g, "\r\n")}\r\n<!-- vibespec:end -->\r\nafter\r\n`);
+    assert.deepEqual(init(root), []);
+    for (const invalid of [
+      "<!-- vibespec:start -->\nincomplete\n",
+      "<!-- vibespec:start -->\n<!-- onespec:end -->\n",
+      "<!-- vibespec:start -->\n<!-- vibespec:end -->\n<!-- vibespec:start -->\n<!-- vibespec:end -->\n",
+    ]) {
+      fs.writeFileSync(agents, invalid);
+      assert.throws(() => init(root), /repair.*markers/);
+      assert.equal(fs.readFileSync(agents, "utf8"), invalid);
+    }
   });
 
   test("the package's own test script is what runs, never the check itself, and a test citing a heading the spec does not have is caught", async () => {
@@ -661,13 +689,20 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.equal(after.said("always", /the law .* is false/)?.ok, false, after.text);
   });
 
-  test("a changed proof library invalidates proofs that use it", async () => {
+  test("proof caching follows library changes and compiler failure waits for proof completion", async () => {
     const root = fixtures(["highest"], (f) => {
       f["package.json"] = '{"type":"module"}';
       f["spec/highest.proof.dfy"] = "lemma lawTheHighestIsAtLeastTheStart_ensures(xs: seq<int>, start: int)\n  ensures (lawTheHighestIsAtLeastTheStart(xs, start) == true)\n{\n  ProofLib.FoldLeftMax((top: int, x: int) => (if (x > top) then x else top), start, xs);\n}\n";
     });
     fs.cpSync(path.join(project, "tools"), path.join(root, "tools"), { recursive: true });
-    fs.symlinkSync(nodeModules, path.join(root, "node_modules"), "dir");
+    const modules = path.join(root, "node_modules");
+    fs.mkdirSync(path.join(modules, ".bin"), { recursive: true });
+    for (const entry of fs.readdirSync(nodeModules).filter((f) => f !== ".bin"))
+      fs.symlinkSync(path.join(nodeModules, entry), path.join(modules, entry), fs.statSync(path.join(nodeModules, entry)).isDirectory() ? "dir" : "file");
+    for (const tool of ["quint", "lsc"]) {
+      const executable = process.platform === "win32" ? `${tool}.cmd` : tool;
+      fs.symlinkSync(path.join(nodeModules, ".bin", executable), path.join(modules, ".bin", executable), "file");
+    }
     const script = path.join(root, "tools/spec.ts");
     const first = await runCli(script, root, "check", "--json");
     const checked = JSON.parse(first.stdout);
@@ -678,6 +713,19 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     const again = JSON.parse(second.stdout);
     assert.ok(again.results.some((r: Result) => r.stage === "proof" && r.ok), second.stdout + second.stderr);
     assert.ok(fs.readFileSync(path.join(root, "gen/proof/highest/highest.dfy"), "utf8").includes(marker));
+    fs.writeFileSync(path.join(root, "tsconfig.json"), '{"compilerOptions":{"noEmit":true},"include":["gen/*.ts"]}');
+    if (process.platform !== "win32") {
+      const compiler = path.join(modules, ".bin/tsc");
+      fs.writeFileSync(compiler, "#!/bin/sh\nexit 1\n");
+      fs.chmodSync(compiler, 0o644);
+    }
+    fs.appendFileSync(path.join(root, "spec/highest.proof.dfy"), "// Recheck the proof beside the failed compiler.\n");
+    const failed = await runCli(script, root, "check", "--json");
+    const result = JSON.parse(failed.stdout);
+    assert.equal(failed.status, 1, failed.stdout + failed.stderr);
+    assert.ok(result.results.some((r: Result) => r.stage === "types" && !r.ok), failed.stdout);
+    assert.ok(result.results.some((r: Result) => r.stage === "proof" && r.ok), failed.stdout);
+    assert.ok(!fs.existsSync(path.join(root, ".spec-cache/lock")));
   });
 
   test("a story's text, a definition a rule relies on, here or in an imported spec, and a src contract are each reviewed", () => {
@@ -754,6 +802,7 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
   test("moving an unchanged contract to another function requires review", () => {
     const text = "//@ pure\nexport function one(): number {\n  //@ ensures \\result === 1\n  return 1;\n}\n//@ pure\nexport function two(): number {\n  return 2;\n}\n";
     const root = scratch({ "src/count.ts": text });
+    fs.mkdirSync(path.join(root, "spec"));
     acceptContracts(root);
     fs.writeFileSync(path.join(root, "src/count.ts"), text.replace("  //@ ensures \\result === 1\n", "").replace("  return 2;", "  //@ ensures \\result === 1\n  return 2;"));
     assert.deepEqual(pendingContracts(root).map((p) => p.status), ["contract changed"]);
@@ -938,8 +987,8 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
       ["an annotation in a string", 'export const note = "//@ ensures false";', /`\/\/@` here is not in a `\/\/` comment/],
       ["an annotation in a template", "export const note = `${1} //@ ensures false`;", /`\/\/@` here is not in a `\/\/` comment/],
       ["a NUL character", "export const x = 1; // \0", /NUL characters are not allowed/],
-      ["a carriage return in a comment", "export const x = 1; // \r hidden", /line breaks/],
-      ["a Unicode line break in a comment", "export const x = 1; // \u2028 hidden", /line breaks/],
+      ["a carriage return in a comment", "export const x = 1; // \r hidden", /line break/],
+      ["a Unicode line break in a comment", "export const x = 1; // \u2028 hidden", /line break/],
     ];
     for (const [what, code, message] of refused) assert.throws(() => checkVerifiedSource("src/x.ts", `//@ backend dafny\n${code}\n`), message, what);
     checkVerifiedSource("src/ledger.ts", read("src/ledger.ts"));

@@ -168,8 +168,8 @@ export function acceptReviews(root: string, spec: Spec, specs: Spec[] = readSpec
 const contractsFile = (root: string) => path.join(root, "spec/src.lock.json");
 /**
  * The contract of a file: every `//@` comment line, under the declarations it sits in (`f: //@ requires …`), so that
- * moving an annotation from one function to another changes it. A `//@` later in a comment is prose, except
- * `//@ backend`, which LemmaScript reads wherever it appears.
+ * moving an annotation from one function to another changes it. Keep every line containing `//@`, including an
+ * annotation after code on the same line; source validation rejects occurrences in strings or block comments.
  */
 function contractOf(file: string, code: string): string[] {
   const sf = ts.createSourceFile(file, code, ts.ScriptTarget.Latest, true);
@@ -193,7 +193,7 @@ function contractOf(file: string, code: string): string[] {
   let at = 0;
   for (const line of code.split("\n")) {
     const text = line.trim();
-    if (text.startsWith("//@") || /\/\/@[ \t]*backend\b/.test(line)) {
+    if (line.includes("//@")) {
       const owner = owners(at + line.indexOf("//@")).join(".");
       out.push(owner ? `${owner}: ${text}` : text);
     }

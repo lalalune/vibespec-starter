@@ -157,9 +157,11 @@ export function replay(domain: any, trace: Step[], model?: Model) {
 /** The first rule a trace breaks, in the spec's words, and how many steps it took; undefined if it breaks none. */
 export function firstBreak(domain: any, model: Model, trace: Step[], cite: (def: string) => string): { why: string; steps: number } | undefined {
   let before: unknown;
-  for (const [i, { event, law, state, lawsHold }] of trace.entries()) {
+  for (const [i, { event, law, evaluated, state, lawsHold }] of trace.entries()) {
     const found = (why: string) => ({ why, steps: i + 1 });
     if (law && lawsHold === false) return found(`the law ${cite(law.name)} is false for ${JSON.stringify(law.args)}`);
+    if (evaluated?.result === false && lawsHold === false && model.laws.some((l) => l.name === evaluated.name))
+      return found(`the law ${cite(evaluated.name)} is false in state ${JSON.stringify(state)} with sampled parameters ${JSON.stringify(evaluated.picks)}`);
     const always = model.always.filter((a) => !domain[a](state)).map(cite);
     if (always.length) return found(`a reachable state breaks ${always.join(", ")}`);
     const steps = event ? model.steps.filter((r) => !domain[r.name](before, ...(r.via ? [event.type] : []), state)).map((r) => cite(r.name)) : [];
@@ -181,9 +183,9 @@ const changes = (a: any, b: any, at = ""): string[] =>
 
 /** A trace as the initial state, then each event with only what it changed. */
 export const showTrace = (trace: Step[]) =>
-  trace.filter((s, i) => i === 0 || s.event || s.lawsHold === false).map(({ event, law, state, lawsHold }, i, shown) => {
+  trace.filter((s, i) => i === 0 || s.event || s.lawsHold === false).map(({ event, law, evaluated, state, lawsHold }, i, shown) => {
     const { type, ...args } = event ?? { type: "" };
-    const what = event ? type + (Object.keys(args).length ? JSON.stringify(args) : "") : law ? `${law.name}${JSON.stringify(law.args)}` : "initial";
-    const result = law && !event ? String(lawsHold) : i ? changes(shown[i - 1].state, state).join(", ") || "no change" : JSON.stringify(state);
+    const what = event ? type + (Object.keys(args).length ? JSON.stringify(args) : "") : law ? `${law.name}${JSON.stringify(law.args)}` : evaluated ? `${evaluated.name}${JSON.stringify(evaluated.picks)}` : "initial";
+    const result = (law || evaluated) && !event ? String(lawsHold) : i ? changes(shown[i - 1].state, state).join(", ") || "no change" : JSON.stringify(state);
     return `      ${what.padEnd(30)} -> ${result}`;
   }).join("\n");

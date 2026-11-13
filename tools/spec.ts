@@ -336,14 +336,20 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
     // The typecheck runs while the proofs do; it is reported first.
     const typecheck = fs.existsSync(path.join(root, "tsconfig.json")) ? run("tsc", ["--noEmit", "-p", "."], root) : undefined;
     const proofsDone = provingAll();
+    // A missing or unexecutable compiler must not release the project lock while proofs still write into gen/.
+    const [typesResult, proofsResult] = await Promise.allSettled([typecheck, proofsDone]);
     if (typecheck) {
-      const tsc = await typecheck;
-      report(tsc.ok, "types", tsc.ok ? "application typechecks against the generated contract" : "application does not fit the generated contract", indent(tsc.out.trim()), "src/ and test/");
+      if (typesResult.status === "rejected") report(false, "types", "the TypeScript checker could not run", indent(String(typesResult.reason)));
+      else {
+        const tsc = typesResult.value!;
+        report(tsc.ok, "types", tsc.ok ? "application typechecks against the generated contract" : "application does not fit the generated contract", indent(tsc.out.trim()), "src/ and test/");
+      }
     } else {
       const code = ["src", "test"].filter((d) => fs.existsSync(path.join(root, d)));
       report(!code.length, "types", code.length ? `${code.join(" and ")} exist but there is no tsconfig.json, so nothing checks them against the generated contract; run \`spec init\` to add one` : "skipped: there is no tsconfig.json and no src/ or test/");
     }
-    for (const r of await proofsDone) report(...r);
+    if (proofsResult.status === "rejected") report(false, "proof", "the prover could not run", indent(String(proofsResult.reason)));
+    else for (const r of proofsResult.value) report(...r);
     for (const r of await tests(root, specs)) report(...r);
     if (complete && proofsRan) collectGarbage(memory);
   }
@@ -397,7 +403,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
 
 // --- init ----------------------------------------------------------------------------
 
-/** Give a project what it needs to use the package. Nothing that is already there is replaced. */
+/** Set up a project, preserving its content outside the marked Vibespec instructions. */
 export function init(root: string): string[] {
   const pkg = path.join(import.meta.dirname, "..");
   const done: string[] = [];
@@ -407,7 +413,30 @@ export function init(root: string): string[] {
     fs.writeFileSync(path.join(root, file), content());
     done.push(file);
   };
-  for (const doc of [".claude/skills/sync/SKILL.md", ".claude/skills/design/SKILL.md", "AGENTS.md", "CONTRIBUTING.md"]) add(doc, () => fs.readFileSync(path.join(pkg, doc), "utf8"));
+  for (const doc of [".claude/skills/sync/SKILL.md", ".claude/skills/design/SKILL.md", "CONTRIBUTING.md"]) add(doc, () => fs.readFileSync(path.join(pkg, doc), "utf8"));
+  const agents = path.join(root, "AGENTS.md");
+  const procedure = fs.readFileSync(path.join(pkg, "AGENTS.md"), "utf8").trim();
+  const previous = fs.existsSync(agents) ? fs.readFileSync(agents, "utf8") : "";
+  const eol = previous.includes("\r\n") ? "\r\n" : "\n";
+  const section = `<!-- vibespec:start -->${eol}${procedure.replace(/\r?\n/g, eol)}${eol}<!-- vibespec:end -->`;
+  const starts = [...previous.matchAll(/<!-- (vibespec|onespec):start\b[^>]*-->/g)];
+  const ends = [...previous.matchAll(/<!-- (vibespec|onespec):end -->/g)];
+  if (starts.length !== ends.length || starts.length > 1 || (starts.length === 1 && (starts[0][1] !== ends[0][1] || starts[0].index! > ends[0].index!)))
+    throw new Error("AGENTS.md: repair the duplicated or incomplete Vibespec markers before running spec init");
+  const updated = starts.length ? previous.slice(0, starts[0].index) + section + previous.slice(ends[0].index! + ends[0][0].length)
+    : previous.trim() === procedure ? `${section}${eol}`
+    : `${previous.trimEnd()}${previous.trim() ? eol + eol : ""}${section}${eol}`;
+  if (updated !== previous) {
+    fs.writeFileSync(agents, updated);
+    done.push("AGENTS.md (Vibespec instructions)");
+  }
+  const claude = path.join(root, "CLAUDE.md");
+  const own = fs.existsSync(claude) ? fs.readFileSync(claude, "utf8") : "";
+  if (!/^@AGENTS\.md\s*$/m.test(own)) {
+    const eol = own.includes("\r\n") ? "\r\n" : "\n";
+    fs.writeFileSync(claude, `${own.trimEnd()}${own.trim() ? eol + eol : ""}@AGENTS.md${eol}`);
+    done.push("CLAUDE.md (imports AGENTS.md)");
+  }
   add("tsconfig.json", () => JSON.stringify({ compilerOptions: { target: "es2023", module: "nodenext", strict: true, noEmit: true, allowImportingTsExtensions: true, erasableSyntaxOnly: true, skipLibCheck: true, types: ["node"] }, include: ["src", "test", "gen/*.ts"] }, null, 2) + "\n");
   if (!fs.existsSync(path.join(root, "spec"))) { fs.mkdirSync(path.join(root, "spec")); done.push("spec/"); }
   const ignore = path.join(root, ".gitignore");

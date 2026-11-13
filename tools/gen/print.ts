@@ -243,7 +243,7 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
     const lines: string[] = [];
     for (; e.kind === "let"; e = e.expr) {
       if (e.opdef.expr.kind === "lambda") fail(`local def ${e.opdef.name} is not supported`);
-      lines.push(`const ${bind(e.opdef.name)} = ${ex(e.opdef.expr)};`);
+      lines.push(`const ${bind(e.opdef.name)}: ${tsType(typeOf(e.opdef.id))} = ${ex(e.opdef.expr)};`);
     }
     return [...lines, `return ${ex(e)};`];
   };
