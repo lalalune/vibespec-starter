@@ -99,5 +99,16 @@
     "./stories/storybook": "./vibestack/stories/storybook.ts",
     "./design/eslint": "./vibestack/design/eslint.ts",
     "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "exports": {
+      "./testing": "./dist/testing/index.js",
+      "./testing/vitest": "./dist/testing/vitest.js",
+      "./testing/generate": "./dist/testing/generate.js",
+      "./stories": "./dist/stories/meta.js",
+      "./stories/storybook": "./dist/stories/storybook.js",
+      "./design/eslint": "./dist/design/eslint.js",
+      "./package.json": "./package.json"
+    }
   }
 }

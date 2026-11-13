@@ -622,7 +622,7 @@ const isMain = (): boolean => {
   }
 };
 
-const USAGE = "usage: spec check [<directory>] [--json] | watch [<directory>] | gen [<directory>] [--if-valid] | accept [<directory>] [unproved] | new [<path>] | init [<directory>] | migrate [<directory>] | studio [<directory>] [--port <n>]";
+const USAGE = "usage: spec check [<directory>] [--json] | watch [<directory>] | gen [<directory>] [--if-valid] | accept [<directory>] [unproved] | new [<path>] | init [<directory>] | migrate [<directory>] | studio [<directory>] [--port <n>] | tests [<directory>] | stories gen [--watch] [--check] | tokens build|check|apply";
 
 /**
  * Check, then check again whenever spec/, src/, test/ or tsconfig.json changes. One process stays warm between runs
@@ -723,6 +723,12 @@ if (isMain()) {
       const loader = built ? [] : ["--import", pathToFileURL(createRequire(path.join(import.meta.dirname, "studio/package.json")).resolve("vibelang/register")).href];
       const child = spawn(process.execPath, [...loader, entry, ...args], { cwd: root, stdio: "inherit" });
       child.on("exit", (code, signal) => { process.exitCode = code ?? (signal ? 1 : 0); });
+    } else if (command === "stories" || command === "tokens") {
+      // Each is a command line of its own, reading its arguments after its name (stories/cli.ts, design/cli.ts).
+      process.argv.splice(2, 1);
+      await (command === "stories" ? import("./stories/cli.ts") : import("./design/cli.ts"));
+    } else if (command === "tests" && takes([], ["*"])) {
+      await (await import("./testing/generate.ts")).main(args[0]);
     } else if (command === "migrate" && takes([])) {
       const release = lockProject(root);
       try {
