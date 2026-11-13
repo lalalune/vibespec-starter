@@ -187,9 +187,11 @@ export function firstBreak(domain: any, model: Model, trace: Step[], cite: (def:
  * trace up to state `end`, then for ever either nothing (`loop === end`), which is fair if that state allows no fair event,
  * or the states from `loop` to `end`, equal at both ends, again and again, which is fair if it takes every weakly fair
  * event that each of its states allows and every strongly fair one that any allows. It breaks the rule if some state
- * `from` on it is followed by none, itself included, that the rule relates it to.
+ * `from` on it is followed by none, itself included, that the rule relates it to. A rule with a bound (`within_<rule>`)
+ * is also broken by a trace in which that many events follow `from` and neither it nor any state they reach is related
+ * to it; then `loop === end` is the state the last of them reaches, and `within` the bound.
  */
-export function lasso(domain: any, model: Model, trace: Step[]): { broken?: { rule: string; from: number; loop: number; end: number }; loops: number } {
+export function lasso(domain: any, model: Model, trace: Step[]): { broken?: { rule: string; from: number; loop: number; end: number; within?: number }; loops: number } {
   const keys = trace.map((s) => JSON.stringify(s.state));
   const memo = new Map<string, boolean>();
   const relates = (rule: string, i: number, j: number) => {
@@ -202,6 +204,10 @@ export function lasso(domain: any, model: Model, trace: Step[]): { broken?: { ru
     const taken = trace.slice(loop + 1, end + 1).map((s) => s.event?.type);
     return [...model.fair].every(([e, how]) => taken.includes(e) || !(how === "weak" ? allowed.every((a) => a.includes(e)) : allowed.some((a) => a.includes(e))));
   };
+  for (const [rule, within] of model.within)
+    for (let from = 0; from < trace.length; from++)
+      for (let end = from, taken = 0; end < trace.length && !relates(rule, from, end); end++)
+        if (end > from && trace[end].event && ++taken === within) return { broken: { rule, from, loop: end, end, within }, loops: 0 };
   let loops = 0;
   for (let end = 0; end < trace.length; end++)
     for (let loop = 0; loop <= end; loop++) {
@@ -229,11 +235,15 @@ const changes = (a: any, b: any, at = ""): string[] =>
     ? [...new Set([...Object.keys(a), ...Object.keys(b)])].flatMap((k) => changes(a[k], b[k], at ? `${at}.${k}` : k))
     : [`${at || "state"} = ${JSON.stringify(b)}`];
 
-/** A trace as the initial state, then each event with only what it changed, and what it output if anything. */
-export const showTrace = (trace: Step[]) =>
-  trace.filter((s, i) => i === 0 || s.event || s.lawsHold === false).map(({ event, law, evaluated, state, out, lawsHold }, i, shown) => {
+/**
+ * A trace as the initial state, then each event with only what it changed, and what it output if anything, with `marks`
+ * on the steps they name. A step not shown leaves the state as it was, so its mark goes on the last one shown before it.
+ */
+export const showTrace = (trace: Step[], marks: [number, string][] = []) =>
+  trace.map((s, at) => ({ ...s, at })).filter((s) => s.at === 0 || s.event || s.lawsHold === false).map(({ event, law, evaluated, state, out, lawsHold, at }, i, shown) => {
     const { type, ...args } = event ?? { type: "" };
     const what = event ? type + (Object.keys(args).length ? JSON.stringify(args) : "") : law ? `${law.name}${JSON.stringify(law.args)}` : evaluated ? `${evaluated.name}${JSON.stringify(evaluated.picks)}` : "initial";
     const result = (law || evaluated) && !event ? String(lawsHold) : i ? [...changes(shown[i - 1].state, state), ...(event && out?.length ? [`out ${JSON.stringify(out)}`] : [])].join(", ") || "no change" : JSON.stringify(state);
-    return `      ${what.padEnd(30)} -> ${result}`;
+    const mark = marks.filter(([m]) => m >= at && m < (shown[i + 1]?.at ?? Infinity)).map(([, text]) => text).join("; ");
+    return `      ${what.padEnd(30)} -> ${result}${mark && `   <- ${mark}`}`;
   }).join("\n");
