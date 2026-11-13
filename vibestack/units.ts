@@ -56,9 +56,7 @@ export function generated(root: string, spec: Spec, ir: any, models: Map<string,
   const model = generate(ir, spec.name, spec.file, (d) => origins.get(d), models);
   fs.writeFileSync(path.join(dir, `${spec.name}.ts`), model.ts);
   fs.writeFileSync(path.join(dir, `${spec.name}.run.qnt`), model.harness);
-  const manifest = path.join(root, "package.json");
-  const namespace = (fs.existsSync(manifest) ? JSON.parse(fs.readFileSync(manifest, "utf8")).name : undefined) ?? fs.realpathSync(root);
-  fs.writeFileSync(path.join(dir, `${spec.name}.effect.vibe`), effectAdapter(spec.name, model.source, model.ts, namespace));
+  fs.writeFileSync(path.join(dir, `${spec.name}.effect.vibe`), effectAdapter(spec.name, model.source, model.ts, namespace(root)));
   if (model.opaques.length) fs.writeFileSync(path.join(dir, `${spec.name}.sim.qnt`), simulated(spec.qnt, model.opaques));
   writeConformance(root, model);
   models.set(spec.name, model);
@@ -66,9 +64,26 @@ export function generated(root: string, spec: Spec, ir: any, models: Map<string,
 }
 
 /**
+ * What tells the `Machine` services of one package from another's (gen/vibe.ts): the package's name, or else its path
+ * from the workspace or repository root, "." for that root, or its directory's name where there is neither. Never
+ * where a checkout happens to be, which would differ from one machine to the next in generated and built code.
+ */
+function namespace(dir: string): string {
+  const manifest = path.join(dir, "package.json");
+  const name: unknown = fs.existsSync(manifest) ? JSON.parse(fs.readFileSync(manifest, "utf8")).name : undefined;
+  if (typeof name === "string" && name) return name;
+  const real = fs.realpathSync(dir);
+  for (let up = real; ; up = path.dirname(up)) {
+    if (["pnpm-workspace.yaml", ".git"].some((f) => fs.existsSync(path.join(up, f)))) return path.relative(up, real).split(path.sep).join("/") || ".";
+    if (up === path.dirname(up)) return path.basename(real);
+  }
+}
+
+/**
  * Each owner's gen/, written anew from the root's: the modules of its specs and of every spec they import, under the
- * root's module names, with their Effect adapters and conformance helpers, so that a package imports only from its
- * own gen/. A module not generated, because its spec is not valid, is not there.
+ * root's module names, with their conformance helpers, so that a package imports only from its own gen/. An Effect
+ * adapter is written for the owner, whose name its `Machine` key carries: that is the package the service runs in.
+ * A module not generated, because its spec is not valid, is not there.
  */
 export function mirrorGen(root: string, specs: Spec[]) {
   const from = path.join(root, "gen");
@@ -78,10 +93,12 @@ export function mirrorGen(root: string, specs: Spec[]) {
     for (const spec of specs) if (`${owner(root, spec.file)}/` === dir) need(spec.name);
     const to = path.join(root, dir, "gen");
     fs.rmSync(to, { recursive: true, force: true });
-    const files = fs.readdirSync(from).filter((f) => needed.has(f.match(/^(\w+)\.(?:ts|effect\.vibe|conformance\.ts)$/)?.[1] ?? ""));
+    const files = fs.readdirSync(from).filter((f) => needed.has(f.match(/^(\w+)\.(?:ts|conformance\.ts)$/)?.[1] ?? ""));
     if (!files.length) continue;
     fs.mkdirSync(to, { recursive: true });
     for (const f of [...files, "package.json", ...files.some((f) => f.endsWith(".conformance.ts")) ? ["_conformance.ts"] : []]) fs.copyFileSync(path.join(from, f), path.join(to, f));
+    for (const spec of specs) if (files.includes(`${spec.name}.ts`))
+      fs.writeFileSync(path.join(to, `${spec.name}.effect.vibe`), effectAdapter(spec.name, spec.file, fs.readFileSync(path.join(from, `${spec.name}.ts`), "utf8"), namespace(path.join(root, dir))));
   }
 }
 

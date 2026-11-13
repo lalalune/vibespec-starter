@@ -405,19 +405,20 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
     // The typecheck runs while the proofs do; it is reported first.
     // VibeLang's compiler checks `.vibe`, `.ts` and `.tsx` as one program.
     // Each of the root and the owners is a program of its own, checked against its own gen/.
-    const typechecks = dirs.map((dir) => fs.existsSync(path.join(root, dir, "tsconfig.json")) ? run("vibelang", ["--noEmit", "-p", "."], path.join(root, dir)) : undefined);
+    const typechecks = dirs.map(async (dir) => fs.existsSync(path.join(root, dir, "tsconfig.json")) ? run("vibelang", ["--noEmit", "-p", "."], path.join(root, dir)) : undefined);
     const proofsDone = provingAll();
     // A missing or unexecutable compiler must not release the project lock while proofs still write into gen/.
     const typesResults = await Promise.allSettled(typechecks);
-    if (typechecks.some(Boolean) && !nodeRunsVibelang()) report(false, "types", `VibeLang runs its sources on Node ^22.22.3 or >=24.11.1, and this is ${process.version}; update Node (.nvmrc names the version)`);
+    if (typesResults.some((r) => r.status === "rejected" || r.value) && !nodeRunsVibelang()) report(false, "types", `VibeLang runs its sources on Node ^22.22.3 or >=24.11.1, and this is ${process.version}; update Node (.nvmrc names the version)`);
     for (const [i, dir] of dirs.entries()) {
       const result = typesResults[i];
       const types = (ok: boolean, summary: string, detail = "") => report(...within(dir, [ok, "types", summary, detail, "src/ and test/"]));
-      if (!typechecks[i]) {
+      if (result.status === "rejected") types(false, "the VibeLang compiler could not run", indent(String(result.reason)));
+      else if (result.value) types(result.value.ok, result.value.ok ? "application typechecks against the generated contract" : "application does not fit the generated contract", indent(result.value.out.trim()));
+      else {
         const code = ["src", "test"].filter((d) => fs.existsSync(path.join(root, dir, d)));
         types(!code.length, code.length ? `${code.join(" and ")} exist but there is no tsconfig.json, so nothing checks them against the generated contract; run \`spec init\` to add one` : "skipped: there is no tsconfig.json and no src/ or test/");
-      } else if (result.status === "rejected") types(false, "the VibeLang compiler could not run", indent(String(result.reason)));
-      else types(result.value!.ok, result.value!.ok ? "application typechecks against the generated contract" : "application does not fit the generated contract", indent(result.value!.out.trim()));
+      }
     }
     for (const r of await proofsDone) report(...r);
     for (const dir of dirs) for (const r of await tests(root, dir, specs)) report(...within(dir, r));

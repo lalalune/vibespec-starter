@@ -113,7 +113,6 @@ applications and packages beside Studio; the examples stand alone.
 
 ```bash
 pnpm dev                              # this project
-pnpm dev apps/web                     # the starter application
 pnpm dev vibestack/examples/order     # an example, or any directory with spec/
 ```
 
