@@ -7,7 +7,7 @@ import { writeConformance } from "./conform.ts";
 import { fail } from "./gen/types.ts";
 import type { Unit } from "./prove.ts";
 import { run } from "./run.ts";
-import { importedMeanings, originalColumn, readSpecs, type Spec } from "./parse.ts";
+import { importedMeanings, originalColumn, type Spec } from "./parse.ts";
 import { defines } from "./review.ts";
 import { entry, recall, store, type Memory } from "./cache.ts";
 import { filesUnder, plainText, readSrc, type SrcFile } from "./util.ts";
@@ -56,22 +56,6 @@ export function generated(root: string, spec: Spec, ir: any, models: Map<string,
   writeConformance(root, model);
   models.set(spec.name, model);
   return model;
-}
-
-/**
- * Tangle, typecheck and generate one spec. `models` holds the specs it imports,
- * already generated, and receives this one. Throws with a message that points
- * into the spec.
- */
-export async function gen(root: string, spec: Spec, models = new Map<string, Model>()): Promise<Model> {
-  const dir = genDir(root);
-  const out = path.join(dir, `${spec.name}.ir.json`);
-  fs.writeFileSync(path.join(dir, `${spec.name}.qnt`), spec.qnt);
-  const typed = await run("quint", ["typecheck", "--out", out, `gen/${spec.name}.qnt`], root);
-  const ir = fs.existsSync(out) ? JSON.parse(fs.readFileSync(out, "utf8")) : { errors: [] };
-  fs.rmSync(out, { force: true });
-  if (!typed.ok) throw typeErrors(spec, ir, typed.out, readSpecs(root));
-  return generated(root, spec, ir, models);
 }
 
 /**

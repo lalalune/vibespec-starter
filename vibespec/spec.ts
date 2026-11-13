@@ -11,13 +11,13 @@ import { run } from "./run.ts";
 import { readSpecs, badSpecName, specFiles, specName, importedMeanings, isStd, located, type Spec } from "./parse.ts";
 import { contracts, pending, pendingKey, pendingContracts, acceptAllReviews, pendingSpecs, migrateLocks, moved, showPending, ledgerFile, readLedger, writeLedger, type Pending, type Accepted, type Lock } from "./review.ts";
 import { entry, remembered, collectGarbage, type Memory } from "./cache.ts";
-import { gen, generated, typecheckAll, proofUnits, proofFiles, strayProofFiles } from "./units.ts";
+import { generated, typecheckAll, proofUnits, proofFiles, strayProofFiles } from "./units.ts";
 import { SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, LASSO_TRACES, STEPS, DEPTHS, SEARCHED, simulate, search, firstBreak, lasso, showTrace, replay, type Step } from "./simulate.ts";
 import { sha, indent, tests, readSrc, projectRoot, type SrcFile } from "./util.ts";
 
 export { readSpecs, badSpecName, parseSpec, scanSpec, expandListHelpers, type Spec, type Rule, type Story } from "./parse.ts";
 export { pending, pendingKey, pendingContracts, acceptReviews, acceptContracts, dependencies, type Lock, type Pending } from "./review.ts";
-export { gen, checkVerifiedSource } from "./units.ts";
+export { generated, typecheckAll, checkVerifiedSource } from "./units.ts";
 export { replay, type Step } from "./simulate.ts";
 export { danglingCitations } from "./util.ts";
 
@@ -660,8 +660,10 @@ if (isMain()) {
     if (command === "gen" && takes([], ["--if-valid"])) {
       // --if-valid is for `npm install`: a spec in the middle of an edit must not make installing fail.
       try {
+        const specs = readSpecs(root);
+        const typed = typecheckAll({ root, fresh: false, used: new Set() }, specs);
         const models = new Map<string, Model>();
-        for (const s of readSpecs(root)) await gen(root, s, models);
+        for (const s of specs) generated(root, s, await typed.get(s.name)!, models);
       } catch (e) {
         if (!args.length) throw e;
         console.log(`note: gen/ was not generated, because a spec is not valid yet (${(e as Error).message.split("\n")[0]}); \`npm run check\` says why`);
