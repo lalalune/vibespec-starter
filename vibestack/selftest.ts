@@ -52,18 +52,18 @@ const fixtures = (names: string[], edit: (files: Record<string, string>) => void
   edit(files);
   return scratch(files);
 };
-/** Scratch copies contain sources; generators and dependencies belong to the scratch build. */
-function copySources(directory: "vibestack" | "packages" | "apps" | "spec", root: string) {
-  const source = path.join(project, directory);
-  fs.cpSync(source, path.join(root, directory), { recursive: true, verbatimSymlinks: true, filter: (from) => {
-    const parts = path.relative(source, from).split(path.sep);
-    return !(directory === "vibestack" && parts[0] === "examples")
-      && !parts.some((part, index) => /^(node_modules|dist|generated|storybook-static|coverage|\.cache|\.spec-cache|\.studio|\.turbo|\.vibe)$/.test(part) || (part === "gen" && !(directory === "vibestack" && index === 0)));
+/** Copy sources without outputs or live locks; units.ts:genDir marks generated gen/ with package.json. */
+function copySources(from: string, to: string): void {
+  fs.cpSync(from, to, { recursive: true, verbatimSymlinks: true, filter: (file) => {
+    const name = path.basename(file);
+    return !["node_modules", ".spec-cache", ".cache", ".vibe", ".studio", ".turbo", "dist", "generated", "storybook-static", "coverage"].includes(name)
+      && !(name === "gen" && fs.existsSync(path.join(file, "package.json")))
+      && !(name === "examples" && path.basename(path.dirname(file)) === "vibestack");
   } });
 }
 /** `root` with its own copy of the toolchain, and of node_modules only the packages and the executables `tools`. */
 function toolchain(root: string, ...tools: string[]): string {
-  copySources("vibestack", root);
+  copySources(path.join(project, "vibestack"), path.join(root, "vibestack"));
   const modules = path.join(root, "node_modules");
   fs.mkdirSync(path.join(modules, ".bin"), { recursive: true });
   for (const entry of fs.readdirSync(nodeModules).filter((f) => f !== ".bin"))
@@ -1760,9 +1760,21 @@ pure def lawOwn(own: int): bool = shadowOwn(own) == own`));
   test("a rebuilt packaged command can generate a project from the repository root", async () => {
     const root = oneRule("packaged", "A packaged value", "pure val answer = 42");
     const inputs = ["package.json", "tsconfig.json", "tsconfig.build.json", "tsconfig.base.json", "turbo.json", "pnpm-workspace.yaml", "pnpm-lock.yaml", ".nvmrc"];
-    const copy = scratch(Object.fromEntries(inputs.map((file) => [file, read(file)])));
+    const staging = scratch(Object.fromEntries(inputs.map((file) => [file, read(file)])));
     // Studio's page is built from the workspace packages it shares with every interface.
-    for (const directory of ["vibestack", "packages", "apps", "spec"] as const) copySources(directory, copy);
+    for (const directory of ["vibestack", "packages", "apps", "spec"])
+      copySources(path.join(project, directory), path.join(staging, directory));
+    const lock = path.join(staging, "vibestack/studio/.spec-cache/lock");
+    fs.mkdirSync(path.dirname(lock), { recursive: true });
+    fs.writeFileSync(lock, `${process.pid}\n`);
+    fs.mkdirSync(path.join(staging, "node_modules"));
+    fs.writeFileSync(path.join(staging, "node_modules/should-not-copy"), "dependencies belong to the scratch install\n");
+    const copy = scratch({});
+    copySources(staging, copy);
+    const fixture = "vibestack/stories/test/fixtures/gen/index.ts";
+    assert.deepEqual(fs.readFileSync(path.join(copy, fixture)), fs.readFileSync(path.join(project, fixture)));
+    assert.ok(!fs.existsSync(path.join(copy, "vibestack/studio/.spec-cache/lock")));
+    assert.ok(!fs.existsSync(path.join(copy, "node_modules")));
     assert.equal(read("vibestack/gen/typescript.ts", copy), read("vibestack/gen/typescript.ts"));
     for (const directory of ["vibestack/studio", ...fs.readdirSync(path.join(copy, "packages")).map((name) => `packages/${name}`)])
       for (const output of ["gen", "dist", "generated", "node_modules", ".spec-cache", ".cache", ".vibe", ".turbo", "storybook-static"])
