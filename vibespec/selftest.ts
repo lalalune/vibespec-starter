@@ -46,7 +46,7 @@ function scratch(files: Record<string, string>): string {
 /** A scratch project whose specs are the named fixtures, with their proof files, each changed by `edit` if it is given. */
 const fixtures = (names: string[], edit: (files: Record<string, string>) => void = () => {}) => {
   const files = Object.fromEntries(names.flatMap((n) => [`${n}.md`, `${n}.proof.dfy`]
-    .filter((f) => fs.existsSync(path.join(project, "vibespec/fixtures", f))).map((f) => [`spec/${f}`, read(`vibespec/fixtures/${f}`)])));
+    .filter((f) => f.endsWith(".md") || fs.existsSync(path.join(project, "vibespec/fixtures", f))).map((f) => [`spec/${f}`, read(`vibespec/fixtures/${f}`)])));
   edit(files);
   return scratch(files);
 };
@@ -317,6 +317,8 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       ["a map into records", "pure def records(xs: Set[int]): Set[{ n: int }] = xs.map(x => { n: x })", /set|Set|record/],
       ["== on values that hold a set", "type A = { s: Set[int] }\npure def same(a: A, b: A): bool = a == b", /a set is a sequence/],
       ["a map keyed by booleans", "pure def flags(k: bool): bool -> int = Map(k -> 1)", /keys must be/],
+      ...["fairOn", "fairEnabled", "arguments", "implements"].map((name): [string, string, RegExp] =>
+        [`reserved generated name ${name}`, `pure def ${name}(n: int): int = n`, /cannot be used as a name/]),
     ];
     const [constant, ...results] = await Promise.all(["pure val stepLimit = 3\npure def lawPositive(k: int): bool = stepLimit > 0", ...refused.map(([, quint]) => quint)]
       .map((quint) => run(oneRule("t", "A rule", quint))));
@@ -1106,6 +1108,11 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.ok(again.results.some((r: Result) => r.stage === "proof" && r.ok), second.stdout + second.stderr);
     assert.ok(fs.readFileSync(path.join(root, "gen/proof/highest/highest.dfy"), "utf8").includes(marker));
     fs.writeFileSync(path.join(root, "tsconfig.json"), '{"compilerOptions":{"noEmit":true},"include":["gen/*.ts"]}');
+    if (process.platform !== "win32") {
+      const compiler = path.join(modules, ".bin/tsc");
+      fs.writeFileSync(compiler, "#!/bin/sh\nexit 1\n");
+      fs.chmodSync(compiler, 0o644);
+    }
     fs.appendFileSync(path.join(root, "spec/highest.proof.dfy"), "// Recheck the proof beside the failed compiler.\n");
     const failed = await runCli(script, root, "check", "--json");
     const result = JSON.parse(failed.stdout);
