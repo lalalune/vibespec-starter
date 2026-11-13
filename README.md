@@ -10,9 +10,9 @@ that say it exactly. Everything else is generated, simulated and proved with
 [Dafny](https://dafny.org). The coding agent in your session keeps prose and
 model in step; you sign off.
 
-[![Use this template](https://img.shields.io/badge/Use_this_template-2ea44f?style=for-the-badge&logo=github)](https://github.com/lalalune/onespec/generate)
+[![Use this template](https://img.shields.io/badge/Use_this_template-2ea44f?style=for-the-badge&logo=github)](https://github.com/lalalune/vibespec-starter/generate)
 
-[![check](https://github.com/lalalune/onespec/actions/workflows/check.yml/badge.svg)](https://github.com/lalalune/onespec/actions/workflows/check.yml)
+[![check](https://github.com/lalalune/vibespec-starter/actions/workflows/check.yml/badge.svg)](https://github.com/lalalune/vibespec-starter/actions/workflows/check.yml)
 
 [Quick start](#quick-start) ·
 [Tutorial](#tutorial) ·
@@ -26,7 +26,7 @@ model in step; you sign off.
 
 ## Why
 
-Agents write code fast; reading all of it is the slow part. onespec moves
+Agents write code fast; reading all of it is the slow part. Vibespec moves
 what you must read to the top: a short list of sentences a product owner
 would call true or false, each with its formal meaning underneath. From
 there:
@@ -71,7 +71,7 @@ draft, submit, pay in instalments, hold, cancel, reopen.
 **Needs** Node 24+ and [Dafny](https://github.com/dafny-lang/dafny/releases)
 4.11 on the `PATH`.
 
-1. Click **[Use this template](https://github.com/lalalune/onespec/generate)**
+1. Click **[Use this template](https://github.com/lalalune/vibespec-starter/generate)**
    to create your own repository, then clone it.
 2. Install, check, and run the example:
 

@@ -1,5 +1,5 @@
 {
-  "name": "onespec",
+  "name": "vibespec",
   "private": true,
   "type": "module",
   "engines": {
@@ -21,10 +21,10 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/lalalune/onespec.git"
+    "url": "git+https://github.com/lalalune/vibespec-starter.git"
   },
-  "homepage": "https://github.com/lalalune/onespec#readme",
-  "bugs": "https://github.com/lalalune/onespec/issues",
+  "homepage": "https://github.com/lalalune/vibespec-starter#readme",
+  "bugs": "https://github.com/lalalune/vibespec-starter/issues",
   "keywords": [
     "formal-verification",
     "quint",

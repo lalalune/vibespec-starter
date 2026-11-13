@@ -121,7 +121,7 @@ How `npm run check` runs them:
 
 - `npm run check` is where step 3 of the sync skill's loop stops: what is
   left waits on the user.
-- In the onespec repository, if you changed `tools/`, `npm run selftest`
+- In the vibespec-starter repository, if you changed `tools/`, `npm run selftest`
   passes, with a new case for each new kind of mistake the change catches.
 - What you wrote has had its passes under "Writing code".
 - Your summary follows "When you stop" in the sync skill.
@@ -132,7 +132,7 @@ The spec format, the generated code and the code built on it. The agent's
 loop is the [`sync` skill](.claude/skills/sync/SKILL.md); setup and the stages
 of `npm run check` are in [README.md](README.md).
 
-In the onespec repository, "the order example" is `spec/order.md` and "the
+In the vibespec-starter repository, "the order example" is `spec/order.md` and "the
 tracker example" is `examples/dashboard/spec/tracker.md`.
 
 ## Writing a spec
@@ -209,13 +209,13 @@ and near-misses of the conventions above such as `alwayspaid` or `CanPay`.
 - **`import kernel.* from "./kernel"`** takes a library's names as they are.
   A library is a spec with no `initial`: definitions and laws, or a
   *component* such as an account with `canWithdraw` and `withdraw` and no
-  state of its own (`tools/fixtures/account.md` in the onespec repository,
+  state of its own (`tools/fixtures/account.md` in the vibespec-starter repository,
   used by `bank.md`).
 - **`import lamp as L from "./lamp"`** takes any spec under a name, a state
   machine included. A room can then hold two `L::Lamp`s in its state, start
   them from `L::initial`, move them with `L::toggle`, require
   `L::alwaysFlipsAreCounted` of each, and add rules about the pair that
-  neither lamp could state (`tools/fixtures/room.md` in the onespec
+  neither lamp could state (`tools/fixtures/room.md` in the vibespec-starter
   repository).
 
 A spec is imported once, one way or the other, and imports cannot form a
@@ -538,7 +538,7 @@ The toolchain is a package with a `spec` command, installed from a path or
 a tarball made with `npm pack`.
 
 ```sh
-npm install --save-dev /path/to/onespec-0.1.0.tgz
+npm install --save-dev /path/to/vibespec-0.1.0.tgz
 npx spec init          # adds what is missing; replaces nothing
 npx spec new <name>    # a starter spec/<name>.md
 npm run check
@@ -586,7 +586,7 @@ npx quint verify gen/order.run.qnt --main order_run --invariant inv --max-steps 
 
 ## Changing the tools
 
-In the onespec repository:
+In the vibespec-starter repository:
 
 | File | Role |
 |---|---|
