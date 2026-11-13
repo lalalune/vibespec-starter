@@ -8,7 +8,7 @@ spec puts the server, two tabs and an unreliable network together.
 pnpm install --ignore-workspace   # here, after the install at the repository root
 pnpm check      # the whole pipeline (from this directory)
 pnpm test       # the tests alone, against the real server on a free port
-pnpm start      # build, then open http://localhost:3000 in two windows
+pnpm start      # build, then open http://localhost:3000 in two windows; the list is kept in ./todos.json
 pnpm storybook  # every component of the page in each of its states
 pnpm lint       # the page uses the design tokens only
 ```
@@ -18,14 +18,14 @@ Needs Node 26+ and Dafny on the path.
 | Path | Kind | Covers |
 |---|---|---|
 | `spec/todo.md` | library | A to-do, the four edits, when an edit makes sense, how it is applied |
-| `spec/server.md` | machine | One request per edit, answered once, version = number of changes, ids never reused |
+| `spec/server.md` | machine | One `request` per edit, applied or refused by its edit, answered once, version = number of changes, ids never reused |
 | `spec/client.md` | machine | One tab: confirmed copy, queue of unanswered edits, offline, answers and pushes |
 | `spec/system.md` | machine | Server + tabs `a` and `b` + a lossy, repeating, reordering network + forged requests |
 | `spec/*.proof.dfy` | proofs | What Dafny could not prove alone |
-| `src/server.vibe`, `src/main.vibe` | backend shell | `POST /api/events`, `GET /api/snapshot`, `GET /api/stream`, the page's files |
+| `src/server.vibe`, `src/main.vibe` | backend shell | `POST /api/events`, `GET /api/snapshot`, `GET /api/stream`, the page's files, and the state saved in `todos.json` |
 | `src/protocol.vibe` | shared shell | Wire format |
 | `src/web/sync.vibe` | frontend shell | The `Tab` service: one client machine and its requests, shared with `test/app.test.vibe` |
-| `test/drivers/client.ts` | conformance | How `check` reaches a tab: every journey and random walks through `Tab.dispatch`, compared with `spec/client.md` |
+| `test/drivers/client.ts`, `test/drivers/server.ts` | conformance | How `check` reaches a tab and the HTTP server: every journey and random walks, compared with `spec/client.md` and `spec/server.md` |
 | `src/web/` | page | React: `useTab.ts` gives `components/TodoPage.tsx` the tab's `Client` and its effects |
 | `tokens.json`, `design.md` | design | The page's colors and shapes, as tokens |
 
@@ -36,7 +36,7 @@ sequenceDiagram
   participant B as tab b
   Note over A: create / setDone / rename / remove<br/>queued with id "a-n"
   A->>S: POST /api/events (oldest queued edit only)
-  Note over S: decodeEvent, then Machine.send or refuse<br/>same client + seq + edit = retry, applied once
+  Note over S: decodeEvent, then Machine.send(request)<br/>verdict read back from the log: a retry is applied once
   S-->>A: Answer → receiveAck / receiveRefusal
   S-->>B: /api/stream push → receiveSnapshot
 ```
@@ -46,7 +46,23 @@ sequenceDiagram
 The shell is [VibeLang](https://github.com/smithersai/vibelang) (`.vibe`):
 TypeScript syntax for Effect, on `gen/<name>.effect.vibe`, which `pnpm gen`
 writes beside each generated module. The server is Effect's `HttpRouter` over
-the generated `Machine` service; a tab changes its `Client` only with `apply`.
+a `Machine` service that applies each event with the generated `apply` and
+saves the state before it answers; a tab keeps its `Client` in the `Machine`
+that `gen/client.effect.vibe` generates, and changes it only through `send`
+and `receive`.
+
+## Where the list is kept
+
+`server(web, listener, file)` starts from the state saved in `file`, or from
+an empty list if there is none, and refuses to start, with `NotAStateFile`
+naming it, on a file it cannot read, that is not JSON or that is not a state
+that keeps the server's rules. Each request it takes is saved before it is
+answered: written to `file.tmp`, flushed to disk, renamed over `file`, and
+the rename flushed with the directory, one request at a time. Where a
+directory cannot be opened, as on Windows, that last flush is left to the
+system, and a power cut just after an answer may undo its rename. `pnpm start` keeps it in
+`todos.json` in the directory it is run from; delete that file to start
+over.
 
 | Stays TypeScript | Why |
 |---|---|
@@ -56,7 +72,8 @@ the generated `Machine` service; a tab changes its `Client` only with `apply`.
 
 ## The page
 
-The `Tab` of `sync.vibe` owns the client's state. `useTab.ts` hands every
+The generated client `Machine`, which `browser()` of `sync.vibe` provides to
+the `Tab`, holds the client's state. `useTab.ts` hands every
 state it publishes to `TodoPage`, whose components take that `Client` and
 callbacks as props, offer a control exactly when the generated guard allows
 its event (`canCreate`, `canSetDone`, `canRename`, `canRemove`, `canGoOffline`,
@@ -78,8 +95,12 @@ shell's journeys and the mount of every story.
   `always` and `step` rule, and every law holds. `pnpm check` gives the count.
 - **Simulated**: the `sometimes` rules, among them that both tabs can finish
   their edits and agree with the server despite loss, duplication and reordering.
-- **Tested**: the HTTP shell and two tabs against the real server (`test/`);
-  a tab against `spec/client.md` through its driver; that every story mounts. No test drives the page in a browser.
+- **Tested**: the HTTP shell and two tabs against the real server (`test/`),
+  including a restart on the same state file and a start refused on a file
+  that holds no state; the real server against `spec/server.md`, through its
+  driver, comparing the state it saved in its file with the spec's and each
+  answer's verdict with its log; a tab against `spec/client.md` through its
+  driver; that every story mounts. No test drives the page in a browser.
 - **Trusted**: `src/`, React, Effect, the VibeLang compiler, the generator,
   Dafny and Quint. Convergence is a `sometimes` rule: the model shows it can
   happen, not that it always does.
@@ -89,8 +110,8 @@ shell's journeys and the mount of every story.
 The specs were written before the tools could do the following, and still
 work around their absence. Each is a good first exercise:
 
-- **Imported proofs.** The server and client restate "a commit / refusal /
-  queued edit / answer keeps the rules" as laws for the system proof file.
+- **Imported proofs.** The server and client restate "a request / queued
+  edit / answer keeps the rules" as laws for the system proof file.
   It can call `server_<transition>_ensures` and `client_<transition>_ensures`
   instead (.claude/skills/prove/SKILL.md, "Proof files").
 - **Equality.** `sameTodos` and its reflexivity law can become `==`, which

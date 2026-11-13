@@ -1,6 +1,6 @@
-// Proofs that every request the server answers keeps its rules. All five
-// transitions append one entry to the log; four of them also apply an edit
-// through `commit`, so the work is done once, in `CommitKeeps`.
+// Proofs that every request the server answers keeps its rules. `request`
+// appends one entry to the log, through `commit` when it applies the edit and
+// through `refusal` when not; `CommitKeeps` and `RefusalKeeps` do the work.
 
 // The rules, with ProofLib.Filter in place of the opaque library filter.
 lemma VersionBridge(s: Server)
@@ -125,72 +125,34 @@ lemma CommitKeeps(s: Server, client: string, seq_: int, op: todo_Op)
   }
 }
 
-lemma create_ensures(s: Server, client: string, seq_: int, id: string, title: string)
-  ensures (inv(s) ==> canCreate(s, client, seq_, id, title) ==> alwaysTheVersionCountsTheChanges(create(s, client, seq_, id, title)))
-  ensures (inv(s) ==> canCreate(s, client, seq_, id, title) ==> alwaysNoRequestIsAnsweredTwice(create(s, client, seq_, id, title)))
-  ensures (inv(s) ==> canCreate(s, client, seq_, id, title) ==> alwaysIdsAreUnique(create(s, client, seq_, id, title)))
-  ensures (inv(s) ==> canCreate(s, client, seq_, id, title) ==> stepEachRequestRaisesTheVersionByAtMostOne(s, create(s, client, seq_, id, title)))
-  ensures (inv(s) ==> canCreate(s, client, seq_, id, title) ==> stepNoToDoIsForgotten(s, create(s, client, seq_, id, title)))
+lemma request_ensures(s: Server, client: string, seq_: int, op: todo_Op)
+  ensures (inv(s) ==> canRequest(s, client, seq_) ==> alwaysTheVersionCountsTheChanges(request(s, client, seq_, op)))
+  ensures (inv(s) ==> canRequest(s, client, seq_) ==> alwaysNoRequestIsAnsweredTwice(request(s, client, seq_, op)))
+  ensures (inv(s) ==> canRequest(s, client, seq_) ==> alwaysIdsAreUnique(request(s, client, seq_, op)))
+  ensures (inv(s) ==> canRequest(s, client, seq_) ==> stepEachRequestRaisesTheVersionByAtMostOne(s, request(s, client, seq_, op)))
+  ensures (inv(s) ==> canRequest(s, client, seq_) ==> stepNoToDoIsForgotten(s, request(s, client, seq_, op)))
 {
-  if inv(s) && canCreate(s, client, seq_, id, title) {
-    CommitKeeps(s, client, seq_, todo_Op("create", id, title, false));
-  }
+  if inv(s) && canRequest(s, client, seq_) { RequestKeeps(s, client, seq_, op); }
 }
 
-lemma setDone_ensures(s: Server, client: string, seq_: int, id: string, done: bool)
-  ensures (inv(s) ==> canSetDone(s, client, seq_, id, done) ==> alwaysTheVersionCountsTheChanges(setDone(s, client, seq_, id, done)))
-  ensures (inv(s) ==> canSetDone(s, client, seq_, id, done) ==> alwaysNoRequestIsAnsweredTwice(setDone(s, client, seq_, id, done)))
-  ensures (inv(s) ==> canSetDone(s, client, seq_, id, done) ==> alwaysIdsAreUnique(setDone(s, client, seq_, id, done)))
-  ensures (inv(s) ==> canSetDone(s, client, seq_, id, done) ==> stepEachRequestRaisesTheVersionByAtMostOne(s, setDone(s, client, seq_, id, done)))
-  ensures (inv(s) ==> canSetDone(s, client, seq_, id, done) ==> stepNoToDoIsForgotten(s, setDone(s, client, seq_, id, done)))
+lemma RequestKeeps(s: Server, client: string, seq_: int, op: todo_Op)
+  requires inv(s) && canRequest(s, client, seq_)
+  ensures alwaysTheVersionCountsTheChanges(request(s, client, seq_, op))
+  ensures alwaysNoRequestIsAnsweredTwice(request(s, client, seq_, op))
+  ensures alwaysIdsAreUnique(request(s, client, seq_, op))
+  ensures stepNoToDoIsForgotten(s, request(s, client, seq_, op))
 {
-  if inv(s) && canSetDone(s, client, seq_, id, done) {
-    CommitKeeps(s, client, seq_, todo_Op("done", id, "", done));
-  }
+  if allows(s, client, seq_, op) { CommitKeeps(s, client, seq_, op); } else { RefusalKeeps(s, client, seq_, op); }
 }
 
-lemma rename_ensures(s: Server, client: string, seq_: int, id: string, title: string)
-  ensures (inv(s) ==> canRename(s, client, seq_, id, title) ==> alwaysTheVersionCountsTheChanges(rename(s, client, seq_, id, title)))
-  ensures (inv(s) ==> canRename(s, client, seq_, id, title) ==> alwaysNoRequestIsAnsweredTwice(rename(s, client, seq_, id, title)))
-  ensures (inv(s) ==> canRename(s, client, seq_, id, title) ==> alwaysIdsAreUnique(rename(s, client, seq_, id, title)))
-  ensures (inv(s) ==> canRename(s, client, seq_, id, title) ==> stepEachRequestRaisesTheVersionByAtMostOne(s, rename(s, client, seq_, id, title)))
-  ensures (inv(s) ==> canRename(s, client, seq_, id, title) ==> stepNoToDoIsForgotten(s, rename(s, client, seq_, id, title)))
+lemma RefusalKeeps(s: Server, client: string, seq_: int, op: todo_Op)
+  requires inv(s) && !answered(s, client, seq_)
+  ensures alwaysTheVersionCountsTheChanges(refusal(client, s, seq_, op))
+  ensures alwaysNoRequestIsAnsweredTwice(refusal(client, s, seq_, op))
+  ensures alwaysIdsAreUnique(refusal(client, s, seq_, op))
+  ensures stepNoToDoIsForgotten(s, refusal(client, s, seq_, op))
 {
-  if inv(s) && canRename(s, client, seq_, id, title) {
-    CommitKeeps(s, client, seq_, todo_Op("rename", id, title, false));
-  }
-}
-
-lemma remove_ensures(s: Server, client: string, seq_: int, id: string)
-  ensures (inv(s) ==> canRemove(s, client, seq_, id) ==> alwaysTheVersionCountsTheChanges(remove(s, client, seq_, id)))
-  ensures (inv(s) ==> canRemove(s, client, seq_, id) ==> alwaysNoRequestIsAnsweredTwice(remove(s, client, seq_, id)))
-  ensures (inv(s) ==> canRemove(s, client, seq_, id) ==> alwaysIdsAreUnique(remove(s, client, seq_, id)))
-  ensures (inv(s) ==> canRemove(s, client, seq_, id) ==> stepEachRequestRaisesTheVersionByAtMostOne(s, remove(s, client, seq_, id)))
-  ensures (inv(s) ==> canRemove(s, client, seq_, id) ==> stepNoToDoIsForgotten(s, remove(s, client, seq_, id)))
-{
-  if inv(s) && canRemove(s, client, seq_, id) {
-    CommitKeeps(s, client, seq_, todo_Op("remove", id, "", false));
-  }
-}
-
-lemma refuse_ensures(s: Server, client: string, seq_: int, op: todo_Op)
-  ensures (inv(s) ==> canRefuse(s, client, seq_, op) ==> alwaysTheVersionCountsTheChanges(refuse(s, client, seq_, op)))
-  ensures (inv(s) ==> canRefuse(s, client, seq_, op) ==> alwaysNoRequestIsAnsweredTwice(refuse(s, client, seq_, op)))
-  ensures (inv(s) ==> canRefuse(s, client, seq_, op) ==> alwaysIdsAreUnique(refuse(s, client, seq_, op)))
-  ensures (inv(s) ==> canRefuse(s, client, seq_, op) ==> stepEachRequestRaisesTheVersionByAtMostOne(s, refuse(s, client, seq_, op)))
-  ensures (inv(s) ==> canRefuse(s, client, seq_, op) ==> stepNoToDoIsForgotten(s, refuse(s, client, seq_, op)))
-{
-  if inv(s) && canRefuse(s, client, seq_, op) { RefuseKeeps(s, client, seq_, op); }
-}
-
-lemma RefuseKeeps(s: Server, client: string, seq_: int, op: todo_Op)
-  requires inv(s) && canRefuse(s, client, seq_, op)
-  ensures alwaysTheVersionCountsTheChanges(refuse(s, client, seq_, op))
-  ensures alwaysNoRequestIsAnsweredTwice(refuse(s, client, seq_, op))
-  ensures alwaysIdsAreUnique(refuse(s, client, seq_, op))
-  ensures stepNoToDoIsForgotten(s, refuse(s, client, seq_, op))
-{
-  var after := refuse(s, client, seq_, op);
+  var after := refusal(client, s, seq_, op);
   var x := Answered(client, seq_, op, false);
   VersionBridge(s);
   VersionBridge(after);
@@ -204,14 +166,8 @@ lemma RefuseKeeps(s: Server, client: string, seq_: int, op: todo_Op)
   }
 }
 
-lemma lawACommitKeepsTheRules_ensures(s: Server, client: string, seq_: int, op: todo_Op)
-  ensures (lawACommitKeepsTheRules(s, client, seq_, op) == true)
+lemma lawARequestKeepsTheRules_ensures(s: Server, client: string, seq_: int, op: todo_Op)
+  ensures (lawARequestKeepsTheRules(s, client, seq_, op) == true)
 {
-  if rulesHold(s) && allows(s, client, seq_, op) { CommitKeeps(s, client, seq_, op); }
-}
-
-lemma lawARefusalKeepsTheRules_ensures(s: Server, client: string, seq_: int, op: todo_Op)
-  ensures (lawARefusalKeepsTheRules(s, client, seq_, op) == true)
-{
-  if rulesHold(s) && canRefuse(s, client, seq_, op) { RefuseKeeps(s, client, seq_, op); }
+  if rulesHold(s) && canRequest(s, client, seq_) { RequestKeeps(s, client, seq_, op); }
 }

@@ -1,7 +1,7 @@
 // spec/system.md, "Only a tab's oldest queued edit can be on its way unanswered"; spec/client.md, "Story: Hear back from the server"
-// Shared by useTab.ts and test/app.test.vibe.
-import { type Client, type Event, type Pending, NotAnEvent, apply, decodeEvent, initial } from "../../gen/client.effect.vibe"
-import { toRequest } from "../protocol.vibe"
+// Shared by useTab.ts, test/app.test.vibe and test/drivers/client.ts.
+import { type Client, type Event, type Pending, Machine, NotAnEvent, Rejected, machine } from "../../gen/client.effect.vibe"
+import type { Request } from "../protocol.vibe"
 
 /** How long a tab waits before it tries the network again. */
 const RETRY = "2 seconds"
@@ -35,42 +35,42 @@ export function newId(name: string, c: Client): string {
   return `${name}-${c.made + 1}`
 }
 
-/** The part of an answer that says which event it is to its tab; the client machine decodes the rest. */
-schema Verdict { readonly ok: boolean }
+/** The part of an answer that says which event it is, and to which queued edit; the client machine decodes the rest. */
+schema Verdict { readonly ok: boolean; readonly seq: number }
 
-/** What the server said, as the event of the client machine it is to a tab. */
-effect function heard(type: "receiveAck" | "receiveRefusal" | "receiveSnapshot", said: unknown) {
-  if (typeof said !== "object" || said === null) throw new NotAnEvent({ input: said })
-  return try decodeEvent({ ...said, type })
-}
-
-/** A new tab called `name`, talking to the server at `base`. */
+/** A new tab called `name`, over the client `Machine` it is given, talking to the server at `base`. */
 export effect function open(base: string, name: string) {
   const client = HttpClient.mapRequest(HttpClient.filterStatusOk(try HttpClient.HttpClient), HttpClientRequest.prependUrl(base))
-  const held = try SubscriptionRef.make(initial)
+  const held = try Machine
   const sending = try Semaphore.make(1)
-  const get = () => SubscriptionRef.get(held)
+  const get = () => held.get()
   const asked = <A, E>(answer: A!E) => mapError(answer, (cause) => new Unanswered({ cause }))
 
   effect function dispatch(event: Event) {
-    return try SubscriptionRef.modifyEffect(held, effect (c) => {
-      const next = apply(c, event) catch () => undefined
-      return next === undefined ? [false, c] as const : [true, next] as const
-    })
+    // The machine fails with Rejected, and changes nothing, where the rules do not allow the event.
+    const sent = held.send(event) catch () => undefined
+    return sent !== undefined
+  }
+
+  /** What the server said, as the client machine's event `type`; one the rules do not allow changes nothing. */
+  effect function hear(type: "receiveAck" | "receiveRefusal" | "receiveSnapshot", said: unknown) {
+    if (typeof said !== "object" || said === null) throw new NotAnEvent({ input: said })
+    held.receive({ ...said, type }) catch effect (error) => match (error) {
+      when Rejected: undefined;
+      default: throw error;
+    }
   }
 
   effect function send(p: Pending) {
-    const request = toRequest(name, p.seq, p.op)
-    if (request === undefined) throw new NotAnEvent({ input: p })
+    const request: Request = { type: "request", client: name, seq: p.seq, op: p.op }
     const said = try (try client.execute(try HttpClientRequest.bodyJson(HttpClientRequest.post("/api/events"), request))).json
-    const { ok } = try Schema.decodeUnknownEffect(Verdict)(said)
-    const answer = try heard(ok ? "receiveAck" : "receiveRefusal", said)
-    if (!("seq" in answer) || answer.seq !== p.seq) throw new NotAnEvent({ input: said })
-    try dispatch(answer)
+    const { ok, seq } = try Schema.decodeUnknownEffect(Verdict)(said)
+    if (seq !== p.seq) throw new NotAnEvent({ input: said })
+    try hear(ok ? "receiveAck" : "receiveRefusal", said)
   }
 
   effect function refresh() {
-    try dispatch(try heard("receiveSnapshot", try (try client.get("/api/snapshot")).json))
+    try hear("receiveSnapshot", try (try client.get("/api/snapshot")).json)
   }
 
   // Oldest first, one request at a time, for as long as the tab is online:
@@ -91,14 +91,13 @@ export effect function open(base: string, name: string) {
       buffered = frames.pop() ?? ""
       for (const frame of frames) {
         if (!frame.startsWith("data: ")) continue
-        const push = heard("receiveSnapshot", try Effect.try(() => JSON.parse(frame.slice("data: ".length)))) catch () => undefined
-        if (push) try dispatch(push)
+        effect { try hear("receiveSnapshot", try Effect.try(() => JSON.parse(frame.slice("data: ".length)))) } catch () => undefined
       }
     }
   }
 
   return {
-    changes: SubscriptionRef.changes(held),
+    changes: held.changes,
     get,
     dispatch,
     effect edit(event: Edit) {
@@ -122,7 +121,7 @@ export effect function open(base: string, name: string) {
   }
 }
 
-/** The page's tab: `open`, over the browser's fetch. */
+/** The page's tab: `open`, over a client machine in memory and the browser's fetch. */
 export function browser(base: string, name: string) {
-  return Layer.provide(Layer.effect(Tab, open(base, name)), FetchHttpClient.layer)
+  return Layer.provide(Layer.effect(Tab, open(base, name)), [machine(), FetchHttpClient.layer])
 }
