@@ -644,7 +644,7 @@ lemma notify_ensures(s: Tracker)
 
 // The rule, restated over ProofLib.Filter.
 lemma TUniqueBridge(s: Tracker)
-  ensures alwaysTaskNumbersAreUnique(s) == Std.Collections.Seq.All(s.tasks, (a: Task) => (|ProofLib.Filter((b: Task) => (b.id == a.id), s.tasks)| == 1))
+  ensures alwaysTaskNumbersAreUnique(s) == !(exists a :: a in s.tasks && !(|ProofLib.Filter((b: Task) => (b.id == a.id), s.tasks)| == 1))
 {
 }
 
@@ -652,8 +652,8 @@ lemma TUniqueBridge(s: Tracker)
 lemma TIdsKeptUnique(xs: seq<Task>, ys: seq<Task>)
   requires |xs| == |ys|
   requires forall i :: 0 <= i < |xs| ==> xs[i].id == ys[i].id
-  requires Std.Collections.Seq.All(xs, (a: Task) => (|ProofLib.Filter((b: Task) => (b.id == a.id), xs)| == 1))
-  ensures Std.Collections.Seq.All(ys, (a: Task) => (|ProofLib.Filter((b: Task) => (b.id == a.id), ys)| == 1))
+  requires !(exists a :: a in xs && !(|ProofLib.Filter((b: Task) => (b.id == a.id), xs)| == 1))
+  ensures !(exists a :: a in ys && !(|ProofLib.Filter((b: Task) => (b.id == a.id), ys)| == 1))
 {
   forall j | 0 <= j < |ys|
     ensures |ProofLib.Filter((b: Task) => (b.id == ys[j].id), ys)| == 1
@@ -668,8 +668,8 @@ lemma TIdsKeptUnique(xs: seq<Task>, ys: seq<Task>)
 // Appending a task whose number is above every other keeps the numbers unique.
 lemma TAppendFreshUnique(xs: seq<Task>, n: Task)
   requires forall i :: 0 <= i < |xs| ==> xs[i].id < n.id
-  requires Std.Collections.Seq.All(xs, (a: Task) => (|ProofLib.Filter((b: Task) => (b.id == a.id), xs)| == 1))
-  ensures Std.Collections.Seq.All(xs + [n], (a: Task) => (|ProofLib.Filter((b: Task) => (b.id == a.id), xs + [n])| == 1))
+  requires !(exists a :: a in xs && !(|ProofLib.Filter((b: Task) => (b.id == a.id), xs)| == 1))
+  ensures !(exists a :: a in xs + [n] && !(|ProofLib.Filter((b: Task) => (b.id == a.id), xs + [n])| == 1))
 {
   var ys := xs + [n];
   forall j | 0 <= j < |ys|
@@ -687,8 +687,8 @@ lemma TAppendFreshUnique(xs: seq<Task>, n: Task)
 
 // Filtering the tasks keeps the numbers unique.
 lemma TFilterKeepsUnique(f: Task -> bool, xs: seq<Task>)
-  requires Std.Collections.Seq.All(xs, (a: Task) => (|ProofLib.Filter((b: Task) => (b.id == a.id), xs)| == 1))
-  ensures Std.Collections.Seq.All(ProofLib.Filter(f, xs), (a: Task) => (|ProofLib.Filter((b: Task) => (b.id == a.id), ProofLib.Filter(f, xs))| == 1))
+  requires !(exists a :: a in xs && !(|ProofLib.Filter((b: Task) => (b.id == a.id), xs)| == 1))
+  ensures !(exists a :: a in ProofLib.Filter(f, xs) && !(|ProofLib.Filter((b: Task) => (b.id == a.id), ProofLib.Filter(f, xs))| == 1))
 {
   var ys := ProofLib.Filter(f, xs);
   ProofLib.FilterSubset(f, xs);
@@ -708,7 +708,7 @@ lemma TFilterKeepsUnique(f: Task -> bool, xs: seq<Task>)
 // One task has no problem exactly when it is well formed.
 lemma TTaskClean(s: Tracker, t: Task)
   requires t in s.tasks
-  ensures |problemsOf(s, t)| == 0 <==> ((((((Std.Collections.Seq.All(t.owners, (o: string) => (o in s.owners)) && Std.Collections.Seq.All(t.parents, (p: int) => hasTask(s, p))) && Std.Collections.Seq.All(t.related, (r: int) => hasTask(s, r))) && !((t.id in t.parents))) && !((t.id in t.related))) && !((t.id in ancestors(s, t.id)))) && Std.Collections.Seq.All(t.related, (r: int) => linksBack(s, r, t.id)))
+  ensures |problemsOf(s, t)| == 0 <==> ((((((!(exists o :: o in t.owners && !(o in s.owners)) && !(exists p :: p in t.parents && !(hasTask(s, p)))) && !(exists r :: r in t.related && !(hasTask(s, r)))) && !((t.id in t.parents))) && !((t.id in t.related))) && !((t.id in ancestors(s, t.id)))) && !(exists r :: r in t.related && !(linksBack(s, r, t.id))))
 {
   assert hasTask(s, t.id);
   ProofLib.FilterNone((o: string) => !((o in s.owners)), t.owners);
@@ -722,7 +722,7 @@ lemma TWarningList(s: Tracker)
 {
   ProofLib.FoldLeftConcatEmpty((acc: seq<Problem>, t: Task) => (acc + problemsOf(s, t)), (t: Task) => problemsOf(s, t), [], s.tasks);
   forall i | 0 <= i < |s.tasks|
-    ensures |problemsOf(s, s.tasks[i])| == 0 <==> ((((((Std.Collections.Seq.All(s.tasks[i].owners, (o: string) => (o in s.owners)) && Std.Collections.Seq.All(s.tasks[i].parents, (p: int) => hasTask(s, p))) && Std.Collections.Seq.All(s.tasks[i].related, (r: int) => hasTask(s, r))) && !((s.tasks[i].id in s.tasks[i].parents))) && !((s.tasks[i].id in s.tasks[i].related))) && !((s.tasks[i].id in ancestors(s, s.tasks[i].id)))) && Std.Collections.Seq.All(s.tasks[i].related, (r: int) => linksBack(s, r, s.tasks[i].id)))
+    ensures |problemsOf(s, s.tasks[i])| == 0 <==> ((((((!(exists o :: o in s.tasks[i].owners && !(o in s.owners)) && !(exists p :: p in s.tasks[i].parents && !(hasTask(s, p)))) && !(exists r :: r in s.tasks[i].related && !(hasTask(s, r)))) && !((s.tasks[i].id in s.tasks[i].parents))) && !((s.tasks[i].id in s.tasks[i].related))) && !((s.tasks[i].id in ancestors(s, s.tasks[i].id)))) && !(exists r :: r in s.tasks[i].related && !(linksBack(s, r, s.tasks[i].id))))
   {
     TTaskClean(s, s.tasks[i]);
   }
@@ -1076,13 +1076,13 @@ lemma TFoldDistinctBy<T, U, K>(f: (seq<T>, U) -> seq<T>, h: U -> seq<T>, key: T 
 
 // The rule, restated over ProofLib.Filter.
 lemma TSentTwiceBridge(s: Tracker)
-  ensures alwaysNothingIsSentTwice(s) == Std.Collections.Seq.All(s.sent, (a: Note) => (|ProofLib.Filter((b: Note) => ((((a.kind == b.kind) && (a.task == b.task)) && (a.to == b.to)) && (a.version == b.version)), s.sent)| == 1))
+  ensures alwaysNothingIsSentTwice(s) == !(exists a :: a in s.sent && !(|ProofLib.Filter((b: Note) => ((((a.kind == b.kind) && (a.task == b.task)) && (a.to == b.to)) && (a.version == b.version)), s.sent)| == 1))
 {
 }
 
 // Nothing sent twice means no two notes share kind, task, person and version.
 lemma TSentDistinct(sent: seq<Note>)
-  ensures Std.Collections.Seq.All(sent, (a: Note) => (|ProofLib.Filter((b: Note) => ((((a.kind == b.kind) && (a.task == b.task)) && (a.to == b.to)) && (a.version == b.version)), sent)| == 1)) <==> ProofLib.DistinctBy(sent, (n: Note) => (n.kind, n.task, n.to, n.version))
+  ensures !(exists a :: a in sent && !(|ProofLib.Filter((b: Note) => ((((a.kind == b.kind) && (a.task == b.task)) && (a.to == b.to)) && (a.version == b.version)), sent)| == 1)) <==> ProofLib.DistinctBy(sent, (n: Note) => (n.kind, n.task, n.to, n.version))
 {
   forall i | 0 <= i < |sent|
     ensures (|ProofLib.Filter((b: Note) => ((((sent[i].kind == b.kind) && (sent[i].task == b.task)) && (sent[i].to == b.to)) && (sent[i].version == b.version)), sent)| == 1) <==> (forall j :: 0 <= j < |sent| && j != i ==> (sent[j].kind, sent[j].task, sent[j].to, sent[j].version) != (sent[i].kind, sent[i].task, sent[i].to, sent[i].version))
