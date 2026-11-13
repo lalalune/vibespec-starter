@@ -927,7 +927,7 @@ lemma TNotesForParts(s: Tracker, t: Task)
 lemma TNoteFacts(s: Tracker, t: Task, x: Note)
   requires x in notesFor(s, t)
   ensures x.task == t.id && x.at == s.now
-  ensures x.kind.Update? ==> updateIsDue(t, s.now) && x.version == t.updatedAt && x.by == t.updatedBy && x.to != x.by
+  ensures x.kind.Update? ==> updateIsDue(t, s.now) && x.version == t.updatedAt && x.by_ == t.updatedBy && x.to != x.by_
   ensures x.kind.Soon? ==> reminder(t, s.now).DueSoon? && x.version == t.due
   ensures x.kind.Today? ==> reminder(t, s.now).DueToday? && x.version == t.due
 {
@@ -974,7 +974,7 @@ lemma TNotifyAnnouncedAndTimely(s: Tracker)
   assert s2.sent == s.sent + newNotes;
   forall k | 0 <= k < |s2.sent|
     ensures (!(s2.sent[k].kind.Update?) || ((s2.sent[k].at - s2.sent[k].version) >= debounce))
-    ensures (!(s2.sent[k].kind.Update?) || (s2.sent[k].to != s2.sent[k].by))
+    ensures (!(s2.sent[k].kind.Update?) || (s2.sent[k].to != s2.sent[k].by_))
     ensures ((!(s2.sent[k].kind.Today?) || ((s2.sent[k].version <= today(s2.sent[k].at)) && ((today(s2.sent[k].at) - s2.sent[k].version) <= lateDays))) && (!(s2.sent[k].kind.Soon?) || (((s2.sent[k].version - today(s2.sent[k].at)) >= 1) && ((s2.sent[k].version - today(s2.sent[k].at)) <= soonDays))))
   {
     if k < |s.sent| {
@@ -1658,7 +1658,7 @@ lemma TDeleteTaskTask(s: Tracker, id: int, actor: string, j: int)
   requires 0 <= j < |deleteTask(s, id, actor).tasks|
   ensures exists i :: 0 <= i < |s.tasks| && forall q :: q in problemsOf(deleteTask(s, id, actor), deleteTask(s, id, actor).tasks[j]) ==> q in problemsOf(s, s.tasks[i])
 {
-  var s2 := deleteTask(s, id);
+  var s2 := deleteTask(s, id, actor);
   var kept := ProofLib.Filter((t: Task) => (t.id != id), s.tasks);
   assert |s2.tasks| == |kept|;
   assert forall k :: 0 <= k < |kept| ==> s2.tasks[k] == kept[k].(parents := drop(kept[k].parents, id), related := drop(kept[k].related, id));
