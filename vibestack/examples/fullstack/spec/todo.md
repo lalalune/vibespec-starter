@@ -81,7 +81,8 @@ pure def opAllowed(todos: List[Todo], op: Op): bool =
 
 A new to-do is added at the end, not done. Creating an id that already exists
 changes nothing. Setting the done mark sets it to the value the edit carries,
-a rename sets the title, and removing sets the deleted mark.
+a rename sets the title, and removing sets the deleted mark. An edit of an
+unknown kind changes nothing.
 
 ```quint
 pure def edit(t: Todo, op: Op): Todo =

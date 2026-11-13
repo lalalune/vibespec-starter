@@ -110,6 +110,9 @@ pure def alwaysOnlyTheOldestQueuedEditIsOnItsWay(sys: System): bool =
 
 ### A user edit is queued in the tab, and sent at once if the tab is online and has nothing else queued
 
+The edit must make sense on the list the user sees, and only tabs `a` and `b`
+act.
+
 ```quint
 pure def canAct(sys: System, who: str, op: Op): bool = isClient(who) and opAllowed(C::view(clientOf(sys, who)), op)
 pure def act(sys: System, who: str, op: Op): System =
@@ -185,6 +188,9 @@ pure def serve(sys: System, i: int): System =
 ```
 
 ### An online tab takes any answer off the network
+
+An answer here is an acknowledgement, a refusal or a push of a change, taken
+in any order by the tab it is addressed to.
 
 ```quint
 pure def receive(m: Msg, c: C::Client): C::Client =
@@ -262,6 +268,16 @@ pure def alwaysTheHistoryEndsWithTheCurrentList(sys: System): bool =
     and sameTodos(pastAt(sys.history, sys.server.version), sys.server.todos)
 ```
 
+### The history only grows: a step leaves it as it was or adds one list at its end
+
+So the list recorded for an earlier version never changes.
+
+```quint
+pure def stepTheHistoryOnlyGrows(before: System, after: System): bool =
+  after.history == before.history
+    or after.history == before.history.append(pastAt(after.history, before.history.length()))
+```
+
 ### A tab's confirmed copy is the list exactly as it was at the version the tab has seen
 
 The same holds for every copy on the network.
@@ -291,9 +307,26 @@ pure def sometimesBothTabsAgree(sys: System): bool = and {
 
 ### A tab can queue edits while offline, and an edit can be refused
 
+A tab's edit is allowed offline exactly when it would be online. Offline, it
+joins the tab's queue and nothing is sent. The simulator tries this on the
+initial system and on one with an edit already queued.
+
 ```quint
 pure def sometimesQueuedOffline(sys: System): bool = not(sys.a.online) and sys.a.pending.length() >= 2
 pure def sometimesARefusedEdit(sys: System): bool = sys.a.refusals + sys.b.refusals >= 1
+
+pure val sysValues = Set(initial).union(Set({ ...initial, a: C::create(C::initial, "x", "milk") }))
+
+pure def lawATabCanQueueAnEditWhileOffline(sys: System, who: str, op: Op): bool =
+  val c = clientOf(sys, who)
+  val off = withClient(who, { ...c, online: false }, sys)
+  val after = act(off, who, op)
+  and {
+    canAct(off, who, op) iff canAct(withClient(who, { ...c, online: true }, sys), who, op),
+    clientOf(after, who).pending.length() == c.pending.length() + 1,
+    not(clientOf(after, who).online),
+    after.net == sys.net,
+  }
 ```
 
 ## Story: Nobody can answer for my edits
@@ -361,7 +394,8 @@ pure def alwaysTheForgeryCountIsNotNegative(sys: System): bool = sys.forged >= 0
 ### A lone user's edit is never refused
 
 A user is alone when the other tab has never made an edit and nobody has
-forged a request.
+forged a request. Refused means the tab was told of a refusal of an edit it
+still had queued, which is what its `refusals` counts.
 
 ```quint
 pure def lone(sys: System, who: str): bool = clientOf(sys, other(who)).made == 0 and sys.forged == 0
@@ -412,8 +446,8 @@ Discovered by the proof: these are what "never refused" rests on. While a
 user is alone, the server has accepted every queued edit it answered, as
 that edit; an acknowledgement of the oldest queued edit carries the current
 version; once the oldest edit is applied, applying it again changes nothing;
-until it is, the tab has seen the current version; a copy newer than the
-tab's is the current list; what the user sees is the server's list with the
+until it is, the tab has seen the current version; a copy on its way to the
+tab that is newer than the tab's is at the current version; what the user sees is the server's list with the
 queued edits applied; each edit not yet applied makes sense after the ones
 before it; and no refusal is on its way for a queued edit.
 
