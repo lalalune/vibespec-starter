@@ -5,15 +5,15 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Model } from "./gen.ts";
 import type { Found } from "./conformance.ts";
-import { conformance, conformanceFound, writeConformance, type Machine } from "./conform.ts";
-import { LIB_FILE, dafnyVersion, proofPaths, prove, type Proof } from "./prove.ts";
+import { conformance, conformanceFound, writeConformance, type Machine, type Simulated } from "./conform.ts";
+import { ensuresOf, LIB_FILE, dafnyVersion, proofPaths, prove, type Offered, type Proof } from "./prove.ts";
 import { run } from "./run.ts";
 import { readSpecs, badSpecName, specFiles, specName, importedMeanings, isStd, located, type Spec } from "./parse.ts";
 import { contracts, pending, pendingKey, pendingContracts, acceptAllReviews, pendingSpecs, migrateLocks, moved, showPending, ledgerFile, readLedger, writeLedger, type Pending, type Accepted, type Lock } from "./review.ts";
 import { entry, remembered, collectGarbage, type Memory } from "./cache.ts";
 import { generated, typecheckAll, proofUnits, proofFiles, strayProofFiles } from "./units.ts";
 import { SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, LASSO_TRACES, STEPS, DEPTHS, SEARCHED, simulate, search, firstBreak, lasso, showTrace, replay, type Step } from "./simulate.ts";
-import { sha, indent, packageScripts, tests, readSrc, projectRoot, type SrcFile } from "./util.ts";
+import { sha, indent, packageScripts, tests, readSrc, projectRoot, allDone, type SrcFile } from "./util.ts";
 
 export { readSpecs, badSpecName, parseSpec, scanSpec, expandListHelpers, type Spec, type Rule, type Story } from "./parse.ts";
 export { pending, pendingKey, pendingContracts, acceptReviews, acceptContracts, dependencies, type Lock, type Pending } from "./review.ts";
@@ -23,6 +23,9 @@ export { danglingCitations } from "./util.ts";
 
 export interface Result { ok: boolean; stage: "model" | "always" | "sometimes" | "replay" | "types" | "proof" | "tests" | "traces" | "review" | "skipped"; summary: string; detail: string; where?: string }
 export const show = ({ ok, stage, summary, detail }: Result) => `${stage === "skipped" ? "-" : ok ? "✓" : "✗"} ${stage.padEnd(9)} ${summary}${detail ? "\n" + detail.trimEnd() : ""}`;
+
+/** The one simulation result that is not remembered: anything else comes back the same from the same harness and seed. */
+const COULD_NOT_RUN = "the simulator could not run";
 
 /** The one most useful thing to do after a check, given what it found. */
 export function nextStep(results: Result[]): string {
@@ -126,6 +129,8 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
   const typed = typecheckAll(memory, specs);
   // Node caches imported modules by path, so each run loads its generated code from a directory of its own.
   const loaded = path.join(root, "gen", `run-${Date.now()}`);
+  /** Each spec's simulation starts once its model is generated; they run at once and are reported in the specs' order. */
+  const simulations: { spec: Spec; model: Model; domain: any; simulated: Promise<{ said: Result[]; tested?: Found<any> }> }[] = [];
 
   for (const spec of specs) {
     const cite = (def: string) => {
@@ -153,9 +158,9 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
 
     // A spec whose model and harness are unchanged, and that passed, is not simulated again.
     const simulationSteps = STEPS + Math.max(0, ...model.within.values());
-    const simulated = await remembered<{ said: Result[]; tested?: Found<any> }>(memory, entry(root, "simulate", [importedMeanings(spec, specs), spec.meaning, model.harness, String([SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, LASSO_TRACES, simulationSteps, ...DEPTHS])]), async () => {
+    const simulated = await remembered<{ said: Result[]; tested?: Simulated }>(memory, entry(root, "simulate", [importedMeanings(spec, specs), spec.meaning, model.harness, String([SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, LASSO_TRACES, simulationSteps, ...DEPTHS])]), async () => {
       const said: Result[] = [];
-      let tested: Found<any> | undefined;
+      let tested: Simulated | undefined;
       const say = (ok: boolean, stage: Result["stage"], summary: string, detail = "") => said.push({ ok, stage, summary, detail });
       try {
         type Run = Awaited<ReturnType<typeof simulate>>;
@@ -186,9 +191,6 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
           simulate(root, model, "inv", REPLAYED, COMPARED_SAMPLES, "probe", true),
           ...model.sometimes.map((w) => search(root, model, `never_${w}`)),
         ]);
-        const failure = settled.find((r) => r.status === "rejected");
-        if (failure) throw failure.reason;
-        const [probe, ...searches] = settled.map((r) => (r as PromiseFulfilledResult<Awaited<ReturnType<typeof simulate>>>).value);
         const witnesses = model.sometimes.map((w, i) => ({ w, run: searches[i] }));
         const runs = [sim, probe, ...searches.filter((run) => run.broken)];
         if (broke(runs)) return { said, tested };
@@ -209,21 +211,21 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
         }
         const neverAllowed: { t: (typeof guarded)[number]; again?: string }[] = [];
         const neverRefused: string[] = [];
-        for (const t of guarded) {
-          const g = t.guard!;
-          // The harness has a witness invariant for every guard whose arguments the simulator can supply. Only a
-          // guard that never allows its event fails the check, so only that search goes deeper.
-          const searchable = model.evals.some((v) => v.name === g);
-          for (const side of ["allows", "refuses"] as const) {
-            if (seen.get(g)![side]) continue;
-            const found = searchable ? await search(root, model, `never_${side}_${g}`, "probe", side === "allows" ? DEPTHS : [STEPS]) : undefined;
-            if (found?.broken) {
-              if (broke([found])) return { said, tested };
-              seen.get(g)![side] = true;
-              traces.push(...found.traces);
-            } else if (side === "refuses") neverRefused.push(g);
-            else neverAllowed.push({ t, again: found?.again });
-          }
+        // The harness has a witness invariant for every guard whose arguments the simulator can supply. The searches
+        // run at once and are read in the guards' order. Only a guard that never allows its event fails the check, so
+        // only that search goes deeper and gets the witness budget; one that never refuses it is only reported.
+        const missing = guarded.flatMap((t) => (["allows", "refuses"] as const).filter((side) => !seen.get(t.guard!)![side]).map((side) => ({ t, side })));
+        const searched = await allDone(missing.map(({ t, side }) => model.evals.some((v) => v.name === t.guard)
+          ? search(root, model, `never_${side}_${t.guard}`, "probe", side === "allows" ? DEPTHS : [STEPS], side === "allows" ? WITNESS_SAMPLES : SAMPLES)
+          : Promise.resolve(undefined)));
+        for (const [i, { t, side }] of missing.entries()) {
+          const found = searched[i];
+          if (found?.broken) {
+            if (broke([found])) return { said, tested };
+            seen.get(t.guard!)![side] = true;
+            traces.push(...found.traces);
+          } else if (side === "refuses") neverRefused.push(t.guard!);
+          else neverAllowed.push({ t, again: found?.again });
         }
         // A `leadsTo` rule is broken by a fair run that never gets where it should: one of these traces, then nothing
         // or a loop for ever (simulate.ts, `lasso`).
@@ -261,23 +263,29 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
         const missed = [...model.evals.map((v) => v.name).filter((n) => !compared.has(n)), ...model.uncompared];
         say(true, "replay", `generated TypeScript agrees with Quint on ${traces.length} traces: every state${model.laws.length ? ", every law" : ""}, and ${compared.size} definitions evaluated on them`
           + (missed.length ? `; not compared on their own, because the simulator had no arguments for them: ${missed.join(", ")}` : ""));
-        if (model.stateType) tested = conformanceFound(domain, model, spec, traces, witnesses.flatMap(({ w, run }) =>
+        if (model.stateType) tested = conformanceFound(model, spec, traces, witnesses.flatMap(({ w, run }) =>
           run.traces.filter((trace) => domain[w](trace.at(-1)?.state)).sort((a, b) => a.length - b.length).slice(0, 1).map((trace) => ({ w, trace }))));
       } catch (e) {
         const mismatch = (e as Error).message.startsWith("TypeScript and Quint disagree");
-        say(false, mismatch ? "replay" : "always", mismatch ? "this is a bug in the generator (vibespec/gen.ts, vibespec/gen/), not in the spec" : "the simulator could not run", indent((e as Error).message));
+        say(false, mismatch ? "replay" : "always", mismatch ? "this is a bug in the generator (vibespec/gen.ts, vibespec/gen/), not in the spec" : COULD_NOT_RUN, indent((e as Error).message));
       }
       return { said, tested };
-    }, ({ said }) => said.every((r) => r.ok));
-    const found = simulated.said;
-    if (simulated.tested) {
-      writeConformance(root, model, simulated.tested);
-      machines.set(model.name, { domain, model, found: simulated.tested });
+    }, ({ said }) => !said.some((r) => r.summary === COULD_NOT_RUN));
+    simulated.catch(() => {}); // a failure is reported in its turn, not as an unhandled rejection
+    simulations.push({ spec, model, domain, simulated });
+  }
+  // Every simulation finishes before anything is reported, so that none is left writing into gen/.
+  await Promise.allSettled(simulations.map((s) => s.simulated));
+  for (const { spec, model, domain, simulated } of simulations) {
+    const { said, tested } = await simulated;
+    if (tested) {
+      writeConformance(root, model, tested);
+      machines.set(model.name, { domain, model, found: tested });
     }
-    for (const r of found) report(r.ok, r.stage, r.summary, r.detail, spec.file);
-    const ran = new Set(found.map((r) => r.stage));
+    for (const r of said) report(r.ok, r.stage, r.summary, r.detail, spec.file);
+    const ran = new Set(said.map((r) => r.stage));
     const notRun = (["sometimes", "replay"] as const).filter((s) => !ran.has(s) && (s !== "sometimes" || model.sometimes.length));
-    if (notRun.length && found.some((r) => !r.ok)) skip(`${notRun.join(" and ")} of ${spec.file}`, "simulation stopped at the failure above");
+    if (notRun.length && said.some((r) => !r.ok)) skip(`${notRun.join(" and ")} of ${spec.file}`, "simulation stopped at the failure above");
   }
 
   const complete = allOk;
@@ -308,15 +316,24 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
           const proofPath = located(root, u.proofFile);
           const proofText = fs.existsSync(proofPath) ? fs.readFileSync(proofPath, "utf8") : undefined;
           proofTexts.set(u.unit, proofText);
+          const proving = (axioms: Offered[]) => remembered(memory, entry(root, "prove", [u.unit, u.meaning, proofText ?? "", proofText === undefined ? "" : lib, JSON.stringify(axioms)]),
+            () => prove(root, u, { proof: proofText === undefined ? undefined : { file: u.proofFile, text: proofText }, lib, axioms }), (p) => !p.errors.length);
           running.set(u.unit, (async () => {
-            if (proofText !== undefined) await Promise.allSettled(u.laws.map((l) => running.get(l.from)));
-            // A law of an imported module is offered only if its own unit proved it, in this run.
-            const laws = u.laws.filter(({ law, from }) => {
+            const offered = proofText === undefined ? [] : u.imports.lemmas.map(({ fn }) => ({ fn }));
+            const first = proving(offered);
+            await Promise.allSettled([first, ...(offered.length ? u.imports.lemmas.map((l) => running.get(l.from)) : [])]);
+            // A clause of an imported lemma is offered only if its own unit proved it, in this run; none of them is if
+            // one of the lemma's failures is not one of its clauses. A lemma its unit does not generate has none.
+            const resolved = offered.length ? u.imports.lemmas.map(({ fn, def, from }) => {
               const p = proved.get(from);
-              return p && !p.errors.length && !p.unproved.some((x) => x.startsWith(`${law}: `));
-            }).map((l) => l.fn);
-            const offered = { proof: proofText === undefined ? undefined : { file: u.proofFile, text: proofText }, lib, laws };
-            const proof = await remembered(memory, entry(root, "prove", [u.unit, u.meaning, proofText ?? "", proofText === undefined ? "" : lib, proofText === undefined ? "" : laws.join(" ")]), () => prove(root, u, offered), (p) => !p.errors.length);
+              if (!p || p.errors.length) return undefined;
+              const clauses = ensuresOf(p.dfy, `${def}_ensures`).map((c) => `${def}: ${c}`);
+              const failed = p.unproved.filter((x) => x.startsWith(`${def}: `));
+              const known = failed.every((x) => clauses.includes(x));
+              return { fn, proved: clauses.map((c) => known && !failed.includes(c)) };
+            }) : [];
+            const proof = resolved.every((r) => r?.proved.every(Boolean)) ? await first
+              : await proving(resolved.filter((r): r is Required<Offered> => !!r?.proved.length));
             proved.set(u.unit, proof);
             return proof;
           })());
@@ -371,8 +388,12 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
       }
       return out;
     }
-    // The typecheck runs while the proofs do; it is reported first.
-    const typecheck = fs.existsSync(path.join(root, "tsconfig.json")) ? run("tsc", ["--noEmit", "-p", "."], root) : undefined;
+    // The typecheck runs while the proofs do; it is reported first. tsc keeps what it learned in the cache directory,
+    // and rereads only the files whose text changed.
+    const buildInfo = path.join(".spec-cache", "tsbuildinfo");
+    memory.used.add(path.basename(buildInfo));
+    if (memory.fresh) fs.rmSync(path.join(root, buildInfo), { force: true });
+    const typecheck = fs.existsSync(path.join(root, "tsconfig.json")) ? run("tsc", ["--noEmit", "-p", ".", "--incremental", "--tsBuildInfoFile", buildInfo], root) : undefined;
     const proofsDone = provingAll();
     // A missing or unexecutable compiler must not release the project lock while proofs still write into gen/.
     const [typesResult] = await Promise.allSettled([typecheck]);

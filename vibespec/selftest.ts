@@ -224,16 +224,22 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const root = fixtures(["door"]);
     const { failed, text } = await run(root);
     assert.deepEqual(failed, ["review"], text);
-    assert.match(fs.readFileSync(path.join(root, "gen/proof/door.log"), "utf8"), /Dafny auditor completed/);
+    const log = fs.readFileSync(path.join(root, "gen/proof/door.log"), "utf8");
+    assert.match(log, /Dafny auditor completed/);
+    assert.doesNotMatch(log, /every assertion isolated/, "a unit that proves whole is not verified again");
   });
 
-  test("a missing guard is found by simulation, as a trace that the same seed gives again, and the later stages say they were skipped", async () => {
+  test("a missing guard is found by simulation, as a trace that the same seed gives again and that is remembered, and the later stages say they were skipped", async () => {
     const root = copyOfProject("spec/index.md", unguarded);
-    const [first, again] = [await run(root), await run(root)];
+    const first = await run(root);
+    fs.rmSync(path.join(root, ".spec-cache"), { recursive: true });
+    const [again, remembered] = [await run(root), await run(root)];
     const trace = first.said("always", /./);
     assert.equal(trace?.ok, false, first.text);
     assert.match(trace!.detail, /seed \d+; to simulate again: npx quint run gen\/index\.run\.qnt .* --seed \d+/);
     assert.equal(again.said("always", /./)?.detail, trace!.detail, "the same harness gives the same trace");
+    assert.equal(remembered.said("always", /./)?.detail, trace!.detail);
+    assert.ok(!fs.existsSync(path.join(root, "gen/traces")), "a failing simulation is not run again for the same harness");
     assert.ok(first.said("skipped", /^types, proof, tests and traces: /), first.text);
     assert.match(first.next, /^always \(spec\/index\.md\) is the first ✗/);
   });
@@ -703,6 +709,16 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.equal(trusting.said("proof", /spec\/highest\.proof\.dfy:4: `assume` is not allowed/)?.ok, false, trusting.text);
   });
 
+  test("what an imported machine's unit proved is offered to the importer's proof file, and only once it is proved", async () => {
+    const officeProof = "lemma serve_ensures(o: Office)\n  ensures (inv(o) ==> alwaysTheDeskKeepsItsRule(serve(o)))\n{\n  ticket_issue_ensures(o.desk);\n}\n";
+    const project = (edit: (files: Record<string, string>) => void = () => {}) => fixtures(["highest", "ticket", "office"], (f) => { f["spec/office.proof.dfy"] = officeProof; edit(f); });
+    const [proved, unoffered] = await Promise.all([run(project()), run(project((f) => { delete f["spec/ticket.proof.dfy"]; }))]);
+    assert.deepEqual(proved.failed, ["review"], proved.text);
+    assert.ok(proved.said("proof", /^office\.ts: all \d+ obligations proved/), proved.text);
+    // Without the ticket's proof file its transition is not proved, so it is not offered.
+    assert.equal(unoffered.said("proof", /^office\.ts: Dafny could not check it[\s\S]*unresolved identifier: ticket_issue_ensures/)?.ok, false, unoffered.text);
+  });
+
   test("a proof file may only add lemmas, and only bodies to the generated ones; a body is the brace group that ends a lemma, after a complete header", () => {
     const refused: [string, string, RegExp][] = [
       ["a block comment", "lemma A() { /* } */ }", /block comments are not allowed/],
@@ -744,10 +760,16 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     // A helper may not take a generated name, or the library's.
     assert.throws(() => spliced("lemma f(x: int) { }"), /p\.dfy:1: lemma f: the name is already declared/);
     assert.throws(() => spliced("lemma ProofLib() { }"), /the name is already declared/);
+    // Of the library, only what the proof file calls goes in, with everything that uses in turn.
+    const withLib = splice(GENERATED_F, { proof: { file: "p.dfy", text: "lemma H(xs: seq<int>) { ProofLib.FilterMember((x: int) => x > 0, xs, 1); }\n" }, axioms: [], lib: read("vibespec/proof/lib.dfy") }).dfy;
+    assert.deepEqual([...withLib.slice(withLib.indexOf("module ProofLib")).matchAll(/^\s*(?:ghost )?(?:lemma|function|predicate) (\w+)/gm)].map((m) => m[1]), ["Filter", "FilterNil", "FilterCons", "FilterMember"]);
   });
 
   test("an obligation that fails is not assumed while the others are checked", async () => {
-    const { said, text } = await run(fixtures(["twins"]));
+    const root = fixtures(["twins"]);
+    const { said, text } = await run(root);
+    // Verified whole first, then the definition that failed, every assertion isolated, then each postcondition alone.
+    assert.match(fs.readFileSync(path.join(root, "gen/proof/twins.log"), "utf8"), /every assertion isolated[\s\S]*checked on its own/);
     const found = said("proof", /^twins\.ts: 3 of 4 obligations not proved/);
     assert.equal(found?.ok, false, text);
     assert.match(found!.detail, /alwaysBIsAtMostThreeOrNinetyNine/);
@@ -773,6 +795,13 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const failed = await failedStages("spec/index.md", (s) => s.replace("pure def canAddItem(o: Order, qty: int): bool =\n  o.status == Draft and qty > 0 and o.units + qty <= maxUnits",
       "pure def canAddItem(o: Order, qty: int): bool =\n  o.status == Draft and qty > 0 // and o.units + qty <= maxUnits"));
     assert.ok(failed.includes("review"), failed.join());
+  });
+
+  test("a comment in the Quint is reviewed, but the model it annotates is not simulated again", async () => {
+    const root = copyOfProject("spec/index.md", (s) => s.replace("pure val unitPrice = 5", "pure val unitPrice = 5 /* euros */ // per unit"));
+    const { failed, text } = await run(root);
+    assert.deepEqual(failed, ["review"], text);
+    assert.ok(!fs.existsSync(path.join(root, "gen/traces")), text);
   });
 
   test("init preserves local instructions and refreshes its marked procedure", () => {
@@ -1224,11 +1253,16 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
   test("a sibling postcondition cannot pass when its generated definition cannot be copied", () => {
     const dfy = "lemma f_ensures(n: int)\n  ensures n > 0\n  ensures n < 0\n{ }\n";
     const region = { def: "f_ensures", generated: true };
-    const result = isolatedCopies({ dfy, regions: dfy.split("\n").map(() => region) }, new Map([["f_ensures", new Set([2])]]));
+    const others = (ensures: number[]) => ensures.filter((l) => l !== 2).map((l) => [l]);
+    const result = isolatedCopies({ dfy, regions: dfy.split("\n").map(() => region) }, new Map([["f_ensures", others]]));
     assert.equal(result.copies.length, 0);
     assert.deepEqual([...result.closed.keys()], ["f: n < 0"]);
-    const unknown = isolatedCopies({ dfy, regions: [] }, new Map([["missing", new Set([2])]]));
+    const unknown = isolatedCopies({ dfy, regions: [] }, new Map([["missing", others]]));
     assert.match(unknown.errors.join("\n"), /cannot locate the generated definition/);
+    // A copy keeps only the postconditions picked, and each of its lines names the line it copies.
+    const shaped = dfy.replace("{ }", "{\n}");
+    const copied = isolatedCopies({ dfy: shaped, regions: shaped.split("\n").map(() => region) }, new Map([["f_ensures", others]]));
+    assert.deepEqual(copied.copies.map(({ lines, origin }) => ({ lines, origin })), [{ lines: ["lemma isolated0_f_ensures(n: int)", "  ensures n < 0", "{", "}"], origin: [1, 3, 4, 5] }]);
   });
 
   test("a generated runtime helper does not inflate the unit's obligation count", async () => {

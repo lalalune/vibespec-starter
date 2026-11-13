@@ -217,8 +217,8 @@ function importsOf(text: string): SpecImport[] {
 }
 
 /**
- * Quint with every comment reduced to one space, line breaks kept: what it means, whatever the comments say. Strings are
- * kept whole, and a comment still separates the tokens around it.
+ * Quint with every comment reduced to one space, line breaks kept and no space at the end of a line: what it means,
+ * whatever the comments say. Strings are kept whole, and a comment still separates the tokens around it.
  */
 function codeOnly(text: string): string {
   const { comment } = scan(text);
@@ -227,7 +227,7 @@ function codeOnly(text: string): string {
     if (!comment[i] || text[i] === "\n") out += text[i];
     else if (!comment[i - 1] || text[i - 1] === "\n") out += " ";
   }
-  return out;
+  return out.replace(/[ \t]+$/gm, "");
 }
 
 /**
