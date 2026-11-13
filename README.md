@@ -113,8 +113,8 @@ balance 0
 ## Run and test examples
 
 Run these commands from the repository root after `npm install`. Pass the
-project directory, which contains `spec/` and `package.json`, rather than the
-path to an individual Markdown spec.
+project directory containing `spec/`, rather than an individual Markdown spec.
+Its `package.json`, when present, supplies the application's run scripts.
 
 ```bash
 npm run check -- vibespec/examples/order
