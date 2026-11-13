@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 2e0fcc3ba0cbb3ffa9a1b49b8c441ec950b30d53
+          ref: bef8f2fc554577bb483e79b7fdadfbaeb4ad28bd
       - uses: dafny-lang/setup-dafny-action@v1
         with:
           dafny-version: '4.11.0'
