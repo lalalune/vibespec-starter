@@ -123,8 +123,7 @@ pure def resume(s: Session, changes: int): Session = { ...s, waiting: changes }
 ### What is waiting goes down only by a sync, by hand, or by publishing what undoes a change
 
 What waits is measured against the specs as last synced, so publishing an
-edit that puts a story back as it was leaves less to sync. Discovered by
-simulation: the first version of this rule left that case out.
+edit that puts a story back as it was leaves less to sync.
 
 ```quint
 pure def stepWaitingGoesDownOnlyBySyncOrUndo(before: Session, via: str, after: Session): bool =

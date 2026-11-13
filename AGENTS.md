@@ -3,15 +3,15 @@
 Each application starts at `spec/index.md`: its stories, rules and Quint
 model, with links to child specs wherever an area needs its own directory.
 `gen/` is derived from it. Keep the spec true to what the user wants and
-`npm run check` green.
+`pnpm check` green.
 
-**Read this file and [README.md](README.md) in full before doing any work.**
+**Read this file in full before doing any work.**
 The spec format, naming rules and everything the tools accept are in
 [Spec reference](#spec-reference) below.
 
 ## Who does what
 
-`npm run check` detects; you translate: story → rules, rule → Quint, changed
+`pnpm check` detects; you translate: story → rules, rule → Quint, changed
 Quint → prose, counterexample → rule. That is your work in this session; it
 needs no other program or account.
 
@@ -20,25 +20,50 @@ needs no other program or account.
 each failure asks of you, and what to report. Claude Code loads it as the
 `sync` skill; other agents read the file.
 
-The user signs off with `npm run accept`.
+The user signs off with `pnpm accept`.
+
+## The stack
+
+Every project built here uses this, and nothing beside it:
+
+| For | Use | Never |
+|---|---|---|
+| Runtime | Node 26 | an older Node |
+| Packages | pnpm workspaces, pinned by `packageManager`; `pnpm -r` and `--filter` run tasks across packages | npm, yarn, bun; a task runner such as Turborepo, unless pnpm has been measured and cannot do the job |
+| Rules and state | the spec, and the code `gen/` derives from it | a second model of the same state |
+| Shell: effects, services, I/O, async | [VibeLang](#the-vibelang-shell) (`.vibe`) on Effect 4 | plain TypeScript for effectful code; Redux, Zustand or another state library |
+| User interface | React, in `.tsx`, built with Vite | Vue, Svelte, Angular, hand-built DOM |
+| UI state | React hooks over the generated machine's `Machine` service | state kept in a component that the spec owns |
+| Styling | Tailwind CSS v4 with the project's design tokens, shadcn/ui conventions on Radix primitives | hard-coded colors, a second token set, global CSS beyond the token file |
+| Tests | Vitest with `@effect/vitest`, on `test/**/*.test.vibe` | Jest, `node --test` for a new test |
+
+- **Every interface is React**: an application's, an example's and Studio's.
+- **Reuse before adding.** Find the component, token or service that exists
+  and extend it; add one only when none fits.
+- **TypeScript stays** for `gen/`, for verified `//@` logic
+  ("Hand-written verified logic"), for React components and for the tools.
 
 ## Hard rules
 
 - Never edit `gen/`, `.spec-cache/`, `.studio/` or `spec/lock.json`, and never add a
   `lemmascript.json`. The tools own them; a change there could make a check
   pass that should not.
-- Never run `npm run accept -- unproved` unless the user asks. It lowers the
+- Never run `pnpm accept unproved` unless the user asks. It lowers the
   listed obligations from proved to simulated.
-- Run `npm run accept` only when the user asks, and only after reading each
+- Run `pnpm accept` only when the user asks, and only after reading each
   rule `review` lists and finding that its prose and Quint say the same thing.
-- Never weaken or delete a rule (`always`, `step`, `sometimes` or `law`) to
+- Never weaken or delete a rule (`always`, `step`, `sometimes`, `leadsTo` or `law`) to
   make a check pass without telling the user which rule and why.
 - Proving obligations is your work, in `spec/<path>.proof.dfy` or
   `src/<path>.proof.dfy` ("Proof files", below). Satisfy a check;
   never get past it: no trust or skip annotations, no edits to the tools or
   what they generate, no workaround for what a proof file may not contain.
-- Verified logic belongs in the spec as `pure def`. Hand-write TypeScript in
-  `src/` only for what Quint cannot express or what touches the outside world.
+- Verified logic belongs in the spec as `pure def`. Hand-write code in `src/`
+  only for what Quint cannot express (TypeScript with proved `//@` contracts)
+  or what touches the outside world (VibeLang, and React for what a person
+  sees).
+- Never work around the stack above: no other package manager, UI framework,
+  state library or test runner, and no effectful shell code outside VibeLang.
 
 ## Writing code
 
@@ -64,7 +89,7 @@ Check each point before you write, and again after.
 ## Tests
 
 The spec proves the rules for every state and input; a test covers only what
-`npm run check`'s other stages cannot see: hand-written code meeting the
+`pnpm check`'s other stages cannot see: hand-written code meeting the
 outside world. Write one only when its failure would be a bug a user meets
 and nothing else would catch it.
 
@@ -72,7 +97,7 @@ and nothing else would catch it.
 |---|---|
 | A whole user journey, or an integration with a real service, through the real shell: input parsing, storage, HTTP, UI wiring | A guard, transition, rule or law the spec already proves, except as a step of a journey |
 | Hand-written code that touches the outside world, through the journey that uses it. Pure logic becomes a `pure def` or gets a `//@` contract instead | Strings, labels, page titles, markup, styles, snapshots |
-| A shell bug that was found: one more step in the journey it broke | That a function was called; what `tsc` already checks |
+| A shell bug that was found: one more step in the journey it broke | That a function was called; what the `types` stage already checks |
 
 - **Journeys.** A test walks a story end to end, is named after it, and cites
   the rule each assertion serves (`// spec/index.md, "…"`). A story whose
@@ -88,7 +113,7 @@ and nothing else would catch it.
   setup to assert one more thing belongs inside it.
 - **Compact.** Shared helpers over repeated setup, one assertion of a whole
   value over one per field, no comment that restates the test's name.
-- **One command.** `npm run check` runs the package's `test` script, which
+- **One command.** `pnpm check` runs the package's `test` script, which
   runs the tests and never the package's own check (a tool's journeys may check
   scratch projects, as Studio's do). No other test scripts, and nothing a
   person must set to run them; the config a runner or service needs is fine.
@@ -98,7 +123,7 @@ and nothing else would catch it.
   something else, change the assertion and name it and its rule in your
   report. Propose deleting a test; never delete one yourself.
 
-How `npm run check` runs them:
+How `pnpm check` runs them:
 
 - **Any runner.** It runs the package's `test` script with the package
   manager named by `packageManager` in `package.json`, or else by the lock file
@@ -106,8 +131,10 @@ How `npm run check` runs them:
   `bun test` and Playwright all work. Without a `test` script it runs
   `node --test` on `test/**/*.test.ts`. The exit code decides; a failure shows
   the runner's summary of failures, or its last 80 lines.
-- **Citations.** A test, or a shell file in `src/`, names the story or rule it
-  serves by its heading, on one line:
+- **VibeLang.** A package's `test` script is `vitest run`, on
+  `test/**/*.test.vibe` ("The VibeLang shell", below).
+- **Citations.** A test, or a shell file in `src/`, in VibeLang or
+  TypeScript, names the story or rule it serves by its heading, on one line:
   `// spec/index.md, "A payment never exceeds the balance"`, or
   `// spec/index.md, "Story: Check out"` for a story; several may share a line,
   separated by `;`. `check` fails on a
@@ -115,15 +142,15 @@ How `npm run check` runs them:
   brings its tests up for review.
 - **Monorepos.** Each package with a `spec/` runs its own `check` and its own
   tests; run them all from the root with the workspace tool
-  (`pnpm -r --if-present check`, `npm run check --workspaces --if-present`).
+  (`pnpm -r --if-present check`; one package with `pnpm --filter <name> check`).
   A journey that crosses packages is tested in the package that owns it,
   usually the app.
 
 ## Definition of done
 
-- `npm run check` is where step 3 of the sync skill's loop stops: what is
+- `pnpm check` is where step 3 of the sync skill's loop stops: what is
   left waits on the user.
-- In the vibestack repository, if you changed `vibestack/`, `npm run selftest`
+- In the vibestack repository, if you changed `vibestack/`, `pnpm selftest`
   passes, with a new case for each new kind of mistake the change catches.
 - What you wrote has had its passes under "Writing code".
 - Your summary follows "When you stop" in the sync skill.
@@ -132,14 +159,14 @@ How `npm run check` runs them:
 
 The spec format, the generated code and the code built on it. The agent's
 loop is the [`sync` skill](.claude/skills/sync/SKILL.md); the stages of
-`npm run check` are [below](#stages-of-npm-run-check).
+`pnpm check` are [below](#stages-of-pnpm-check).
 
 In the vibestack repository, "the order example" is
 `vibestack/examples/order/spec/index.md` and "the tracker example" is
 `vibestack/examples/dashboard/spec/tracker.md`. The root `spec/index.md` is blank, ready
 for a new application.
 
-## Stages of `npm run check`
+## Stages of `pnpm check`
 
 Each line of a report names its stage: `✓` passed, `✗` failed, `-` skipped,
 with the reason.
@@ -150,7 +177,7 @@ with the reason.
 | `always` | `always` rules and laws hold on simulated traces; `leadsTo` rules on fair runs | the spec is not a valid model |
 | `sometimes` | each `sometimes` goal is reached, and each event happens in some simulated state | the model is invalid, or simulation stopped at an `always` failure |
 | `replay` | the generated TypeScript agrees with Quint on the simulated traces | as `sometimes` |
-| `types` | `tsc` checks `src/` and the tests against `gen/` | a stage above failed; without a `tsconfig.json` it passes as skipped only when there is no `src/` or `test/` |
+| `types` | the `vibelang` compiler checks `src/`, the tests and `gen/` ([The VibeLang shell](#the-vibelang-shell)) | a stage above failed; without a `tsconfig.json` it passes as skipped only when there is no `src/` or `test/` |
 | `proof` | Dafny proves each unit's obligations, or `spec/lock.json` records them as simulated only | a stage above failed |
 | `tests` | the package's [tests](#tests) pass, and their citations name a story or rule the spec has | a stage above failed |
 | `traces` | recorded traces and `driver:` programs agree with the spec ([Conformance](#conformance)) | a stage above failed |
@@ -158,8 +185,8 @@ with the reason.
 
 ## Writing a spec
 
-`npx spec new` fills an empty `spec/index.md` with a starter that passes every
-stage but `review`. `npx spec new <name>` writes `spec/<name>/index.md`;
+`pnpm exec spec new` fills an empty `spec/index.md` with a starter that passes every
+stage but `review`. `pnpm exec spec new <name>` writes `spec/<name>/index.md`;
 nested names such as `billing/payments` are allowed. A non-empty spec is
 never replaced.
 
@@ -261,8 +288,16 @@ Refused, each with a message saying why: the generated and harness names
 keywords (`Number`, `delete`, …); Quint built-ins (`to`, `next`, `all`,
 `size`, …); a parameter named like a variant; a variant field called `tag`;
 and near-misses of the conventions above such as `alwayspaid` or `CanPay`.
+A state machine is also refused the names of its Effect adapter: `Rejected`,
+`NotAnEvent`, `NotAState`, `NotASender`, `Machine`, `machine`, `apply`,
+`decodeEvent`, `decodeState` and `decodeSender` ("The VibeLang shell", below).
 
 ### Using one spec from another
+
+Import paths resolve relative to the spec that contains them. For example,
+`import currency.* from "../shared/currency"` uses a sibling area's library,
+and `import payments as P from "./payments"` uses `payments/index.md`.
+Generated code uses the imported spec's full module path.
 
 - **`import kernel.* from "./kernel"`** takes a library's names as they are.
   A library is a spec with no `initial`: definitions and laws, or a
@@ -276,8 +311,9 @@ and near-misses of the conventions above such as `alwayspaid` or `CanPay`.
   neither lamp could state (`vibestack/fixtures/room.md` in the vibestack
   repository).
 - **`import net as N from "./net"`** takes a spec that ships with the tools,
-  from their `std/` directory, when `spec/` has none of that name. It is
-  simulated and proved with the specs that import it, never reviewed.
+  from their `std/` directory, when the importing spec's directory has no
+  `net.md` or `net/index.md`. It is simulated and proved with the specs that
+  import it, never reviewed.
   [`vibestack/std/net.md`](vibestack/std/net.md) is a network that loses, repeats and reorders:
   the numbers of the messages in flight, with `N::send`, `N::take` (to
   deliver or lose one), `N::repeat`, and laws for an `always` rule that only
@@ -469,7 +505,7 @@ the state marked.
 
 ### Review
 
-`npm run accept` records a fingerprint of everything a person has
+`pnpm accept` records a fingerprint of everything a person has
 reconciled; `review` lists what differs. What each status asks of the agent
 is in the [`sync` skill](.claude/skills/sync/SKILL.md).
 
@@ -493,7 +529,7 @@ another spec is named `spec/<file>: <rule>`. A renamed heading is one rule
 removed and one new.
 
 The versioned `spec/lock.json` holds `specs` keyed by source path, `contracts`
-keyed by source file, and `unproved` keyed by proof unit. `npx spec migrate`
+keyed by source file, and `unproved` keyed by proof unit. `pnpm exec spec migrate`
 consolidates older per-spec ledgers without accepting new reviews or proof
 exceptions. A proof exception in the old list form is not carried over: its
 obligations are reported as not proved until proved or accepted again. Commit the resulting lock with the specs.
@@ -520,7 +556,7 @@ for each one, in this order:
 3. **Accept simulation for it**: the user's decision, never the agent's, and
    only for a spec unit: nothing simulates hand-written code, so a `src`
    unit's obligations must be proved.
-   `npm run accept -- unproved` records the obligations in
+   `pnpm accept unproved` records the obligations in
    `spec/lock.json` under `unproved`, per unit, with a fingerprint of the
    unit's text and proof file. The check then passes and says how many obligations are
    simulated only. It fails again if a *new* one appears, or if the unit or
@@ -543,13 +579,12 @@ obligations simulated only lists them.
 
 ### Proof files
 
-A spec's adjacent `.proof.dfy` proves its generated module: for example,
-`spec/billing/index.proof.dfy` proves `gen/billing.ts`;
-`src/<path>.proof.dfy` proves those of `src/<path>.ts`. A proof file that
+A unit's proof file sits beside it: `spec/billing/index.proof.dfy` proves
+`gen/billing.ts`, `src/<path>.proof.dfy` proves `src/<path>.ts`. A proof file that
 belongs to no unit is reported.
 
 **What the prover sees** is `gen/proof/<unit>/<unit>.dfy`, written by every
-`npm run check`, and Dafny's full output is `gen/proof/<unit>.log`. The file
+`pnpm check`, and Dafny's full output is `gen/proof/<unit>.log`. The file
 is, in order: what LemmaScript generated (the modules the unit imports, with
 names prefixed `<module>_` and without their obligations, then the unit
 itself), the bodies the proof file supplied, the lemmas the tools add, the
@@ -599,7 +634,7 @@ a body.
   `FilterNone`, `FilterOne`, `FilterTwo`, `FilterCountOneIffUnique`,
   `FilterDistinctCountOne`, `FilterKeepsDistinctBy`, `FilterLengthPointwise`,
   `FilterPointwise`, `FilterSamePredicate`, `FilterOfFilterShorter`) and folds
-  (`FoldLeftAppend`, `FoldLeftMax`, `FoldLeftPointwise`, `FoldLeftConcatEmpty`, `FoldLeftDedupDistinct`).
+  (`FoldLeftAppend`, `FoldLeftInflationary`, `FoldLeftAboveEach`, `FoldLeftMax`, `FoldLeftPointwise`, `FoldLeftConcatEmpty`, `FoldLeftDedupDistinct`).
   Read the file for what each states. A lemma general enough for any project
   belongs there, with its proof; one about your spec belongs in your proof
   file.
@@ -627,7 +662,7 @@ supply one to replace it.
   State facts about `ProofLib.Filter`, and connect them to the rule with a
   helper whose `ensures` is the rule's body with `ProofLib.Filter` in place of
   `Std.Collections.Seq.Filter`; it proves with an empty body:
-  `lemma KeysBridge(r: Registry) ensures alwaysAKeyNamesOneProject(r) == !(exists a :: a in r.entries && !(|ProofLib.Filter((b: Entry) => (b.key == a.key), r.entries)| == 1)) { }`.
+  `lemma KeysFilter(r: Registry) ensures alwaysAKeyNamesOneProject(r) == !(exists a :: a in r.entries && !(|ProofLib.Filter((b: Entry) => (b.key == a.key), r.entries)| == 1)) { }`.
 - A lambda is the same term only if it is the same text: pass the lambda the
   generated code uses, copied verbatim from the `.dfy`.
 
@@ -638,7 +673,7 @@ supply one to replace it.
 2. Copy the lemma's header into the proof file and write a body. For a
    transition, the usual shape is
    `if inv(s) && canX(s, …) { var after := x(s, …); …facts about after… }`.
-3. Run `npm run check`. Dafny's messages point into the `.dfy`; the log has
+3. Run `pnpm check`. Dafny's messages point into the `.dfy`; the log has
    them all.
 
 `vibestack/fixtures/highest.md` is the smallest example: its law needs induction
@@ -682,10 +717,10 @@ line.
   Both return a fresh copy, so nothing the caller keeps can change it
   afterwards.
 - Calling a transition directly (`pay(o, 5)`) is only meaningful when its
-  guard holds. Application code goes through `enabled` and `step`, as
-  `vibestack/examples/order/src/app.ts` does.
-- `gen/` is rebuilt by `npm run gen` and `npm run check`, and by
-  `npm install` when every spec is valid.
+  guard holds. Application code goes through `apply`, or a `Machine`, of the
+  Effect adapter ("The VibeLang shell"), which use `enabled` and `step`.
+- `gen/` is rebuilt by `pnpm gen` and `pnpm check`, and by
+  `pnpm install` when every spec is valid.
 
 ### Conformance
 
@@ -700,11 +735,121 @@ Three ways to run the real application against a state machine's spec:
 A `Driver` has `reset`, `dispatch` (returns `"accepted"` or `"refused"`),
 `observe` and, for a spec that emits effects, `observeOutput`.
 
-A disagreement throws `ConformanceError`: its `trace` is the shrunk list of
-`[key, event]` pairs that shows it, `seed` the seed of its walks and `origin`
-the journey or walk that found it. Save the trace as a counterexample;
-`replay(driver, trace)`, from the same module, runs exactly it again, and
-`conformance(driver, { seed })` repeats the walks.
+## The VibeLang shell
+
+The shell around the generated code is
+[VibeLang](https://github.com/smithersai/vibelang): `.vibe` files, TypeScript
+syntax over [Effect](https://effect.website) 4, in which a function's type
+says what it fails with and which services it needs. Every package depends on
+the `vibelang` compiler: `types` runs `vibelang --noEmit -p .`, which checks
+`.vibe`, `.ts` and `.tsx` as one program, and `gen` writes
+`gen/<name>.effect.vibe` beside each `gen/<name>.ts`.
+
+**Before writing any**, read the skill the compiler ships,
+`node_modules/vibelang/skills/vibelang/SKILL.md`. The language is new: look
+syntax and Effect APIs up, and compile often.
+
+### The Effect adapter
+
+`gen/<name>.effect.vibe` is `gen/<name>.ts` for effect code. Import it in
+place of the `.ts` module: `"../gen/index.effect.vibe"`.
+
+| It exports | Which is |
+|---|---|
+| every type of `gen/<name>.ts` | the same types |
+| its constants and functions, under their own names: `initial`, `step`, `enabled`, `parseEvent`, your guards, helpers and rules | the same, declared to throw nothing, so effect code calls them bare: `canPay(order, 5)`. The compiler refuses that call (EK0403) when the function is imported from `gen/<name>.ts` |
+
+and for a state machine, with `[, by]`, `NotASender` and `decodeSender` only
+when the spec has a sender:
+
+| It exports | Which is |
+|---|---|
+| `error Rejected { event, state[, by] }` | the rules do not allow this event in this state |
+| `error NotAnEvent { input }`, `NotAState { input }`, `NotASender { input }` | an untrusted value that is not one |
+| `decodeEvent(input)`, `decodeState(input)`, `decodeSender(input)` | `parseEvent`, `parseState` and `parseSender`, failing where they return `undefined` |
+| `apply(current, event[, by])` | `step`, failing with `Rejected` where `enabled` refuses instead of leaving the state unchanged |
+| `service Machine` | the state and the one way to change it: `get()`, `send(event[, by])`, `receive(input[, by])` for an untrusted event (`decodeEvent`, then `send`), and `changes`, a `Stream` of the state, starting with the current one |
+| `machine(start = initial)` | a `Layer` that provides `Machine` in memory, applying one event at a time; `start` may be a state `decodeState` returned |
+
+Where transitions return `{ state, out }`, `apply`, `send` and `receive`
+return that record; `get` and `changes` give the state.
+
+A shell and its test, on the order example's spec:
+
+```vibe
+// src/app.vibe
+import { Machine, NotAnEvent, Rejected, canSubmit } from "../gen/index.effect.vibe"
+
+/** What to tell the sender of an untrusted input. Needs a Machine, which the caller provides. */
+export effect function answer(input: unknown) {
+  const orders = try Machine
+  return effect {
+    const order = try orders.receive(input) // decodeEvent, then apply: the state changes only if both pass
+    return canSubmit(order) ? "ready to submit" : order.status // a guard of the spec, called bare
+  } catch (error) => match (error) {
+    when NotAnEvent: "not an event";
+    when Rejected: `${error.event.type} is not allowed for a ${error.state.status} order`;
+  }
+}
+```
+
+```vibe
+// test/app.test.vibe
+// spec/index.md, "Story: Check out"
+import { assert, it } from "@effect/vitest"
+import { machine } from "../gen/index.effect.vibe"
+import { answer } from "../src/app.vibe"
+
+it.effect("Check out", effect () => {
+  provide machine() {
+    const said = [try answer({ type: "addItem", qty: 2 }), try answer({ type: "pay", amount: 1 }), try answer("pay")]
+    try Effect.try(() => assert.deepStrictEqual(said, ["ready to submit", "pay is not allowed for a Draft order", "not an event"]))
+  }
+})
+```
+
+- **`machine()` forgets when the process ends.** A shell that stores state
+  writes its own service on `apply` and the decoders.
+- **Match an event by its `type`**: `match (event.type) { when "pay": …; }`.
+  The compiler does not yet check that a `match` on the event itself, or on
+  a variant by its `tag`, covers every case.
+- **A `.vibe` file reaches the platform through Effect**, not through
+  `node:*` imports, `console`, `fetch` or the DOM: an Effect service
+  (`Console`, `FileSystem`, `HttpClient`, …), a `module node { … }` body in
+  the file, or a thin `.ts` file beside it.
+- **`//@` files stay `.ts`** ("Hand-written verified logic"). Effect code
+  calls one through a `module` body that says what its functions throw.
+
+### The React interface
+
+Components are `.tsx` under `src/`, built with Vite. A component reads the
+state and sends events through hooks over the `Machine` service, so what it
+shows is the spec's state and what it can do is what `enabled` allows: a
+control is offered exactly when its event is. It keeps in `useState` only
+what the spec does not own, such as an open menu or a draft in a text box.
+Style with Tailwind utilities on the project's tokens, compose shadcn/ui
+components before writing one, and follow the
+[design skill](.claude/skills/design/SKILL.md).
+
+### Building, running and testing
+
+| | Command | Does |
+|---|---|---|
+| check | `pnpm check` | `types` checks `src/`, `test/` and `gen/` with `vibelang --noEmit -p .` |
+| build | `pnpm build` (`vibelang`) | checks, and writes JavaScript to `dist/`, as `dist/src/…` and `dist/gen/…` |
+| run | `pnpm build && node dist/src/main.js` | runs the built `src/main.vibe` |
+| test | `pnpm test` (`vitest run`) | `test/**/*.test.vibe`, written with `@effect/vitest`; compiled as they load, no build first |
+
+| Needs | |
+|---|---|
+| Node | 26 |
+| `dependencies` | `effect`, `@effect/platform-node`, `vibelang-runtime` |
+| `devDependencies` | `vibelang`, `vibelang-vite`, `vite`, `vitest`, `@effect/vitest`, `@types/node` |
+
+VibeLang's packages move together, and with one version of Effect: pin them
+exactly, at the versions in the tools' own `package.json`, which `spec init`
+adds. The compiler writes declarations for other tools under `.vibe/`, even
+when it only checks: keep it out of Git, like `dist/`.
 
 ## Hand-written verified logic
 
@@ -715,7 +860,7 @@ event log, write TypeScript under `src/` with
 `vibestack/examples/order/src/ledger.ts` is the worked example.
 
 - Any `.ts` file under `src/` that contains `//@` is proved by
-  `npm run check`, as the unit `src-<path>`. Its `//@` lines are its
+  `pnpm check`, as the unit `src-<path>`. Its `//@` lines are its
   contract, reviewed like a rule (see [Review](#review)).
 - Such a file may import one generated module and nothing else, and only by
   name: no `as`, default or namespace import. Its annotations may mention
@@ -726,7 +871,7 @@ event log, write TypeScript under `src/` with
   `export { … }`, `export default` or statements. The proof reads names as
   written, and LemmaScript does not model what such statements do at run time.
 - `//@` must be in a `//` comment, never in a block comment or a string. In
-  any other script under `src/` (`.mts`, `.cts`, `.tsx`, `.js`, `.jsx`,
+  any other script under `src/` (`.vibe`, `.vibex`, `.mts`, `.cts`, `.tsx`, `.js`, `.jsx`,
   `.mjs`, `.cjs`) it is an error.
 - Allowed annotations: `backend`, `pure`, `requires`, `ensures`, `invariant`,
   `decreases`, `type`, `ghost`, `assert`. Any other, such as `assume`,
@@ -746,14 +891,14 @@ Tests for the shell: see [Tests](#tests) above.
 ## Using it from another package
 
 The toolchain is a package with a `spec` command, installed from a path or
-a tarball made with `npm pack`.
+a tarball made with `pnpm pack`.
 
 ```sh
-npm install --save-dev /path/to/vibestack-0.1.0.tgz
-npx spec init          # adds what is missing; updates only its own marked instructions
-npx spec new           # fill an empty spec/index.md
-npx spec new <name>    # a starter spec/<name>/index.md
-npm run check
+pnpm add -D /path/to/vibestack-0.1.0.tgz
+pnpm exec spec init          # adds what is missing; updates only its own marked instructions
+pnpm exec spec new           # fill an empty spec/index.md
+pnpm exec spec new <name>    # a starter spec/<name>/index.md
+pnpm check
 ```
 
 | `spec init` adds | |
@@ -761,14 +906,19 @@ npm run check
 | `.claude/skills/sync/`, `.claude/skills/design/`, `AGENTS.md` | the agent's procedure and this reference; existing AGENTS content is kept around a marked Vibestack section |
 | `.agents/skills/` | links to the same skills in `.claude/skills/` |
 | `CLAUDE.md` | imports `AGENTS.md`, preserving any existing instructions |
-| `tsconfig.json`, an empty `spec/index.md` | |
-| `.gitignore` | `gen/`, `.spec-cache/`, `.studio/` |
-| `package.json` | scripts `dev`, `check`, `gen`, `accept`; `"type": "module"` when unset |
+| an empty `spec/index.md` | |
+| `tsconfig.json` | for the VibeLang compiler: `src`, `test`, `gen/*.ts` and `gen/*.vibe`, emitting to `dist/`, with the compiler's declarations in `.vibe/declarations` |
+| `vitest.config.ts` | Vitest with the VibeLang plugin, on `test/**/*.test.vibe` |
+| `.gitignore` | `gen/`, `.spec-cache/`, `.studio/`, `dist/`, `.vibe/` |
+| `package.json` | scripts `dev`, `check`, `gen`, `accept`, `build` (`vibelang`) and `test` (`vitest run`); the VibeLang toolchain it lacks, at its pins; `"type": "module"` if unset |
+
+It replaces no file that exists, and no script or dependency already there.
 
 `spec` works on `spec/**/*.md`, and optionally `src/`, the package's
 [tests](#tests) and a `tsconfig.json`, in the directory it is run from. Without a `tsconfig.json`, a package containing `src/` or `test/` fails the
 types stage; a spec-only package reports that there is no code to typecheck. To hand the generated code to another package, compile `gen/*.ts`
-with `tsc`; it has no dependencies.
+with `tsc`; it has no dependencies. `gen/*.effect.vibe` needs the VibeLang
+toolchain.
 
 ## Large applications
 
@@ -784,20 +934,20 @@ with `tsc`; it has no dependencies.
   everything it imports and the versions of the tools; `tsc` keeps its
   incremental state there. The specs are simulated at once.
 - **The spec covers the rules, not the plumbing.** Chat, HTTP and storage stay
-  hand-written around the generated core, as `vibestack/examples/dashboard/src/notify.ts`
+  hand-written around the generated core, as `vibestack/examples/dashboard/src/notify.vibe`
   does for sending messages.
 
 ## Checking harder
 
 Simulation is seeded from what it simulates, so a run repeats exactly. A
 failing `always` rule or an unreached `sometimes` goal prints its seed and the
-`npx quint run` command that replays it.
+`pnpm exec quint run` command that replays it.
 
 To check a model exhaustively up to a depth with the Apalache model checker
 (needs Java 17+, downloads Apalache on first use):
 
 ```sh
-npx quint verify gen/index.run.qnt --main index_run --invariant inv --max-steps 10
+pnpm exec quint verify gen/index.run.qnt --main index_run --invariant inv --max-steps 10
 ```
 
 ## Changing the tools
@@ -813,8 +963,9 @@ In the vibestack repository:
 | `vibestack/util.ts` | source discovery, test execution and citations |
 | `vibestack/conform.ts` | the `traces` stage, and the writer of `gen/<name>.conformance.ts` |
 | `vibestack/conformance.ts` | the runtime copied into `gen/` as `_conformance.ts` |
+| `vibestack/gen/vibe.ts` | `gen/<name>.effect.vibe`, read off the generated TypeScript |
 | `vibestack/scan.ts` | how a spec's lines are read; imports nothing, so Studio's page uses it too |
-| `vibestack/studio/` | Studio, a workspace package with its own spec, checked by `npm run check --workspace vibestack-studio`: change `spec/`, then its shell in `src/` |
+| `vibestack/studio/` | Studio, a workspace package with its own spec, checked by `pnpm --filter vibestack-studio check`: change `spec/`, then its shell in `src/` |
 | `vibestack/prove.ts` | proves one unit: checks and splices the proof file, runs LemmaScript and `dafny audit`, verifies again with every assertion isolated each definition that fails, and alone every postcondition a failing one could hide |
 | `vibestack/proof/lib.dfy` | the library proof files call |
 | `vibestack/std/` | specs that ship with the tools, which any spec may import, each with its proof file |
@@ -826,13 +977,13 @@ In the vibestack repository:
 | `vibestack/gen/typescript.ts`, `vibestack/gen/harness.ts` | the two outputs |
 | `vibestack/selftest.ts`, `vibestack/fixtures/` | the selftest and the specs it uses besides the order example |
 
-Node runs all of it directly; `npm run build` compiles it for the packaged
+Node runs all of it directly; `pnpm build` compiles it for the packaged
 `spec` command.
 
 `check(root)` returns `{ ok, results, next }`, and `spec check --json` prints
 that object. Each result has `ok`, `stage` (a stage, or `skipped`),
 `summary`, `detail` and, when it concerns one, `where`; `next` is the line
-the command line ends with. `npm run selftest` builds scratch projects from
+the command line ends with. `pnpm selftest` builds scratch projects from
 this project's spec or from `vibestack/fixtures/`, breaks one thing at a time and
 asserts which stage catches each. Add a case for every new kind of mistake a
 change is meant to catch.

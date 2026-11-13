@@ -4,7 +4,8 @@ The studio shows one spec at a time as an outline: its title and
 introduction, then its stories in order, each with its rules in order. Every
 change a person makes is an event on that outline, and the page offers only
 the events the outline allows. Text arrives whole: the page sends a heading
-or a body as it was typed, trimmed, and the outline keeps it as it is.
+as it was typed, trimmed, and a body as a Markdown block, and the outline
+keeps each as it is.
 
 ## Domain
 

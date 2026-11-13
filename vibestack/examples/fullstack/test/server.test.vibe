@@ -1,0 +1,145 @@
+// spec/server.md, "Story: Change the list over HTTP"
+import { assert, layer } from "@effect/vitest"
+import { Machine } from "../gen/server.effect.vibe"
+import type { Answer } from "../src/protocol.vibe"
+import { Served } from "./served.vibe"
+
+module node {
+  import assert from "node:assert/strict"
+  import { chromium } from "playwright"
+
+  export async function browserJourney(base: string) {
+    const browser = await chromium.launch()
+    try {
+      const page = await browser.newPage()
+      const errors: string[] = []
+      page.on("pageerror", (error) => errors.push(error.message))
+      const local = new URL(base)
+      local.hostname = "127.0.0.1"
+      await page.goto(local.href, { waitUntil: "domcontentloaded" })
+      const input = page.getByRole("textbox", { name: "New to-do" })
+      await input.fill("browser task")
+      await page.getByRole("button", { name: "Add", exact: true }).click()
+      await page.getByRole("checkbox", { name: "Mark browser task done" }).check()
+      await page.getByRole("checkbox", { name: "Mark browser task incomplete" }).waitFor()
+      page.once("dialog", (dialog) => dialog.accept("renamed browser task"))
+      await page.getByRole("button", { name: "Rename browser task", exact: true }).click()
+      await page.getByRole("button", { name: "Rename renamed browser task", exact: true }).waitFor()
+      await page.getByRole("button", { name: "Online", exact: true }).click()
+      await input.fill("offline browser task")
+      await page.getByRole("button", { name: "Add", exact: true }).click()
+      const queued = page.getByRole("listitem", { name: "offline browser task, waiting for server" })
+      await queued.waitFor()
+      await page.getByRole("button", { name: "Online", exact: true }).click()
+      await queued.waitFor({ state: "detached" })
+      for (const title of ["renamed browser task", "offline browser task"]) {
+        const remove = page.getByRole("button", { name: `Remove ${title}`, exact: true })
+        await remove.click()
+        await remove.waitFor({ state: "detached" })
+      }
+      assert.deepEqual(errors, [])
+    } finally { await browser.close() }
+  }
+}
+import { browserJourney } from node
+
+effect function post(body: unknown) {
+  const response = try HttpClient.execute(try HttpClientRequest.bodyJson(HttpClientRequest.post("/api/events"), body))
+  return { status: response.status, body: (try response.json) as unknown as Answer }
+}
+
+layer(Served, { excludeTestServices: true })((it) => {
+  it.effect("a request is applied once, and a retry gets the same answer", () => effect {
+    const create = { type: "create", client: "ann", seq: 1, id: "ann-1", title: "milk" }
+    const first = try post(create)
+    const again = try post(create)
+    try Effect.try(() => {
+      assert.strictEqual(first.status, 200)
+      assert.strictEqual(first.body.ok, true)
+      assert.strictEqual(first.body.version, 1)
+      assert.strictEqual(again.body.ok, true)
+      assert.strictEqual(again.body.version, 1)
+      assert.strictEqual(again.body.todos.length, 1)
+    })
+  })
+
+  it.effect("an edit that does not make sense is refused and logged, and its retry is refused too", () => effect {
+    const tick = { type: "setDone", client: "ann", seq: 2, id: "nobody", done: true }
+    const first = try post(tick)
+    const again = try post(tick)
+    const { log } = try (try Machine).get()
+    try Effect.try(() => {
+      assert.strictEqual(first.body.ok, false)
+      assert.strictEqual(first.body.version, 1)
+      assert.strictEqual(again.body.ok, false)
+      assert.strictEqual(log.length, 2)
+    })
+  })
+
+  it.effect("removing leaves a tombstone, so the id cannot be created again", () => effect {
+    const removed = try post({ type: "remove", client: "ben", seq: 1, id: "ann-1" })
+    const again = try post({ type: "create", client: "ben", seq: 2, id: "ann-1", title: "milk" })
+    try Effect.try(() => {
+      assert.strictEqual(removed.body.ok, true)
+      assert.strictEqual(again.body.ok, false)
+      assert.deepStrictEqual(again.body.todos.map((t) => [t.id, t.deleted]), [["ann-1", true]])
+    })
+  })
+
+  it.effect("a request that reuses a number for another edit is refused, not taken for a retry", () => effect {
+    // Someone squats on dan's first number with an edit of their own.
+    const forged = { type: "create", client: "dan", seq: 1, id: "dan-x", title: "forged" }
+    const squatted = try post(forged)
+    const real = try post({ type: "create", client: "dan", seq: 1, id: "dan-1", title: "milk" })
+    // The squatter's own retry is still a retry.
+    const retried = try post(forged)
+    try Effect.try(() => {
+      assert.strictEqual(squatted.body.ok, true)
+      assert.strictEqual(real.body.ok, false)
+      assert.isFalse(real.body.todos.some((t) => t.id === "dan-1"))
+      assert.strictEqual(retried.body.ok, true)
+    })
+  })
+
+  it.effect("a client cannot ask the server to refuse a request", () => effect {
+    const refused = try post({ type: "refuse", client: "eve", seq: 1, op: { kind: "create", id: "eve-1", title: "milk", done: false } })
+    const created = try post({ type: "create", client: "eve", seq: 1, id: "eve-1", title: "milk" })
+    try Effect.try(() => {
+      assert.strictEqual(refused.status, 400)
+      assert.strictEqual(created.body.ok, true)
+    })
+  })
+
+  it.effect("malformed input is rejected before it reaches the machine", () => effect {
+    const fraction = try post({ type: "create", client: "ann", seq: 1.5, id: "x", title: "y" })
+    const unknown = try post({ type: "explode" })
+    const notJson = try HttpClient.execute(HttpClientRequest.bodyText(HttpClientRequest.post("/api/events"), "{not json", "application/json"))
+    const version = (try (try Machine).get()).version
+    const plainText = try HttpClient.execute(HttpClientRequest.bodyText(HttpClientRequest.post("/api/events"), JSON.stringify({ type: "remove", client: "zed", seq: 1, id: "eve-1" })))
+    const after = (try (try Machine).get()).version
+    try Effect.try(() => {
+      assert.strictEqual(fraction.status, 400)
+      assert.strictEqual(unknown.status, 400)
+      assert.strictEqual(notJson.status, 400)
+      assert.strictEqual(plainText.status, 415)
+      assert.strictEqual(after, version)
+    })
+  })
+
+  it.effect("the snapshot is the server's list and version", () => effect {
+    const s = (try (try HttpClient.get("/api/snapshot")).json) as { version: number; todos: unknown[] }
+    const { version } = try (try Machine).get()
+    try Effect.try(() => {
+      assert.strictEqual(s.version, version)
+      assert.strictEqual(s.todos.length, 3)
+    })
+  })
+
+  // spec/client.md, "Story: Edit the list in the browser"; spec/client.md, "Story: Hear back from the server"
+  it.effect("the served browser queues edits, catches up and changes the list", () => effect {
+    const base = HttpServer.formatAddress((try HttpServer.HttpServer).address)
+    try tryPromise(() => browserJourney(base))
+    const outside = try HttpClient.get("/src/../package.json")
+    try Effect.try(() => assert.strictEqual(outside.status, 404))
+  })
+})

@@ -1,0 +1,131 @@
+// spec/system.md, "Only a tab's oldest queued edit can be on its way unanswered"; spec/client.md, "Story: Hear back from the server"
+// The frontend's network code, with no page in it: the React page (app.ts)
+// and the end-to-end test use the same Tab. Everything the server says is
+// turned into an event of the generated client machine
+// (gen/client.effect.vibe) and applied by it; nothing here changes a tab's
+// state directly.
+import { type Client, type Event, type Pending, NotAnEvent, apply, decodeEvent, initial, step } from "../../gen/client.effect.vibe"
+import { toRequest } from "../protocol.vibe"
+
+/** The server did not answer, or said something that is no answer. */
+export error Unanswered { cause: unknown }
+
+/** An edit the user makes. */
+export type Edit = Extract<Event, { type: "create" | "setDone" | "rename" | "remove" }>
+
+/** One browser tab: a client of spec/client.md, and the requests that keep it in step with the server. */
+export service Tab {
+  readonly changes: Stream.Stream<Client>
+  get(): Client!!
+  /** One event of the client machine; one the rules do not allow changes nothing. */
+  dispatch(event: Event): void!!
+  /** A user edit: queued at once, and sent after the edits queued before it, for as long as the tab is online. */
+  edit(event: Edit): void!!
+  /** Send one queued edit and take in the answer. */
+  send(p: Pending): void!Unanswered
+  /** Take in the list as the server has it now. */
+  refresh(): void!Unanswered
+  /** Back online: send the queue, oldest first, and catch up. */
+  goOnline(): void!Unanswered
+  /** Take in the server's pushes for as long as it sends them. */
+  listen(): void!Unanswered
+}
+
+/** A fresh id for a to-do this tab creates: unique, because the tab's name is. */
+export function newId(name: string, c: Client): string {
+  return `${name}-${c.made + 1}`
+}
+
+/** The part of an answer that says which event it is to its tab; the client machine decodes the rest. */
+schema Verdict { readonly ok: boolean }
+
+/** What the server said, as the event of the client machine it is to a tab. */
+effect function heard(type: "receiveAck" | "receiveRefusal" | "receiveSnapshot", said: unknown) {
+  if (typeof said !== "object" || said === null) throw new NotAnEvent({ input: said })
+  return try decodeEvent({ ...said, type })
+}
+
+/** A new tab called `name`, talking to the server at `base`. */
+export effect function open(base: string, name: string) {
+  const client = HttpClient.mapRequest(HttpClient.filterStatusOk(try HttpClient.HttpClient), HttpClientRequest.prependUrl(base))
+  const held = try SubscriptionRef.make(initial)
+  const sending = try Semaphore.make(1)
+  const get = () => SubscriptionRef.get(held)
+  const asked = <A, E>(answer: A!E) => mapError(answer, (cause) => new Unanswered({ cause }))
+
+  effect function dispatch(event: Event) {
+    try SubscriptionRef.updateEffect(held, effect (c) => apply(c, event) catch () => c)
+  }
+
+  effect function send(p: Pending) {
+    const request = toRequest(name, p.seq, p.op)
+    if (request === undefined) throw new NotAnEvent({ input: p })
+    const said = try (try client.execute(try HttpClientRequest.bodyJson(HttpClientRequest.post("/api/events"), request))).json
+    const { ok } = try Schema.decodeUnknownEffect(Verdict)(said)
+    const answer = try heard(ok ? "receiveAck" : "receiveRefusal", said)
+    if (!("seq" in answer) || answer.seq !== p.seq) throw new NotAnEvent({ input: said })
+    try dispatch(answer)
+  }
+
+  effect function refresh() {
+    try dispatch(try heard("receiveSnapshot", try (try client.get("/api/snapshot")).json))
+  }
+
+  // Send the queue oldest first, one request at a time, for as long as the
+  // tab is online; an edit the server did not answer is sent again two seconds
+  // later. Sending the whole queue at once would let the network reorder the
+  // user's own edits.
+  const flush = Semaphore.withPermit(sending, effect {
+    while (true) {
+      const { online, pending: [oldest] } = try get()
+      if (!online || oldest === undefined) return
+      send(oldest) catch effect () => { try sleep("2 seconds") }
+    }
+  })
+
+  effect function readPushes() {
+    const response = try client.get("/api/stream")
+    let buffered = ""
+    for try (const read of Stream.decodeText(response.stream)) {
+      const frames = (buffered + read).split("\n\n")
+      buffered = frames.pop() ?? ""
+      const pushes: Event[] = []
+      for (const frame of frames) {
+        if (!frame.startsWith("data: ")) continue
+        const push = heard("receiveSnapshot", try Effect.try(() => JSON.parse(frame.slice("data: ".length)))) catch () => undefined
+        if (push) pushes.push(push)
+      }
+      if (pushes.length) try SubscriptionRef.update(held, (c) => pushes.reduce(step, c))
+    }
+  }
+
+  effect function listen() {
+    while (true) {
+      readPushes() catch () => undefined
+      try sleep("2 seconds")
+    }
+  }
+
+  return {
+    changes: SubscriptionRef.changes(held),
+    get,
+    dispatch,
+    effect edit(event: Edit) {
+      try dispatch(event)
+      try flush
+    },
+    send: (p: Pending) => asked(send(p)),
+    refresh: () => asked(refresh()),
+    effect goOnline() {
+      try dispatch({ type: "goOnline" })
+      try flush
+      try asked(refresh())
+    },
+    listen: () => asked(listen())
+  }
+}
+
+/** The page's tab: `open`, over the browser's fetch. */
+export function browser(base: string, name: string) {
+  return Layer.provide(Layer.effect(Tab, open(base, name)), FetchHttpClient.layer)
+}

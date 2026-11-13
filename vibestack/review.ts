@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
-import { readSpecs, isStd, bareQuint as bare, type Import, type Spec, type Story, type Rule } from "./parse.ts";
-import { short, readSrc, indent, type SrcFile } from "./util.ts";
+import { readSpecs, isStd, bareQuint as bare, heading, type Import, type Spec, type Story, type Rule } from "./parse.ts";
+import { short, readSrc, indent } from "./util.ts";
 import { DECLASSIFY } from "./gen/secrecy.ts";
 
 /**
@@ -145,13 +145,13 @@ export const showPending = (p: Pending) => `${p.where}\n      ${p.status}${p.not
 
 export type Lock = Record<string, string[]>;
 /** A spec's ledger. `locks` remembers the ones read, for a caller that reads many in a row while none of them changes. */
-const readLock = (root: string, spec: Spec, locks?: Map<string, Lock>): Lock => {
-  const known = locks?.get(spec.file);
+const readLock = (root: string, spec: Spec, locks: Map<string, Lock>): Lock => {
+  const known = locks.get(spec.file);
   if (known) return known;
   const all = readReviewLock(root).specs;
-  for (const [file, value] of Object.entries(all)) locks?.set(file, value);
+  for (const [file, value] of Object.entries(all)) locks.set(file, value);
   const lock = all[spec.file] ?? {};
-  locks?.set(spec.file, lock);
+  locks.set(spec.file, lock);
   return lock;
 };
 
@@ -171,7 +171,7 @@ export function pending(root: string, spec: Spec, specs: Spec[] = readSpecs(root
   for (const s of spec.stories) {
     const was = lock[storyKey(s)];
     const status = !rulesOf(spec, s).length ? "story has no rules" : !was ? "new story" : was[0] !== proseFingerprint(s.prose) ? "story changed" : undefined;
-    if (status) out.push({ where: `${spec.file}:${s.line}  ${s.title}`, story: s, status, lines: rulesOf(spec, s).map((r) => r.key.slice(s.title.length + 3)) });
+    if (status) out.push({ where: `${spec.file}:${s.line}  ${s.title}`, story: s, status, lines: rulesOf(spec, s).map(heading) });
   }
   for (const rule of spec.rules) {
     const [prose, code] = fingerprint(rule);
@@ -232,7 +232,7 @@ export function pendingSpecs(root: string, specs: Spec[]): Pending[] {
 export function acceptAllReviews(root: string, specs: Spec[], src = readSrc(root)) {
   const lock = readReviewLock(root);
   lock.specs = Object.fromEntries(specs.filter((spec) => !isStd(spec.file)).map((spec) => [spec.file, reviewed(spec, specs)]));
-  lock.contracts = contractLock(root, src);
+  lock.contracts = contractLedger(contracts(root, src));
   writeReviewLock(root, lock);
 }
 
@@ -274,15 +274,19 @@ function contractOf(file: string, code: string): string[] {
   return out;
 }
 /** The contract of every proved src file, under its path. */
-export const contracts = (root: string, src = readSrc(root)) => new Map(src.filter((u) => u.ts).map((u) => [`src/${u.file.split(path.sep).join("/")}`, contractOf(u.file, u.code)]));
+export const contracts = (root: string, src = readSrc(root)) => new Map(src.filter((u) => u.ts).map((u) => [`src/${u.file}`, contractOf(u.file, u.code)]));
+/** What the ledger records of every contract: a fingerprint of its lines. */
+const contractLedger = (now: ReturnType<typeof contracts>) =>
+  Object.fromEntries([...now].map(([file, lines]) => [file, short(lines.join("\n"))]));
 
 /** The `//@` contracts in src/ that are new, changed or gone since `accept`. A file that loses every `//@` is gone. */
 export function pendingContracts(root: string, src = readSrc(root)): Pending[] {
   const lock = readReviewLock(root).contracts;
   const now = contracts(root, src);
+  const ledger = contractLedger(now);
   const out: Pending[] = [];
   for (const [file, lines] of now) {
-    const status = !(file in lock) ? "new contract" : lock[file] !== short(lines.join("\n")) ? "contract changed" : undefined;
+    const status = !(file in lock) ? "new contract" : lock[file] !== ledger[file] ? "contract changed" : undefined;
     if (status) out.push({ where: file, status, lines });
   }
   for (const file of Object.keys(lock)) if (!now.has(file)) out.push({ where: file, status: "contract removed" });
@@ -292,11 +296,9 @@ export function pendingContracts(root: string, src = readSrc(root)): Pending[] {
 /** Record the `//@` contract of every proved src file as reconciled. */
 export function acceptContracts(root: string, src = readSrc(root)) {
   const lock = readReviewLock(root);
-  lock.contracts = contractLock(root, src);
+  lock.contracts = contractLedger(contracts(root, src));
   writeReviewLock(root, lock);
 }
-/** The contracts as the ledger records them: a fingerprint per file. */
-const contractLock = (root: string, src: SrcFile[]) => Object.fromEntries([...contracts(root, src)].map(([file, lines]) => [file, short(lines.join("\n"))]));
 
 /**
  * Both halves of every rule that has moved, the text and rules of every story that has, and the lines of every new or
@@ -307,8 +309,6 @@ export const moved = (todo: Pending[]): string[] => todo.flatMap(({ where, rule,
   : story && status !== "story has no rules" ? [`    "${story.title}" (${status})\n      its text:\n${indent(story.prose.trim() || "(only the heading)", 8)}\n      its rules:\n${indent((lines ?? []).join("\n"), 8)}`]
   : !story && lines ? [`    ${where} (${status})\n      ${status === "document changed" ? "its document" : "its //@ lines"}:\n${indent(lines.join("\n"), 8)}`]
   : []);
-
-
 
 export function readLedger(root: string): Record<string, Accepted | undefined> {
   return readReviewLock(root).unproved;

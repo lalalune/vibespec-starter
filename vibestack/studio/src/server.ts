@@ -3,15 +3,15 @@
 // manifest (./doc.ts), and serves the page (./page.ts) with the modules it imports.
 // README, "Studio".
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import ts from "typescript";
 import { parseSpec, readSpecs, specFiles, specName } from "../../parse.ts";
 import { ledgerFile, pending, pendingKey, type Lock } from "../../review.ts";
-import type { Result } from "../../spec.ts";
-import { filesUnder, projectRoot } from "../../util.ts";
+import { acceptable, type Result } from "../../spec.ts";
+import { scanCatalog, type ComponentIndex } from "../../stories/catalog.ts";
+import { filesUnder, projectRoot, short } from "../../util.ts";
 import { enabled, initial, step, type Event, type Session, type Verdict } from "../gen/index.ts";
 import { manifestOf, nodesOf, promptFor, type Ids, type Manifest } from "./doc.ts";
 import { outlineOf, specOrder } from "./markdown.ts";
@@ -26,6 +26,26 @@ const PUBLIC = path.join(import.meta.dirname, "public");
 const MODULES = /^(scan|studio\/src\/(page|markdown)|studio\/gen\/(index|outline))$/;
 const DEEPLINK_LIMIT = 5000; // characters of a prompt a claude-cli:// link carries
 
+/** The component registries of this project and its workspace packages, with paths relative to the project. */
+function componentCatalog(root: string): ComponentIndex {
+  const parents = ["apps", "packages", "vibestack/examples"];
+  const roots = [root, path.join(root, "vibestack/studio"), ...parents.flatMap((parent) => {
+    const directory = path.join(root, parent);
+    return fs.existsSync(directory) ? fs.readdirSync(directory, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => path.join(directory, entry.name)) : [];
+  })].filter((directory) => fs.existsSync(path.join(directory, "package.json")) && fs.existsSync(path.join(directory, "src")));
+  const components = [...new Set(roots)].flatMap((directory) => {
+    const prefix = path.relative(root, directory);
+    const relative = (file: string) => path.join(prefix, file).split(path.sep).join("/");
+    return scanCatalog(directory).components.map((component) => ({
+      ...component,
+      source: { ...component.source, file: relative(component.source.file) },
+      ...(component.model ? { model: { ...component.model, spec: relative(component.model.spec) } } : {}),
+      ...(component.design ? { design: component.design.map(relative) } : {}),
+    }));
+  });
+  return { version: 1, storybook: {}, components };
+}
+
 interface Project { name: string; root: string }
 
 /** An agent the studio can start on the sync prompt, and the link that opens its app on the same prompt. */
@@ -39,8 +59,8 @@ const AGENTS: Record<string, Agent> = {
   claude: {
     label: "Claude Code",
     command: ({ check }) => ["claude", ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits",
-      "--allowedTools", "Read", "Edit", "Write", "Glob", "Grep", `Bash(${check}:*)`, "Bash(npm run -s check:*)", "Bash(npx quint:*)",
-      "--disallowedTools", "Bash(npm run accept:*)", "Bash(spec accept:*)"]],
+      "--allowedTools", "Read", "Edit", "Write", "Glob", "Grep", `Bash(${check}:*)`, "Bash(pnpm -s check:*)", "Bash(pnpm exec quint:*)",
+      "--disallowedTools", "Bash(npm run accept:*)", "Bash(pnpm accept:*)", "Bash(pnpm run accept:*)", "Bash(spec accept:*)"]],
     link: ({ root, prompt }) => `claude-cli://open?cwd=${encodeURIComponent(root)}&q=${encodeURIComponent(prompt)}`,
   },
   codex: {
@@ -52,6 +72,7 @@ const AGENTS: Record<string, Agent> = {
 
 /** The process behind the session's job, and what it printed. The last of each kind is kept, for its log. */
 interface Job { kind: "check" | "agent" | "accept"; label: string; status: "running" | "passed" | "failed" | "stopped"; started: number; finished?: number; log: string[]; child?: ChildProcess }
+export type JobView = Omit<Job, "kind" | "child">;
 interface State { baseline: Record<string, string>; ids: Ids }
 interface Live {
   project: Project;
@@ -67,7 +88,6 @@ interface Live {
 /** A request the session does not allow now. */
 class Refused extends Error {}
 
-const hash = (text: string) => createHash("sha256").update(text).digest("hex").slice(0, 16);
 const readJson = <T>(file: string): T | undefined => (fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : undefined);
 const projectName = (root: string) => readJson<{ name?: string }>(path.join(root, "package.json"))?.name ?? path.basename(root);
 const writeJson = (file: string, value: unknown) => {
@@ -85,8 +105,8 @@ function specTexts(root: string): Record<string, string> {
 /** The command a person or agent runs in a project to check it: its own script if it can, else the tools of this repository. */
 function checkCommand(root: string): string {
   const scripts = readJson<{ scripts?: Record<string, string> }>(path.join(root, "package.json"))?.scripts ?? {};
-  const installed = fs.existsSync(path.join(root, "node_modules/.bin/spec")) || !scripts.check?.startsWith("spec ");
-  return scripts.check && installed ? "npm run check" : `node ${path.relative(root, SPEC)} check`;
+  const hasSpecBin = fs.existsSync(path.join(root, "node_modules/.bin/spec")) || !scripts.check?.startsWith("spec ");
+  return scripts.check && hasSpecBin ? "pnpm check" : `node ${path.relative(root, SPEC)} check`;
 }
 
 /** The sync skill, as a path from the project root: its own copy, or the nearest one above it. */
@@ -102,13 +122,13 @@ function skillPath(root: string): string {
 function ownedFiles(root: string): Record<string, string> {
   const ledger = ledgerFile(root);
   return Object.fromEntries([...(fs.existsSync(ledger) ? [path.relative(root, ledger)] : []), ...filesUnder(root, ".studio")]
-    .map((f) => [f, hash(fs.readFileSync(path.join(root, f), "utf8"))]));
+    .map((f) => [f, short(fs.readFileSync(path.join(root, f), "utf8"))]));
 }
 
-const installed = new Map<string, boolean>();
+const onPathCache = new Map<string, boolean>();
 const onPath = (program: string) => {
-  if (!installed.has(program)) installed.set(program, spawnSync(process.platform === "win32" ? "where" : "which", [program]).status === 0);
-  return installed.get(program)!;
+  if (!onPathCache.has(program)) onPathCache.set(program, spawnSync(process.platform === "win32" ? "where" : "which", [program]).status === 0);
+  return onPathCache.get(program)!;
 };
 
 /**
@@ -116,10 +136,7 @@ const onPath = (program: string) => {
  * passed, every story has rules and every rule has Quint.
  */
 function verdictOf(results: Result[]): Verdict {
-  const failed = results.filter((r) => !r.ok);
-  if (!failed.length) return "Green";
-  const reviewOnly = failed.every((r) => r.stage === "review") && !failed.some((r) => /story has no rules|not formalized/.test(r.detail));
-  return reviewOnly ? "Reviewable" : "Failing";
+  return !results.some((r) => !r.ok) ? "Green" : acceptable(results) ? "Reviewable" : "Failing";
 }
 
 /** Everything the page shows of the project. */
@@ -130,7 +147,9 @@ function snapshot(live: Live, agents: Record<string, Agent>) {
   let texts: Record<string, string> = {};
   let review: Record<string, Record<string, string>> = {};
   let problem: string | undefined;
+  let manifest: Manifest | undefined;
   try {
+    manifest = readJson<Manifest>(manifestFile(root));
     texts = specTexts(root);
     const specs = readSpecs(root);
     const locks = new Map<string, Lock>();
@@ -138,13 +157,12 @@ function snapshot(live: Live, agents: Record<string, Agent>) {
   } catch (e) {
     problem = (e as Error).message;
   }
-  const manifest = readJson<Manifest>(manifestFile(root));
   const context = { skill: skillPath(root), check: checkCommand(root) };
   return {
     project: live.project,
     session: live.session,
     specs: Object.entries(texts).sort(([a], [b]) => specOrder(a, b))
-      .map(([file, text]) => ({ file, module: specName(file), hash: hash(text), text, outline: outlineOf(file, text), review: review[file] ?? {} })),
+      .map(([file, text]) => ({ file, module: specName(file), hash: short(text), text, outline: outlineOf(file, text), review: review[file] ?? {} })),
     problem,
     manifest,
     prompt: promptFor(manifest, context),
@@ -153,9 +171,7 @@ function snapshot(live: Live, agents: Record<string, Agent>) {
     agents: Object.entries(agents).map(([id, a]) => ({ id, label: a.label, available: onPath(a.command({ root, check: context.check })[0]), link: a.link?.({ root, prompt: promptFor(manifest, context, DEEPLINK_LIMIT) }) })),
   };
 }
-const jobView = ({ label, status, started, finished, log }: Job) => ({ label, status, started, finished, log: log.slice(-400) });
-export type JobView = ReturnType<typeof jobView>;
-const jobsView = (live: Live): Partial<Record<Job["kind"], JobView>> => Object.fromEntries(Object.values(live.jobs).map((j) => [j.kind, jobView(j)]));
+const jobsView = (live: Live): Partial<Record<Job["kind"], JobView>> => Object.fromEntries(Object.values(live.jobs).map((j) => [j.kind, { label: j.label, status: j.status, started: j.started, finished: j.finished, log: j.log.slice(-400) }]));
 
 /** A line of an agent's JSON output, as a person would want to read it; undefined for bookkeeping. */
 function readable(line: string): string | undefined {
@@ -189,7 +205,8 @@ function pageModule(file: string): string {
  */
 export async function startStudio({ project, port = 4321, agents = AGENTS }: { project: Project; port?: number; agents?: Record<string, Agent> }) {
   const { root } = project;
-  const changes = readJson<Manifest>(manifestFile(root))?.changes.length ?? 0;
+  let changes = 0;
+  try { changes = readJson<Manifest>(manifestFile(root))?.changes.length ?? 0; } catch { /* an unreadable manifest holds nothing waiting */ }
   const live: Live = { project, session: step(initial, { type: "resume", changes }), jobs: {}, clients: new Set() };
 
   const broadcast = (event: string, data: unknown) => {
@@ -231,7 +248,7 @@ export async function startStudio({ project, port = 4321, agents = AGENTS }: { p
     let out = "";
     const child = spawn(program, args, { cwd: root, env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1" }, stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"] });
     job.child = child;
-    if (input !== undefined) child.stdin!.end(input);
+    if (input !== undefined) child.stdin!.on("error", (e) => job.log.push(`✗ ${e.message}`)).end(input);
     const lines = (stream: NodeJS.ReadableStream, keep: boolean) => {
       let rest = "";
       stream.on("data", (chunk: Buffer) => {
@@ -287,7 +304,7 @@ export async function startStudio({ project, port = 4321, agents = AGENTS }: { p
     const session = { ...live.session, unpublished: true };
     allow({ type: "publish", changes: 0 }, session);
     const disk = specTexts(root);
-    const conflicts = body.force ? [] : body.files.filter((f) => (f.file in disk ? hash(disk[f.file]) : null) !== f.base).map((f) => f.file);
+    const conflicts = body.force ? [] : body.files.filter((f) => (f.file in disk ? short(disk[f.file]) : null) !== f.base).map((f) => f.file);
     if (conflicts.length) return { status: 409, body: { error: "changed on disk since you loaded it", conflicts } };
     const next = { ...disk };
     for (const f of body.files) {
@@ -339,7 +356,7 @@ export async function startStudio({ project, port = 4321, agents = AGENTS }: { p
     res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
     res.end(JSON.stringify(body));
   };
-  const TYPES: Record<string, string> = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml" };
+  const TYPES: Record<string, string> = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".js": "text/javascript; charset=utf-8" };
 
   const server = http.createServer(async (req, res) => {
     res.setHeader("content-security-policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; object-src 'none'; frame-ancestors 'none'");
@@ -360,10 +377,20 @@ export async function startStudio({ project, port = 4321, agents = AGENTS }: { p
         return res.end(pageModule(file));
       }
       if (req.method === "GET" && !url.pathname.startsWith("/api/")) {
-        const file = path.join(PUBLIC, url.pathname === "/" ? "index.html" : path.normalize(url.pathname).replace(/^([/\\])+/, ""));
+        const page = url.pathname === "/" ? "index.html" : /^\/components\/?$/.test(url.pathname) ? "components/index.html" : path.normalize(url.pathname).replace(/^([/\\])+/, "");
+        const file = path.join(PUBLIC, page);
         if (!file.startsWith(PUBLIC) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) return send(res, 404, { error: "not found" });
         res.writeHead(200, { "content-type": TYPES[path.extname(file)] ?? "application/octet-stream", "cache-control": "no-store" });
         return res.end(fs.readFileSync(file));
+      }
+      if (req.method === "GET" && url.pathname === "/api/components") return send(res, 200, componentCatalog(root));
+      if (req.method === "GET" && url.pathname === "/api/component-source") {
+        const file = url.searchParams.get("file") ?? "";
+        const allowed = componentCatalog(root).components.some((component) => component.source.file === file || component.model?.spec === file || component.design?.includes(file));
+        const absolute = path.resolve(root, file);
+        if (!allowed || !fs.existsSync(absolute) || !fs.realpathSync(absolute).startsWith(fs.realpathSync(root) + path.sep)) return send(res, 404, { error: "not found" });
+        res.writeHead(200, { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" });
+        return res.end(fs.readFileSync(absolute));
       }
       if (url.pathname === "/api/events") {
         res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive" });
@@ -391,10 +418,12 @@ export async function startStudio({ project, port = 4321, agents = AGENTS }: { p
         case "/api/agent": {
           const agent = Object.hasOwn(agents, body.agent) ? agents[body.agent] : undefined;
           if (!agent) return send(res, 400, { error: `no agent ${body.agent}` });
-          act({ type: "sync" });
           const check = checkCommand(root);
+          const command = agent.command({ root, check });
+          const prompt = promptFor(readJson<Manifest>(manifestFile(root)), { skill: skillPath(root), check });
           const owned = ownedFiles(root);
-          run("agent", agent.label, agent.command({ root, check }), promptFor(readJson<Manifest>(manifestFile(root)), { skill: skillPath(root), check }), readable, (job) => {
+          act({ type: "sync" });
+          run("agent", agent.label, command, prompt, readable, (job) => {
             // The review ledgers and Studio's state are the tools' to write: a sync that touched them is not trusted.
             // Whatever happens here, the sync ends (spec/index.md, "A sync that ends well leaves nothing waiting and checks again").
             try {

@@ -1,0 +1,29 @@
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
+import type { Event } from "../gen/index.effect.vibe"
+import { OrderBook, OrderBookMemory, reason } from "./app.vibe"
+
+const events: Event[] = [
+  { type: "submit" }, // the draft is empty
+  { type: "addItem", qty: 2 },
+  { type: "submit" },
+  { type: "pay", amount: 4 },
+  { type: "pay", amount: 7 }, // more than the balance
+  { type: "pay", amount: 6 },
+  { type: "cancel" }, // already paid
+]
+
+effect function main() {
+  provide OrderBookMemory {
+    const book = try OrderBook
+    for (const event of events) {
+      const shown = Formatter.formatJson(event).padEnd(30)
+      const line = effect {
+        return `✓ ${shown} ${Formatter.formatJson(try book.dispatch("A1", event))}`
+      } catch (error) => `✗ ${shown} ${reason(error)}`
+      try Console.log(line)
+    }
+    try Console.log("balance", try book.balance("A1"))
+  }
+}
+
+NodeRuntime.runMain(main())

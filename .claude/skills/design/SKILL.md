@@ -7,7 +7,7 @@ description: "Design or review anything a person looks at, built from a spec in 
 
 ## Before you draw
 
-1. **Inventory.** For each story in `spec/index.md` or a linked child spec, write down what the user
+1. **Inventory.** For each story in `spec/**/*.md`, write down what the user
    must see or do, and the rule behind it. That list is the whole content:
    everything on it ships; no page, section, setting or sample content off it does.
 2. **Cut.** For each item ask: does the user need to see this, here, now? What
@@ -36,7 +36,13 @@ description: "Design or review anything a person looks at, built from a spec in 
   the UI asserts what the user can do and what the state became, not what the
   page says (AGENTS.md, "Tests").
 - **One system.** One type pairing, a small palette with one accent and one
-  spacing scale, as shared tokens. Extend an existing component before adding one.
+  spacing scale, as the project's design tokens. Extend an existing component
+  before adding one.
+- **React, Tailwind, shadcn/ui.** Every interface is React components styled
+  with Tailwind CSS v4 utilities on those tokens, composed from shadcn/ui
+  components on Radix primitives (AGENTS.md, "The stack"). Name a color, size
+  or radius by its token, never by its value; a new value is a new token,
+  added once.
 
 ## Review: two or three passes
 

@@ -41,7 +41,7 @@ export interface Oracle<S, E> {
 }
 
 /**
- * What `npm run check` found for one spec: the events the simulator took or tried a guard with, a shortest journey to
+ * What `pnpm check` found for one spec: the events the simulator took or tried a guard with, a shortest journey to
  * each `sometimes` rule, and where the state holds sets. An event that came from someone carries them as `by`.
  */
 export interface Found<E> {
@@ -115,7 +115,7 @@ const lines = <E>(trace: Trace<E>) => trace.map(([k, e]) => `  ${k} ${show(e)}`)
 /** What `check` and `replay` share: running a trace through the driver beside the oracle, and shrinking one that disagrees. */
 function runner<S, E, V>(oracle: Oracle<S, E>, found: Found<E>, driver: Driver<E, V>, options: Options<S, V>) {
   const { view, keys = ["a", "b"], walks = 200, steps = 20, seed = 1 } = options;
-  if (!found.events.length) throw new Error(`gen/${found.spec}.conformance.ts holds no events yet: \`npm run check\` writes them`);
+  if (!found.events.length) throw new Error(`gen/${found.spec}.conformance.ts holds no events yet: \`pnpm check\` writes them`);
   if (!keys.length || keys.some((key) => typeof key !== "string" || !key) || new Set(keys).size !== keys.length) throw new Error("conformance keys must be distinct nonempty strings");
   for (const [name, count] of Object.entries({ walks, steps, seed })) if (!Number.isSafeInteger(count) || count < 0) throw new Error(`conformance ${name} must be a nonnegative safe integer`);
   const seen = new Set<string>();
@@ -134,7 +134,7 @@ function runner<S, E, V>(oracle: Oracle<S, E>, found: Found<E>, driver: Driver<E
     for (const [i, [key, sent]] of trace.entries()) {
       const at = `event ${i + 1}, ${key} ${show(sent)}`;
       const { by, ...rawEvent } = sent as Sent<E> & Record<string, unknown>;
-      const before = model.get(key) ?? oracle.initial;
+      const before = model.get(key)!;
       const applied = transition(oracle, found, before, rawEvent, by);
       if (typeof applied === "string") return `${at}: ${applied}`;
       const { event, allowed, after, out } = applied;
@@ -205,7 +205,8 @@ export function transition<S, E>(oracle: Oracle<S, E>, found: Found<E>, before: 
   if (found.sender ? by === undefined || !oracle.parseSender || oracle.parseSender(by) === undefined : by !== undefined)
     return found.sender ? "the event needs a valid sender" : "the spec's events have no sender";
   const result = oracle.step(before, event, by);
-  return { event, allowed: oracle.enabled(before, event, by), after: found.outputShape ? (result as { state: S }).state : result as S, ...(found.outputShape ? { out: (result as { out: unknown }).out } : {}) };
+  const { state: after, out } = found.outputShape ? result as { state: S; out: unknown } : { state: result as S, out: undefined };
+  return { event, allowed: oracle.enabled(before, event, by), after, out };
 }
 
 /** Compare what the real application exposed, keeping sets independent of their iteration order. */

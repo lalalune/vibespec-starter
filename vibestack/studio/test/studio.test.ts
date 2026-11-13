@@ -1,5 +1,5 @@
 // Journeys through the studio's real server, filesystem and checks. The session's and the outline's rules are proved
-// by `npm run check`; these cover what the proofs cannot see: HTTP, the files written, the jobs run, and the page's
+// by `pnpm check`; these cover what the proofs cannot see: HTTP, the files written, the jobs run, and the page's
 // modules as the browser loads them.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -61,13 +61,34 @@ test("a spec is published with its origins, checked, synced by an agent, and ref
   const { studio, url, post, project, settled } = await studioOn(root);
   try {
     // The page and the modules it imports load; nothing else under the tools does.
-    for (const file of ["/", "/style.css", "/vibestack/studio/src/page.js", "/vibestack/studio/src/markdown.js", "/vibestack/studio/gen/outline.js", "/vibestack/studio/gen/index.js", "/vibestack/scan.js"]) {
+    for (const file of ["/", "/components", "/style.css", "/vibestack/studio/src/page.js", "/vibestack/studio/src/markdown.js", "/vibestack/studio/gen/outline.js", "/vibestack/studio/gen/index.js", "/vibestack/scan.js"]) {
       const asset = await fetch(url + file);
       assert.equal(asset.status, 200, file);
       assert.ok((await asset.text()).length > 0, file);
     }
     assert.match(await (await fetch(`${url}/vibestack/studio/src/page.js`)).text(), /from "\.\.\/gen\/outline\.js"/);
+    const components = await (await fetch(`${url}/components`)).text();
+    const script = components.match(/src="([^"]+\.js)"/)![1];
+    const client = await fetch(url + script);
+    assert.equal(client.status, 200);
+    assert.match(client.headers.get("content-type") ?? "", /javascript/);
     for (const file of ["/vibestack/spec.js", "/vibestack/studio/src/server.js", "/vibestack/studio/gen/index.conformance.js"]) assert.equal((await fetch(url + file)).status, 404, file);
+
+    // Component discovery reads sources without writing artifacts, and source links cannot follow a symlink outside the project.
+    fs.mkdirSync(path.join(root, "src"));
+    fs.writeFileSync(path.join(root, "package.json"), '{"name":"door"}');
+    const component = "export function Demo(): JSX.Element { return <button>Open</button>; }";
+    fs.writeFileSync(path.join(root, "src/Demo.tsx"), component);
+    const outside = scratch({ "Outside.tsx": component.replace("Demo", "Outside") });
+    fs.symlinkSync(path.join(outside, "Outside.tsx"), path.join(root, "src/Outside.tsx"));
+    const catalog = await (await fetch(`${url}/api/components`)).json();
+    assert.deepEqual(catalog.components.map((c: { name: string }) => c.name), ["Demo"]);
+    assert.equal(fs.existsSync(path.join(root, ".storybook")), false);
+    assert.equal(await (await fetch(`${url}/api/component-source?file=src%2FDemo.tsx`)).text(), component);
+    assert.equal((await fetch(`${url}/api/component-source?file=src%2FOutside.tsx`)).status, 404);
+    assert.equal((await fetch(`${url}/api/component-source?file=..%2FOutside.tsx`)).status, 404);
+    fs.rmSync(path.join(root, "src"), { recursive: true });
+    fs.rmSync(path.join(root, "package.json"));
 
     // Only this machine's pages may act.
     assert.equal((await post("check", {}, { origin: "https://untrusted.example" })).status, 403);
@@ -98,7 +119,7 @@ test("a spec is published with its origins, checked, synced by an agent, and ref
     // spec/index.md, "A finished check gives its verdict": the door's rules are new, so only review is left.
     const checked = await settled();
     assert.equal(checked.session.verdict, "Reviewable");
-    assert.match(checked.check.next, /npm run accept/);
+    assert.match(checked.check.next, /pnpm accept/);
     // spec/index.md, "Sign-off needs a check that left only review, nothing unpublished and nothing waiting"
     assert.equal((await post("accept", {})).status, 409);
     // Only the studio's own agents run, not what every object inherits.

@@ -8,9 +8,9 @@ import os from "node:os";
 import path from "node:path";
 import { after, describe, test } from "node:test";
 import { LIB_FILE, isolatedCopies, parseProofFile, readVerdict, splice } from "./prove.ts";
-import { exec } from "./run.ts";
+import { exec, run as tool } from "./run.ts";
 import { migrateLocks, pendingSpecs, readLedger, writeLedger } from "./review.ts";
-import { packageScripts } from "./util.ts";
+import { packageScripts, nodeRunsVibelang } from "./util.ts";
 import { canonical, departure } from "./conformance.ts";
 import { conformance as checkTraces, conformanceFound, writeConformance } from "./conform.ts";
 import { acceptContracts, acceptReviews, check, checkVerifiedSource, danglingCitations, expandListHelpers, generated, init, parseSpec, pending, pendingContracts, readSpecs, replay, show, typecheckAll, type Result, type Spec } from "./spec.ts";
@@ -19,25 +19,35 @@ const project = path.join(import.meta.dirname, "..");
 const EXAMPLE = path.join(project, "vibestack/examples/order");
 const read = (file: string, from = project): string => fs.readFileSync(path.join(from, file), "utf8");
 const F = "`".repeat(3);
+/** What `init` writes for a package in plain TypeScript, which a scratch project is unless its manifest lists `vibelang`. */
+const TSCONFIG = JSON.stringify({ compilerOptions: { target: "es2023", module: "nodenext", strict: true, noEmit: true, allowImportingTsExtensions: true, erasableSyntaxOnly: true, skipLibCheck: true, types: ["node"] }, include: ["src", "test", "gen/*.ts"] }, null, 2) + "\n";
+/** What makes the order example a VibeLang package: its manifest, and what its compiler and test runner read. */
+const VIBELANG = Object.fromEntries(["package.json", "tsconfig.json", "vitest.config.ts"].map((f) => [f, fs.readFileSync(path.join(EXAMPLE, f), "utf8")]));
 const roots: string[] = [];
 const nodeModules = (function find(dir: string): string {
   const here = path.join(dir, "node_modules");
-  return fs.existsSync(here) ? here : dir === path.dirname(dir) ? assert.fail("no node_modules: run npm install") : find(path.dirname(dir));
+  return fs.existsSync(here) ? here : dir === path.dirname(dir) ? assert.fail("no node_modules: run pnpm install") : find(path.dirname(dir));
 })(project);
 after(() => roots.forEach((root) => fs.rmSync(root, { recursive: true, force: true })));
 
 /** A scratch project holding the given files. */
 function scratch(files: Record<string, string>): string {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "spec-selftest-"));
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "spec-selftest-")));
   roots.push(root);
   for (const [file, text] of Object.entries(files)) {
     fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
     fs.writeFileSync(path.join(root, file), text);
   }
   if (Object.keys(files).some((f) => /^(src|test)\//.test(f)) && !files["tsconfig.json"]) {
-    fs.copyFileSync(path.join(EXAMPLE, "tsconfig.json"), path.join(root, "tsconfig.json"));
+    fs.writeFileSync(path.join(root, "tsconfig.json"), TSCONFIG);
     fs.symlinkSync(nodeModules, path.join(root, "node_modules"), "dir");
   }
+  return root;
+}
+/** A scratch project whose shell is VibeLang, configured as the order example is. */
+function vibeScratch(files: Record<string, string>): string {
+  const root = scratch({ ...VIBELANG, ...files });
+  fs.symlinkSync(nodeModules, path.join(root, "node_modules"), "dir");
   return root;
 }
 /** A scratch project whose specs are the named fixtures, with their proof files, each changed by `edit` if it is given. */
@@ -47,10 +57,23 @@ const fixtures = (names: string[], edit: (files: Record<string, string>) => void
   edit(files);
   return scratch(files);
 };
+/** `root` with its own copy of the toolchain, and of node_modules only the packages and the executables `tools`. */
+function toolchain(root: string, ...tools: string[]): string {
+  fs.cpSync(path.join(project, "vibestack"), path.join(root, "vibestack"), { recursive: true, filter: (from) => from !== path.join(project, "vibestack/examples") });
+  const modules = path.join(root, "node_modules");
+  fs.mkdirSync(path.join(modules, ".bin"), { recursive: true });
+  for (const entry of fs.readdirSync(nodeModules).filter((f) => f !== ".bin"))
+    fs.symlinkSync(path.join(nodeModules, entry), path.join(modules, entry), fs.statSync(path.join(nodeModules, entry)).isDirectory() ? "dir" : "file");
+  for (const tool of tools.map((t) => process.platform === "win32" ? `${t}.cmd` : t))
+    fs.symlinkSync(path.join(nodeModules, ".bin", tool), path.join(modules, ".bin", tool), "file");
+  return root;
+}
 /** A spec made of a single rule. */
 const ruleSpec = (quint: string, heading = "A rule", title = "T", story = "Story") => `# ${title}\n\n## ${story}\n\n### ${heading}\n\n${F}quint\n${quint}\n${F}\n`;
 /** A scratch project with one spec made of a single rule. */
 const oneRule = (name: string, heading: string, quint: string) => scratch({ [`spec/${name}.md`]: ruleSpec(quint, heading) });
+/** A scratch project with a spec `use` that imports a spec `lib`. */
+const libAndUse = (lib: string, use: string) => scratch({ "spec/lib.md": lib, "spec/use.md": use });
 /** Hand-written code with a one-line contract. */
 const ONE = "//@ pure\nexport function one(): number {\n  //@ ensures \\result === 1\n  return 1;\n}\n";
 /** Generated Dafny: one function and its obligation. */
@@ -68,6 +91,7 @@ async function until(ready: () => boolean | Promise<boolean>, why: () => string 
 // so that every copy starts with its cache: an edit then re-runs only what it changes.
 const pristine = scratch({});
 for (const file of ["spec/index.md", "src", "test", "tsconfig.json"]) fs.cpSync(path.join(EXAMPLE, file), path.join(pristine, file), { recursive: true });
+for (const [file, text] of Object.entries(VIBELANG)) fs.writeFileSync(path.join(pristine, file), text);
 fs.symlinkSync(nodeModules, path.join(pristine, "node_modules"), "dir");
 for (const spec of readSpecs(pristine)) acceptReviews(pristine, spec);
 acceptContracts(pristine);
@@ -102,7 +126,7 @@ async function run(root: string, accept: false | "reviews" | "unproved" = false)
 const failedStages = async (file: string, edit: (text: string) => string) => (await run(copyOfProject(file, edit))).failed;
 const pendingItems = (root: string) => readSpecs(root).flatMap((spec) => pending(root, spec).map((p) => `${p.where.split("  ")[1]}: ${p.status}${p.note ?? ""}`));
 /** gen/ for one spec, as `check` and `spec gen` generate it. */
-const gen = async (root: string, spec: Spec) => generated(root, spec, await typecheckAll({ root, fresh: true, used: new Set() }, [spec]).get(spec.name)!, new Map());
+const gen = async (root: string, spec: Spec) => generated(root, spec, await typecheckAll({ root, fresh: true, used: new Set() }, readSpecs(root)).get(spec.name)!, new Map());
 /** Run a fresh CLI process so toolchain fingerprints cannot carry over from another invocation. */
 const runCli = (script: string, root: string, ...args: string[]) => exec(process.execPath, [script, ...args], root);
 const unguarded = (s: string) => s.replace("o.status == Draft and o.units > 0", "o.status == Draft");
@@ -167,7 +191,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const spec = parseSpec(root, "spec/counter.md");
     const model = await gen(root, spec);
     const domain = await import(path.join(root, "gen/counter.ts"));
-    const found = conformanceFound(domain, model, spec, [[{ state: 0 }, { event: { type: "inc" }, state: 1 }, { event: { type: "inc" }, state: 2 }]], []);
+    const found = conformanceFound(model, spec, [[{ state: 0 }, { event: { type: "inc" }, state: 1 }, { event: { type: "inc" }, state: 2 }]], []);
     writeConformance(root, model, found);
     const helper = await import(path.join(root, "gen/counter.conformance.ts"));
     const states = new Map<string, number>();
@@ -207,7 +231,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const quiet = oneRule("quiet", "Wait", "pure val initial: int = 0\npure def stay(n: int): int = n\npure def alwaysZero(n: int): bool = n == 0");
     const quietSpec = parseSpec(quiet, "spec/quiet.md"), quietModel = await gen(quiet, quietSpec);
     const quietDomain = await import(path.join(quiet, "gen/quiet.ts"));
-    writeConformance(quiet, quietModel, conformanceFound(quietDomain, quietModel, quietSpec, [[{ state: 0 }, { event: { type: "stay" }, state: 0 }]], []));
+    writeConformance(quiet, quietModel, conformanceFound(quietModel, quietSpec, [[{ state: 0 }, { event: { type: "stay" }, state: 0 }]], []));
     const quietHelper = await import(path.join(quiet, "gen/quiet.conformance.ts"));
     await quietHelper.conformance({ reset() {}, dispatch: () => "accepted", observe: () => 0 }, { walks: 1, steps: 2 });
   });
@@ -235,7 +259,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const [again, remembered] = [await run(root), await run(root)];
     const trace = first.said("always", /./);
     assert.equal(trace?.ok, false, first.text);
-    assert.match(trace!.detail, /seed \d+; to simulate again: npx quint run gen\/index\.run\.qnt .* --seed \d+/);
+    assert.match(trace!.detail, /seed \d+; to simulate again: pnpm exec quint run gen\/index\.run\.qnt .* --seed \d+/);
     assert.equal(again.said("always", /./)?.detail, trace!.detail, "the same harness gives the same trace");
     assert.equal(remembered.said("always", /./)?.detail, trace!.detail);
     assert.ok(!fs.existsSync(path.join(root, "gen/traces")), "a failing simulation is not run again for the same harness");
@@ -345,7 +369,11 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
   test("who sent an event travels beside it, a guard takes only what it uses, a step rule sees the event, and deep goals are found", async () => {
     const vault = (edit: (s: string) => string = (s) => s) => fixtures(["vault"], (f) => { f["spec/vault.md"] = edit(f["spec/vault.md"]); });
     const root = vault();
-    const ok = await run(root);
+    const [ok, broken, stray] = await Promise.all([
+      run(root),
+      run(vault((s) => s.replace("{ ...v, open: false }", "{ ...v, open: true }"))),
+      run(vault((s) => s.replace("canRelabel(v: Vault, by: Actor): bool = by", "canRelabel(v: Vault, who: Actor): bool = who"))),
+    ]);
     assert.deepEqual(ok.failed, ["review"], ok.text);
     assert.ok(ok.said("sometimes", /sometimesLate is reachable/), ok.text); // thirty ticks: beyond a trace of 20 events
     const gen = await import(path.join(root, "gen/vault.ts"));
@@ -357,9 +385,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.match(departure(gen, helper.found, [{ event: { type: "open" }, by: "Mallory", state: gen.initial }])?.why ?? "", /valid sender/);
     assert.equal(gen.step(gen.initial, { type: "relabel", label: "a" }, "Owner").label, "a");
     // A counterexample shows each event with only what it changed.
-    const broken = await run(vault((s) => s.replace("{ ...v, open: false }", "{ ...v, open: true }")));
     assert.ok(broken.said("always", /a step breaks[\s\S]*\n\s+close\s+-> open = true\n/), broken.text);
-    const stray = await run(vault((s) => s.replace("canRelabel(v: Vault, by: Actor): bool = by", "canRelabel(v: Vault, who: Actor): bool = who")));
     assert.ok(stray.said("model", /canRelabel: `who` must be a parameter of relabel/), stray.text);
   });
 
@@ -412,17 +438,115 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
   });
 
   test("hand-written code that changes what it is checked against is refused or flagged", async () => {
+    const reexport = await failedStages("src/ledger.ts", (s) => s + '\nexport * from "./app.vibe";\n');
+    assert.ok(reexport.includes("proof"), reexport.join());
     const { said, text } = await run(copyOfProject("src/ledger.ts", (s) => s.replace(/(\/\/@ ensures)/, "//@ requires true\n$1")));
     assert.ok(said("proof", /^src-ledger\.ts: .*under 2 \/\/@ requires/), text);
   });
 
-  test("the application's types and tests are checked", async () => {
-    assert.ok((await failedStages("src/app.ts", (s) => s + "\nconst wrong: number = \"x\";\n")).includes("types"));
-    const failing = await run(copyOfProject("test/app.test.ts", (s) => s + '\ntest("fails", () => { throw new Error("no"); });\n'));
-    assert.ok(failing.failed.includes("tests"), failing.text);
+  test("the application's types and tests are checked, in VibeLang as in TypeScript", async () => {
+    const [mistyped, failing, plain] = await Promise.all([
+      run(copyOfProject("src/app.vibe", (s) => s + "\nconst wrong: number = \"x\"\n")),
+      run(copyOfProject("test/app.test.vibe", (s) => s + '\nit("never holds", () => { assert.strictEqual(1, 2) })\n')),
+      run(fixtures(["door"], (f) => Object.assign(f, {
+        "src/wrong.ts": 'export const wrong: number = "x";\n',
+        "test/never.test.ts": 'import { test } from "node:test";\ntest("never holds", () => { throw new Error("no"); });\n',
+      }))),
+    ]);
+    const unfit = "application does not fit the generated contract";
+    assert.equal(mistyped.said("types", /src\/app\.vibe\(\d+,\d+\): error TS2322/)?.summary, unfit, mistyped.text);
+    assert.deepEqual(failing.failed, ["tests"], failing.text);
+    assert.ok(failing.said("tests", /^fail\n[\s\S]*test\/app\.test\.vibe > never holds[\s\S]*expected 1 to equal 2/), failing.text);
+    assert.deepEqual(plain.failed, ["types", "tests", "review"], plain.text);
+    assert.equal(plain.said("types", /src\/wrong\.ts\(1,14\): error TS2322/)?.summary, unfit, plain.text);
+    assert.ok(plain.said("tests", /^fail\n[\s\S]*never holds/), plain.text);
     const untyped = copyOfProject();
     fs.rmSync(path.join(untyped, "tsconfig.json"));
     assert.ok((await run(untyped)).failed.includes("types"));
+    // The types stage also refuses a Node that cannot load `.vibe` sources: below either floor, or between the two lines.
+    assert.deepEqual(["22.22.2", "22.22.3", "23.11.1", "24.5.0", "24.11.1", "26.0.0"].map((v) => nodeRunsVibelang(v)), [false, true, false, false, true, true]);
+  });
+
+  test("a VibeLang shell written for a transition the spec has since renamed no longer fits the generated contract", async () => {
+    const { said, next, text } = await run(copyOfProject("spec/index.md", (s) => s.replace(/\b(a|canA)ddItem\b/g, "$1ddItems")));
+    assert.equal(said("types", /src\/demo\.vibe\(\d+,\d+\): error TS\d+: Type '"addItem"' is not assignable/)?.summary, "application does not fit the generated contract", text);
+    assert.match(next, /^types \(src\/ and test\/\) is the first ✗: update src\/ and test\/ to the generated contract/);
+  });
+
+  test("every package gets the Effect face of each generated module, and VibeLang checks the shell, senders, effects and independent package machines", async () => {
+    const names = ["lamp", "lib", "mailer", "room", "shop", "vault"];
+    const specs = Object.fromEntries(names.map((n) => [`spec/${n}.md`, read(`vibestack/fixtures/${n}.md`)]));
+    const generate = async (root: string) => {
+      const specs = readSpecs(root), models = new Map();
+      const typed = typecheckAll({ root, fresh: true, used: new Set() }, specs);
+      for (const spec of specs) generated(root, spec, await typed.get(spec.name)!, models);
+      return fs.readdirSync(path.join(root, "gen")).sort();
+    };
+    const plain = await generate(scratch(specs));
+    assert.deepEqual(plain, ["_conformance.ts", "package.json", ...names.flatMap((n) => [`${n}.qnt`, `${n}.run.qnt`, `${n}.ts`, `${n}.effect.vibe`, ...(n === "lib" ? [] : [`${n}.conformance.ts`])])].sort());
+    const root = vibeScratch({ ...specs, "src/desk.vibe": `import { total } from "../gen/lib.effect.vibe"
+import { Machine as Mailer, machine as mailer } from "../gen/mailer.effect.vibe"
+import { add, apply, initial } from "../gen/shop.effect.vibe"
+import { type NotASender, type Rejected, Machine as Vault, decodeSender, machine as vault } from "../gen/vault.effect.vibe"
+
+/** The owner opens the vault, and whoever \`input\` names relabels it. */
+export effect function relabelled(input: unknown, label: string): string!(NotASender | Rejected) {
+  provide vault() {
+    const held = try Vault
+    try held.send({ type: "open" }, "Owner")
+    return (try held.send({ type: "relabel", label }, try decodeSender(input))).label
+  }
+}
+
+/** What sending \`n\` asks of the program, and how many were sent. */
+export effect function posted(n: number) {
+  provide mailer() {
+    const held = try Mailer
+    const did = try held.receive({ type: "send", n })
+    return [did.out.length, (try held.get()).sent] as const
+  }
+}
+
+/** A cart with one line, by the rules and by the transition itself, and what a library makes of it. */
+export effect function filled(sku: string, qty: number) {
+  const cart = try apply(initial, { type: "add", sku, qty })
+  return [cart.count, add(initial, sku, qty).count, total([qty])] as const
+}
+` });
+    const faces = (await generate(root)).filter((f) => f.endsWith(".effect.vibe"));
+    assert.deepEqual(faces, names.map((n) => `${n}.effect.vibe`));
+    const compiled = await tool("vibelang", ["--noEmit", "-p", "."], root);
+    assert.ok(compiled.ok, compiled.out);
+    const counter = ruleSpec("pure val initial: int = 0\npure def add(n: int): int = n + 1");
+    const named = (name: string) => vibeScratch({ "package.json": JSON.stringify({ ...JSON.parse(VIBELANG["package.json"]), name }), "spec/index.md": counter });
+    const first = named("first-machine"), second = named("second-machine");
+    await Promise.all([generate(first), generate(second)]);
+    fs.mkdirSync(path.join(first, "src"), { recursive: true });
+    fs.writeFileSync(path.join(first, "src/pair.vibe"), `import { Machine as First, machine as first } from "../gen/index.effect.vibe"
+import { Machine as Second, machine as second } from ${JSON.stringify(path.relative(path.join(first, "src"), path.join(second, "gen/index.effect.vibe")).split(path.sep).join("/"))}
+export effect function independent() {
+  provide first(), second() {
+    const a = try First
+    const b = try Second
+    try a.send({ type: "add" })
+    return [try a.get(), try b.get()]
+  }
+}
+`);
+    const paired = await exec(process.execPath, ["--import", "vibelang/register", "--input-type=module", "-e", 'import assert from "node:assert/strict"; import { Effect } from "effect"; import { independent } from "./src/pair.vibe"; assert.deepEqual(await Effect.runPromise(independent()), [1, 0]);'], first);
+    assert.equal(paired.status, 0, paired.stdout + paired.stderr);
+  });
+
+  test("a machine cannot bind a name of its Effect face, and a library may bind it", async () => {
+    const machine = "pure val initial: int = 0\npure def apply(n: int, k: int): int = n + k";
+    const { failed, said, text } = await run(vibeScratch({ "spec/t.md": ruleSpec(machine) }));
+    assert.deepEqual(failed, ["model"], text);
+    assert.ok(said("model", /^spec\/t\.md is not a valid model\n\s+spec\/t\.md: `apply` is a name of the generated Effect adapter \(gen\/t\.effect\.vibe\); name the definition otherwise$/), text);
+    const plain = oneRule("t", "A rule", machine);
+    await assert.rejects(gen(plain, parseSpec(plain, "spec/t.md")), /`apply` is a name of the generated Effect adapter/);
+    const library = vibeScratch({ "spec/t.md": ruleSpec("pure def apply(n: int, k: int): int = n + k") });
+    await gen(library, parseSpec(library, "spec/t.md"));
+    assert.match(fs.readFileSync(path.join(library, "gen/t.effect.vibe"), "utf8"), /^export \{ apply \}$/m);
   });
 
   test("Markdown the tools would read differently from a viewer is refused or read as a viewer does", async () => {
@@ -519,8 +643,10 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.ok(tooLate.said("always", /within its bound \(`within_leadsToAhead = 21`\)/), tooLate.text);
   });
 
-  test("nested set samples stay bounded and an inner lambda may shadow a match binder", async () => {
-    const root = oneRule("nested", "Nested values", "type P = A({ xs: List[int] }) | B\npure def sum(p: P): int = match p { | A(x) => x.xs.foldl(0, (n, x) => n + x) | _ => 0 }\npure def lawSum(k: int): bool = sum(A({ xs: List(1, 2) })) == 3\npure def lawCount(xs: List[Set[int]]): bool = xs.length() >= 0\npure def zeros(n: int): Set[int] = Set(n * 0)\npure def lawZeros(n: int): bool = zeros(n).contains(0)");
+  test("nested set samples stay bounded, an inner lambda may shadow a match binder, and forall and subseteq keep their meaning as quantifiers", async () => {
+    // A set's `forall` and `subseteq` are printed negated (print.ts, SET_OPS): the laws are sampled, compared with Quint and proved.
+    const quantifiers = "\npure def positive(x: int): bool = x > 0\npure def lawQuantifiers(xs: Set[int]): bool = xs.subseteq(xs) and (xs.forall(positive) or xs.exists(x => x <= 0)) and not(xs.exists(x => x > 0) and xs.forall(x => x <= 0))";
+    const root = oneRule("nested", "Nested values", "type P = A({ xs: List[int] }) | B\npure def sum(p: P): int = match p { | A(x) => x.xs.foldl(0, (n, x) => n + x) | _ => 0 }\npure def lawSum(k: int): bool = sum(A({ xs: List(1, 2) })) == 3\npure def lawCount(xs: List[Set[int]]): bool = xs.length() >= 0\npure def zeros(n: int): Set[int] = Set(n * 0)\npure def lawZeros(n: int): bool = zeros(n).contains(0)" + quantifiers);
     const { failed, text } = await run(root);
     assert.deepEqual(failed, ["review"], text);
   });
@@ -554,14 +680,23 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
 
   test("lists, nested helpers, an imported library, laws, step rules and the proof ledger work together", async () => {
     const shop = (edit?: (files: Record<string, string>) => void) => fixtures(["lib", "shop"], edit);
+    const plainRoot = shop();
+    const recorded = shop((f) => { f["src/count.ts"] = 'import { type Cart } from "../gen/shop.ts";\n//@ pure\nexport function count(c: Cart): number {\n  //@ ensures \\result === c.count\n  return c.count;\n}\n'; });
+    const [plain, recording, wrongStep, wrongLaw, importsMachine, circle] = await Promise.all([
+      run(plainRoot),
+      run(recorded, "unproved"),
+      run(shop((f) => { f["spec/shop.md"] = f["spec/shop.md"].replace("count: c.count }", "count: c.count - 1 }"); })),
+      run(shop((f) => { f["spec/lib.md"] = f["spec/lib.md"].replace("total(List(n)) == n", "total(List(n)) == n + 1"); })),
+      run(shop((f) => { f["spec/other.md"] = ruleSpec('import shop.* from "./shop"\npure val two = 2', "Uses a machine", "Other", "Group"); })),
+      run(shop((f) => { f["spec/lib.md"] = f["spec/lib.md"].replace("pure def total", 'import shop.* from "./shop"\npure def total'); })),
+    ]);
     // The nested helpers (some inside some inside every) agree between Quint and TypeScript, and simulation passes.
-    const plain = await run(shop());
     assert.deepEqual(plain.failed, ["proof", "review"], plain.text);
     assert.ok(plain.said("proof", /not proved/), plain.text);
+    // `every` reaches Dafny as a quantifier over the members, as `some` does, not as Std.Collections.Seq.All (print.ts, LIST_HELPERS).
+    assert.match(fs.readFileSync(path.join(plainRoot, "gen/proof/shop/shop.dfy"), "utf8"), /\n  !\(\(exists l :: l in c\.lines && !\(\(exists t :: t in l\.tags && \(exists m :: m in c\.lines/);
     // Once the unproved obligations are recorded, only the review is left.
     // Hand-written code proved against the shop says that it rests on what is simulated only there.
-    const recorded = shop((f) => { f["src/count.ts"] = 'import { type Cart } from "../gen/shop.ts";\n//@ pure\nexport function count(c: Cart): number {\n  //@ ensures \\result === c.count\n  return c.count;\n}\n'; });
-    const recording = await run(recorded, "unproved");
     assert.match(recording.said("proof", /^spec\/lock\.json: [1-9]\d* added, 0 removed\n/)?.detail ?? "", /^    \+ shop\.ts: /m, recording.text);
     const accepted = await run(recorded);
     assert.deepEqual(accepted.failed, ["review"], accepted.text);
@@ -573,13 +708,9 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     fs.appendFileSync(path.join(recorded, "spec/lib.md"), `\n### Two\n\n${F}quint\npure val two = 2\n${F}\n`);
     const moved = await run(recorded);
     assert.equal(moved.said("proof", /^shop\.ts: \d+ of \d+ obligations not proved; the \d+ accepted earlier were accepted for another text/)?.ok, false, moved.text);
-    const wrongStep = await run(shop((f) => { f["spec/shop.md"] = f["spec/shop.md"].replace("count: c.count }", "count: c.count - 1 }"); }));
     assert.equal(wrongStep.said("always", /^a step breaks/)?.ok, false, wrongStep.text);
-    const wrongLaw = await run(shop((f) => { f["spec/lib.md"] = f["spec/lib.md"].replace("total(List(n)) == n", "total(List(n)) == n + 1"); }));
     assert.equal(wrongLaw.said("always", /^the law .* is false for \{"n":/)?.ok, false, wrongLaw.text);
-    const importsMachine = await run(shop((f) => { f["spec/other.md"] = ruleSpec('import shop.* from "./shop"\npure val two = 2', "Uses a machine", "Other", "Group"); }));
     assert.ok(importsMachine.said("model", /is imported under a name/), importsMachine.text);
-    const circle = await run(shop((f) => { f["spec/lib.md"] = f["spec/lib.md"].replace("pure def total", 'import shop.* from "./shop"\npure def total'); }));
     assert.ok(circle.said("model", /import each other in a circle/), circle.text);
   });
 
@@ -714,50 +845,58 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       return root;
     };
     const unproved = /^index\.ts: \d+ of \d+ obligations not proved/;
+    const tsconfigured = withFile("tsconfig.json", `{"compilerOptions":{"noLib":true,"types":["missing"]},"files":["missing.ts"]}`);
+    const lookalike = copyOfProject("src/ledger.ts", (s) => s.replace('"../gen/index.ts"', '"./index.ts"'));
+    fs.writeFileSync(path.join(lookalike, "src/index.ts"), 'export * from "../gen/index.ts";\n');
+    const [namesake, configured, ownConfig, sneaky, lying, disguised] = await Promise.all([
+      run(withFile("src/index.ts", ONE)),
+      run(withFile("lemmascript.json", `{"proof-dir":"proofs"}`)),
+      run(tsconfigured),
+      run(copyOfProject("src/ledger.ts", (s) => s.replace("return order.due - order.paid;", "/* x */ //@ assume false\n  return order.paid - order.due;"))),
+      run(copyOfProject("src/ledger.ts", (s) => s.replace("\nexport function replay", '\n  import { owed } from "/tmp/lies.ts";\nexport function replay'))),
+      run(lookalike),
+    ]);
     // A file in src/ named after the spec does not take the place of the spec's own proof.
-    const namesake = await run(withFile("src/index.ts", ONE));
     assert.ok(namesake.said("proof", unproved), namesake.text);
     // A LemmaScript configuration in the project cannot point the proof at files someone could edit.
-    const configured = await run(withFile("lemmascript.json", `{"proof-dir":"proofs"}`));
     assert.ok(configured.said("proof", unproved), configured.text);
     // Nor can the project's tsconfig.json add files, globals or options to the proof: each unit has its own.
-    const tsconfigured = withFile("tsconfig.json", `{"compilerOptions":{"noLib":true,"types":["missing"]},"files":["missing.ts"]}`);
-    const ownConfig = await run(tsconfigured);
     assert.ok(ownConfig.said("proof", unproved), ownConfig.text);
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(tsconfigured, "gen/proof/index/tsconfig.json"), "utf8")).files, ["index.ts"]);
     // An annotation that asks the prover for trust is refused wherever it sits on the line.
-    const sneaky = await run(copyOfProject("src/ledger.ts", (s) => s.replace("return order.due - order.paid;", "/* x */ //@ assume false\n  return order.paid - order.due;")));
     assert.ok(sneaky.said("proof", /`\/\/@ assume` is not allowed/), sneaky.text);
     // So is an import of anything but a generated module, however it is indented, or of a look-alike of one.
-    const lying = await run(copyOfProject("src/ledger.ts", (s) => s.replace("\nexport function replay", '\n  import { owed } from "/tmp/lies.ts";\nexport function replay')));
     assert.ok(lying.said("proof", /may only import generated modules/), lying.text);
-    const lookalike = copyOfProject("src/ledger.ts", (s) => s.replace('"../gen/index.ts"', '"./index.ts"'));
-    fs.writeFileSync(path.join(lookalike, "src/index.ts"), 'export * from "../gen/index.ts";\n');
-    const disguised = await run(lookalike);
     assert.deepEqual(disguised.failed, ["proof"], disguised.text);
     assert.ok(disguised.said("proof", /may only import generated modules/), disguised.text);
     // Annotations in a file the prover does not read are refused, not ignored.
-    const module = await run(copyOfProject("src/dec.mts", () => "//@ backend dafny\nexport function dec(x: number): number {\n  //@ ensures \\result > x\n  return x - 1;\n}\n"));
+    const [module, vibe] = await Promise.all([
+      run(copyOfProject("src/dec.mts", () => "//@ backend dafny\nexport function dec(x: number): number {\n  //@ ensures \\result > x\n  return x - 1;\n}\n")),
+      run(copyOfProject("src/dec.vibe", () => "//@ backend dafny\nexport const dec = 1\n")),
+    ]);
     assert.equal(module.said("proof", /src\/dec\.mts: `\/\/@` appears in it, but only \.ts files under src\/ are proved/)?.ok, false, module.text);
+    assert.equal(vibe.said("proof", /src\/dec\.vibe: `\/\/@` appears in it, but only \.ts files under src\/ are proved/)?.ok, false, vibe.text);
   });
 
   test("a law that needs induction is proved by a proof file, and only then offered to the spec that imports it", async () => {
     const project = (edit: (f: Record<string, string>) => void = () => {}) => fixtures(["highest", "ticket"], edit);
+    const root = project();
+    const [bare, proved, unoffered, trusting] = await Promise.all([
+      run(project((f) => { delete f["spec/highest.proof.dfy"]; delete f["spec/ticket.proof.dfy"]; f["spec/typo.proof.dfy"] = ""; })),
+      run(root),
+      run(project((f) => { delete f["spec/highest.proof.dfy"]; })),
+      run(project((f) => { f["spec/highest.proof.dfy"] = f["spec/highest.proof.dfy"].replace("ProofLib.FoldLeftMax", "assume false;\n  ProofLib.FoldLeftMax"); })),
+    ]);
     // Without a proof file the law is not proved, and a proof file that belongs to nothing is pointed out.
-    const bare = await run(project((f) => { delete f["spec/highest.proof.dfy"]; delete f["spec/ticket.proof.dfy"]; f["spec/typo.proof.dfy"] = ""; }));
     assert.equal(bare.said("proof", /^highest\.ts: 1 of 1 obligations not proved/)?.ok, false, bare.text);
     assert.equal(bare.said("proof", /^spec\/typo\.proof\.dfy belongs to no proof unit/)?.ok, false, bare.text);
     // With both proof files, everything proves, and the final Dafny is there to read.
-    const root = project();
-    const proved = await run(root);
     assert.deepEqual(proved.failed, ["review"], proved.text);
     assert.ok(proved.said("proof", /^ticket\.ts: all 3 obligations proved/), proved.text);
     assert.match(fs.readFileSync(path.join(root, "gen/proof/ticket/ticket.dfy"), "utf8"), /lemma \{:axiom\} highest_lawTheHighestIsAtLeastTheStart_ensures/);
     // A law its own unit does not prove is not offered.
-    const unoffered = await run(project((f) => { delete f["spec/highest.proof.dfy"]; }));
     assert.equal(unoffered.said("proof", /^ticket\.ts: Dafny could not check it[\s\S]*unresolved identifier: highest_lawTheHighestIsAtLeastTheStart_ensures/)?.ok, false, unoffered.text);
     // A proof file that asks for trust is refused, with its file and line.
-    const trusting = await run(project((f) => { f["spec/highest.proof.dfy"] = f["spec/highest.proof.dfy"].replace("ProofLib.FoldLeftMax", "assume false;\n  ProofLib.FoldLeftMax"); }));
     assert.equal(trusting.said("proof", /spec\/highest\.proof\.dfy:4: `assume` is not allowed/)?.ok, false, trusting.text);
   });
 
@@ -768,6 +907,16 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.ok(proved.said("proof", /^office\.ts: all \d+ obligations proved/), proved.text);
     // Without the ticket's proof file its transition is not proved, so it is not offered.
     assert.equal(unoffered.said("proof", /^office\.ts: Dafny could not check it[\s\S]*unresolved identifier: ticket_issue_ensures/)?.ok, false, unoffered.text);
+    // Bump preserves the second invariant but breaks the first at an amount simulation does not sample.
+    const mixedRoot = fixtures(["magic"], (f) => {
+      f["spec/consumer.md"] = ruleSpec('import magic as M from "./magic"\npure def lawGood(k: int): bool = M::alwaysBumpsNonNegative(M::bump({ n: 0, m: 0 }, 777777))\npure def lawBad(k: int): bool = k == 777777 implies M::alwaysNonNegative(M::bump({ n: 0, m: 0 }, 777777))');
+      f["spec/consumer.proof.dfy"] = ["Good", "Bad"].map((name) => `lemma law${name}_ensures(k: int)\n  ensures (law${name}(k) == true)\n{\n  magic_bump_ensures(magic_C(0, 0), 777777);\n}\n`).join("\n");
+    });
+    const mixed = await run(mixedRoot);
+    const consumer = mixed.said("proof", /^consumer\.ts: 1 of 2 obligations not proved/);
+    assert.equal(consumer?.ok, false, mixed.text);
+    assert.match(consumer!.detail, /lawBad: /);
+    assert.doesNotMatch(consumer!.detail, /lawGood: /);
   });
 
   test("a proof file may only add lemmas, and only bodies to the generated ones; a body is the brace group that ends a lemma, after a complete header", () => {
@@ -861,8 +1010,8 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const agents = path.join(root, "AGENTS.md");
     const expected = `mine\n\n<!-- vibestack:start -->\n${read("AGENTS.md").trim()}\n<!-- vibestack:end -->\n`;
     assert.equal(fs.readFileSync(agents, "utf8"), expected);
-    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).scripts, { check: "mine", dev: "spec studio", gen: "spec gen", accept: "spec accept" });
-    assert.equal(fs.readFileSync(path.join(root, ".gitignore"), "utf8"), "gen/\n.spec-cache/\n.studio/\n");
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).scripts, { check: "mine", dev: "spec studio", gen: "spec gen", accept: "spec accept", build: "vibelang", test: "vitest run" });
+    assert.equal(fs.readFileSync(path.join(root, ".gitignore"), "utf8"), "gen/\n.spec-cache/\n.studio/\ndist/\n.vibe/\n");
     assert.ok(["sync", "design"].every((s) => fs.existsSync(path.join(root, `.claude/skills/${s}/SKILL.md`))) && added.includes("tsconfig.json"), added.join());
     assert.match(fs.readFileSync(path.join(root, "CLAUDE.md"), "utf8"), /^@AGENTS\.md$/m);
     assert.deepEqual(init(root), []);
@@ -886,6 +1035,49 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       assert.throws(() => init(root), /repair.*markers/);
       assert.equal(fs.readFileSync(agents, "utf8"), invalid);
     }
+  });
+
+  test("init starts a package that has no code in VibeLang, with the order example's toolchain, and leaves one that has code or a tsconfig.json in TypeScript; a second run adds nothing", () => {
+    const common = [".claude/skills/sync/SKILL.md", ".agents/skills/sync", ".claude/skills/design/SKILL.md", ".agents/skills/design", "AGENTS.md (Vibestack instructions)", "CLAUDE.md (imports AGENTS.md)"];
+    const json = (root: string, file: string) => JSON.parse(fs.readFileSync(path.join(root, file), "utf8"));
+    const text = (root: string, file: string) => fs.readFileSync(path.join(root, file), "utf8");
+    const scripts = { dev: "spec studio", check: "spec check", gen: "spec gen", accept: "spec accept" };
+    const example = JSON.parse(VIBELANG["package.json"]);
+    const pins = JSON.parse(read("package.json")).devDependencies;
+    const pinned = (deps: Record<string, string>) => Object.fromEntries(Object.keys(deps).map((name) => [name, pins[name]]));
+
+    const fresh = scratch({ "package.json": '{"name":"fresh"}' });
+    assert.deepEqual(init(fresh), [...common, "tsconfig.json", "vitest.config.ts", "spec/index.md", ".gitignore",
+      "package.json scripts: dev, check, gen, accept, build, test",
+      "package.json VibeLang toolchain: effect, @effect/platform-node, vibelang-runtime, vibelang, vibelang-vite, vite, vitest, @effect/vitest, @types/node (run your package manager's install)",
+      'package.json packageManager: pnpm@10.24.0', 'package.json engines.node: >=26', 'package.json "type": "module"']);
+    assert.deepEqual(json(fresh, "tsconfig.json"), JSON.parse(VIBELANG["tsconfig.json"]));
+    assert.match(text(fresh, "vitest.config.ts"), /^import vibelang from "vibelang-vite";\n[\s\S]*plugins: \[vibelang\(\)\], test: \{ include: \["test\/\*\*\/\*\.test\.vibe"\]/);
+    assert.equal(text(fresh, ".gitignore"), "gen/\n.spec-cache/\n.studio/\ndist/\n.vibe/\n");
+    assert.deepEqual(json(fresh, "package.json"), {
+      name: "fresh", type: "module", packageManager: "pnpm@10.24.0", scripts: { ...scripts, build: "vibelang", test: "vitest run" }, engines: { node: ">=26" },
+      dependencies: pinned(example.dependencies), devDependencies: pinned(example.devDependencies), pnpm: { overrides: { "@effect/platform-node-shared": pins["@effect/platform-node"] } },
+    });
+    assert.ok(Object.values({ ...json(fresh, "package.json").dependencies, ...json(fresh, "package.json").devDependencies }).every((version) => typeof version === "string" && !/^(catalog|workspace):/.test(version)));
+    assert.deepEqual(init(fresh), []);
+
+    const coded = scratch({ "package.json": '{"name":"coded"}' });
+    fs.mkdirSync(path.join(coded, "src"));
+    const configured = scratch({ "package.json": '{"name":"configured"}', "tsconfig.json": "{}\n" });
+    for (const [root, name, config, added] of [[coded, "coded", TSCONFIG, ["tsconfig.json"]], [configured, "configured", "{}\n", []]] as const) {
+      assert.deepEqual(init(root), [...common, ...added, "spec/index.md", ".gitignore", "package.json scripts: dev, check, gen, accept", 'package.json packageManager: pnpm@10.24.0', 'package.json engines.node: >=26', 'package.json "type": "module"']);
+      assert.deepEqual(json(root, "tsconfig.json"), JSON.parse(config));
+      assert.ok(!fs.existsSync(path.join(root, "vitest.config.ts")));
+      assert.equal(text(root, ".gitignore"), "gen/\n.spec-cache/\n.studio/\n");
+      assert.deepEqual(json(root, "package.json"), { name, type: "module", packageManager: "pnpm@10.24.0", engines: { node: ">=26" }, scripts });
+      assert.deepEqual(init(root), []);
+    }
+    const explicit = scratch({ "package.json": JSON.stringify({ name: "existing", packageManager: "npm@10.9.0", engines: { node: ">=28" }, pnpm: { overrides: { "@effect/platform-node-shared": "4.2.0" } } }), "tsconfig.json": "{}" });
+    init(explicit);
+    const preserved = json(explicit, "package.json");
+    assert.equal(preserved.packageManager, "npm@10.9.0");
+    assert.deepEqual(preserved.engines, { node: ">=28" });
+    assert.deepEqual(preserved.pnpm, { overrides: { "@effect/platform-node-shared": "4.2.0" } });
   });
 
   test("nested specs link to children and reuse a machine through its directory index", async () => {
@@ -983,8 +1175,9 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.equal(fs.readFileSync(path.join(root, "spec/lock.json"), "utf8"), before);
   });
 
-  test("the package's own test script is what runs, never the check itself, and a test citing a heading the spec does not have is caught", async () => {
-    const root = copyOfProject("package.json", () => JSON.stringify({ scripts: { test: `node ${JSON.stringify(path.join(project, "vibestack/spec.ts"))} check` } }));
+  test("the package's own test script is what runs, never the check itself; without one Node runs test/**/*.test.ts and a VibeLang test has no runner; a citation of a heading the spec does not have is caught, in a .vibe file as in a test", async () => {
+    const manifest = (scripts: Record<string, string>) => JSON.stringify({ ...JSON.parse(VIBELANG["package.json"]), scripts });
+    const root = copyOfProject("package.json", () => manifest({ test: `node ${JSON.stringify(path.join(project, "vibestack/spec.ts"))} check` }));
     const again = await run(root);
     assert.deepEqual(again.failed, ["tests"], again.text);
     assert.ok(again.said("tests", /a test script cannot run spec check or accept: the check already runs the tests/), again.text);
@@ -993,14 +1186,21 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { test: `cd ${JSON.stringify(other)} && node ${JSON.stringify(path.join(project, "vibestack/spec.ts"))} check --json > /dev/null; test -f gen/door.ts` } }));
     const elsewhere = await run(root);
     assert.ok(elsewhere.said("tests", /^pass/), elsewhere.text);
-    fs.writeFileSync(path.join(root, "package.json"), "{}");
+    fs.writeFileSync(path.join(root, "package.json"), manifest({}));
     const cite = (heading: string) => `// spec/index.md, ${JSON.stringify(heading)}\n`;
     const cites = ["Story: Check out", "Only a non-empty draft can be submitted", "Refunds are instant"].map(cite).join("");
     fs.mkdirSync(path.join(root, "test/journeys"), { recursive: true });
-    fs.writeFileSync(path.join(root, "test/journeys/checkout.test.ts"), `import { test } from "node:test";\n${cites}test("a journey", () => {});\n`);
+    // Node's runner loads the shell the journey imports only through VibeLang's loader.
+    fs.writeFileSync(path.join(root, "test/journeys/checkout.test.ts"), `import assert from "node:assert/strict";\nimport { test } from "node:test";\nimport { noted } from "../../src/notes.vibe";\n${cites}test("a journey", () => assert.ok(noted));\n`);
+    fs.writeFileSync(path.join(root, "src/notes.vibe"), `${cite("Story: Check out")}${cite("Refunds are final")}export const noted = true\n`);
+    // What the compiler writes for notes.vibe is its output, not the package's code, wherever it lands.
+    fs.writeFileSync(path.join(root, "src/notes.d.vibe.ts"), `${cite("Refunds are final")}export declare const noted: boolean;\n`);
+    const dangling = [["src/notes.vibe:2", "Refunds are final"], ["test/journeys/checkout.test.ts:6", "Refunds are instant"]].map(([at, heading]) => `${at}  ${cite(heading).slice(3, -1)}`);
+    assert.deepEqual(danglingCitations(root, readSpecs(root)), dangling);
     const { failed, text, said } = await run(root);
     assert.deepEqual(failed, ["tests"], text);
-    assert.ok(said("tests", /^1 citations[\s\S]*test\/journeys\/checkout\.test\.ts:4 {2}spec\/index\.md, "Refunds are instant"$/), text);
+    assert.equal(said("tests", /^2 citations name no story or rule of the spec\n/)?.detail, dangling.map((d) => `      ${d}`).join("\n"), text);
+    assert.equal(said("tests", /^test\/app\.test\.vibe: a VibeLang test, and the package has no `test` script to run it/)?.ok, false, text);
     assert.ok(said("tests", /^pass\n$/), text);
     // A driver that observes through the generated module checks the oracle against itself.
     fs.writeFileSync(path.join(root, "test/journeys/checkout.test.ts"), `import { test } from "node:test";\nimport { conformance } from "../../gen/index.conformance.ts";\nimport { initial, step } from "../../gen/index.ts";\ntest("a journey", () => conformance({ reset() {}, dispatch: () => "accepted", observe: () => step(initial, { type: "submit" }) } as never));\n`);
@@ -1008,12 +1208,21 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.ok(oracle.said("tests", /conformance drivers must reach the application[\s\S]*checkout\.test\.ts:4: driver uses generated step/), oracle.text);
   });
 
+  test("a conformance driver that asks the Effect face of the generated oracle is refused, though it may name a typed failure", async () => {
+    const { said, text } = await run(copyOfProject("test/app.test.vibe", (s) => s.replace("import { type Event, Rejected }", "import { type Event, Rejected, apply, initial }")
+      .replace("app.runPromise(outcome(id, event))", 'app.runPromise(Effect.match(apply(initial, event), { onSuccess: () => "accepted" as const, onFailure: (error) => (error instanceof Rejected ? "refused" as const : "accepted" as const) }))')));
+    assert.match(said("tests", /^conformance drivers must reach the application, not call the generated oracle\n/)?.detail ?? "",
+      /^ +test\/app\.test\.vibe:(\d+): driver uses generated apply\n +test\/app\.test\.vibe:\1: driver uses generated initial$/, text);
+  });
+
   test("nothing stale survives in gen/", async () => {
     const root = copyOfProject();
     fs.mkdirSync(path.join(root, "gen"), { recursive: true });
-    fs.writeFileSync(path.join(root, "gen/renamed.ts"), "export const stale = true;\n");
+    for (const stale of ["renamed.ts", "renamed.effect.vibe"]) fs.writeFileSync(path.join(root, "gen", stale), "export const stale = true;\n");
     await check(root);
-    assert.deepEqual(fs.readdirSync(path.join(root, "gen")).filter((f) => f.endsWith(".ts")).sort(), ["_conformance.ts", "index.conformance.ts", "index.ts"]);
+    // The VibeLang compiler also emits the declarations of the adapter's pure module.
+    assert.deepEqual(fs.readdirSync(path.join(root, "gen")).filter((f) => /\.(ts|vibe)$/.test(f)).sort(),
+      ["_conformance.ts", "index.conformance.ts", "index.effect.vibe", "index.effect.vibe.pure.d.ts", "index.ts"]);
   });
 
   test("a truncated cache entry is recomputed and generated modules run in a CommonJS project", async () => {
@@ -1031,10 +1240,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
 
   test("changing an imported definition invalidates model and simulation results", async () => {
     const wrap = (quint: string) => ruleSpec(quint, "Price", "Library", "Values");
-    const root = scratch({
-      "spec/lib.md": wrap("pure val price = 1"),
-      "spec/use.md": wrap('import lib.* from "./lib"\npure def lawPrice(k: int): bool = price == 1'),
-    });
+    const root = libAndUse(wrap("pure val price = 1"), wrap('import lib.* from "./lib"\npure def lawPrice(k: int): bool = price == 1'));
     const first = await run(root);
     assert.deepEqual(first.failed, ["review"], first.text);
     fs.writeFileSync(path.join(root, "spec/lib.md"), wrap("pure val price = 2"));
@@ -1043,18 +1249,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
   });
 
   test("proof caching follows library changes and compiler failure waits for proof completion", async () => {
-    const root = fixtures(["highest"], (f) => { f["package.json"] = '{"type":"module"}'; });
-    fs.cpSync(path.join(project, "vibestack"), path.join(root, "vibestack"), {
-      recursive: true, filter: (from) => !["examples", "studio"].some((d) => from === path.join(project, "vibestack", d)),
-    });
-    const modules = path.join(root, "node_modules");
-    fs.mkdirSync(path.join(modules, ".bin"), { recursive: true });
-    for (const entry of fs.readdirSync(nodeModules).filter((f) => f !== ".bin"))
-      fs.symlinkSync(path.join(nodeModules, entry), path.join(modules, entry), fs.statSync(path.join(nodeModules, entry)).isDirectory() ? "dir" : "file");
-    for (const tool of ["quint", "lsc"]) {
-      const executable = process.platform === "win32" ? `${tool}.cmd` : tool;
-      fs.symlinkSync(path.join(nodeModules, ".bin", executable), path.join(modules, ".bin", executable), "file");
-    }
+    const root = toolchain(fixtures(["highest"], (f) => { f["package.json"] = '{"type":"module"}'; }), "quint", "lsc");
     const script = path.join(root, "vibestack/spec.ts");
     const first = await runCli(script, root, "check", "--json");
     const checked = JSON.parse(first.stdout);
@@ -1067,7 +1262,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.ok(fs.readFileSync(path.join(root, "gen/proof/highest/highest.dfy"), "utf8").includes(marker));
     fs.writeFileSync(path.join(root, "tsconfig.json"), '{"compilerOptions":{"noEmit":true},"include":["gen/*.ts"]}');
     if (process.platform !== "win32") {
-      const compiler = path.join(modules, ".bin/tsc");
+      const compiler = path.join(root, "node_modules/.bin/tsc");
       fs.writeFileSync(compiler, "#!/bin/sh\nexit 1\n");
       fs.chmodSync(compiler, 0o644);
     }
@@ -1094,12 +1289,23 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.ok(moved.includes("Story: Fill a draft / The amount due is always the price of the units: model changed through unitPrice (Domain / Unit price and order size)"), moved.join("\n"));
     assert.ok(!moved.some((m) => m.startsWith("Story: Check out / A payment never exceeds the balance")), "a rule that does not use the price is not flagged");
 
-    // Across specs: a change to a library definition flags the rules that use it.
-    const shop = fixtures(["lib", "shop"]);
-    for (const spec of readSpecs(shop)) acceptReviews(shop, spec);
-    fs.writeFileSync(path.join(shop, "spec/lib.md"), read("vibestack/fixtures/lib.md").replace("acc + x)", "x + acc)"));
-    const flagged = pendingItems(shop);
+    // Across specs: a change to a library definition flags the rules that use it,
+    // through a namespace beside a local namesake, and past a comment that hides a namesake.
+    const libChanged = (root: string, lib: string) => {
+      for (const spec of readSpecs(root)) acceptReviews(root, spec);
+      fs.writeFileSync(path.join(root, "spec/lib.md"), lib);
+      return pendingItems(root);
+    };
+    const flagged = libChanged(fixtures(["lib", "shop"]), read("vibestack/fixtures/lib.md").replace("acc + x)", "x + acc)"));
     assert.ok(flagged.includes("Story: Fill a cart / A cart holds lines: model changed through total (spec/lib.md: Sums / The total of a list)"), flagged.join("\n"));
+    const names = (quint: string) => ruleSpec(quint, "Identity", "Names", "Rules");
+    const namespaced = libChanged(libAndUse(names("pure def identity(n: int): int = n"), names('import lib as L from "./lib"\npure def identity(n: int): int = 0\npure def lawIdentity(n: int): bool = L::identity(n) == n')),
+      names("pure def identity(n: int): int = n + 0"));
+    assert.ok(namespaced.some((item) => item.includes("model changed through") && item.includes("identity")), namespaced.join("\n"));
+    const lib = ruleSpec("pure def value(n: int): int = n + 1", "Imported", "Names", "Rules");
+    const hidden = libChanged(libAndUse(lib, `# Use\n\n## Rules\n\n### Local\n\n${F}quint\nimport lib.* from "./lib"\n/*\npure def value(n: int): int = 0\n*/\npure def other(n: int): int = n\n${F}\n\n### Uses imported value\n\n${F}quint\npure def lawValue(n: int): bool = value(n) > n\n${F}\n`),
+      lib.replace("n + 1", "n + 2"));
+    assert.ok(hidden.some((item) => item.startsWith("Rules / Uses imported value: model changed through") && item.includes("value")), hidden.join("\n"));
 
     // The //@ lines of hand-written code: changed, new, and gone, whether the file loses them or is deleted.
     const contract = () => pendingContracts(root).map((p) => `${p.where}: ${p.status}`);
@@ -1111,26 +1317,6 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     edit("src/ledger.ts", (s) => s.replace(/^.*\/\/@.*\n/gm, ""));
     fs.rmSync(path.join(root, "src/extra.ts"));
     assert.deepEqual(contract(), ["src/extra.ts: contract removed", "src/ledger.ts: contract removed"]);
-  });
-
-  test("a namespaced dependency remains reviewed when a local definition has the same name", () => {
-    const wrap = (quint: string) => ruleSpec(quint, "Identity", "Names", "Rules");
-    const root = scratch({
-      "spec/lib.md": wrap("pure def identity(n: int): int = n"),
-      "spec/use.md": wrap('import lib as L from "./lib"\npure def identity(n: int): int = 0\npure def lawIdentity(n: int): bool = L::identity(n) == n'),
-    });
-    for (const spec of readSpecs(root)) acceptReviews(root, spec);
-    fs.writeFileSync(path.join(root, "spec/lib.md"), wrap("pure def identity(n: int): int = n + 0"));
-    assert.ok(pendingItems(root).some((item) => item.includes("model changed through") && item.includes("identity")), pendingItems(root).join("\n"));
-  });
-
-  test("a comment cannot hide an imported rule's dependency from review", () => {
-    const lib = ruleSpec("pure def value(n: int): int = n + 1", "Imported", "Names", "Rules");
-    const use = `# Use\n\n## Rules\n\n### Local\n\n${F}quint\nimport lib.* from "./lib"\n/*\npure def value(n: int): int = 0\n*/\npure def other(n: int): int = n\n${F}\n\n### Uses imported value\n\n${F}quint\npure def lawValue(n: int): bool = value(n) > n\n${F}\n`;
-    const root = scratch({ "spec/lib.md": lib, "spec/use.md": use });
-    for (const spec of readSpecs(root)) acceptReviews(root, spec);
-    fs.writeFileSync(path.join(root, "spec/lib.md"), lib.replace("n + 1", "n + 2"));
-    assert.ok(pendingItems(root).some((item) => item.startsWith("Rules / Uses imported value: model changed through") && item.includes("value")), pendingItems(root).join("\n"));
   });
 
   test("source edited by a test cannot be accepted with a proof of its earlier contents", async () => {
@@ -1162,13 +1348,13 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const before = await run(root);
     assert.deepEqual(before.failed, ["review"], before.text);
     assert.ok(before.said("review", /story changed/) && before.said("review", /src\/ledger\.ts\n\s+contract changed/), before.text);
-    assert.match(before.next, /npm run accept/);
+    assert.match(before.next, /pnpm accept/);
     await check(root, "reviews");
     const after = await run(root);
     assert.deepEqual(after.failed, [], after.text);
     assert.equal(after.next, "all green");
-    // The total is the `ensures` of the generated Dafny: two are left in src/ledger.ts, and its loop invariants are not counted.
-    assert.ok(after.said("proof", /^src-ledger\.ts: all 2 obligations proved/), after.text);
+    // The total is the `ensures` of the generated Dafny: three remain after the paid-order clause is removed; loop invariants are not counted.
+    assert.ok(after.said("proof", /^src-ledger\.ts: all 3 obligations proved/), after.text);
   });
 
   test("a second check in the same project is refused, a lock left by a process that ended is taken over, and unused cache entries go", async () => {
@@ -1185,6 +1371,50 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.ok(!fs.existsSync(lock), "the lock is released");
     assert.ok(!fs.existsSync(unused), "a cache entry the run did not use is deleted");
     assert.ok(fs.readdirSync(path.dirname(lock)).length > 0, "the entries it used are kept");
+  });
+
+  test("a rebuilt packaged command can generate a project from the repository root", async () => {
+    const root = oneRule("packaged", "A packaged value", "pure val answer = 42");
+    const copy = toolchain(scratch({ "package.json": read("package.json"), "tsconfig.build.json": read("tsconfig.build.json") }), "quint", "lsc", "tsc");
+    const built = await tool("tsc", ["-p", "tsconfig.build.json"], copy);
+    assert.ok(built.ok, built.out);
+    fs.mkdirSync(path.join(copy, "dist/proof"), { recursive: true });
+    fs.copyFileSync(LIB_FILE, path.join(copy, "dist/proof/lib.dfy"));
+    fs.cpSync(path.join(project, "vibestack/std"), path.join(copy, "dist/std"), { recursive: true });
+    const script = path.join(copy, "dist/spec.js");
+    fs.chmodSync(script, 0o755);
+    const generated = await exec(process.platform === "win32" ? process.execPath : script,
+      [...(process.platform === "win32" ? [script] : []), "gen", root], copy);
+    assert.equal(generated.status, 0, generated.stdout + generated.stderr);
+    assert.equal((await import(path.join(root, "gen/packaged.ts"))).answer, 42);
+
+    // pnpm exposes transitive executables as regular shims while keeping their package beside the tool's dependency.
+    const consumer = oneRule("arithmetic", "A value equals itself", "pure def lawIdentity(n: int): bool = n == n");
+    const installed = path.join(consumer, "node_modules/vibestack");
+    fs.mkdirSync(path.join(installed, "node_modules"), { recursive: true });
+    fs.writeFileSync(path.join(installed, "package.json"), '{"type":"module"}');
+    fs.cpSync(path.join(copy, "dist"), path.join(installed, "dist"), { recursive: true });
+    for (const entry of fs.readdirSync(nodeModules).filter((name) => name !== ".bin"))
+      fs.symlinkSync(path.join(nodeModules, entry), path.join(installed, "node_modules", entry), fs.statSync(path.join(nodeModules, entry)).isDirectory() ? "dir" : "file");
+    const binaries = path.join(consumer, "node_modules/.bin");
+    fs.mkdirSync(binaries, { recursive: true });
+    fs.symlinkSync(path.join(nodeModules, ".pnpm"), path.join(consumer, "node_modules/.pnpm"), "dir");
+    for (const dependency of ["@informalsystems", "typescript"])
+      fs.symlinkSync(path.join(nodeModules, dependency), path.join(consumer, "node_modules", dependency), "dir");
+    for (const command of ["quint", "tsc"]) {
+      const name = process.platform === "win32" ? `${command}.cmd` : command;
+      fs.symlinkSync(path.join(nodeModules, ".bin", name), path.join(binaries, name), "file");
+    }
+    const lsc = path.join(nodeModules, "lemmascript/tools/dist/lsc.js");
+    const shim = path.join(binaries, process.platform === "win32" ? "lsc.cmd" : "lsc");
+    const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+    fs.writeFileSync(shim, process.platform === "win32" ? `@"${process.execPath}" "${lsc}" %*\r\n` : `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(lsc)} "$@"\n`);
+    fs.chmodSync(shim, 0o755);
+    assert.ok(!fs.existsSync(path.join(consumer, "node_modules/lemmascript")));
+    const checked = await runCli(path.join(installed, "dist/spec.js"), consumer, "check", "--json");
+    const proof = JSON.parse(checked.stdout).results.find((result: Result) => result.stage === "proof");
+    assert.ok(proof?.ok, checked.stdout + checked.stderr);
+    assert.match(proof.summary, /all 1 obligations proved/);
   });
 
   test("the command line checks, generates and watches a project directory from its parent", async () => {
@@ -1218,7 +1448,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const checked = JSON.parse((await cli(parent, "check", "a project", "--json")).stdout);
     assert.deepEqual([...new Set(checked.results.filter((r: Result) => !r.ok).map((r: Result) => r.stage))], ["review"], JSON.stringify(checked, null, 2));
     for (const stage of ["model", "always", "sometimes", "replay", "proof"]) assert.ok(checked.results.some((r: Result) => r.stage === stage && r.ok), stage);
-    assert.match(checked.next, /npm run accept/);
+    assert.match(checked.next, /pnpm accept/);
     assert.ok(fs.existsSync(path.join(root, "gen/tally.ts")));
     assert.ok(!fs.existsSync(path.join(parent, "gen")));
     const accepted = await cli(parent, "accept", root);
@@ -1425,16 +1655,4 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const ledger = path.join(root, "spec/lock.json");
     assert.ok(!fs.existsSync(ledger) || !fs.readFileSync(ledger, "utf8").includes("src-inc.ts"), text);
   });
-});
-
-// The build rewrites dist/ and Studio's gen/ in this checkout, so it runs only once no concurrent case reads them.
-test("a rebuilt packaged command can generate a project from the repository root", async () => {
-  const root = oneRule("packaged", "A packaged value", "pure val answer = 42");
-  const built = await exec(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "build"], project);
-  assert.equal(built.status, 0, built.stdout + built.stderr);
-  const script = path.join(project, "dist/spec.js");
-  const generated = await exec(process.platform === "win32" ? process.execPath : script,
-    [...(process.platform === "win32" ? [script] : []), "gen", root], project);
-  assert.equal(generated.status, 0, generated.stdout + generated.stderr);
-  assert.equal((await import(path.join(root, "gen/packaged.ts"))).answer, 42);
 });

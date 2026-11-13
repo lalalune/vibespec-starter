@@ -4,7 +4,7 @@ import path from "node:path";
 import { parseSpec, readSpecs, specName, type Spec } from "../../parse.ts";
 import { dependencies } from "../../review.ts";
 import { danglingCitations, filesUnder } from "../../util.ts";
-import { itemsOf, nodeId, nodesOfOutline, outlineOf } from "./markdown.ts";
+import { itemsOf, nodeId, nodesOfOutline, outlineOf, SIGN } from "./markdown.ts";
 
 // --- identity: which node of the baseline a node of the current specs is -----------------------------
 
@@ -181,12 +181,10 @@ export function manifestOf(root: string, baseline: Record<string, string>, curre
 
 // --- the prompt ---------------------------------------------------------------------------------
 
-const SIGN = { added: "+", deleted: "-", changed: "~" } as const;
-
 /** The sync request for an agent, at most `limit` characters; the whole manifest is in `.studio/manifest.json`. */
 export function promptFor(m: Manifest | undefined, { skill, check }: { skill: string; check: string }, limit = Infinity): string {
   const head = [
-    `Sync the specs: follow the sync skill in ${skill}, after reading AGENTS.md and README.md in full.`,
+    `Sync the specs: follow the sync skill in ${skill}, after reading AGENTS.md in full.`,
     m ? "I published these changes from the spec studio; the full manifest, with what each asks of you, is in .studio/manifest.json." : "",
     `Run \`${check}\` until only review items and obligations you could not prove are left, then stop and report as the skill says. Do not run accept, and do not edit .studio/.`,
   ].filter(Boolean).join("\n");

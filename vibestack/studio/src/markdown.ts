@@ -11,6 +11,8 @@ export const storyKey = (title: string) => `## ${title.trim()}`;
 export const ruleKey = (story: string, title: string) => `${story.trim()} / ${title.trim()}`;
 /** Which story or rule of which spec a node is, as the manifest and the page's origins name it. */
 export const nodeId = (file: string, key: string) => `${file}\0${key}`;
+/** The mark of each kind of change in the manifest (./doc.ts), in the prompt and on the page. */
+export const SIGN = { added: "+", deleted: "-", changed: "~" } as const;
 
 /** A story, or a rule with its story's id, of an outline in one spec, with its ledger key and node id. */
 export interface OutlineNode { id: string; key: string; story: Story; rule?: Rule; parent?: string }

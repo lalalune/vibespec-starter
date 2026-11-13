@@ -13,7 +13,8 @@ import { dafnyVersion, solver } from "./prove.ts";
 const toolchains = new Map<string, Promise<string>>();
 function toolchainId(stage: "model" | "simulate" | "prove"): Promise<string> {
   let id = toolchains.get(stage);
-  if (!id) toolchains.set(stage, (id = (async () => {
+  if (id) return id;
+  toolchains.set(stage, (id = (async () => {
     const version = (dep: string) => {
       for (let dir = import.meta.dirname; dir !== path.dirname(dir); dir = path.dirname(dir)) {
         const file = path.join(dir, "node_modules", dep, "package.json");
@@ -21,9 +22,9 @@ function toolchainId(stage: "model" | "simulate" | "prove"): Promise<string> {
       }
       return dep;
     };
-    // Every file of the tools themselves, as source or as built: those at the top and in gen/, the only directories of
-    // tool code, each read without descending; examples, Studio and self-tests are not part of them.
-    // Only the prover's own file is left out of what a model or simulation depends on: anything else may be used by both.
+    // The tools' own scripts, as source or as built: this directory and gen/, never the projects below it (examples,
+    // Studio), whose checks rewrite their gen/ while this one reads. Only the prover's own file is left out of what a
+    // model or simulation depends on: anything else may be used by both.
     const ext = path.extname(import.meta.filename);
     const own = (f: string) => f.endsWith(ext) && f !== `selftest${ext}` && (stage === "prove" || f !== `prove${ext}`);
     const tools = ["", "gen"].flatMap((dir) => fs.readdirSync(path.join(import.meta.dirname, dir)).map((f) => path.join(dir, f))).filter(own).sort()
@@ -35,6 +36,8 @@ function toolchainId(stage: "model" | "simulate" | "prove"): Promise<string> {
     }
     return parts.join(" ");
   })()));
+  // A failed probe is not remembered: the next check probes again.
+  id.catch(() => toolchains.delete(stage));
   return id;
 }
 

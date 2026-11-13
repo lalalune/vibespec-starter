@@ -1,0 +1,67 @@
+// The program around spec/assistant.md: it knows who sent each event from the service the event came
+// through, never from what was said (spec/assistant.md, "Who sends an event").
+import { Machine, type NotAnEvent, type Rejected } from "../gen/assistant.effect.vibe"
+import type * as T from "../gen/assistant.effect.vibe"
+
+export error NoAnswer { from: T.Actor }
+
+/** The model that chooses the agent's actions. What it returns is untrusted. */
+export service Model {
+  choose(seen: T.Assistant): unknown!NoAnswer
+}
+
+/** Websites and devices: the biller's answer to a request, the page the browser shows, and what the program does to them. */
+export service World {
+  bill(request: number): number!NoAnswer
+  page(): T.Page!!
+  perform(carried: T.Effect): void!!
+}
+
+export type Said = "begin" | "confirm" | "decline"
+export type Refusal = Rejected | NotAnEvent | NoAnswer
+
+/** Where a turn stopped, and each answer of the model that ended it instead of becoming a choice. */
+export interface Turn {
+  readonly state: T.Assistant
+  readonly refused: ReadonlyArray<Refusal>
+}
+
+/** Offers the rules the page showing now and, for a request still waiting, the biller's answer. */
+effect function observe() {
+  const machine = try Machine
+  const world = try World
+  const seen = (try machine.send({ type: "load", page: try world.page() }, "World")).state
+  if (!seen.waiting) return seen
+  // spec/assistant.md, "Only the world replies, and only to the request still waiting": no answer, or one refused, changes nothing.
+  return effect {
+    return (try machine.receive({ type: "reply", request: seen.request, amount: try world.bill(seen.request) }, "World")).state
+  } catch () => seen
+}
+
+/**
+ * What the person said, then the agent's actions until the turn ends or asks the person. It fails with `Rejected`
+ * when the rules refuse what the person said.
+ */
+export effect function hear(said: Said): Turn!Rejected!(Machine | Model | World) {
+  const machine = try Machine
+  const model = try Model
+  const world = try World
+  const refused: Refusal[] = []
+  try observe()
+  let state = (try machine.send({ type: said }, "Person")).state
+  // spec/assistant.md, "Every choice spends the budget": each pass makes one choice, so there are at most `maxActions`.
+  while (state.phase === "Planning") {
+    // The model's answer can only become the Agent's choice. Any other answer finishes the turn, which
+    // spec/assistant.md, "A turn's budget stays within bounds, and a turn being planned has some left" allows.
+    const chosen = effect {
+      return try machine.receive({ type: "choose", choice: try model.choose(state) }, "Agent")
+    } catch effect (error) => {
+      refused.push(error)
+      return try machine.send({ type: "choose", choice: "Finish" }, "Agent")
+    }
+    // spec/assistant.md, "What the program carries out": what this choice returned beside the state.
+    for (const carried of chosen.out) try world.perform(carried)
+    state = try observe()
+  }
+  return { state, refused }
+}

@@ -18,28 +18,35 @@ jobs:
           filters: |
             tools:
               - "vibestack/**"
+              - "packages/**"
+              - "pnpm-*.yaml"
               - "package*.json"
 
   check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      # Dafny's action installs Node 16 for itself, so the project Node version must come after it.
       - uses: dafny-lang/setup-dafny-action@v1
         with:
           dafny-version: "4.11.0"
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v7
         with:
           node-version: 26
-          cache: npm
-      - run: npm ci --workspaces=false
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
       # Quint's evaluator, which it would otherwise download on every run. `.spec-cache/` is never restored: CI
       # checks from scratch.
       - uses: actions/cache@v4
         with:
           path: ~/.quint
-          key: quint-${{ hashFiles('package-lock.json') }}
-      - run: npm run check
+          key: quint-${{ hashFiles('pnpm-lock.yaml') }}
+      - run: pnpm check
+      - run: pnpm -r --if-present typecheck
+      - run: pnpm --filter @repo/ui --filter @repo/design-system --filter @repo/storybook test
+      - run: pnpm --filter fullstack-todo exec playwright install --with-deps chromium
+      - run: pnpm --filter fullstack-todo gen
+      - run: pnpm --filter fullstack-todo test
       - if: always()
         uses: actions/upload-artifact@v7
         with:
@@ -57,16 +64,17 @@ jobs:
       - uses: dafny-lang/setup-dafny-action@v1
         with:
           dafny-version: "4.11.0"
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v7
         with:
           node-version: 26
-          cache: npm
-      - run: npm ci --workspaces=false
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
       - uses: actions/cache@v4
         with:
           path: ~/.quint
-          key: quint-${{ hashFiles('package-lock.json') }}
-      - run: npm run selftest
+          key: quint-${{ hashFiles('pnpm-lock.yaml') }}
+      - run: pnpm selftest
 
   # Studio and the examples, each with its own spec, proofs, tests and lock.
   workspaces:
@@ -78,13 +86,14 @@ jobs:
       - uses: dafny-lang/setup-dafny-action@v1
         with:
           dafny-version: "4.11.0"
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v7
         with:
           node-version: 26
-          cache: npm
-      - run: npm ci
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
       - uses: actions/cache@v4
         with:
           path: ~/.quint
-          key: quint-${{ hashFiles('package-lock.json') }}
-      - run: npm run check --workspaces --if-present
+          key: quint-${{ hashFiles('pnpm-lock.yaml') }}
+      - run: pnpm -r --if-present check

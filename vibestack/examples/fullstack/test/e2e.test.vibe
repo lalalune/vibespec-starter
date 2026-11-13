@@ -1,0 +1,88 @@
+// spec/system.md, "Story: Edit together, online or not"; spec/system.md, "Story: Editing alone is never refused"
+// Two tabs and the real HTTP server: the convergence the system spec says is
+// possible, checked on the running application.
+import { assert, it } from "@effect/vitest"
+import { type Client, view } from "../gen/client.effect.vibe"
+import { Machine } from "../gen/server.effect.vibe"
+import { sameTodos } from "../gen/todo.effect.vibe"
+import { type Tab, newId, open } from "../src/web/sync.vibe"
+import { Connections, Served } from "./served.vibe"
+
+effect function until(tab: Tab.Shape, ok: (c: Client) => boolean) {
+  try timeout(Stream.runHead(Stream.filter(tab.changes, ok)), "5 seconds")
+}
+
+it.live("two tabs, one of them offline for a while, end up with the server's list", () => effect {
+  provide Served {
+    const server = try Machine
+    // The tabs stop listening before the server closes.
+    try scoped(effect {
+      const a = try open("", "a")
+      const b = try open("", "b")
+      try Effect.forkScoped(a.listen())
+      try Effect.forkScoped(b.listen())
+
+      // a adds milk; b hears about it through the push stream.
+      const milk = newId("a", try a.get())
+      try a.edit({ type: "create", id: milk, title: "milk" })
+      try until(b, (c) => c.seen === 1)
+
+      // a goes offline and keeps editing; b ticks milk off meanwhile.
+      try a.dispatch({ type: "goOffline" })
+      const eggs = newId("a", try a.get())
+      try a.edit({ type: "create", id: eggs, title: "eggs" })
+      try a.edit({ type: "rename", id: milk, title: "oat milk" })
+      const queued = (try a.get()).pending
+      try b.edit({ type: "setDone", id: milk, done: true })
+      const ticked = (try server.get()).version
+
+      // A request that arrives twice is applied once.
+      try a.send(queued[0]!)
+      try a.send({ seq: 2, op: { kind: "create", id: eggs, title: "eggs", done: false } })
+      const sentTwice = (try server.get()).version
+
+      // Back online: the queue is sent again and the tab catches up.
+      try a.goOnline()
+      try until(b, (c) => c.seen === 4)
+      try b.refresh()
+
+      // spec/client.md, "Story: Hear back from the server"
+      try (try Connections).disconnect()
+      try a.edit({ type: "setDone", id: eggs, done: true })
+      const { version, todos } = try server.get()
+      try until(b, (c) => c.seen === version)
+
+      const [ours, theirs] = [try a.get(), try b.get()]
+      try Effect.try(() => {
+        assert.strictEqual(queued.length, 2)
+        assert.strictEqual(ticked, 2)
+        assert.strictEqual(sentTwice, 3)
+        assert.strictEqual(ours.pending.length, 0)
+        assert.strictEqual(theirs.pending.length, 0)
+        assert.strictEqual(ours.seen, version)
+        assert.strictEqual(theirs.seen, version)
+        assert.isTrue(sameTodos(view(ours), view(theirs)))
+        assert.isTrue(sameTodos(view(ours), todos))
+        assert.deepStrictEqual(view(ours).map((t) => [t.title, t.done]), [["oat milk", true], ["eggs", true]])
+      })
+    })
+  }
+})
+
+it.live("a lone user's queued edits reach the server in order, and none is refused", () => effect {
+  provide Served {
+    const a = try open("", "a")
+    try a.dispatch({ type: "goOffline" })
+    const milk = newId("a", try a.get())
+    try a.edit({ type: "create", id: milk, title: "milk" })
+    try a.edit({ type: "setDone", id: milk, done: true })
+    try a.edit({ type: "rename", id: milk, title: "oat milk" })
+    try a.goOnline()
+    const c = try a.get()
+    try Effect.try(() => {
+      assert.strictEqual(c.pending.length, 0)
+      assert.strictEqual(c.refusals, 0)
+      assert.deepStrictEqual(view(c).map((t) => [t.title, t.done]), [["oat milk", true]])
+    })
+  }
+})

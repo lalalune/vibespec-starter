@@ -18,12 +18,19 @@ pure val initial: Registry = { entries: List(), last: Admin }
 
 ### What the simulator tries
 
-Three project keys, three spreadsheets, two channels, and the empty channel.
+Three project keys, three spreadsheets, two channels, and the empty value of
+each, plus four registries.
 
 ```quint
-pure val keyValues = Set("a", "b", "c")
-pure val sheetValues = Set("S1", "S2", "S3")
+pure val keyValues = Set("", "a", "b", "c")
+pure val sheetValues = Set("", "S1", "S2", "S3")
 pure val channelValues = Set("", "C1", "C2")
+pure val rValues = Set(
+  { entries: List(), last: Admin },
+  { entries: List({ key: "a", sheet: "S1", channel: "C1" }), last: Admin },
+  { entries: List({ key: "a", sheet: "S1", channel: "C1" }, { key: "b", sheet: "S2", channel: "C1" }), last: Sheet },
+  { entries: List({ key: "a", sheet: "S1", channel: "C1" }, { key: "b", sheet: "S2", channel: "C2" }), last: Admin },
+)
 ```
 
 ## Story: Connect a sheet as a project
@@ -33,8 +40,7 @@ pure val channelValues = Set("", "C1", "C2")
 
 ### A sheet is connected as at most one project
 
-If two projects shared one spreadsheet, both would hand out the same task
-numbers.
+Two projects sharing a spreadsheet would hand out the same task numbers.
 
 ```quint
 pure def hasKey(r: Registry, key: str): bool = r.entries.some(e => e.key == key)
@@ -51,9 +57,31 @@ pure def connect(r: Registry, key: str, sheet: str, channel: str): Registry =
 
 pure def alwaysASheetHasOneProject(r: Registry): bool =
   r.entries.every(a => r.entries.select(b => b.sheet == a.sheet).length() == 1)
+```
 
+### A project key names one project
+
+Commands and links name a project by its key.
+
+```quint
 pure def alwaysAKeyNamesOneProject(r: Registry): bool =
   r.entries.every(a => r.entries.select(b => b.key == a.key).length() == 1)
+```
+
+### Every project has a key and a sheet
+
+An empty key would read as "no project" where the dashboard answers which
+project a channel means, and an empty sheet names no spreadsheet.
+
+```quint
+pure def alwaysEveryProjectHasAKeyAndASheet(r: Registry): bool =
+  r.entries.every(e => e.key != "" and e.sheet != "")
+```
+
+### Two projects can be connected
+
+```quint
+pure def sometimesTwoProjectsAreConnected(r: Registry): bool = r.entries.length() >= 2 and r.last == Admin
 ```
 
 ### A project can be disconnected
@@ -73,6 +101,10 @@ pure def disconnect(r: Registry, key: str): Registry =
 
 ### The admin screen never gives two projects the same channel
 
+A project whose channel the admin screen sets, or that it connects, does not
+share that channel with any other project. A channel shared by hand edits may
+stay shared.
+
 ```quint
 pure def canSetChannel(r: Registry, key: str, channel: str): bool =
   hasKey(r, key) and channelIsFree(r, key, channel)
@@ -80,12 +112,11 @@ pure def canSetChannel(r: Registry, key: str, channel: str): bool =
 pure def setChannel(r: Registry, key: str, channel: str): Registry =
   { entries: r.entries.listMap(e => if (e.key == key) { ...e, channel: channel } else e), last: Admin }
 
-pure def sharedChannels(r: Registry): List[str] =
-  r.entries.select(a => a.channel != "" and r.entries.some(b => b.key != a.key and b.channel == a.channel))
-    .listMap(e => e.channel)
-
 pure def stepTheAdminScreenNeverSharesAChannel(before: Registry, after: Registry): bool =
-  after.last == Admin implies sharedChannels(after).every(c => sharedChannels(before).includes(c))
+  after.last == Admin implies after.entries.every(a =>
+    a.channel == ""
+      or before.entries.some(b => b.key == a.key and b.channel == a.channel)
+      or after.entries.every(b => b.key == a.key or b.channel != a.channel))
 ```
 
 ### A channel typed into a sheet by hand is accepted, even if another project has it
@@ -99,13 +130,18 @@ pure def canHandSetChannel(r: Registry, key: str, channel: str): bool = hasKey(r
 pure def handSetChannel(r: Registry, key: str, channel: str): Registry =
   { entries: r.entries.listMap(e => if (e.key == key) { ...e, channel: channel } else e), last: Sheet }
 
+pure def sharedChannels(r: Registry): List[str] =
+  r.entries.select(a => a.channel != "" and r.entries.some(b => b.key != a.key and b.channel == a.channel))
+    .listMap(e => e.channel)
+
 pure def sometimesTwoProjectsClaimAChannel(r: Registry): bool = sharedChannels(r).length() > 0
 ```
 
 ### The dashboard never guesses which project a shared channel means
 
 It returns the single project that claims the channel, and nothing when no
-project or more than one does.
+project or more than one does. Since no project has an empty key, an answer
+is never mistaken for nothing.
 
 ```quint
 pure def claimants(r: Registry, channel: str): List[Entry] =
@@ -115,12 +151,15 @@ pure def projectFor(r: Registry, channel: str): str =
   if (claimants(r, channel).length() == 1) claimants(r, channel).nth(0).key else ""
 
 pure def lawAnAnswerIsTheOnlyClaimant(r: Registry, channel: str): bool =
-  projectFor(r, channel) == "" or claimants(r, channel).every(e => e.key == projectFor(r, channel))
+  r.entries.every(e => e.key != "") implies
+    ((claimants(r, channel).length() == 1)
+      iff (projectFor(r, channel) != "" and claimants(r, channel).every(e => e.key == projectFor(r, channel))))
 
-pure val rValues = Set(
-  { entries: List(), last: Admin },
-  { entries: List({ key: "a", sheet: "S1", channel: "C1" }), last: Admin },
-  { entries: List({ key: "a", sheet: "S1", channel: "C1" }, { key: "b", sheet: "S2", channel: "C1" }), last: Sheet },
-  { entries: List({ key: "a", sheet: "S1", channel: "C1" }, { key: "b", sheet: "S2", channel: "C2" }), last: Admin },
-)
+```
+
+### A channel can name a project
+
+```quint
+pure def sometimesAChannelNamesAProject(r: Registry): bool =
+  r.entries.some(e => e.channel != "" and projectFor(r, e.channel) == e.key)
 ```
