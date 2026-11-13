@@ -49,9 +49,18 @@ const fixtures = (names: string[], edit: (files: Record<string, string>) => void
   edit(files);
   return scratch(files);
 };
+/** Copy sources without outputs or live locks; units.ts:genDir marks generated gen/ with package.json. */
+function copySources(from: string, to: string): void {
+  fs.cpSync(from, to, { recursive: true, verbatimSymlinks: true, filter: (file) => {
+    const name = path.basename(file);
+    return ![".spec-cache", ".cache", ".vibe", ".studio", ".turbo", "dist", "generated", "storybook-static"].includes(name)
+      && !(name === "gen" && fs.existsSync(path.join(file, "package.json")))
+      && !(name === "examples" && path.basename(path.dirname(file)) === "vibestack");
+  } });
+}
 /** `root` with its own copy of the toolchain, and of node_modules only the packages and the executables `tools`. */
 function toolchain(root: string, ...tools: string[]): string {
-  fs.cpSync(path.join(project, "vibestack"), path.join(root, "vibestack"), { recursive: true, filter: (from) => from !== path.join(project, "vibestack/examples") });
+  copySources(path.join(project, "vibestack"), path.join(root, "vibestack"));
   const modules = path.join(root, "node_modules");
   fs.mkdirSync(path.join(modules, ".bin"), { recursive: true });
   for (const entry of fs.readdirSync(nodeModules).filter((f) => f !== ".bin"))
@@ -1623,9 +1632,16 @@ pure def lawOwn(own: int): bool = shadowOwn(own) == own`));
 
   test("a rebuilt packaged command can generate a project from the repository root", async () => {
     const root = oneRule("packaged", "A packaged value", "pure val answer = 42");
-    const copy = toolchain(scratch({ "package.json": read("package.json"), "tsconfig.build.json": read("tsconfig.build.json"), "tsconfig.base.json": read("tsconfig.base.json") }), "quint", "lsc", "vibelang");
+    const staging = toolchain(scratch({ "package.json": read("package.json"), "tsconfig.build.json": read("tsconfig.build.json"), "tsconfig.base.json": read("tsconfig.base.json") }), "quint", "lsc", "vibelang");
     // Studio's page is built from the workspace packages it shares with every interface.
-    fs.cpSync(path.join(project, "packages"), path.join(copy, "packages"), { recursive: true, verbatimSymlinks: true });
+    copySources(path.join(project, "packages"), path.join(staging, "packages"));
+    const lock = path.join(staging, "vibestack/studio/.spec-cache/lock");
+    fs.mkdirSync(path.dirname(lock), { recursive: true });
+    fs.writeFileSync(lock, `${process.pid}\n`);
+    const copy = scratch({});
+    copySources(staging, copy);
+    const fixture = "vibestack/stories/test/fixtures/gen/index.ts";
+    assert.deepEqual(fs.readFileSync(path.join(copy, fixture)), fs.readFileSync(path.join(project, fixture)));
     const built = await exec(process.platform === "win32" ? "pnpm.cmd" : "pnpm", ["run", "build"], copy);
     assert.equal(built.status, 0, built.stdout + built.stderr);
     const script = path.join(copy, "dist/spec.js");
