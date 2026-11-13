@@ -313,7 +313,7 @@ Keep `spec/`, `src/`, `test/` and `vibespec/` in git, lock files included.
 | `spec/index.md`, `spec/**/index.md`, `spec/**/*.md` | The spec tree: stories, rules, Quint and links; the template root is blank |
 | `spec/lock.json` | Versioned review ledger: `specs` by source path, `contracts` by source file, and `unproved` by proof unit |
 | `spec/<path>.proof.dfy`, `src/<path>.proof.dfy` | Proofs, in Dafny lemmas, of obligations Dafny cannot prove alone. Written by the agent; optional |
-| `.spec-cache/` | Remembered results, and `lock`: one check or accept per project at a time |
+| `.spec-cache/` | Remembered results, `tsc`'s incremental state, and `lock`: one check or accept per project at a time |
 | `.claude/skills/sync/SKILL.md` | How the agent in your session keeps stories, rules and model in step |
 | `.claude/skills/design/SKILL.md` | How the agent designs what a person sees: only what the spec asks, visual first, few words |
 | `vibespec/spec.ts` | The pipeline and command line |
