@@ -110,7 +110,11 @@ pure def alwaysBudgetBounded(s: Assistant): bool =
   0 <= s.budget and s.budget <= maxActions and (s.phase == Planning implies s.budget > 0)
 ```
 
-### Every choice spends the budget, so every turn ends
+### Every choice spends the budget
+
+At most four model choices occur between turns. Waiting for the person or
+the outside world has no time bound; this is a bound on model actions, not a
+proof that every participant eventually responds.
 
 ```quint
 pure def stepChoicesSpendBudget(before: Assistant, via: str, after: Assistant): bool =

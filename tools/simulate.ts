@@ -123,7 +123,7 @@ export async function simulate(root: string, model: Model, invariant: string, tr
  */
 export async function search(root: string, model: Model, invariant: string, step = "step", depths = DEPTHS): ReturnType<typeof simulate> {
   let run!: Awaited<ReturnType<typeof simulate>>;
-  for (const steps of depths) if ((run = await simulate(root, model, invariant, 1, Math.ceil(WITNESS_SAMPLES * STEPS / steps), step, true, steps)).broken) break;
+  for (const steps of depths) if ((run = await simulate(root, model, invariant, 1, Math.ceil(WITNESS_SAMPLES * STEPS / steps), step, false, steps)).broken) break;
   return run;
 }
 export const SEARCHED = () => `${WITNESS_SAMPLES} traces of ${STEPS} events and longer ones up to ${DEPTHS.at(-1)}`;
