@@ -7,8 +7,8 @@ session around that work: what may happen when. Editing one spec is
 [the outline](./outline.md).
 
 The session is shared by the page, which knows whether there are edits not
-yet published, and the server, which runs one job at a time and remembers
-what the last check found.
+yet published, and the server, which runs one job at a time, remembers
+what the last check found, and runs the application beside them.
 
 ## Domain
 
@@ -19,18 +19,19 @@ length of the manifest. The verdict is what the last finished check found.
 It is unknown while a check runs and once the specs change, until a check
 finishes. A check that was already running when they changed reports on what
 it read; a sign-off checks again before it records anything (`pnpm accept`),
-so nothing unchecked is signed off.
+so nothing unchecked is signed off. `previewing` is whether the project's app is
+running beside the studio.
 
 ```quint
 type Job = Idle | Checking | Syncing | SigningOff
 type Verdict = Unknown | Failing | Reviewable | Green
-type Session = { unpublished: bool, waiting: int, job: Job, verdict: Verdict }
+type Session = { unpublished: bool, waiting: int, job: Job, verdict: Verdict, previewing: bool }
 ```
 
 ### A new session has nothing to do
 
 ```quint
-pure val initial: Session = { unpublished: false, waiting: 0, job: Idle, verdict: Unknown }
+pure val initial: Session = { unpublished: false, waiting: 0, job: Idle, verdict: Unknown, previewing: false }
 ```
 
 ### What the simulator tries
@@ -230,4 +231,36 @@ pure def stepSignOffFollowsReview(before: Session, via: str, after: Session): bo
 
 ```quint
 pure def sometimesSigningOff(s: Session): bool = s.job == SigningOff
+```
+
+## Story: Preview the app
+
+> As a spec author, I want to run the application the specs describe beside
+> the studio, so that I see what I am building while I build it.
+
+### The app can be started and stopped whenever, beside any job
+
+The app is the project's own development server: its `start` script, or its
+`dev` script when that is not the studio.
+
+```quint
+pure def canPreview(s: Session): bool = not(s.previewing)
+pure def preview(s: Session): Session = { ...s, previewing: true }
+pure def canEndPreview(s: Session): bool = s.previewing
+pure def endPreview(s: Session): Session = { ...s, previewing: false }
+```
+
+### Running the app changes nothing else
+
+```quint
+pure def stepPreviewChangesNothingElse(before: Session, via: str, after: Session): bool =
+  (via == "preview" or via == "endPreview") implies
+    (after.unpublished == before.unpublished and after.waiting == before.waiting
+      and after.job == before.job and after.verdict == before.verdict)
+```
+
+### The app can run while an agent syncs
+
+```quint
+pure def sometimesPreviewingWhileSyncing(s: Session): bool = s.previewing and s.job == Syncing
 ```

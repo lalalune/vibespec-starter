@@ -71,11 +71,14 @@ effect function studioOn(root: string) {
   return { ...page, url, settled }
 }
 
-// spec/index.md, "Story: Edit, then publish"; spec/index.md, "Story: Sync with an agent"; spec/index.md, "Story: Check"
-it.live("a spec is published with its origins, checked, synced by an agent, and refused while a job runs", effect () => { provide services { try scoped(effect {
+/** An app at its boundary: a development server that says where it serves, as Vite does, and answers every request. */
+const APP = `require("node:http").createServer((_, res) => res.end("door app")).listen(0, "127.0.0.1", function () { console.log("  Local: http://localhost:" + this.address().port + "/") })`
+
+// spec/index.md, "Story: Edit, then publish"; spec/index.md, "Story: Sync with an agent"; spec/index.md, "Story: Check"; spec/index.md, "Story: Preview the app"
+it.live("a spec is published with its origins, checked, synced by an agent, and refused while a job runs; the app runs beside it", effect () => { provide services { try scoped(effect {
   const fs = try FileSystem.FileSystem
-  const root = try scratch({ "spec/door.md": try fs.readFileString(`${TOOLS}/fixtures/door.md`) })
-  const { get, post, project, settled } = try studioOn(root)
+  const root = try scratch({ "spec/door.md": try fs.readFileString(`${TOOLS}/fixtures/door.md`), "app.js": APP, "package.json": JSON.stringify({ name: "door", scripts: { start: "node app.js" } }) })
+  const { get, send, post, project, settled } = try studioOn(root)
 
   // The page and what its HTML loads are served; nothing else under the tools is.
   const html = (try get("/")).text
@@ -99,7 +102,7 @@ it.live("a spec is published with its origins, checked, synced by an agent, and 
   // spec/index.md, "A new session has nothing to do"; spec/outline.md, "A story and its rules"
   const first = try project()
   try check(() => {
-    assert.deepStrictEqual(first.session, { unpublished: false, waiting: 0, job: "Idle", verdict: "Unknown" })
+    assert.deepStrictEqual(first.session, { unpublished: false, waiting: 0, job: "Idle", verdict: "Unknown", previewing: false })
     assert.deepStrictEqual(first.specs[0].outline.stories.map((s) => s.title), ["Domain", "Story: Use the door"])
   })
 
@@ -142,6 +145,23 @@ it.live("a spec is published with its origins, checked, synced by an agent, and 
     assert.match(prompt, /~ rule spec\/door\.md: .*\(prose\)/)
     assert.ok(!manifestLeft)
     assert.equal(synced.session.verdict, "Reviewable")
+  })
+
+  // spec/index.md, "The app can be started and stopped whenever, beside any job": the project's start script runs,
+  // says where it serves, and keeps serving while a check runs.
+  const startedApp = (try post("app", { start: true })).status
+  let serving = try project()
+  while (!serving.app.url) { try sleep("100 millis"); serving = try project() }
+  const page = try send(HttpClientRequest.get(serving.app.url))
+  const checkBeside = (try post("check", {})).status
+  const beside = try project()
+  const stopped = (try post("app", { start: false })).status
+  const gone = (try settled()).session
+  try check(() => {
+    assert.deepStrictEqual([startedApp, serving.app.script, page.text, checkBeside, stopped], [200, "start", "door app", 200, 200])
+    // spec/index.md, "Running the app changes nothing else"
+    assert.deepStrictEqual([beside.session.previewing, beside.session.job], [true, "Checking"])
+    assert.equal(gone.previewing, false)
   })
 }) } })
 

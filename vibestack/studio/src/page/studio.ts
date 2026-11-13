@@ -146,9 +146,9 @@ export async function connect() {
   const events = new EventSource(`/api/events?project=${encodeURIComponent(S.project)}`);
   events.addEventListener("files", () => { refresh().catch((e: Error) => toast(e.message)); });
   events.addEventListener("job", (e) => {
-    const { session, jobs, check } = JSON.parse((e as MessageEvent).data);
+    const { session, jobs, check, app } = JSON.parse((e as MessageEvent).data);
     const ended = S.snap!.session.job !== "Idle" && session.job === "Idle";
-    Object.assign(S.snap!, { session, jobs, check });
+    Object.assign(S.snap!, { session, jobs, check, app });
     if (ended) refresh().catch((error: Error) => toast(error.message));
     else redraw();
   });
