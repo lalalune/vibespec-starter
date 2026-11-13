@@ -41,7 +41,7 @@ export interface Scope {
 }
 
 export function printer({ types, inferred, ref, helper, bind, variants, definitions, sampleSets }: Scope) {
-  const { resolve, tagged, isScalar, named, ownerOf, typeName, tsType } = types;
+  const { resolve, tagged, isScalar, setElem, named, ownerOf, typeName, tsType } = types;
   const typeOf = (id: number): Json => inferred(id) ?? fail(`no inferred type for expression ${id}`);
   /** Which arithmetic helpers the printed code needs, and the value types of the maps it looks things up in. */
   const arithmetic = new Set<string>();
@@ -78,9 +78,18 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
     for (; e.kind === "app" && e.opcode === "with"; e = e.args[0]) updates.unshift(`${e.args[1].value}: ${ex(e.args[2], TERNARY)}`);
     return { base: e, updates };
   };
+  /** `a.append(x).concat(b)` as the items of one array literal, `...a, x, ...b`, rather than spreads nested in spreads. */
+  const items = (e: Json): string[] =>
+    e.kind === "app" && e.opcode === "append" ? [...items(e.args[0]), ex(e.args[1], TERNARY)]
+    : e.kind === "app" && e.opcode === "concat" ? [...items(e.args[0]), ...items(e.args[1])]
+    : [`...${ex(e, ATOM)}`];
   /** A lambda. Its parameters carry their types, which LemmaScript cannot always infer. */
   const arrow = (params: Json[], result: Json): string => {
+    // A parameter hides an enclosing match arm's binder of the same name: inside the lambda the name is the parameter.
+    const hidden = params.map((p) => [p.name, renamed.get(p.name), matchedAs.get(p.name)] as const);
+    for (const [n] of hidden) { renamed.delete(n); matchedAs.delete(n); }
     const text = ex(result, TERNARY);
+    for (const [n, r, m] of hidden) { if (r !== undefined) renamed.set(n, r); if (m !== undefined) matchedAs.set(n, m); }
     const param = (p: Json) => (inferred(p.id) ? `${bind(p.name)}: ${tsType(typeOf(p.id))}` : bind(p.name));
     return `(${params.map(param).join(", ")}) => ${text.startsWith("{") ? `(${text})` : text}`;
   };
@@ -93,6 +102,7 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
       case "bool": return [String(e.value), ATOM];
       case "str": return [JSON.stringify(e.value), ATOM];
       case "name": {
+        if (sampleSets.has(e.name)) return fail(`${e.name} is a sample set for the simulator and cannot be used in a definition`);
         if (renamed.has(e.name)) return fail(`\`${e.name}\` is what a match arm carries; use its fields (${e.name}.field), or rebuild the variant, rather than the value as a whole`);
         if (!variants.has(e.name)) return [ref(e.name), ATOM];
         const owner = ownerOf(e.name);
@@ -149,8 +159,7 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
       // Lists are arrays.
       // An empty list carries its type, which TypeScript cannot infer where it is a fold's starting value.
       case "List": return [a.length ? `[${a.map((x) => ex(x, TERNARY)).join(", ")}]` : `([] as ${tsType(typeOf(e.id))})`, ATOM];
-      case "append": return [`[...${recv()}, ${ex(a[1], TERNARY)}]`, ATOM];
-      case "concat": return [`[...${recv()}, ...${ex(a[1], ATOM)}]`, ATOM];
+      case "append": case "concat": return [`[${items(e).join(", ")}]`, ATOM];
       case "length": return [`${recv()}.length`, ATOM];
       case "nth": return [`${recv()}[${ex(a[1])}]`, ATOM];
       case "head": return [`${recv()}[0]`, ATOM];
@@ -205,18 +214,18 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
       // A set is an array that never holds the same value twice. Only simple values can be in one.
       const t = resolve(typeOf(op === "in" ? a[1].id : a[0].id));
       if (t.kind !== "set") return fail(`\`${op}\` is supported on sets only`);
-      if (!isScalar(t.elem)) fail("sets of records or lists are not supported; use a list");
-      const el = tsType(t.elem);
+      const el = tsType(setElem(t));
       const [x, y] = op === "in" ? [a[1], a[0]] : [a[0], a[1]];
-      return [SET_OPS[op]({ a: ex(x, ATOM), b: y && ex(y, y.kind === "lambda" ? ARROW : ATOM), el, out: op === "map" ? tsType(resolve(typeOf(e.id)).elem) : el }), ATOM];
+      // What `map` makes is a set too, so it is held to the same rule as what it maps.
+      return [SET_OPS[op]({ a: ex(x, ATOM), b: y && ex(y, y.kind === "lambda" ? ARROW : ATOM), el, out: op === "map" ? tsType(setElem(resolve(typeOf(e.id)))) : el }), ATOM];
     }
     if (op === "Set") {
       const t = resolve(typeOf(e.id));
-      if (!isScalar(t.elem)) fail("sets of records or lists are not supported; use a list");
-      const items = [...new Set(a.map((x) => ex(x, TERNARY)))];
+      setElem(t);
+      const members = [...new Set(a.map((x) => ex(x, TERNARY)))];
       const literal = (x: Json) => ["int", "str", "bool"].includes(x.kind) || (x.kind === "name" && variants.has(x.name));
       if (a.length > 1 && !a.every(literal)) fail("Set(…) with several members that are not literals could hold the same value twice; write Set(a).union(Set(b))");
-      return [items.length ? `[${items.join(", ")}]` : `([] as ${tsType(t.elem)}[])`, ATOM];
+      return [members.length ? `[${members.join(", ")}]` : `([] as ${tsType(t.elem)}[])`, ATOM];
     }
     if (definitions.has(op)) return [`${ref(op)}(${a.map((x) => ex(x, TERNARY)).join(", ")})`, ATOM];
     if (sampleSets.has(op)) return fail(`${op} is a sample set for the simulator and cannot be used in a definition`);

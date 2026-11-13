@@ -640,3 +640,75 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.match(spec.rules[0].prose, /### Not a rule[\s\S]*### Nor this/);
   });
 });
+
+describe("fix-gen", { concurrency: true }, () => {
+  const spec = (title: string, quint: string) => `# ${title}\n\n## Story\n\n### ${title}\n\n${F}quint\n${quint}\n${F}\n`;
+  /** Generate one spec made of a single block; the Model, or the generator's refusal. */
+  const generated = (quint: string, more: Record<string, string> = {}) => {
+    const root = scratch({ "spec/t.md": spec("T", quint), ...more });
+    const models = new Map();
+    for (const s of readSpecs(root).filter((s) => s.name !== "t")) gen(root, s, models);
+    return gen(root, parseSpec(root, "spec/t.md"), models);
+  };
+  const counter = "type S = { c: int }\npure val initial: S = { c: 0 }\npure def inc(s: S): S = { c: s.c + 1 }\n";
+
+  test("an imported enum and a list as parameters, and an append chain, simulate, replay and prove", async () => {
+    const root = scratch({
+      "spec/sizes.md": spec("Sizes", "type Size = Small | Large\npure def lawSmallIsNotLarge(z: Size): bool = z == Small or z == Large"),
+      "spec/box.md": spec("Box", 'import sizes.* from "./sizes"\ntype B = { l: List[int], z: Size }\npure val initial: B = { l: List(), z: Small }\n'
+        + "pure def canStash(b: B, z: Size, xs: List[int]): bool = b.l.length() < 4\n"
+        + "pure def stash(b: B, z: Size, xs: List[int]): B = { l: b.l.append(1).append(2).concat(xs.select(x => x > 9)), z: z }\n"
+        + "pure def sometimesLarge(b: B): bool = b.z == Large and b.l.length() > 0"),
+    });
+    const { failed, text } = await run(root);
+    assert.deepEqual(failed, ["review"], text);
+    const harness = fs.readFileSync(path.join(root, "gen/box.run.qnt"), "utf8");
+    assert.match(harness, /Set\(D_sizes::Small, D_sizes::Large\)/);
+    assert.match(harness, /nondet xs__0 = .* nondet xs = Set\(List\(\), List\(xs__0\), List\(xs__0, xs__1\)\)\.oneOf\(\)/);
+    assert.doesNotMatch(harness, /tuples\(/);
+    assert.match(fs.readFileSync(path.join(root, "gen/box.ts"), "utf8"), /\[\.\.\.b\.l, 1, 2, \.\.\.xs\.filter\(/);
+  });
+
+  test("a law false on a reachable state fails simulation, whether or not the spec gives values for it", async () => {
+    for (const values of ["pure val tValues = Set({ c: 0 })\n", ""]) {
+      const root = scratch({ "spec/t.md": spec("T", `${counter}${values}pure def lawSmall(t: S): bool = t.c < 3`) });
+      const { failed, said, text } = await run(root);
+      assert.ok(failed.includes("always"), text);
+      assert.ok(said("always", /the law .* is false for \{"t":\{"c":3\}\}/), text);
+    }
+  });
+
+  test("a lambda parameter named like a match binder is the parameter inside the lambda", () => {
+    const model = generated("type Item = { w: int }\ntype Box = Packed({ w: int }) | Empty\ntype Shelf = { items: List[Item] }\n"
+      + "pure def heavy(s: Shelf, b: Box): bool = match b { | Packed(x) => x.w > 0 and s.items.every(x => x.w > 2) | Empty => false }");
+    assert.match(model.ts, /b\.w > 0 && s\.items\.every\(\(x: Item\) => x\.w > 2\)/, model.ts);
+  });
+
+  test("the generator refuses what it would otherwise mistranslate or crash on", () => {
+    const refused: [string, string, RegExp][] = [
+      ["two record types with the same fields", "type Meters = { v: int }\ntype Feet = { v: int }\ntype S = { feet: List[Feet] }\npure val initial: S = { feet: List() }\npure def add(s: S, n: int): S = { feet: s.feet.append({ v: n }) }", /types Meters and Feet have the same fields/],
+      ["Set.map that makes records", "pure def f(xs: Set[int]): int = xs.map(x => { w: x }).size()", /sets of records or lists are not supported/],
+      ["a pure def without parameters", "pure def lim = 3", /lim: a `pure def` takes parameters; for a constant write `pure val lim = …`/],
+      ["a state and no transition", "type S = { c: int }\npure val initial: S = { c: 0 }\npure def alwaysOk(s: S): bool = s.c >= 0", /defines `initial` but no transition/],
+      ["a sample set of the wrong type", 'pure val nValues = Set(1, 2)\npure def label(n: str): str = n', /nValues \(spec\/t\.md:\d+\) holds int, but the parameter n of label is str/],
+      ["a sample set no parameter is named for", "pure val mValues = Set(1, 2)\npure def twice(n: int): int = n + n", /mValues \(spec\/t\.md:\d+\): no parameter is named m/],
+      ["a sample set used by name", `${counter}pure val kValues = Set(1, 2)\npure def canAdd(s: S, k: int): bool = kValues.contains(k)\npure def add(s: S, k: int): S = { c: s.c + k }`, /kValues is a sample set/],
+      ["a name the harness uses for list picks", "pure def f(xs__0: int): int = xs__0", /`xs__0` cannot be used as a name/],
+    ];
+    for (const [what, quint, message] of refused) assert.throws(() => generated(quint), message, what);
+  });
+
+  test("a definition on three states is listed as uncompared", () => {
+    const model = generated(`${counter}pure def sum3(a: S, b: S, c: S): int = a.c + b.c + c.c`);
+    assert.ok(model.uncompared.includes("sum3"), model.uncompared.join());
+    assert.ok(!model.evals.some((v) => v.name === "sum3"));
+  });
+
+  test("trace integers: -0 is 0, and one beyond 2^53 is refused rather than rounded", () => {
+    const model = generated(counter);
+    const int = { kind: "int" };
+    assert.ok(Object.is(model.canon(int, -0), 0));
+    assert.equal(model.decode(int, { "#bigint": "-5" }), -5);
+    assert.throws(() => model.decode(int, { "#bigint": "9007199254740993" }), /beyond 2\^53 .*bound it with a guard/);
+  });
+});

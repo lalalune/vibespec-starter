@@ -11,42 +11,64 @@ const TRIED: Record<string, string> = { int: "(-1).to(6)", bool: "Set(true, fals
 
 export function harness(
   module: string, source: string, imports: string[], funs: Json[], sig: (d: Json) => { params: Param[]; result: Json },
-  sampleSets: Set<string>, { stateType, transitions, always, sometimes, steps, laws }: Roles, { fields, resolve, shape, tagged, qType }: Types,
+  samples: Map<string, { elem: Json; line: number | undefined }>, { stateType, transitions, always, sometimes, steps, laws }: Roles,
+  { fields, typedef, resolve, shape, tagged, named, qType }: Types,
 ): { text: string; evals: Eval[]; uncompared: string[] } {
   const stateShape = stateType && shape(stateType);
-  /** A Quint set of values to try for a parameter. `<param>Values` in the spec overrides the default for its type. */
-  const sample = (p: Param): string => {
-    if (sampleSets.has(`${p.name}Values`)) return `M::${p.name}Values`;
-    const byType = (t0: Json): string => {
-      const t = resolve(t0);
-      if (t.kind === "sum" && !tagged(t)) return `Set(${fields(t).map((f) => `M::${f.fieldName}`).join(", ")})`;
-      if (t.kind === "set") return `${byType(t.elem)}.powerset()`;
-      if (t.kind === "list") {
-        const of = byType(t.elem);
-        return `Set(List()).union(${of}.map(x => List(x))).union(tuples(${of}, ${of}).map(p => List(p._1, p._2)))`;
-      }
-      return TRIED[t.kind] ?? fail(`parameter ${p.name}: the simulator has no values to try for type ${t.kind}; define \`pure val ${p.name}Values = Set(...)\` in the spec`);
-    };
-    return byType(p.type);
+  const spell = (t: Json) => { try { return qType(t).replace(/^(M|D_\w+)::/, ""); } catch { return shape(t); } };
+  /**
+   * The spec's own `<param>Values` for a parameter, if it defines one. A set of the wrong type would otherwise surface as
+   * a type error inside the generated harness, far from the spec line that causes it.
+   */
+  const given = (p: Param, of: string): string | undefined => {
+    const set = samples.get(`${p.name}Values`);
+    if (!set) return undefined;
+    if (set.elem.kind !== "var" && shape(set.elem) !== shape(p.type))
+      fail(`${p.name}Values (${source}${set.line ? `:${set.line}` : ""}) holds ${spell(set.elem)}, but the parameter ${p.name} of ${of} is ${spell(p.type)}: rename the parameter or the set, as each \`<param>Values\` is used for every parameter of that name`);
+    return `M::${p.name}Values`;
   };
-  const picks = (ps: Param[]) => ps.map((p) => `nondet ${p.name} = ${sample(p)}.oneOf() `).join("");
-  const braces = (ps: Param[], inner: string) => (ps.length ? `{ ${picks(ps)}${inner} }` : inner);
+  /** How the harness names a variant: by the module that defines its type, which an import may not re-export. */
+  const definedIn = (t: Json): Json | undefined => (t.kind === "const" ? (typedef(t.name).type.kind === "const" ? definedIn(typedef(t.name).type) : typedef(t.name)) : named(t, "sum"));
+  const variant = (t0: Json, v: string) => { const d = definedIn(t0); return `${!d || d.module === module ? "M" : `D_${d.module}`}::${v}`; };
+  /** A Quint set of values to try for a value of a type: the values of an enum, every subset, short lists. */
+  const byType = (p: Param, t0: Json): string => {
+    const t = resolve(t0);
+    if (t.kind === "sum" && !tagged(t)) return `Set(${fields(t).map((f) => variant(t0, f.fieldName)).join(", ")})`;
+    if (t.kind === "set") return `${byType(p, t.elem)}.powerset()`;
+    if (t.kind === "list") {
+      const of = byType(p, t.elem);
+      return `Set(List()).union(${of}.map(x => List(x))).union(tuples(${of}, ${of}).map(p => List(p._1, p._2)))`;
+    }
+    return TRIED[t.kind] ?? fail(`parameter ${p.name}: the simulator has no values to try for type ${t.kind}; define \`pure val ${p.name}Values = Set(...)\` in the spec`);
+  };
+  /**
+   * Picks for the parameters of `of`. `<param>Values` in the spec overrides the default for its type. A list parameter
+   * is up to two independent picks, rather than one pick from the set of every such list, which Quint would build in
+   * full on every step (65,536 lists for a List[Set[int]]). The list is still recorded under the parameter's name.
+   */
+  const picks = (ps: Param[], of: string) => ps.map((p) => {
+    const own = given(p, of);
+    const t = resolve(p.type);
+    if (own || t.kind !== "list") return `nondet ${p.name} = ${own ?? byType(p, p.type)}.oneOf() `;
+    const [x0, x1] = [`${p.name}__0`, `${p.name}__1`];
+    const each = byType(p, t.elem);
+    return `nondet ${x0} = ${each}.oneOf() nondet ${x1} = ${each}.oneOf() nondet ${p.name} = Set(List(), List(${x0}), List(${x0}, ${x1})).oneOf() `;
+  }).join("");
+  const braces = (ps: Param[], of: string, inner: string) => (ps.length ? `{ ${picks(ps, of)}${inner} }` : inner);
 
   // Every definition whose arguments the simulator can supply is evaluated during simulation, on reachable states
   // and sampled values, so that TypeScript's result can be compared with Quint's. This is the main test of the
   // translation: it covers helpers, guards and rules, not just the states that events lead to.
   const uncompared: string[] = [];
   const evals: Eval[] = funs.flatMap((d): Eval[] => {
+    const { params, result } = sig(d);
+    const onStates = stateType ? params.filter((p) => shape(p.type) === stateShape).length : 0;
+    let seen = 0;
+    const sources = params.map((p) => (stateType && shape(p.type) === stateShape ? (onStates === 2 && seen++ === 0 ? "prev" as const : "state" as const) : "pick" as const));
+    params.forEach((p, i) => sources[i] === "pick" && given(p, d.name)); // a mismatched set is a mistake in the spec, not a reason to skip
     try {
-      const { params, result } = sig(d);
-      const onStates = params.filter((p) => shape(p.type) === stateShape).length;
-      if (onStates > 2) return [];
-      let seen = 0;
-      const sources = params.map((p) => {
-        if (stateType && shape(p.type) === stateShape) return onStates === 2 && seen++ === 0 ? "prev" as const : "state" as const;
-        sample(p);
-        return "pick" as const;
-      });
+      if (onStates > 2) fail("the simulator holds two states at most: the state and the one before it");
+      picks(params.filter((_, i) => sources[i] === "pick"), d.name);
       qType(result);
       return [{ name: d.name, params: params.map((p, i) => ({ ...p, from: sources[i] })), result }];
     } catch {
@@ -63,16 +85,23 @@ export function harness(
     `all { ${[...conditions, ...vars.map((v) => `${v}' = ${set[v] ?? v}`)].join(", ")} }`;
   const argsOf = (t: Transition) => ["state", ...t.params.map((p) => p.name)].join(", ");
   const action = (t: Transition) =>
-    `  action ${t.name} = ${braces(t.params, frame(t.guard ? [`M::${t.guard}(${argsOf(t)})`] : [], { state: `M::${t.name}(${argsOf(t)})`, prev: "state", moved: "true" }))}`;
+    `  action ${t.name} = ${braces(t.params, t.name, frame(t.guard ? [`M::${t.guard}(${argsOf(t)})`] : [], { state: `M::${t.name}(${argsOf(t)})`, prev: "state", moved: "true" }))}`;
+  // A law is tried on values picked for each parameter. One that takes the state is also evaluated on the states the
+  // simulator reaches (below); if the spec gives no `<param>Values` for that parameter, that is the only way it is tried.
+  const onReached = (l: Law) => evals.some((v) => v.name === l.name);
+  const sampled = laws.filter((l) => !onReached(l) || l.params.every((p) => !stateType || shape(p.type) !== stateShape || samples.has(`${p.name}Values`)));
   const lawAction = (l: Law) =>
-    `  action ${l.name} = ${braces(l.params, frame([], { lawsHold: `M::${l.name}(${l.params.map((p) => p.name).join(", ")})` }))}`;
+    `  action ${l.name} = ${braces(l.params, l.name, frame([], { lawsHold: `M::${l.name}(${l.params.map((p) => p.name).join(", ")})` }))}`;
   const evalAction = (v: Eval) => {
     const args = v.params.map((p) => (p.from === "pick" ? p.name : p.from)).join(", ");
     // A transition is only evaluated where its guard allows it, as it would be in use.
     const guard = transitions.find((t) => t.name === v.name)?.guard;
-    return `  action eval_${v.name} = ${braces(v.params.filter((p) => p.from === "pick"), frame(guard ? [`M::${guard}(${args})`] : [], { out: `Out_${v.name}(M::${v.name}(${args}))` }))}`;
+    // A law evaluated on a reachable state must hold there too: a false result breaks `inv`, as a picked one does.
+    const result = `M::${v.name}(${args})`;
+    const law: Record<string, string> = laws.some((l) => l.name === v.name) ? { lawsHold: result } : {};
+    return `  action eval_${v.name} = ${braces(v.params.filter((p) => p.from === "pick"), v.name, frame(guard ? [`M::${guard}(${args})`] : [], { out: `Out_${v.name}(${result})`, ...law }))}`;
   };
-  const events = [...transitions.map((t) => t.name), ...laws.map((l) => l.name)];
+  const events = [...transitions.map((t) => t.name), ...sampled.map((l) => l.name)];
   const any = (actions: string[]) => `any { ${(actions.length ? actions : [frame([], {})]).join(", ")} }`;
   const text = [
     `// GENERATED from ${source}. Drives the spec's transitions, laws and definitions for simulation.`,
@@ -84,7 +113,7 @@ export function harness(
     `  var lawsHold: bool`,
     `  action init = ${frame([], { state: "M::initial", prev: "M::initial", moved: "false", lawsHold: "true", out: "Nothing" })}`,
     ...transitions.map(action),
-    ...laws.map(lawAction),
+    ...sampled.map(lawAction),
     ...evals.map(evalAction),
     `  action step = ${any(events)}`,
     // Half events, half evaluations, so that definitions are evaluated on states well into a trace and not just near its start.
@@ -102,5 +131,9 @@ export function harness(
     `}`,
     ``,
   ].join("\n");
+  // A sample set no parameter is named for is never used: most likely a typo for the parameter it was meant for.
+  const forParams = new Set(funs.flatMap((d) => sig(d).params.map((p) => `${p.name}Values`)));
+  for (const [set, { line }] of samples)
+    if (!forParams.has(set)) fail(`${set} (${source}${line ? `:${line}` : ""}): no parameter is named ${set.slice(0, -"Values".length)}, so the simulator never uses it; name it after the parameter it is for`);
   return { text, evals, uncompared };
 }

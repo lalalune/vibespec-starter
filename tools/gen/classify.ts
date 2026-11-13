@@ -51,6 +51,8 @@ export function classify(funs: Json[], stateType: Json | undefined, sig: (d: Jso
       if (guard && !isBool(guard)) fail(`${guard.name}: a guard returns bool`);
       return { name: d.name, params: sig(d).params.slice(1), guard: guard?.name };
     });
+  // Without a transition there are no events, and the Event type would be empty, which TypeScript cannot declare.
+  if (stateType && !transitions.length) fail("the spec defines `initial` but no transition: add a `pure def` from the state to the state, or drop `initial` to make it a library");
   // In a library, `withdraw` and `canWithdraw` are a component's functions for a machine elsewhere to build on.
   for (const g of stateType ? funs.filter((d) => /^can[A-Z]/.test(d.name)) : [])
     if (!transitions.some((t) => t.guard === g.name)) fail(`${g.name}: no transition named ${g.name[3].toLowerCase()}${g.name.slice(4)}`);

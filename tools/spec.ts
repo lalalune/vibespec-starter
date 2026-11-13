@@ -462,10 +462,13 @@ function readTrace(file: string, model: Model): Step[] {
     const t = model.transitions.find((t) => t.name === taken);
     const v = model.evals.find((v) => `eval_${v.name}` === taken);
     const l = model.laws.find((l) => l.name === taken);
+    const picks = v && picked(v.params.filter((p) => p.from === "pick"));
+    // A law evaluated on a reachable state is a law tried, with the state among its arguments.
+    const onState = v && model.laws.some((l) => l.name === v.name) && Object.fromEntries(v.params.map((p) => [p.name, p.from === "pick" ? picks![p.name] : read(model.stateType, st[p.from])]));
     return {
       event: t && { type: t.name, ...picked(t.params) },
-      evaluated: v && { name: v.name, picks: picked(v.params.filter((p) => p.from === "pick")), result: read(v.result, st.out.value) },
-      law: l && { name: l.name, args: picked(l.params) },
+      evaluated: v && { name: v.name, picks: picks!, result: read(v.result, st.out.value) },
+      law: l ? { name: l.name, args: picked(l.params) } : onState ? { name: v!.name, args: onState } : undefined,
       state: model.stateType ? read(model.stateType, st.state) : undefined,
       lawsHold: st.lawsHold,
     };

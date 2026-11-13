@@ -66,7 +66,7 @@ const TAKEN = new Set(`
   break case catch class const continue debugger default delete do else enum export extends false finally for function
   if import in instanceof new null return super switch this throw true try typeof var void while with yield let static await
 `.split(/\s+/).filter(Boolean));
-const GENERATED = /^(eval|quotient|remainder|lookup\d+|std|set|Out)_|^x\d+$/;
+const GENERATED = /^(eval|quotient|remainder|lookup\d+|std|set|Out)_|^x\d+$|__\d+$/;
 
 export function generate(ir: Json, name: string, source: string, origin: (def: string) => Origin | undefined, deps: Map<string, Model>): Model {
   const decls: Json[] = (ir.modules.find((m: Json) => m.name === name) ?? fail(`module ${name} not found`)).declarations;
@@ -102,6 +102,8 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
   // A set named `<param>Values` tells the simulator what to try for a parameter. It never reaches TypeScript, so any Quint is allowed in it.
   const isSampleSet = (d: Json) => d.qualifier === "pureval" && d.name.endsWith("Values") && inferred(d.id)?.kind === "set";
   const sampleSets = new Set(defs.filter(isSampleSet).map((d) => d.name as string));
+  /** What each sample set holds, and where the spec defines it, so that the harness can hold it to the parameter it is for. */
+  const samples = new Map(defs.filter(isSampleSet).map((d) => [d.name as string, { elem: inferred(d.id)!.elem as Json, line: origin(d.name)?.line }]));
   const code = defs.filter((d) => !isSampleSet(d));
   const localNames = new Set(code.map((d) => d.name as string));
   /** A name the spec binds (a type, definition, parameter or local `val`) must survive translation unchanged. */
@@ -139,6 +141,7 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
   const bySpecOrder = (x: Json, y: Json) => (origin(x.name)?.line ?? 0) - (origin(y.name)?.line ?? 0);
   const vals = code.filter((d) => d.qualifier === "pureval");
   const funs = code.filter((d) => d.qualifier === "puredef").sort(bySpecOrder);
+  for (const d of funs) if (d.expr.kind !== "lambda") fail(`${d.name}: a \`pure def\` takes parameters; for a constant write \`pure val ${d.name} = …\``);
   // A rule must be a definition: as a `pure val` it would be generated as a constant and never checked.
   for (const v of vals) if (/^(always|sometimes|step|law|can)[A-Z]/.test(v.name) && typeOf(v.id).kind === "bool") fail(`${v.name}: a rule or guard is a \`pure def\` with parameters (CONTRIBUTING.md, "What goes in the Quint blocks"), not a \`pure val\`; if it is a constant, name it otherwise`);
   const initial = vals.find((d) => d.name === "initial");
@@ -170,7 +173,7 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
   };
   const own = render("");
 
-  const run = harness(name, source, [...imports, ...typeOnly], funs, sig, sampleSets, roles, types);
+  const run = harness(name, source, [...imports, ...typeOnly], funs, sig, samples, roles, types);
   return {
     name, imports, ...roles, evals: run.evals, uncompared: run.uncompared, harness: run.text,
     ts: own.text, render: (prefix, docs) => render(prefix, docs).text, decode: types.decode, canon: types.canon,
