@@ -11,7 +11,7 @@
     "accept": "spec accept"
   },
   "devDependencies": {
-    "vibespec": "file:../..",
+    "vibespec": "file:../../..",
     "@types/node": "^24.0.0"
   }
 }
