@@ -3,7 +3,7 @@ import { type Tokens, colorNames, contrastIssues } from "./tokens.ts"
 const block = (selector: string, lines: string[], indent = "") =>
   `${indent}${selector} {\n${lines.map((line) => `${indent}  ${line}\n`).join("")}${indent}}\n`
 const vars = (prefix: string, values: Record<string, string>) => Object.entries(values).map(([name, value]) => `--${prefix}${name}: ${value};`)
-const scheme = (tokens: Tokens, theme: "light" | "dark") => [`color-scheme: ${theme};`, ...vars("", tokens.color[theme])]
+const scheme = (tokens: Tokens, theme: "light" | "dark") => [`color-scheme: ${theme};`, ...colorNames.map((name) => `--${name}: ${tokens.color[theme][name]};`)]
 const fixed = (tokens: Tokens, duration: string) => [
   ...vars("font-", tokens.font), ...vars("shadow-", tokens.shadow),
   ...vars(duration, tokens.motion.duration), ...vars("ease-", tokens.motion.ease),
@@ -46,8 +46,8 @@ export function syncDoc(doc: string, tokens: Tokens): string {
   return `${doc.slice(0, from)}${start}\n${tables.join("\n\n")}\n${doc.slice(to)}`
 }
 
-/** What `design-tokens check` reports beyond the schema: contrast below AA and a stale design.md. */
+/** What `check` reports beyond the token shapes: contrast below AA and a stale design.md. */
 export const check = (tokens: Tokens, doc: string) => [
   ...contrastIssues(tokens),
-  ...(syncDoc(doc, tokens) === doc ? [] : ["design.md: the token table is stale; run `design-tokens build`"]),
+  ...(syncDoc(doc, tokens) === doc ? [] : ["design.md: the token table is stale; run the design CLI's `build`"]),
 ]

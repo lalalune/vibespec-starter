@@ -3,31 +3,21 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "bin": { "design-tokens": "./src/cli.ts" },
   "exports": {
-    ".": "./src/index.ts",
-    "./eslint": "./src/eslint.ts",
     "./tokens.json": "./tokens.json",
     "./tokens.css": "./generated/tokens.css",
     "./theme.css": "./generated/theme.css"
   },
   "scripts": {
-    "build": "node src/cli.ts build",
-    "check": "node src/cli.ts check",
-    "test": "vitest run",
-    "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "effect": "catalog:",
-    "eslint-plugin-better-tailwindcss": "catalog:",
-    "tailwindcss": "catalog:",
-    "typescript-eslint": "catalog:"
+    "build": "node ../../vibestack/design/cli.ts build",
+    "check": "node ../../vibestack/design/cli.ts check",
+    "test": "vitest run --root ../.. vibestack/design/test"
   },
   "devDependencies": {
-    "@types/node": "catalog:",
     "eslint": "catalog:",
-    "typescript": "catalog:",
+    "eslint-plugin-better-tailwindcss": "catalog:",
+    "tailwindcss": "catalog:",
+    "typescript-eslint": "catalog:",
     "vitest": "catalog:"
-  },
-  "peerDependencies": { "eslint": ">=9" }
+  }
 }
