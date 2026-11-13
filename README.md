@@ -160,7 +160,8 @@ use it for a new project, finish this cleanup before feature work:
 
 1. **Remove the examples.** Delete `vibespec/examples/`, including the order
    example. Remove their workspace entries, npm scripts and CI steps, such
-   as `demo` and `check:dashboard`, and replace the package metadata and
+   as `demo` and `check:dashboard`. Keep `check` pointed at `node vibespec/spec.ts check`
+   for the new project, and replace the package metadata and
    repository links with the new project's.
 2. **Keep the toolchain guide with the toolchain.** Move this README to
    `vibespec/README.md` (the toolchain directory formerly called `tools/`).
@@ -446,6 +447,7 @@ npm run accept
 |---|---|
 | `npm run dev -- <example-or-directory>` | Opens Studio on that project; omit the argument for the root |
 | `npm run check -- <directory>` | Every stage below for that project; omit the directory for the current project |
+| `npm run check --workspaces --if-present` | Checks each example workspace |
 | `npx spec check <directory> --json` | That project's check as one JSON object ([shape](AGENTS.md#changing-the-tools)) |
 | `npm run gen -- <directory>` | Generates that project's `gen/` only |
 | `npx spec watch <directory>` | Rechecks that project when its spec, source or tests change |

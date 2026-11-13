@@ -9,18 +9,20 @@ import os from "node:os";
 import path from "node:path";
 import { after, describe, test } from "node:test";
 import { exec, LIB_FILE, isolatedCopies, parseProofFile, readVerdict, splice } from "./prove.ts";
+import { migrateLocks, pendingSpecs, readLedger, writeLedger } from "./review.ts";
+import { danglingCitations } from "./util.ts";
 import { nodesOf } from "./studio/doc.ts";
 import { canonical, departure } from "./conformance.ts";
 import { conformance as checkTraces, conformanceFound, writeConformance } from "./conform.ts";
-import { serve, startStudio } from "./studio/server.ts";
+import { projectsOf, serve, startStudio } from "./studio/server.ts";
 import { acceptContracts, acceptReviews, check, checkVerifiedSource, expandListHelpers, gen, init, parseSpec, pending, pendingContracts, readSpecs, replay, show, type Result } from "./spec.ts";
 
 const project = path.join(import.meta.dirname, "..");
 const EXAMPLE = path.join(project, "vibespec/examples/order");
 const read = (file: string): string => {
   const example = file === "spec/order.md" ? "spec/index.md" : /^(src|test)\//.test(file) || file === "tsconfig.json" ? file : undefined;
-  return fs.readFileSync(example ? path.join(EXAMPLE, example) : path.join(project, file), "utf8")
-    .replaceAll("gen/index.", "gen/order.").replaceAll("spec/index.md", "spec/order.md");
+  const text = fs.readFileSync(example ? path.join(EXAMPLE, example) : path.join(project, file), "utf8");
+  return example ? text.replaceAll("gen/index.", "gen/order.").replaceAll("spec/index.md", "spec/order.md") : text;
 };
 const F = "`".repeat(3);
 const roots: string[] = [];
@@ -548,7 +550,9 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const { failed, said, text } = await run(root);
     assert.deepEqual(failed, ["proof", "review"], text);
     assert.ok(said("replay", /every law, and \d+ definitions/)?.ok, text);
-    assert.ok(!/lawBoxesAndLooseMakeTheWhole/.test(text), "the division law is proved, so it is not listed as unproved");
+    const proof = said("proof", /^stock\.ts:/);
+    assert.ok(proof, text);
+    assert.doesNotMatch(`${proof.summary}\n${proof.detail}`, /lawBoxesAndLooseMakeTheWhole/, "the division law is proved, so it is not listed as unproved");
     const stock = await import(path.join(root, "gen/stock.ts"));
     // A map key that every object has, a getter on an event, and an extra field are all harmless.
     const received = stock.step(stock.initial, stock.parseEvent({ type: "receive", sku: "constructor", qty: 1 }));
@@ -616,7 +620,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     // So is an import of anything but a generated module, however it is indented, or of a look-alike of one.
     const lying = await run(copyOfProject("src/ledger.ts", (s) => s.replace("\n/** Rebuild", '\n  import { owed } from "/tmp/lies.ts";\n/** Rebuild')));
     assert.ok(lying.said("proof", /may only import generated modules/), lying.text);
-    assert.deepEqual(await failedStages("src/ledger.ts", (s) => s.replace('"../gen/order.ts"', '"./order.ts"')), ["proof"]);
+    assert.deepEqual(await failedStages("src/ledger.ts", (s) => s.replace('"../gen/order.ts"', '"./order.ts"')), ["types", "proof", "tests"]);
   });
 
   test("a law that needs induction is proved by a proof file, and only then offered to the spec that imports it", async () => {
@@ -695,7 +699,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
 
   test("hand-written logic that breaks its contract is caught by the proof", async () => {
     const failed = await failedStages("src/ledger.ts", (s) => s.replace("return order.due - order.paid;", "return order.paid - order.due;"));
-    assert.deepEqual(failed, ["proof"]);
+    assert.deepEqual(failed, ["proof", "tests"]);
   });
 
   test("moving a line break so that a comment swallows half a guard is a change to the model", async () => {
@@ -734,11 +738,106 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     }
   });
 
+  test("nested specs link to children and reuse a machine through its directory index", async () => {
+    const root = scratch({
+      "spec/index.md": "# Home\n\n[Room](./rooms/)\n[Other lamp](./other/light/index.md)\n",
+      "spec/rooms/index.md": read("vibespec/fixtures/room.md").replace('import lamp as L from "./lamp"', 'import /* from "wrong" */ lamp\n  from\n  "./light"').replaceAll("L::", "lamp::"),
+      "spec/rooms/light/index.md": read("vibespec/fixtures/lamp.md"),
+      "spec/rooms/light/index.proof.dfy": "",
+      "spec/other/light/index.md": read("vibespec/fixtures/lamp.md"),
+      "src/app.ts": `// ${"spec/rooms/index.md"}, ${JSON.stringify("Story: Light a room")}\nexport { initial, step } from "../gen/rooms.ts";\n`,
+    });
+    const specs = readSpecs(root);
+    assert.deepEqual(specs.find((s) => s.name === "index")?.links, ["spec/rooms/index.md", "spec/other/light/index.md"]);
+    assert.deepEqual(specs.find((s) => s.name === "rooms")?.imports, ["rooms__light"]);
+    assert.equal(specs.find((s) => s.name === "rooms")?.uses[0].alias, "lamp");
+    assert.deepEqual(danglingCitations(root, specs), []);
+    const first = await run(root, "reviews");
+    assert.deepEqual(first.failed, [], first.text);
+    assert.ok(first.said("proof", /^rooms\.ts: all \d+ obligations proved/), first.text);
+    const room = await import(path.join(root, "gen/rooms.ts"));
+    const lit = room.step(room.step(room.initial, { type: "toggleLeft" }), { type: "toggleRight" });
+    assert.equal(room.sometimesFullyLit(lit), true);
+    assert.equal(room.inv(lit), true);
+    assert.ok(fs.existsSync(path.join(root, "gen/other__light.ts")));
+    const { conformance } = await import(path.join(root, "gen/rooms.conformance.ts"));
+    await assert.rejects(conformance({
+      reset: () => {},
+      dispatch: () => "refused",
+      observe: () => room.initial,
+    }, { walks: 0 }), /conformance to spec\/rooms\/index\.md:/);
+    fs.appendFileSync(path.join(root, "spec/rooms/light/index.md"), `\n${F}quint\npure val label = "lamp"\n${F}\n`);
+    const changed = readSpecs(root);
+    assert.ok(pending(root, changed.find((s) => s.name === "rooms")!, changed).some((p) => p.note?.includes("spec/rooms/light/index.md")));
+  });
+
+  test("nested spec paths refuse missing links, escaped targets, duplicate modules, cycles and symlinks", () => {
+    const cases: [Record<string, string>, RegExp][] = [
+      [{ "spec/index.md": "[Missing](./missing/)\n" }, /no spec at this path/],
+      [{ "spec/index.md": "[Outside](../outside.md)\n", "outside.md": "" }, /stay within spec/],
+      [{ "spec/index.md": "[Outside](..%2Foutside.md)\n", "outside.md": "" }, /stay within spec/],
+      [{ "spec/index.md": "", "spec/room.md": "", "spec/room/index.md": "" }, /same module name/],
+      [{ "spec/index.md": "", "spec/a/index.md": `# A\n### Import\n${F}quint\nimport b.* from "../b"\n${F}\n`,
+        "spec/b/index.md": `# B\n### Import\n${F}quint\nimport a.* from "../a"\n${F}\n` }, /circle/],
+    ];
+    for (const [files, error] of cases) assert.throws(() => readSpecs(scratch(files)), error);
+    const root = scratch({ "spec/index.md": "", "outside.md": "" });
+    fs.symlinkSync(path.join(root, "outside.md"), path.join(root, "spec/linked.md"));
+    assert.throws(() => readSpecs(root), /symbolic links/);
+  });
+
+  test("one lock preserves migrated reviews, contracts and proof acceptance and records deleted specs", async () => {
+    const root = fixtures(["door"]);
+    for (const spec of readSpecs(root)) acceptReviews(root, spec);
+    const proof = { door: { text: "previously-reviewed", unproved: ["an obligation"] } };
+    writeLedger(root, proof);
+    const lockPath = path.join(root, "spec/lock.json");
+    const before = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+    before.contracts["src/old.ts"] = "old-contract";
+    fs.writeFileSync(path.join(root, "spec/door.lock.json"), JSON.stringify(before.specs["spec/door.md"]));
+    fs.writeFileSync(path.join(root, "spec/src.lock.json"), JSON.stringify(before.contracts));
+    fs.writeFileSync(path.join(root, "spec/unproved.lock.json"), JSON.stringify(before.unproved));
+    fs.rmSync(lockPath);
+    assert.deepEqual(migrateLocks(root), ["spec/door.lock.json", "spec/src.lock.json", "spec/unproved.lock.json"]);
+    assert.deepEqual(JSON.parse(fs.readFileSync(lockPath, "utf8")), before);
+    assert.deepEqual(readLedger(root), proof);
+    assert.deepEqual(pending(root, readSpecs(root)[0]), []);
+    assert.equal(fs.existsSync(path.join(root, "spec/door.lock.json")), false);
+    fs.rmSync(path.join(root, "spec/door.md"));
+    fs.writeFileSync(path.join(root, "spec/index.md"), "");
+    assert.deepEqual(pendingSpecs(root, readSpecs(root)).map((p) => p.where), ["spec/door.md"]);
+    const removed = await run(root, "reviews");
+    assert.deepEqual(removed.failed, [], removed.text);
+    const after = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+    assert.deepEqual(Object.keys(after.specs), ["spec/index.md"]);
+    assert.deepEqual(pendingSpecs(root, readSpecs(root)), []);
+    assert.deepEqual(after.contracts, {});
+    assert.deepEqual(after.unproved, proof);
+    fs.mkdirSync(path.join(root, "spec/child"));
+    fs.writeFileSync(path.join(root, "spec/child/index.md"), "");
+    fs.writeFileSync(path.join(root, "spec/index.md"), "# Home\n\n[Child](./child/)\n");
+    assert.deepEqual((await run(root, "reviews")).failed, []);
+    fs.writeFileSync(path.join(root, "spec/index.md"), "# Home\n\n[Open child](./child/)\n");
+    const linked = readSpecs(root);
+    assert.ok(pending(root, linked.find((s) => s.name === "index")!, linked).some((p) => p.status === "document changed"));
+    assert.deepEqual((await run(root, "reviews")).failed, []);
+    assert.deepEqual(pending(root, readSpecs(root).find((s) => s.name === "index")!), []);
+  });
+
+  test("malformed unified review records fail before checks can accept them", async () => {
+    const root = scratch({ "spec/index.md": "", "spec/lock.json": JSON.stringify({ version: 1, specs: { "spec/index.md": { invalid: false } }, contracts: {}, unproved: {} }) });
+    const before = fs.readFileSync(path.join(root, "spec/lock.json"), "utf8");
+    const result = await run(root, "reviews");
+    assert.deepEqual(result.failed, ["model"], result.text);
+    assert.match(result.text, /invalid review records/);
+    assert.equal(fs.readFileSync(path.join(root, "spec/lock.json"), "utf8"), before);
+  });
+
   test("the package's own test script is what runs, never the check itself, and a test citing a heading the spec does not have is caught", async () => {
     const root = copyOfProject("package.json", () => JSON.stringify({ scripts: { test: `node ${JSON.stringify(path.join(project, "vibespec/spec.ts"))} check` } }));
     const again = await run(root);
     assert.deepEqual(again.failed, ["tests"], again.text);
-    assert.ok(again.said("tests", /runs `spec check`; it must run only the tests/), again.text);
+    assert.ok(again.said("tests", /a test script cannot run spec check or accept: the check already runs the tests/), again.text);
     fs.writeFileSync(path.join(root, "package.json"), "{}");
     const cite = (heading: string) => `// spec/order.md, ${JSON.stringify(heading)}\n`;
     const cites = ["Story: Check out", "Only a non-empty draft can be submitted", "Refunds are instant"].map(cite).join("");
@@ -759,6 +858,10 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
   });
 
   test("the studio publishes a spec with its origins, checks it, and refuses remote or concurrent writes", async () => {
+    const available = projectsOf(project);
+    for (const name of ["assistant", "dashboard", "fullstack", "order"])
+      assert.ok(available.some((p) => p.id === `vibespec/examples/${name}` && fs.existsSync(path.join(p.root, "spec"))), name);
+    assert.equal(new Set(available.map((p) => p.id)).size, available.length);
     const root = fixtures(["door"]);
     const studio = await startStudio({ projects: [{ id: ".", name: "Door", root }], port: 0, agents: {} });
     const url = studio.url.replace("localhost", "127.0.0.1");
@@ -805,6 +908,44 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       }
       assert.equal(current.jobs.check?.status, "failed");
       assert.equal(current.check?.next.includes("npm run accept"), true);
+      const created = await post("spec", { name: "nested/child" });
+      assert.equal(created.status, 200, await created.clone().text());
+      assert.equal((await created.json()).file, "spec/nested/child/index.md");
+      const child = readSpecs(root).find((s) => s.file === "spec/nested/child/index.md")!;
+      acceptReviews(root, child);
+      const ledger = fs.readFileSync(path.join(root, "spec/lock.json"), "utf8");
+      const escaped = await post("publish", { files: [{ file: "spec/../outside.md", base: null, text: "" }], origins: [] });
+      assert.equal(escaped.status, 400);
+      assert.equal(fs.existsSync(path.join(root, "outside.md")), false);
+      fs.symlinkSync(path.join(root, "outside.md"), path.join(root, "spec/escape.md"));
+      assert.equal((await post("publish", { files: [{ file: "spec/escape.md", base: null, text: "" }], origins: [] })).status, 400);
+      assert.equal(fs.existsSync(path.join(root, "outside.md")), false);
+      fs.rmSync(path.join(root, "spec/escape.md"));
+      const linked = await post("publish", { files: [{ file: "spec/index.md", base: null, text: "[Child](./nested/child/)\n" }], origins: [] });
+      assert.equal(linked.status, 200, await linked.clone().text());
+      const waitForCheck = async () => {
+        let snap = await (await fetch(`${url}/api/project`)).json();
+        while (snap.job?.status === "running") {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          snap = await (await fetch(`${url}/api/project`)).json();
+        }
+        return snap;
+      };
+      const nested = await waitForCheck();
+      assert.deepEqual(nested.specs.map((s: { file: string }) => s.file), ["spec/index.md", "spec/door.md", "spec/nested/child/index.md"]);
+      const index = nested.specs.find((s: { file: string }) => s.file === "spec/index.md");
+      const childIndex = nested.specs.find((s: { file: string }) => s.file === child.file);
+      const deleted = await post("publish", { files: [
+        { file: index.file, base: index.hash, text: "" },
+        { file: childIndex.file, base: childIndex.hash, text: null },
+      ], origins: [] });
+      assert.equal(deleted.status, 200, await deleted.clone().text());
+      const manifestAfterDelete = (await deleted.json()).manifest;
+      assert.ok(manifestAfterDelete.changes.some((c: { kind: string; spec: string }) => c.kind === "spec" && c.spec === "spec/index.md"));
+      assert.equal(fs.existsSync(path.join(root, child.file)), false);
+      assert.equal(fs.readFileSync(path.join(root, "spec/lock.json"), "utf8"), ledger);
+      const final = await waitForCheck();
+      assert.ok(final.check.results.some((r: Result) => r.stage === "review" && /removed spec/.test(r.summary)));
     } finally {
       await studio.close();
     }
@@ -880,7 +1021,9 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       f["package.json"] = '{"type":"module"}';
       f["spec/highest.proof.dfy"] = "lemma lawTheHighestIsAtLeastTheStart_ensures(xs: seq<int>, start: int)\n  ensures (lawTheHighestIsAtLeastTheStart(xs, start) == true)\n{\n  ProofLib.FoldLeftMax((top: int, x: int) => (if (x > top) then x else top), start, xs);\n}\n";
     });
-    fs.cpSync(path.join(project, "tools"), path.join(root, "tools"), { recursive: true });
+    fs.cpSync(path.join(project, "vibespec"), path.join(root, "vibespec"), {
+      recursive: true, filter: (from) => from !== path.join(project, "vibespec/examples"),
+    });
     const modules = path.join(root, "node_modules");
     fs.mkdirSync(path.join(modules, ".bin"), { recursive: true });
     for (const entry of fs.readdirSync(nodeModules).filter((f) => f !== ".bin"))
@@ -1042,8 +1185,20 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const parent = scratch({});
     const root = path.join(parent, "a project");
     fs.mkdirSync(root);
+    const blank = scratch({ "spec/index.md": "" });
+    assert.equal((await cli(blank, "new")).status, 0);
+    assert.match(fs.readFileSync(path.join(blank, "spec/index.md"), "utf8"), /## Story:/);
+    assert.equal((await cli(blank, "new")).status, 1);
+    assert.equal((await cli(blank, "new", "area/child")).status, 0);
+    assert.ok(fs.existsSync(path.join(blank, "spec/area/child/index.md")));
+    assert.equal((await cli(blank, "new", "../escape")).status, 1);
+    fs.writeFileSync(path.join(blank, "spec/conflict.md"), "");
+    assert.equal((await cli(blank, "new", "conflict")).status, 1);
+    assert.equal(fs.existsSync(path.join(blank, "spec/conflict")), false);
     assert.equal((await cli(root, "new", "Tally")).status, 1);
-    assert.equal((await cli(root, "new", "src")).status, 1);
+    const namedSrc = scratch({});
+    assert.equal((await cli(namedSrc, "new", "src")).status, 0);
+    assert.ok(fs.existsSync(path.join(namedSrc, "spec/src/index.md")), "the unified ledger leaves src available as a spec name");
     assert.equal((await cli(root, "new", "tally")).status, 0);
     assert.match((await cli(root, "new", "tally")).stderr, /spec\/tally\/index\.md already exists/);
     const missing = await cli(root, "accept", "unprovd");
