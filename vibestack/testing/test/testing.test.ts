@@ -144,15 +144,20 @@ describe.concurrent("generated tests", () => {
     fs.rmSync(npmrc);
     expect(testInputs(dir)).toBe(recorded.fingerprint);
 
-    const payload = path.join(dir, "test/fixtures/payload.json");
-    fs.mkdirSync(path.dirname(payload), { recursive: true });
-    fs.writeFileSync(payload, '{"input":1}');
-    const withFixture = testInputs(dir);
-    expect(withFixture).not.toBe(recorded.fingerprint);
-    fs.writeFileSync(payload, '{"input":2}');
-    expect(testInputs(dir)).not.toBe(withFixture);
-    fs.rmSync(payload);
-    expect(testInputs(dir)).toBe(recorded.fingerprint);
+    for (const [file, initial, changed] of [
+      ["test/fixtures/payload.json", '{"input":1}', '{"input":2}'],
+      ["test/fixtures/gen/index.ts", "export const input = 1;\n", "export const input = 2;\n"],
+    ]) {
+      const fixture = path.join(dir, file);
+      fs.mkdirSync(path.dirname(fixture), { recursive: true });
+      fs.writeFileSync(fixture, initial);
+      const withFixture = testInputs(dir);
+      expect(withFixture).not.toBe(recorded.fingerprint);
+      fs.writeFileSync(fixture, changed);
+      expect(testInputs(dir)).not.toBe(withFixture);
+      fs.rmSync(fixture);
+      expect(testInputs(dir)).toBe(recorded.fingerprint);
+    }
 
     // A header carries the hash of what its source says.
     fs.appendFileSync(path.join(dir, "src/math.contract.ts"), "// edited\n");
