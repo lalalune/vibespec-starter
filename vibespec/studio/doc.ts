@@ -222,7 +222,7 @@ export function manifestOf(root: string, baseline: Record<string, string>, curre
   for (const s of specs) if (edited.includes(s.file)) visit(s, "edited");
   const modules = new Set(regenerate.map((r) => r.gen.slice(4)).concat(Object.keys(baseline).filter((f) => !(f in current)).map((f) => `${specName(f)}.ts`)));
   const code = ["src", "test"].flatMap((dir) => filesUnder(root, dir))
-    .filter((f) => /\.[cm]?tsx?$/.test(f) && [...modules].some((m) => fs.readFileSync(path.join(root, f), "utf8").includes(`gen/${m}`))).map((f) => f.split(path.sep).join("/")).sort();
+    .filter((f) => /\.[cm]?tsx?$/.test(f) && [...modules].some((m) => fs.readFileSync(path.join(root, f), "utf8").includes(`gen/${m}`)));
   let citations: string[] = [];
   try { citations = danglingCitations(root, specs); } catch { /* no code to read */ }
   return { published: new Date().toISOString(), changes, regenerate, code, citations };

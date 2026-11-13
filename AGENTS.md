@@ -505,7 +505,7 @@ a body.
   `FilterNone`, `FilterOne`, `FilterTwo`, `FilterCountOneIffUnique`,
   `FilterDistinctCountOne`, `FilterKeepsDistinctBy`, `FilterLengthPointwise`,
   `FilterPointwise`, `FilterSamePredicate`, `FilterOfFilterShorter`) and folds
-  (`FoldLeftMax`, `FoldLeftPointwise`, `FoldLeftConcatEmpty`, `FoldLeftDedupDistinct`).
+  (`FoldLeftAppend`, `FoldLeftMax`, `FoldLeftPointwise`, `FoldLeftConcatEmpty`, `FoldLeftDedupDistinct`).
   Read the file for what each states. A lemma general enough for any project
   belongs there, with its proof; one about your spec belongs in your proof
   file.
@@ -541,7 +541,7 @@ supply one to replace it.
    them all.
 
 `vibespec/fixtures/highest.md` is the smallest example: its law needs induction
-over a fold, and this proof file proves it (the selftest runs it):
+over a fold, and `vibespec/fixtures/highest.proof.dfy` proves it (the selftest runs it):
 
 ```dafny
 lemma lawTheHighestIsAtLeastTheStart_ensures(xs: seq<int>, start: int)
@@ -585,6 +585,19 @@ line.
   `vibespec/examples/order/src/app.ts` does.
 - `gen/` is rebuilt by `npm run gen` and `npm run check`, and by
   `npm install` when every spec is valid.
+
+### Conformance
+
+Three ways to run the real application against a state machine's spec:
+
+| | How | Checked by |
+|---|---|---|
+| `gen/<name>.conformance.ts` | `conformance(driver, options)` in a test: a journey per `sometimes` rule, then random walks | the test |
+| `test/traces/<name>.jsonl` | recorded lines: `{state}` starts, `{event, by?, state?, out?}` steps; at least one state observed | `check`, `traces` |
+| `driver:<name>` script | a program that answers each `{}` (reset) or `{event, by?}` line with one `{state, out?}` line | `check`, `traces`, on the simulated traces |
+
+A `Driver` has `reset`, `dispatch` (returns `"accepted"` or `"refused"`),
+`observe` and, for a spec that emits effects, `observeOutput`.
 
 ## Hand-written verified logic
 

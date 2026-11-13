@@ -15,7 +15,6 @@ import { BUILTIN, printer } from "./gen/print.ts";
 import { EMITTED, HELPERS, typescript } from "./gen/typescript.ts";
 import { fail, typeOfIn, typeWalks, type Json } from "./gen/types.ts";
 import type { ComparisonShape } from "./conformance.ts";
-export { LIST_HELPERS } from "./gen/print.ts";
 
 export interface Model extends Roles {
   name: string;
@@ -52,9 +51,9 @@ export interface Model extends Roles {
 /** Where a definition came from in the spec, for doc comments and ordering. */
 export interface Origin { rule: string; line: number }
 
-/** Names a spec may not bind: the generated code, the harness or the proof library (ProofLib) use them, or TypeScript reserves them. */
+/** Names a spec may not bind: the generated code, the harness, Dafny's standard library (Std) or the proof library (ProofLib) use them, or TypeScript reserves them. */
 const TAKEN = new Set([...EMITTED, ...HARNESS, ...`
-  ProofLib Number Math Object Array JSON Record Set Map String Boolean Symbol Error undefined NaN Infinity globalThis
+  Std ProofLib Number Math Object Array JSON Record Set Map String Boolean Symbol Error undefined NaN Infinity globalThis
   break case catch class const continue debugger default delete do else enum export extends false finally for function
   if import in instanceof new null return super switch this throw true try typeof var void while with yield let static await
   eval arguments implements interface package private protected public

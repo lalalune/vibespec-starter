@@ -54,10 +54,10 @@ function readTrace(file: string, model: Model): Step[] {
 }
 
 /**
- * The simulator's seed: SPEC_SEED if it is set, otherwise one derived from what is simulated, so that the same
- * harness always gives the same traces and a counterexample can be had again.
+ * The simulator's seed, derived from what is simulated, so that the same harness always gives the same traces and a
+ * counterexample can be had again.
  */
-const seedFor = (...what: string[]) => process.env.SPEC_SEED?.trim() || String(parseInt(digest(what.join("\0")).slice(0, 12), 16));
+const seedFor = (...what: string[]) => String(parseInt(digest(what.join("\0")).slice(0, 12), 16));
 
 /**
  * Quint installs its evaluator the first time it simulates, and runs started together would race to. Until it is
@@ -95,13 +95,12 @@ const MAX_SHARDS = 4;
  * Simulate the harness until `invariant` breaks; returns the traces Quint wrote, and the command that runs the same
  * simulation again. One run of Quint uses one core, so with `split` a large budget is split among up to four runs of a
  * single thread, each with a seed of its own; how it is split depends only on the budget, so the same harness always gives
- * the same traces. With SPEC_SEED set, nothing is split, and the seed is the one given. When a run breaks the
- * invariant, the command is the one for that run.
+ * the same traces. When a run breaks the invariant, the command is the one for that run.
  */
 export async function simulate(root: string, model: Model, invariant: string, traces: number, samples: number, step = "step", split = false, steps = STEPS): Promise<{ broken: boolean; traces: Step[][]; again: string }> {
   const dir = path.join(root, "gen/traces", `${model.name}.${invariant}.${step}`);
   fs.rmSync(dir, { recursive: true, force: true });
-  const shards = !split || process.env.SPEC_SEED?.trim() ? 1 : Math.max(1, Math.min(MAX_SHARDS, Math.floor(samples / SHARD_SAMPLES)));
+  const shards = !split ? 1 : Math.max(1, Math.min(MAX_SHARDS, Math.floor(samples / SHARD_SAMPLES)));
   const runs = Array.from({ length: shards }, async (_, k) => {
     const out = shards === 1 ? dir : path.join(dir, String(k));
     fs.mkdirSync(out, { recursive: true });

@@ -1,11 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
-import { LIST_HELPERS } from "./gen.ts";
-import { BUILTINS } from "./gen/print.ts";
+import { BUILTINS, LIST_HELPERS } from "./gen/print.ts";
 import { plainText } from "./util.ts";
 
 /** `defs` are the rule's top-level definitions and types; `locals` the names it binds inside a definition (`val x = …` in a body). */
 export interface Rule { key: string; story: string; line: number; prose: string; code: string; defs: string[]; locals: string[] }
+/** A rule's own heading, without its story. */
+export const heading = (rule: Rule) => rule.key.slice(rule.story.length + 3);
 /** A `##` heading: a story or another group of rules. Its prose is the text between the heading and its first rule. */
 export interface Story { title: string; line: number; prose: string }
 /**
@@ -230,7 +231,7 @@ function codeOnly(text: string): string {
 /**
  * Rewrite `xs.every(x => e)`, `.some`, `.listMap` and `.includes(v)` into Quint's
  * built-in `foldl`, in place and without moving a line (see LIST_HELPERS in
- * gen.ts for why). Strings and comments are left alone.
+ * gen/print.ts for why). Strings and comments are left alone.
  */
 export function expandListHelpers(text: string): string {
   const { code } = scan(text);
@@ -238,7 +239,7 @@ export function expandListHelpers(text: string): string {
   /** The line breaks of a piece of text that is dropped, so that no line moves. */
   const breaks = (s: string) => s.replace(/[^\n]/g, "");
   const expand = (from: number, to: number): string => {
-    const call = /\.(every|some|includes|listMap)\(/g;
+    const call = new RegExp(`\\.(${Object.keys(LIST_HELPERS).join("|")})\\(`, "g");
     let out = "";
     let at = from;
     call.lastIndex = from;

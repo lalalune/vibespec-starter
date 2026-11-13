@@ -168,8 +168,8 @@ export async function proofUnits(root: string, models: Model[], srcFiles: SrcFil
  * Refuse in hand-written verified code what the proof would read one way and Node another: a renamed, default or
  * namespace import, an export other than of a function, constant, type or interface declared in the file, any other
  * top-level statement (LemmaScript does not model one, though Node runs it), and a `//@` that is not in a `//`
- * comment (one in a block comment or a string is not an annotation, though it looks like one). And NUL, which no
- * source needs.
+ * comment (one in a block comment or a string is not an annotation, though it looks like one), and the names `Std` and
+ * `ProofLib`, which the proof gives to Dafny's libraries. And NUL, which no source needs.
  */
 export function checkVerifiedSource(file: string, code: string) {
   const sf = ts.createSourceFile(file, code, ts.ScriptTarget.Latest, true);
@@ -192,6 +192,7 @@ export function checkVerifiedSource(file: string, code: string) {
   const lineComments: [number, number][] = [];
   const visit = (n: TS.Node) => {
     if (n.kind >= ts.SyntaxKind.FirstJSDocNode && n.kind <= ts.SyntaxKind.LastJSDocNode) return;
+    if (ts.isIdentifier(n) && (n.text === "Std" || n.text === "ProofLib")) refuse(n.getStart(), `\`${n.text}\` names a Dafny library in the proof; use another name`);
     for (const c of ts.getLeadingCommentRanges(code, n.pos) ?? []) if (c.kind === ts.SyntaxKind.SingleLineCommentTrivia) lineComments.push([c.pos, c.end]);
     n.getChildren(sf).forEach(visit);
   };

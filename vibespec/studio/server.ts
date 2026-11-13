@@ -1,6 +1,6 @@
 // The spec studio: a local web page to read, edit, reorder and regroup the stories and rules of spec/**/*.md, publish
 // them with a manifest of what changed, and run the check, an agent's sync, and the user's sign-off.
-// README, "The studio".
+// README, "Studio".
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";

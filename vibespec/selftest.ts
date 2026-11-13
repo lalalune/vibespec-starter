@@ -11,6 +11,7 @@ import { after, describe, test } from "node:test";
 import { LIB_FILE, isolatedCopies, parseProofFile, readVerdict, splice } from "./prove.ts";
 import { exec } from "./run.ts";
 import { migrateLocks, pendingSpecs, readLedger, writeLedger } from "./review.ts";
+import { packageScripts } from "./util.ts";
 import { nodesOf } from "./studio/doc.ts";
 import { canonical, departure } from "./conformance.ts";
 import { conformance as checkTraces, conformanceFound, writeConformance } from "./conform.ts";
@@ -193,7 +194,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     fs.writeFileSync(path.join(root, "driver.mjs"), 'import fs from "node:fs"; import readline from "node:readline"; let n=0; for await (const line of readline.createInterface({input:process.stdin})) { const request=JSON.parse(line), {offset,limit}=JSON.parse(fs.readFileSync("driver.json","utf8")); if (!request.event) n=0; else if (n<limit) n++; console.log(JSON.stringify({state:n+offset})); }');
     fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({type:"module",scripts:{"driver:counter":`${JSON.stringify(process.execPath)} driver.mjs`}}));
     const machines = new Map([["counter", { domain, model, found }]]);
-    const departs = async () => (await checkTraces(root, machines)).filter(([ok]) => !ok).map(([, , summary, detail]) => `${summary}\n${detail}`);
+    const departs = async () => (await checkTraces(root, machines, packageScripts(root))).filter(([ok]) => !ok).map(([, , summary, detail]) => `${summary}\n${detail}`);
     assert.deepEqual(await departs(), []);
     // A driver that starts elsewhere, or takes the event the spec refuses in the last state of a trace, departs.
     fs.writeFileSync(path.join(root, "driver.json"), '{"offset":1,"limit":2}');
@@ -302,6 +303,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const refused: [string, string, RegExp][] = [
       ["a type named like a generated one", "type Event = { n: int }\npure val initial: Event = { n: 0 }", /cannot be used as a name/],
       ["a definition named like a JavaScript global", "pure val initial: int = 0\npure def Number(n: int): int = n", /cannot be used as a name/],
+      ["a parameter named like Dafny's standard library", "pure val initial: int = 0\npure def f(Std: int): int = Std", /`Std` cannot be used as a name/],
       ["a set of two computed members", "pure val initial: int = 0\npure def pair(a: int, b: int): int = Set(a, b).size()", /could hold the same value twice/],
       ["a variant field called tag", "type P = A({ tag: int }) | B\npure val initial: int = 0\npure def tick(n: int): int = n", /cannot be called `tag`/],
       ["a match binder used as a whole value", "type N = { n: int }\ntype P = A(N) | B\npure val initial: int = 0\npure def g(r: N): int = r.n\npure def f(p: P): int = match p { | A(x) => g(x) | _ => 0 }\npure def tick(n: int): int = n", /is what a match arm carries/],
@@ -1465,6 +1467,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
 
   test("verified code is refused where the proof and Node would read it differently", () => {
     const refused: [string, string, RegExp][] = [
+      ["the name of Dafny's standard library", "export const Std = 1;", /`Std` names a Dafny library/],
       ["a renamed import", 'import { sometimesFour as alwaysNotNegative, type C } from "../gen/counter.ts";', /may not rename what it imports/],
       ["a default import", 'import counter from "../gen/counter.ts";', /not a default or namespace import/],
       ["a namespace import", 'import * as counter from "../gen/counter.ts";', /not a default or namespace import/],

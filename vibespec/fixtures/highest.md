@@ -1,7 +1,7 @@
 # Highest
 
 A library whose law needs induction over a fold: Dafny does not prove it
-without help, and does with a proof file (see selftest).
+without help, and does with highest.proof.dfy.
 
 ## Running maximum
 

@@ -13,7 +13,7 @@ import { contracts, pending, pendingKey, pendingContracts, acceptAllReviews, pen
 import { entry, remembered, collectGarbage, type Memory } from "./cache.ts";
 import { generated, typecheckAll, proofUnits, proofFiles, strayProofFiles } from "./units.ts";
 import { SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, LASSO_TRACES, STEPS, DEPTHS, SEARCHED, simulate, search, firstBreak, lasso, showTrace, replay, type Step } from "./simulate.ts";
-import { sha, indent, tests, readSrc, projectRoot, type SrcFile } from "./util.ts";
+import { sha, indent, packageScripts, tests, readSrc, projectRoot, type SrcFile } from "./util.ts";
 
 export { readSpecs, badSpecName, parseSpec, scanSpec, expandListHelpers, type Spec, type Rule, type Story } from "./parse.ts";
 export { pending, pendingKey, pendingContracts, acceptReviews, acceptContracts, dependencies, type Lock, type Pending } from "./review.ts";
@@ -387,8 +387,9 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
     }
     if (proofsResult.status === "rejected") report(false, "proof", "the prover could not run", indent(String(proofsResult.reason)));
     else for (const r of proofsResult.value) report(...r);
-    for (const r of await tests(root, specs)) report(...r);
-    for (const r of await conformance(root, machines)) report(...r);
+    const scripts = packageScripts(root);
+    for (const r of await tests(root, specs, scripts)) report(...r);
+    for (const r of await conformance(root, machines, scripts)) report(...r);
     if (complete && proofsRan) collectGarbage(memory);
   }
   fs.rmSync(loaded, { recursive: true, force: true });
@@ -469,9 +470,9 @@ export function init(root: string, warn: (message: string) => void = (message) =
   const previous = fs.existsSync(agents) ? fs.readFileSync(agents, "utf8") : "";
   const eol = previous.includes("\r\n") ? "\r\n" : "\n";
   const section = `<!-- vibespec:start -->${eol}${procedure.replace(/\r?\n/g, eol)}${eol}<!-- vibespec:end -->`;
-  const starts = [...previous.matchAll(/<!-- (vibespec|onespec):start\b[^>]*-->/g)];
-  const ends = [...previous.matchAll(/<!-- (vibespec|onespec):end -->/g)];
-  if (starts.length !== ends.length || starts.length > 1 || (starts.length === 1 && (starts[0][1] !== ends[0][1] || starts[0].index! > ends[0].index!)))
+  const starts = [...previous.matchAll(/<!-- vibespec:start\b[^>]*-->/g)];
+  const ends = [...previous.matchAll(/<!-- vibespec:end -->/g)];
+  if (starts.length !== ends.length || starts.length > 1 || (starts.length === 1 && starts[0].index! > ends[0].index!))
     throw new Error("AGENTS.md: repair the duplicated or incomplete Vibespec markers before running spec init");
   const updated = starts.length ? previous.slice(0, starts[0].index) + section + previous.slice(ends[0].index! + ends[0][0].length)
     : previous.trim() === procedure ? `${section}${eol}`
