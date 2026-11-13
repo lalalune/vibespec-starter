@@ -11,12 +11,11 @@ import { after, describe, test } from "node:test";
 import { LIB_FILE, isolatedCopies, parseProofFile, readVerdict, splice } from "./prove.ts";
 import { exec } from "./run.ts";
 import { migrateLocks, pendingSpecs, readLedger, writeLedger } from "./review.ts";
-import { danglingCitations } from "./util.ts";
 import { nodesOf } from "./studio/doc.ts";
 import { canonical, departure } from "./conformance.ts";
 import { conformance as checkTraces, conformanceFound, writeConformance } from "./conform.ts";
 import { serve, startStudio } from "./studio/server.ts";
-import { acceptContracts, acceptReviews, check, checkVerifiedSource, expandListHelpers, gen, init, parseSpec, pending, pendingContracts, readSpecs, replay, show, type Result } from "./spec.ts";
+import { acceptContracts, acceptReviews, check, checkVerifiedSource, danglingCitations, expandListHelpers, gen, init, parseSpec, pending, pendingContracts, readSpecs, replay, show, type Result } from "./spec.ts";
 
 const project = path.join(import.meta.dirname, "..");
 const EXAMPLE = path.join(project, "vibespec/examples/order");
@@ -1486,6 +1485,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     for (const [what, code, message] of refused) assert.throws(() => checkVerifiedSource("src/x.ts", `//@ backend dafny\n${code}\n`), message, what);
     checkVerifiedSource("src/ledger.ts", read("src/ledger.ts", EXAMPLE));
     checkVerifiedSource("src/x.ts", '//@ backend dafny\n// What the //@ lines promise.\nimport { type C, inv } from "../gen/c.ts";\nexport type D = C;\nexport interface E { c: C }\nconst limit = 3;\n//@ pure\nexport function f(c: C): boolean {\n  //@ ensures \\result === inv(c)\n  return inv(c) && limit > 0 || inv(c);\n}\n');
+    checkVerifiedSource("src/x.ts", "//@ backend dafny\nexport function f(x: number): number { //@ requires x > 0\n  let i = 0; //@ type nat\n  return x + i;\n}\n");
   });
 
   test("verified code that renames an import or re-exports, or annotations in a file that is not .ts, fail the proof", async () => {
