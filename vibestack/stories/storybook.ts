@@ -1,17 +1,17 @@
-// A project's `.storybook/main.ts` is `export default defineMain()`. Storybook and Vite are the project's
-// own: this file names them as strings and hands Vite a plain object, so the tool installs neither.
-import { join, relative, resolve } from "node:path";
-import { type Options, generator, outOf, watched } from "./emit.ts";
+// A project's `.storybook/main.ts` is `export default defineMain(import.meta.dirname)`. Storybook and Vite are
+// the project's own: this file names them as strings and hands Vite a plain object, so the tool installs neither.
+import { dirname, relative, resolve } from "node:path";
+import { type Options, generator, listener, outOf } from "./emit.ts";
 
-export interface MainOptions extends Options {
-  /** Hand-written stories, as globs relative to `.storybook/`. */
-  stories?: string[];
-}
 interface Watcher { on(event: string, listener: (file: string) => void): unknown }
 
-/** Storybook's main config: the generated stories and the hand-written ones, regenerated as components change. */
-export function defineMain({ stories = ["../src/**/*.stories.@(ts|tsx)"], ...options }: MainOptions = {}) {
-  const root = options.root ?? process.cwd();
+/**
+ * Storybook's main config for the project whose `.storybook` directory is `dir`: the generated stories and the
+ * hand-written ones, regenerated as components change. The project is never the working directory, which
+ * belongs to whatever loads the config.
+ */
+export function defineMain(dir: string, options: Omit<Options, "root"> = {}) {
+  const root = dirname(dir);
   const generate = generator({ ...options, root });
   const run = () => {
     for (const line of generate().diagnostics) console.warn(`stories: ${line}`);
@@ -20,7 +20,7 @@ export function defineMain({ stories = ["../src/**/*.stories.@(ts|tsx)"], ...opt
   run();
   return {
     framework: "@storybook/react-vite",
-    stories: [`${relative(join(root, ".storybook"), resolve(root, options.out ?? outOf(root))).replaceAll("\\", "/")}/*.stories.tsx`, ...stories],
+    stories: [`${relative(dir, resolve(root, options.out ?? outOf(root))).replaceAll("\\", "/")}/*.stories.tsx`, "../src/**/*.stories.@(ts|tsx)"],
     addons: ["@storybook/addon-a11y", "@storybook/addon-vitest"],
     core: { disableTelemetry: true },
     viteFinal: <Config extends { plugins?: unknown[] }>(config: Config) => ({
@@ -30,7 +30,8 @@ export function defineMain({ stories = ["../src/**/*.stories.@(ts|tsx)"], ...opt
         {
           name: "vibestack-stories",
           configureServer(server: { watcher: Watcher }) {
-            for (const event of ["add", "change", "unlink"]) server.watcher.on(event, (file) => watched(relative(root, file)) && run());
+            const changed = listener(root, options.out, run);
+            for (const event of ["add", "change", "unlink"]) server.watcher.on(event, changed);
           },
         },
       ],

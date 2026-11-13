@@ -1,14 +1,15 @@
-// The generator on test/fixtures, copied under test/project so that React, CVA and Effect resolve from its
-// install. Run from test/project: `pnpm exec vitest run --project generator`.
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+// The generator on a copy of test/fixtures that nothing else reads or writes: in the system's temporary
+// directory, with test/project's install linked in so that React, CVA and Effect resolve. It runs from any
+// working directory; from test/project, `pnpm exec vitest run --project generator`.
+import { cpSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, expect, it } from "vitest";
-import { type Component, generator } from "../emit.ts";
+import { type Component, generator, watched } from "../emit.ts";
 
-const cache = join(import.meta.dirname, "project", ".cache");
-mkdirSync(cache, { recursive: true });
-const root = mkdtempSync(join(cache, "fixtures-"));
+const root = mkdtempSync(join(realpathSync(tmpdir()), "stories-fixtures-"));
 cpSync(join(import.meta.dirname, "fixtures"), root, { recursive: true });
+symlinkSync(join(import.meta.dirname, "project", "node_modules"), join(root, "node_modules"));
 afterAll(() => rmSync(root, { recursive: true }));
 
 const out = join(root, "generated", "stories");
@@ -42,23 +43,26 @@ it("reads each kind of prop, with the defaults its destructuring gives", () => {
 it("varies one prop at a time from a derived default, with a spy for a function", () => {
   expect(stories("Kinds")).toEqual(["default kit-kinds--default", "state kit-kinds--empty", "prop kit-kinds--flag", "prop kit-kinds--tone-warn", "prop kit-kinds--tone-bad"]);
   expect(component("Kinds").stories[3]).toEqual({ id: "kit-kinds--tone-warn", name: "Tone Warn", kind: "prop", args: { label: "Label", tone: "warn" } });
-  expect(read("kit-kinds.stories.tsx")).toContain('const base = { label: "Label", onPick: fn() };');
-  expect(read("kit-kinds.stories.tsx")).toContain('export default { id: "kit-kinds", title: "Kit/Kinds", component: Kinds };');
+  // Under an alias, so that a component named Empty or Default cannot meet a story of that name.
+  expect(read("kit-kinds.stories.tsx")).toContain('import { Kinds as component } from "../../src/Kinds.tsx";\n\nconst base = { label: "Label", onPick: fn() };\n\nexport default { id: "kit-kinds", title: "Kit/Kinds", component };');
 });
 
-it("reads CVA variants in the order written, and their defaults", () => {
+it("reads CVA variants in the order written, and their defaults, and varies them before an inherited prop", () => {
   expect(component("Tag").props.filter((p) => p.kind === "union")).toEqual([
+    { name: "translate", kind: "union", options: ["no", "yes"], required: false },
     { name: "size", kind: "union", options: ["sm", "md", "lg"], required: false, default: "md" },
     { name: "tone", kind: "union", options: ["quiet", "loud"], required: false, default: "quiet" },
   ]);
-  expect(stories("Tag")).toEqual(["default kit-tag--default", "prop kit-tag--size-sm", "prop kit-tag--tone-loud", "prop kit-tag--size-lg"]);
+  // `children` is only passed on with the rest, and is still what the stories show.
+  expect(stories("Tag")).toEqual(["default kit-tag--default", "state kit-tag--empty", "prop kit-tag--size-sm", "prop kit-tag--tone-loud", "prop kit-tag--size-lg", "prop kit-tag--translate-no", "prop kit-tag--translate-yes"]);
 });
 
 it("caps the stories of a component, taking an option of each prop before a second of any", () => {
   expect(component("Many").stories).toHaveLength(12);
-  expect(stories("Many").slice(0, 5)).toEqual(["default kit-many--default", "prop kit-many--shade-50", "prop kit-many--hue-red", "prop kit-many--dense", "prop kit-many--shade-100"]);
+  // The required `shade` renders as its first option, which is then no story of its own.
+  expect(stories("Many").slice(0, 5)).toEqual(["default kit-many--default", "prop kit-many--shade-100", "prop kit-many--hue-red", "prop kit-many--dense", "prop kit-many--shade-200"]);
   const few = generator({ root, out: join(root, "generated", "few"), cap: 3 })();
-  expect(stories("Many", few)).toEqual(["default kit-many--default", "prop kit-many--shade-50", "prop kit-many--hue-red"]);
+  expect(stories("Many", few)).toEqual(["default kit-many--default", "prop kit-many--shade-100", "prop kit-many--hue-red"]);
 });
 
 it("reports a required prop it cannot give a value, and writes that component no stories", () => {
@@ -136,11 +140,23 @@ it("rewrites only what a change touches, and removes what a deleted component le
   edit("src/Tag.tsx", (text) => text.replace('lg: "l" }', 'lg: "l", xl: "x" }'));
   expect(run()).toMatchObject({ written: ["kit-tag.stories.tsx", "catalog.json", "manifest.json"], removed: [], analyzed: 1 });
   expect(stories("Tag", run())).toContain("prop kit-tag--size-xl");
+  expect(["src/Tag.tsx", "tsconfig.json", "generated/stories/kit-tag.stories.tsx", "node_modules/react/index.ts", ".cache/Tag.tsx"].filter(watched(root))).toEqual(["src/Tag.tsx", "tsconfig.json"]);
+
+  // A type reached through a path alias is an input, and so is the tsconfig that names the alias.
+  edit("src/shades.ts", (text) => text.replace('"red"', '"crimson"'));
+  expect(stories("Many", run())).toContain("prop kit-many--hue-crimson");
+  edit("tsconfig.json", (text) => text.replace('"strict": true', '"strict": false'));
+  expect(run()).toMatchObject({ written: ["manifest.json"], analyzed: 7 });
 
   writeFileSync(join(root, "src/Table.meta.ts"), 'export const meta = { args: { rows: [{ id: 1 }], sort: { by: "id" } } };\n');
   const given = run();
   expect(given).toMatchObject({ written: ["kit-table.stories.tsx", "catalog.json", "stories.test.tsx", "stories.browser.test.tsx", "manifest.json"], analyzed: 1, diagnostics: [] });
   expect(component("Table", given).stories).toEqual([{ id: "kit-table--default", name: "Default", kind: "default", args: { rows: [{ id: 1 }], sort: { by: "id" } } }, { id: "kit-table--empty", name: "Empty", kind: "state", args: { rows: [], sort: { by: "id" } } }]);
+
+  // Args that are not all written out may give a required prop; a bound that is not a pair is reported, not thrown.
+  edit("src/Table.meta.ts", (text) => text.replace("rows: [{ id: 1 }],", "...{ rows: [{ id: 1 }] },"));
+  edit("src/Meter.meta.ts", (text) => text.replace("[0, full]", "full"));
+  expect(run().diagnostics).toEqual(['Meter: `bounds` of "value" must be written out as two numbers, `[least, greatest]`, in Meter.meta.ts']);
 
   rmSync(join(root, "src/Chip.tsx"));
   const gone = run();

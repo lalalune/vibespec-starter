@@ -15,8 +15,12 @@ it("a disabled or loading Button does not fire", async () => {
   await user.click(button);
   rerender(<Button onClick={onClick} loading>Save</Button>);
   await user.click(button);
-  expect(onClick).toHaveBeenCalledTimes(1);
   expect(button.getAttribute("aria-busy")).toBe("true");
+  // A link has no `disabled`: it says so, and refuses the click.
+  rerender(<Button onClick={onClick} disabled asChild><a href="#orders">Save</a></Button>);
+  const link = screen.getByRole("link", { name: "Save" });
+  await user.click(link);
+  expect([onClick.mock.calls.length, link.getAttribute("aria-disabled"), link.tabIndex]).toEqual([1, "true", -1]);
 });
 
 it("a Dialog opens from the keyboard, holds focus, closes on Escape and gives focus back", async () => {

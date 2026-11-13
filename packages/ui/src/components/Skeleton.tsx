@@ -1,7 +1,7 @@
 import type { ComponentProps } from "react";
 import { cn } from "../lib/cn.ts";
 
-export type SkeletonProps = ComponentProps<"div">;
+export type SkeletonProps = Omit<ComponentProps<"div">, "children">;
 
 /** A placeholder in the shape of content still loading; size it with `className`. */
 export function Skeleton({ className, ...props }: SkeletonProps) {

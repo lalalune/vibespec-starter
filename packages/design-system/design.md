@@ -57,9 +57,6 @@ this prose into tokens. To change the design, describe it, and have the change w
 
 | Token | Value |
 | --- | --- |
-| `radius` | 0.5rem |
-| `font.sans` | ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif |
-| `font.mono` | ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace |
 | `shadow.sm` | 0 1px 2px oklch(0 0 0 / 0.08) |
 | `shadow.md` | 0 4px 12px oklch(0 0 0 / 0.12) |
 | `shadow.lg` | 0 12px 32px oklch(0 0 0 / 0.18) |
@@ -67,6 +64,9 @@ this prose into tokens. To change the design, describe it, and have the change w
 | `breakpoint.md` | 48rem |
 | `breakpoint.lg` | 64rem |
 | `breakpoint.xl` | 80rem |
+| `radius` | 0.5rem |
+| `font.sans` | ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, sans-serif |
+| `font.mono` | ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace |
 | `duration.fast` | 100ms |
 | `duration.base` | 150ms |
 | `duration.slow` | 300ms |

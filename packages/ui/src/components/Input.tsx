@@ -1,7 +1,7 @@
 import type { ComponentProps } from "react";
 import { cn } from "../lib/cn.ts";
 
-export type InputProps = ComponentProps<"input"> & {
+export type InputProps = Omit<ComponentProps<"input">, "children"> & {
   /** Marks the value as refused, visibly and through `aria-invalid`. */
   invalid?: boolean;
 };

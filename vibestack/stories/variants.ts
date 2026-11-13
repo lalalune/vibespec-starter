@@ -39,6 +39,9 @@ const pascal = (label: string) => {
   return /^[A-Z]/.test(name) ? name : `Story${name}`;
 };
 
+/** A bound as `[least, greatest]`, when the metadata wrote it as two numbers. */
+const pair = (bound: unknown) => (Array.isArray(bound) && bound.length === 2 && bound.every((n) => typeof n === "number") ? (bound as [number, number]) : undefined);
+
 /** How many values a schema is sampled for: the first fills the default story, each other is a story. */
 const SAMPLES = 3;
 
@@ -60,10 +63,11 @@ export function plan(c: Found, cap: number): Plan {
     else if (!p.required) continue;
     else if (p.name === c.model?.prop) base[p.name] = new Code("initial");
     else if (p.kind === "string" || p.kind === "node") base[p.name] = startCase(p.name);
-    else if (p.kind === "number") base[p.name] = meta?.bounds[p.name]?.[0] ?? 0;
+    else if (p.kind === "number") base[p.name] = pair(meta?.bounds[p.name])?.[0] ?? 0;
     else if (p.kind === "boolean") base[p.name] = false;
     else if (p.kind === "union") base[p.name] = p.options![0];
-    else diagnostics.push(`${c.name}: required prop "${p.name}" (${p.kind}) has no value to render with; give one in \`args\` of ${c.name}.meta.tsx`);
+    // Args that could not all be read may give it when the story runs.
+    else if (!meta?.open) diagnostics.push(`${c.name}: required prop "${p.name}" (${p.kind}) has no value to render with; give one in \`args\` of ${c.name}.meta.tsx`);
   }
   const plain = { ...base, ...args };
   const result = { id, title, samples: meta?.schema ? SAMPLES : 0, base: `{ ${[...fields(base), ...(meta?.schema ? ["...samples[0]"] : []), ...(meta ? ["...given.args"] : [])].join(", ")} }` };
@@ -81,9 +85,13 @@ export function plan(c: Found, cap: number): Plan {
   add("Default", "default", {});
   for (const [name, values] of Object.entries(meta?.examples ?? {})) add(name, "example", {}, ["base", `given.examples[${JSON.stringify(name)}]`], { ...plain, ...values });
   for (const [name, values] of Object.entries(meta?.states ?? {})) add(name, "state", {}, [`given.states[${JSON.stringify(name)}]`], values);
-  for (const [name, [least, greatest]] of Object.entries(meta?.bounds ?? {})) {
-    add(`${name} min`, "prop", { [name]: least });
-    add(`${name} max`, "prop", { [name]: greatest });
+  for (const [name, bound] of Object.entries(meta?.bounds ?? {})) {
+    const [least, greatest] = pair(bound) ?? [];
+    if (least === undefined) diagnostics.push(`${c.name}: \`bounds\` of "${name}" must be written out as two numbers, \`[least, greatest]\`, in ${basename(meta!.file)}`);
+    else {
+      add(`${name} min`, "prop", { [name]: least });
+      add(`${name} max`, "prop", { [name]: greatest });
+    }
   }
   if (c.model?.prop) add("Model", "model", { [c.model.prop]: new Code("initial") }, ["base"], { ...plain, [c.model.prop]: c.model.initial });
   for (let i = 1; i < result.samples; i++) add(`Sample ${i}`, "example", {}, ["base", `samples[${i}]`], plain);
@@ -97,13 +105,16 @@ export function plan(c: Found, cap: number): Plan {
   if (list) add("Empty", "state", { [list.name]: [] });
   else if ("children" in plain) add("Empty", "state", { children: undefined });
 
-  // One prop at a time, and one option of each prop before a second of any, so the cap cuts evenly.
-  const varied = c.props.filter((p) => !STATE.test(p.name)).map((p) => {
-    const usual = p.name in args ? args[p.name] : p.default;
-    if (p.kind === "union") return p.options!.filter((option) => option !== usual).map((option) => [`${p.name} ${option}`, { [p.name]: option }] as const);
-    return p.kind === "boolean" ? [[p.name, { [p.name]: usual !== true }] as const] : [];
-  });
-  for (let i = 0; varied.some((options) => i < options.length); i++) for (const options of varied) if (options[i]) add(options[i][0], "prop", options[i][1]);
+  // One prop at a time, and one option of each prop before a second of any, so the cap cuts evenly; the
+  // component's own props before those it inherits, so the cap cuts those first.
+  for (const own of [true, false]) {
+    const varied = c.props.filter((p) => !STATE.test(p.name) && c.inherited.includes(p.name) !== own).map((p) => {
+      const usual = p.name in plain ? plain[p.name] : p.default;
+      if (p.kind === "union") return p.options!.filter((option) => option !== usual).map((option) => [`${p.name} ${option}`, { [p.name]: option }] as const);
+      return p.kind === "boolean" ? [[p.name, { [p.name]: usual !== true }] as const] : [];
+    });
+    for (let i = 0; varied.some((options) => i < options.length); i++) for (const options of varied) if (options[i]) add(options[i][0], "prop", options[i][1]);
+  }
 
   for (const key of meta?.play ?? []) if (!all.some((s) => s.name === pascal(key))) diagnostics.push(`${c.name}: \`play\` names "${key}", which is no story of it`);
   const manual = c.manual;

@@ -22,7 +22,10 @@ export interface Meta {
   args: Values;
   examples: Record<string, Values>;
   states: Record<string, Values>;
-  bounds: Record<string, [number, number]>;
+  /** As written: a pair of numbers, when the file is right. */
+  bounds: Values;
+  /** Whether `args` holds more than was read: a spread, a computed name or a call. */
+  open: boolean;
   /** The props its schema covers, when it has one. */
   schema?: string[];
   decorator: boolean;
@@ -43,6 +46,8 @@ export interface Found {
   manual?: Manual;
   model?: Model;
   design: string[];
+  /** The props it only inherits: declared by a library or the DOM, not in the project's source. */
+  inherited: string[];
   /** The component this one only works inside, when its file is named after another of its exports. */
   part?: string;
 }
@@ -65,10 +70,16 @@ export function sources(root: string, globs: string[]): string[] {
   return globSync(globs, { cwd: root }).map((file) => file.replaceAll("\\", "/")).filter((file) => file.endsWith(".tsx") && !skip.test(file)).sort().map((file) => join(root, file));
 }
 
+/** Plain order of text, the same on every machine. */
+export const compare = (a: string, b: string) => Number(a > b) - Number(a < b);
+
+/** Where `<name>.meta.ts(x)` or `<name>.stories.ts(x)` would stand beside a component. */
+const sibling = (abs: string, name: string, kind: "meta" | "stories") => ["tsx", "ts"].map((ext) => join(dirname(abs), `${name}.${kind}.${ext}`));
+
 /** The files beside a component that change its stories, present or not: metadata, hand-written stories, its model. */
 export function beside(abs: string, names: string[]): string[] {
   const spec = existsSync(abs) ? modelTag(readFileSync(abs, "utf8")) : undefined;
-  return [...names.flatMap((name) => ["meta.tsx", "meta.ts", "stories.tsx", "stories.ts"].map((end) => join(dirname(abs), `${name}.${end}`))), ...(spec ? [modelFile(abs, spec)] : [])];
+  return [...names.flatMap((name) => [...sibling(abs, name, "meta"), ...sibling(abs, name, "stories")]), ...(spec ? [modelFile(abs, spec)] : [])];
 }
 
 /**
@@ -76,14 +87,11 @@ export function beside(abs: string, names: string[]): string[] {
  * one parsed, so a rebuild reads only the files that changed.
  */
 export function programs(root: string): (files: string[]) => ts.Program {
-  const config = join(root, "tsconfig.json");
-  const given = existsSync(config) ? ts.getParsedCommandLineOfConfigFile(config, {}, { ...ts.sys, onUnRecoverableConfigFileDiagnostic: () => {} })?.options : undefined;
-  const options: ts.CompilerOptions = {
-    ...(given ?? { target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler, strict: true, allowImportingTsExtensions: true }),
-    jsx: given?.jsx ?? ts.JsxEmit.ReactJSX,
-    noEmit: true,
-    skipLibCheck: true,
+  const fail = (problem: ts.Diagnostic) => {
+    throw new Error(ts.flattenDiagnosticMessageText(problem.messageText, "\n"));
   };
+  const given = ts.getParsedCommandLineOfConfigFile(join(root, "tsconfig.json"), {}, { ...ts.sys, onUnRecoverableConfigFileDiagnostic: fail })!.options;
+  const options: ts.CompilerOptions = { ...given, jsx: given.jsx ?? ts.JsxEmit.ReactJSX, noEmit: true, skipLibCheck: true };
   const host = ts.createCompilerHost(options, true);
   const parse = host.getSourceFile;
   const parsed = new Map<string, { stamp: string; file: ts.SourceFile | undefined }>();
@@ -129,9 +137,10 @@ export function literal(given: ts.Expression | undefined): unknown {
   }
   if (ts.isObjectLiteralExpression(node))
     return Object.fromEntries(
-      node.properties.flatMap((p) => {
+      node.properties.flatMap((p): [PropertyKey, unknown][] => {
         const name = p.name && key(p.name);
-        return name === undefined ? [] : [[name, ts.isPropertyAssignment(p) ? literal(p.initializer) : ts.isShorthandPropertyAssignment(p) ? literal(p.name) : dynamic]];
+        // A spread or a computed name is marked, under a key no listing or JSON shows.
+        return name === undefined ? [[dynamic, true]] : [[name, ts.isPropertyAssignment(p) ? literal(p.initializer) : ts.isShorthandPropertyAssignment(p) ? literal(p.name) : dynamic]];
       }),
     );
   const named = ts.isIdentifier(node) && node.text !== "undefined" ? declared(node.getSourceFile(), node.text)?.initializer : undefined;
@@ -153,7 +162,8 @@ function readMeta(checker: ts.TypeChecker, file: ts.SourceFile): Meta | undefine
     args: record(meta.args),
     examples: records(meta.examples),
     states: records(meta.states),
-    bounds: record(meta.bounds) as Meta["bounds"],
+    bounds: record(meta.bounds),
+    open: meta.args === dynamic || dynamic in record(meta.args),
     schema: schema && (covered ? checker.getTypeOfSymbol(covered).getProperties().map((p) => p.name) : []),
     decorator: "decorator" in meta,
     play: Object.keys(record(meta.play)),
@@ -200,10 +210,11 @@ function shape(checker: ts.TypeChecker, type: ts.Type, text: string): Pick<Prop,
       const found = new RegExp(`(?<![\\w-])${String(option).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w-])`).exec(text);
       return found ? found.index : Infinity;
     };
-    return { kind: "union", options: options.sort((a, b) => at(a) - at(b) || (typeof a === "number" && typeof b === "number" ? a - b : String(a).localeCompare(String(b)))) };
+    return { kind: "union", options: options.sort((a, b) => at(a) - at(b) || (typeof a === "number" && typeof b === "number" ? a - b : compare(String(a), String(b)))) };
   }
   if (all(ts.TypeFlags.NumberLike)) return { kind: "number" };
-  if (all(ts.TypeFlags.StringLike)) return { kind: "string" };
+  // Text or a number, such as an input's `value`, is given as text.
+  if (all(ts.TypeFlags.StringLike | ts.TypeFlags.NumberLike)) return { kind: "string" };
   return { kind: all(ts.TypeFlags.Object | ts.TypeFlags.Intersection) ? "object" : "unknown" };
 }
 
@@ -230,7 +241,6 @@ export function analyze(built: ts.Program, abs: string): Found[] {
   const module = file && checker.getSymbolAtLocation(file);
   if (!file || !module) return [];
   const own = (d: ts.Declaration) => !built.isSourceFileFromExternalLibrary(d.getSourceFile()) && !built.isSourceFileDefaultLibrary(d.getSourceFile());
-  const sibling = (name: string, ends: string[]) => ends.map((end) => join(dirname(abs), `${name}.${end}`)).find(existsSync);
   const spec = modelTag(file.text);
   const gen = spec && built.getSourceFile(modelFile(abs, spec));
 
@@ -242,33 +252,34 @@ export function analyze(built: ts.Program, abs: string): Found[] {
     if (!signature || !/Element|ReactNode|^any$/.test(checker.typeToString(signature.getReturnType()))) return [];
 
     const tags = (name: string) => symbol.getJsDocTags(checker).filter((t) => t.name === name).map((t) => ts.displayPartsToString(t.text).trim());
-    const metaFile = sibling(exportOf.name, ["meta.tsx", "meta.ts"]);
+    const metaFile = sibling(abs, exportOf.name, "meta").find(existsSync);
     const metaSource = metaFile ? built.getSourceFile(metaFile) : undefined;
     const meta = metaSource ? readMeta(checker, metaSource) : undefined;
-    const manual = sibling(exportOf.name, ["stories.tsx", "stories.ts"]);
+    const manual = sibling(abs, exportOf.name, "stories").find(existsSync);
     const { model, state } = (gen && tags("model").length ? readModel(checker, gen, spec) : undefined) ?? {};
 
     const binding = body(decl)?.parameters[0]?.name;
     const taken = new Map((binding && ts.isObjectBindingPattern(binding) ? binding.elements : []).filter((e) => !e.dotDotDotToken).map((e) => [(e.propertyName ?? e.name).getText(), e.initializer]));
     const mentioned = new Set([...Object.keys(meta?.args ?? {}), ...Object.values(meta?.examples ?? {}).flatMap((example) => Object.keys(example)), ...Object.keys(meta?.bounds ?? {}), ...(meta?.schema ?? [])]);
     const first = signature.parameters[0];
-    const props = (first ? checker.getPropertiesOfType(checker.getTypeOfSymbolAtLocation(first, decl)) : [])
-      .filter((p) => taken.has(p.name) || mentioned.has(p.name) || STATE.test(p.name) || p.declarations?.some(own))
-      .map((p): Prop => {
-        const type = checker.getTypeOfSymbolAtLocation(p, decl);
-        const at = p.declarations?.find(own);
-        const written = at && ts.isPropertySignature(at) && at.type ? checker.getTypeFromTypeNode(at.type).aliasSymbol?.declarations?.[0] : undefined;
-        const preset = taken.get(p.name) ? literal(taken.get(p.name)) : variantDefaults(at)[p.name];
-        if (model && checker.getNonNullableType(type) === state) model.prop ??= p.name;
-        const description = ts.displayPartsToString(p.getDocumentationComment(checker));
-        return {
-          name: p.name,
-          ...shape(checker, type, (written ?? at)?.getText() ?? ""),
-          required: !(p.flags & ts.SymbolFlags.Optional),
-          ...(preset !== undefined && preset !== dynamic ? { default: preset } : {}),
-          ...(description ? { description } : {}),
-        };
-      });
+    const symbols = (first ? checker.getPropertiesOfType(checker.getTypeOfSymbolAtLocation(first, decl)) : [])
+      // `children` is kept even when the component only passes it on with the rest: it is what most of them show.
+      .filter((p) => p.name === "children" || taken.has(p.name) || mentioned.has(p.name) || STATE.test(p.name) || p.declarations?.some(own));
+    const props = symbols.map((p): Prop => {
+      const type = checker.getTypeOfSymbolAtLocation(p, decl);
+      const at = p.declarations?.find(own);
+      const written = at && ts.isPropertySignature(at) && at.type ? checker.getTypeFromTypeNode(at.type).aliasSymbol?.declarations?.[0] : undefined;
+      const preset = taken.get(p.name) ? literal(taken.get(p.name)) : variantDefaults(at)[p.name];
+      if (model && checker.getNonNullableType(type) === state) model.prop ??= p.name;
+      const description = ts.displayPartsToString(p.getDocumentationComment(checker));
+      return {
+        name: p.name,
+        ...shape(checker, type, (written ?? at)?.getText() ?? ""),
+        required: !(p.flags & ts.SymbolFlags.Optional),
+        ...(preset !== undefined && preset !== dynamic ? { default: preset } : {}),
+        ...(description ? { description } : {}),
+      };
+    });
     return [{
       name: exportOf.name,
       file: abs,
@@ -280,6 +291,7 @@ export function analyze(built: ts.Program, abs: string): Found[] {
       manual: manual ? readManual(manual) : undefined,
       model,
       design: tags("design"),
+      inherited: symbols.filter((p) => !p.declarations?.some(own)).map((p) => p.name),
     }];
   });
   const whole = basename(abs).replace(/\.tsx?$/, "");

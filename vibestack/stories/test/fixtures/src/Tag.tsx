@@ -8,6 +8,6 @@ const tagVariants = cva("tag", {
 
 export type TagProps = ComponentProps<"span"> & VariantProps<typeof tagVariants>;
 
-export function Tag({ size, tone, className, ...props }: TagProps) {
-  return <span className={tagVariants({ size, tone, className })} {...props} />;
+export function Tag({ translate, size, tone, className, ...props }: TagProps) {
+  return <span translate={translate} className={tagVariants({ size, tone, className })} {...props} />;
 }
