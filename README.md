@@ -542,7 +542,7 @@ chat app carries commands and notifications, and a web page shows the state.
 | `kernel.md` | Arithmetic library | 10 laws | 10 obligations |
 | `tracker.md` | One project's sheet: guarded dashboard edits, unguarded hand edits | 20 transitions; 10 `always`, 4 `step`, 4 `sometimes` | 282 obligations |
 | `projects.md` | The registry of projects | 4 transitions; 2 `always`, 1 `step`, 1 `sometimes`, 1 law | 15 obligations |
-| `src/columns.ts` | Hand-written logic | `//@` contracts | 4 obligations |
+| `src/columns.ts` | Hand-written logic | `//@` contracts | 2 obligations |
 
 Every obligation is proved for all states and inputs.
 
