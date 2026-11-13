@@ -769,6 +769,56 @@ Style with Tailwind utilities on the project's tokens, compose shadcn/ui
 components before writing one, and follow the
 [design skill](.claude/skills/design/SKILL.md).
 
+### Components, stories and tokens
+
+A component is ordinary source the project owns: one `.tsx` file in
+`src/components/`, a named export, an exported `<Name>Props` type, and a
+JSDoc sentence on the component and on each prop that needs one. In this
+repository they are `@repo/ui`; a standalone project keeps its own.
+
+| | Source, kept in Git | Generated, never committed | Command, in the project |
+|---|---|---|---|
+| Tokens | `tokens.json`, and `design.md` describing them | `generated/tokens.css`, `generated/theme.css` (the Tailwind v4 entry) | `node <tools>/design/cli.ts build`, `check` |
+| Stories | the component, and `<Name>.meta.tsx` where its types are not enough | `generated/stories/`: Storybook stories, `catalog.json`, `stories.test.tsx` | `node <tools>/stories/cli.ts gen [--watch] [--check]` |
+
+`<tools>` is `vibestack/` here (`../../vibestack` from a package, `../..`
+from an example). In `@repo/ui`: `pnpm stories`, `pnpm storybook`,
+`pnpm test`; in `@repo/design-system`: `pnpm build`, `pnpm check`.
+
+- **Never write a story for what the generator can derive.** It reads each
+  prop's type, default and JSDoc and writes a Default story, one per option
+  of a union or boolean prop, and Disabled, Loading, Error and Empty where
+  such a prop exists, twelve at most. A hand-written `<Name>.stories.tsx`
+  beside the component is kept, and wins over a generated story of the same
+  name.
+- **`<Name>.meta.tsx`** exports `meta: ComponentMeta<Props>` (from
+  `vibestack/stories`): `args` every story starts from, named `examples` and
+  `states`, `bounds` of a numeric prop, a `schema` to sample, a `decorator`,
+  `play` interactions and the stories worth a `snapshot`. Stories, tests and
+  Studio read the same object. A required prop the generator cannot give a
+  value is reported, with the field to add; it never invents data.
+- **A component that shows a model** says so: `@model spec/index.md` in its
+  JSDoc links it to that spec's state and events, and `@design design.md#…`
+  to its design document. Studio's Components view follows both ways.
+- **A file named after one of its exports** (`Dialog.tsx`) gives stories to
+  that component; its other exports are its parts.
+- **Colors, radii, shadows and fonts are tokens.** Use the utilities named
+  after them (`bg-primary`, `text-muted-foreground`, `rounded-md`); the lint
+  rules of `vibestack/design/eslint.ts` refuse a palette class, an arbitrary
+  color and a literal color in a style. Merge classes with `cn()`; use CVA
+  only where a component has real variants.
+- **A design change is a token change.** Describe it in `design.md`, write
+  it as `[{ "path": "color.light.primary", "value": "oklch(…)", "reason": "…" }]`,
+  and run `node <tools>/design/cli.ts apply changes.json`: it refuses an
+  unknown path, an invalid value and a contrast below WCAG AA, and prints
+  the diff; `--write` applies it and rebuilds the CSS. Prose is never read
+  as tokens.
+
+To change a component: find it in `generated/stories/catalog.json` or in
+Studio's Components view, read its props and model there, edit the source,
+run `pnpm stories` (or leave `pnpm storybook` running), look at it, then
+`pnpm test` and `pnpm lint`.
+
 ### Building, running and testing
 
 | | Command | Does |
