@@ -4,7 +4,7 @@
 import { useSyncExternalStore } from "react";
 import { enabled as allowed, type Event as SessionEvent, type Session } from "../../gen/index.ts";
 import { enabled, step, type Event as Edit, type Outline, type Rule, type Story } from "../../gen/outline.ts";
-import { bodyOf, nodeId, ruleKey, specOrder, storyKey, textBody, textOf, type Item } from "../markdown.ts";
+import { bodyOf, nodeId, nodesOfOutline, specOrder, textBody, textOf, type Item } from "../markdown.ts";
 import type { Result } from "../../../spec.ts";
 import type { Snapshot } from "../project.ts";
 import type { ComponentIndex } from "../catalog.ts";
@@ -88,8 +88,7 @@ export const soleHeading = (titles: string[], title: string) => !!title && title
 
 /** The specs on disk, with the ones this page changed kept, and those that changed on disk underneath them noted. */
 function merge(snap: Snapshot, mine: Working[]): Working[] {
-  const keys = (specs: Working[]) => new Map(specs.flatMap((w) => w.outline.stories.flatMap((s) => [
-    [nodeId(w.file, storyKey(s.title)), ui(w.file, s.id)], ...s.rules.map((r) => [nodeId(w.file, ruleKey(s.title, r.title)), ui(w.file, r.id)])] as [string, string][])));
+  const keys = (specs: Working[]) => new Map(specs.flatMap((w) => nodesOfOutline(w.file, w.outline).map((n) => [n.id, ui(w.file, (n.rule ?? n.story).id)] as const)));
   const before = keys(mine);
   const out: Working[] = [];
   S.conflicts = [];
@@ -99,7 +98,7 @@ function merge(snap: Snapshot, mine: Working[]): Working[] {
     out.push(d);
   }
   for (const f of snap.specs) if (!out.some((o) => o.file === f.file)) out.push(working(f));
-  out.sort((a, b) => specOrder(a.file).localeCompare(specOrder(b.file)));
+  out.sort((a, b) => specOrder(a.file, b.file));
   // A story or rule stays open, or being edited, across a reload: by what it is called, since its number may change.
   const after = keys(out);
   const remap = (id: string) => {
@@ -369,8 +368,7 @@ export async function publish(force = false): Promise<void> {
   if (S.publishing) return;
   const dirty = dirtySpecs();
   // What each story and rule was on disk, so the manifest can say what moved and what was renamed.
-  const origins = dirty.filter((s) => !s.deleted).flatMap((spec) => spec.outline.stories.flatMap((s) => [
-    [nodeId(spec.file, storyKey(s.title)), s.origin || null], ...s.rules.map((r) => [nodeId(spec.file, ruleKey(s.title, r.title)), r.origin || null])]));
+  const origins = dirty.filter((s) => !s.deleted).flatMap((spec) => nodesOfOutline(spec.file, spec.outline).map((n) => [n.id, (n.rule ?? n.story).origin || null]));
   S.publishing = true;
   try {
     await api("publish", { files: dirty.map((s) => ({ file: s.file, base: s.base, text: publishedText(s) })), origins, force });

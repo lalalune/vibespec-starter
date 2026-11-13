@@ -120,7 +120,7 @@ pure def stepWaitingGoesDownOnlyBySyncOrUndo(before: Session, via: str, after: S
   (after.waiting < before.waiting) implies (via == "synced" or via == "markSynced" or via == "publish")
 ```
 
-### A studio that starts again picks up what was waiting
+### What is waiting outlives the studio
 
 ```quint
 pure def canResume(s: Session, changes: int): bool = s.job == Idle and s.waiting == 0 and changes >= 0

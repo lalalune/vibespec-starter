@@ -1,4 +1,4 @@
-// spec/client.md, "Edits can be queued while offline"; spec/client.md, "A client can catch up after editing, and can be told of a refusal"
+// spec/client.md, "A tab can go offline and back online, and queue edits while offline"; spec/client.md, "A client can catch up after editing, and can be told of a refusal"
 import { type Client, canGoOffline, canGoOnline } from "../../../gen/client.ts";
 import { cn, focusRing } from "../lib/cn.ts";
 

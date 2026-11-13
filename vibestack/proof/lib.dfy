@@ -1,6 +1,7 @@
-// General lemmas for proof files (spec/<name>.proof.dfy, src/<path>.proof.dfy).
-// The tools add this module to every proof unit that has a proof file and
-// verify it there; call its lemmas as ProofLib.<Name>(...).
+// General lemmas for proof files (spec/<path>.proof.dfy, src/<path>.proof.dfy).
+// The tools add this module to every proof unit that has a proof file, with
+// only the declarations the proof file calls and those they use (`libraryFor`
+// in vibestack/prove.ts), and verify it there; call its lemmas as ProofLib.<Name>(...).
 //
 // How proof files use it: AGENTS.md, "Proof files".
 //
@@ -217,25 +218,87 @@ module ProofLib {
     }
   }
 
-  /** Filtering first can only lower a count. */
-  lemma FilterOfFilterShorter<T>(p: T -> bool, q: T -> bool, xs: seq<T>)
-    ensures |Filter(q, Filter(p, xs))| <= |Filter(q, xs)|
+  /** A predicate that passes less often keeps no more, and fewer if it fails somewhere the other passes. */
+  lemma FilterImpLength<T>(f: T -> bool, g: T -> bool, xs: seq<T>)
+    requires forall i :: 0 <= i < |xs| && f(xs[i]) ==> g(xs[i])
+    ensures |Filter(f, xs)| <= |Filter(g, xs)|
+    ensures (exists i :: 0 <= i < |xs| && g(xs[i]) && !f(xs[i])) ==> |Filter(f, xs)| < |Filter(g, xs)|
     decreases |xs|
   {
     if |xs| == 0 {
-      FilterNil(p, xs);
-      FilterNil(q, xs);
-      FilterNil(q, Filter(p, xs));
+      FilterNil(f, xs);
+      FilterNil(g, xs);
     } else {
-      FilterCons(p, xs);
-      FilterCons(q, xs);
-      FilterOfFilterShorter(p, q, xs[1..]);
-      var r := Filter(p, xs[1..]);
-      if p(xs[0]) {
-        FilterCons(q, [xs[0]] + r);
+      FilterCons(f, xs);
+      FilterCons(g, xs);
+      assert forall i :: 0 <= i < |xs[1..]| ==> xs[1..][i] == xs[i + 1];
+      FilterImpLength(f, g, xs[1..]);
+      if exists i :: 0 <= i < |xs| && g(xs[i]) && !f(xs[i]) {
+        var i :| 0 <= i < |xs| && g(xs[i]) && !f(xs[i]);
+        if i > 0 {
+          assert xs[1..][i - 1] == xs[i];
+        }
+      }
+    }
+  }
+
+  /** As FilterImpLength, after first keeping only what d passes. */
+  lemma FilterOfFilterLength<T>(d: T -> bool, f: T -> bool, g: T -> bool, xs: seq<T>)
+    requires forall i :: 0 <= i < |xs| && d(xs[i]) && f(xs[i]) ==> g(xs[i])
+    ensures |Filter(f, Filter(d, xs))| <= |Filter(g, xs)|
+    ensures (exists i :: 0 <= i < |xs| && g(xs[i]) && !(d(xs[i]) && f(xs[i]))) ==> |Filter(f, Filter(d, xs))| < |Filter(g, xs)|
+    decreases |xs|
+  {
+    if |xs| == 0 {
+      FilterNil(d, xs);
+      FilterNil(f, Filter(d, xs));
+      FilterNil(g, xs);
+    } else {
+      var r := Filter(d, xs[1..]);
+      FilterCons(d, xs);
+      FilterCons(g, xs);
+      assert forall i :: 0 <= i < |xs[1..]| ==> xs[1..][i] == xs[i + 1];
+      FilterOfFilterLength(d, f, g, xs[1..]);
+      if d(xs[0]) {
+        FilterCons(f, [xs[0]] + r);
         assert ([xs[0]] + r)[1..] == r;
       } else {
-        assert Filter(p, xs) == r;
+        assert Filter(d, xs) == r;
+      }
+      if exists i :: 0 <= i < |xs| && g(xs[i]) && !(d(xs[i]) && f(xs[i])) {
+        var i :| 0 <= i < |xs| && g(xs[i]) && !(d(xs[i]) && f(xs[i]));
+        if i > 0 {
+          assert xs[1..][i - 1] == xs[i];
+        }
+      }
+    }
+  }
+
+  /** Filtering first can only lower a count. */
+  lemma FilterOfFilterShorter<T>(p: T -> bool, q: T -> bool, xs: seq<T>)
+    ensures |Filter(q, Filter(p, xs))| <= |Filter(q, xs)|
+  {
+    FilterOfFilterLength(p, q, q, xs);
+  }
+
+  // --- DistinctBy -----------------------------------------------------------
+
+  /** Two lists without repeated keys, and no key in both: their concatenation repeats no key. */
+  lemma DistinctByConcat<T, K>(a: seq<T>, b: seq<T>, key: T -> K)
+    requires DistinctBy(a, key) && DistinctBy(b, key)
+    requires forall x, y :: x in a && y in b ==> key(x) != key(y)
+    ensures DistinctBy(a + b, key)
+  {
+    var c := a + b;
+    forall i, j | 0 <= i < |c| && 0 <= j < |c| && i != j
+      ensures key(c[i]) != key(c[j])
+    {
+      if i < |a| && j >= |a| {
+        assert c[i] == a[i] && c[j] == b[j - |a|];
+      } else if i >= |a| && j < |a| {
+        assert c[j] == a[j] && c[i] == b[i - |a|];
+      } else if i >= |a| && j >= |a| {
+        assert c[i] == b[i - |a|] && c[j] == b[j - |a|];
       }
     }
   }
@@ -282,12 +345,9 @@ module ProofLib {
     requires forall a, x :: f(a, x) == (if x > a then x else a)
     ensures Seq.FoldLeft(f, init, xs) >= init
     ensures forall i :: 0 <= i < |xs| ==> Seq.FoldLeft(f, init, xs) >= xs[i]
-    decreases |xs|
   {
-    if |xs| > 0 {
-      FoldLeftMax(f, f(init, xs[0]), xs[1..]);
-      assert forall i :: 1 <= i < |xs| ==> xs[i] == xs[1..][i - 1];
-    }
+    FoldLeftInflationary(f, init, xs);
+    FoldLeftAboveEach(f, (x: int) => x, init, xs);
   }
 
   /** Two folds whose steps agree position by position give the same result. */
@@ -315,6 +375,55 @@ module ProofLib {
     }
   }
 
+  /** A fold that appends h(x) for each x holds what it started with and what the pieces hold. */
+  lemma FoldLeftConcatMember<A, T>(f: (seq<A>, T) -> seq<A>, h: T -> seq<A>, init: seq<A>, xs: seq<T>, x: A)
+    requires forall a, y :: f(a, y) == a + h(y)
+    ensures x in Seq.FoldLeft(f, init, xs) <==> (x in init || exists i :: 0 <= i < |xs| && x in h(xs[i]))
+    decreases |xs|
+  {
+    if |xs| > 0 {
+      FoldLeftConcatMember(f, h, f(init, xs[0]), xs[1..], x);
+      assert forall i :: 1 <= i < |xs| ==> xs[i] == xs[1..][i - 1];
+      if x in Seq.FoldLeft(f, init, xs) && !(x in init) && !(x in h(xs[0])) {
+        var i :| 0 <= i < |xs[1..]| && x in h(xs[1..][i]);
+        assert x in h(xs[i + 1]);
+      }
+    }
+  }
+
+  /** A fold that appends h(x) for each x repeats no key when no piece does and no two pieces share one. */
+  lemma FoldLeftConcatDistinctBy<T, U, K>(f: (seq<T>, U) -> seq<T>, h: U -> seq<T>, key: T -> K, init: seq<T>, xs: seq<U>)
+    requires forall a, y :: f(a, y) == a + h(y)
+    requires DistinctBy(init, key)
+    requires forall i :: 0 <= i < |xs| ==> DistinctBy(h(xs[i]), key)
+    requires forall i, x, y :: 0 <= i < |xs| && x in init && y in h(xs[i]) ==> key(x) != key(y)
+    requires forall i, j, x, y :: 0 <= i < j < |xs| && x in h(xs[i]) && y in h(xs[j]) ==> key(x) != key(y)
+    ensures DistinctBy(Seq.FoldLeft(f, init, xs), key)
+    decreases |xs|
+  {
+    if |xs| > 0 {
+      DistinctByConcat(init, h(xs[0]), key);
+      assert forall i :: 1 <= i < |xs| ==> xs[i] == xs[1..][i - 1];
+      forall i, x, y | 0 <= i < |xs[1..]| && x in f(init, xs[0]) && y in h(xs[1..][i])
+        ensures key(x) != key(y)
+      {
+        assert xs[1..][i] == xs[i + 1];
+      }
+      FoldLeftConcatDistinctBy(f, h, key, f(init, xs[0]), xs[1..]);
+    }
+  }
+
+  /** A fold that adds each element only if it is not there yet holds only what it started with and what it read. */
+  lemma FoldLeftDedupMember<T>(f: (seq<T>, T) -> seq<T>, acc: seq<T>, xs: seq<T>, x: T)
+    requires forall a, y :: f(a, y) == (if y in a then a else a + [y])
+    ensures x in Seq.FoldLeft(f, acc, xs) ==> x in acc || x in xs
+    decreases |xs|
+  {
+    if |xs| > 0 {
+      FoldLeftDedupMember(f, f(acc, xs[0]), xs[1..], x);
+    }
+  }
+
   /** A fold that adds each element only if it is not there yet builds a list without repeats. */
   lemma FoldLeftDedupDistinct<T>(f: (seq<T>, T) -> seq<T>, acc: seq<T>, xs: seq<T>)
     requires forall a, x :: f(a, x) == (if x in a then a else a + [x])
@@ -324,6 +433,20 @@ module ProofLib {
   {
     if |xs| > 0 {
       FoldLeftDedupDistinct(f, f(acc, xs[0]), xs[1..]);
+    }
+  }
+
+  // --- Sets -----------------------------------------------------------------
+
+  /** A subset is no larger. */
+  lemma SubsetCard<T>(a: set<T>, b: set<T>)
+    requires a <= b
+    ensures |a| <= |b|
+    decreases |a|
+  {
+    if a != {} {
+      var x :| x in a;
+      SubsetCard(a - {x}, b - {x});
     }
   }
 }

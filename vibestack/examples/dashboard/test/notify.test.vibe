@@ -4,7 +4,7 @@ import { Chat, messages, send } from "../src/notify.vibe"
 
 const handles = { ana: "@ana", ben: "@ben", cal: "@cal" }
 
-// spec/tracker.md, "A person named twice in a cell is told once"
+// spec/tracker.md, "Nothing is sent twice"
 it.effect("a name typed twice is told once", () => effect {
   const posted: [string, string][] = []
   provide machine(), Chat = { effect post(handle: string, text: string) { posted.push([handle, text]) } } {
@@ -25,11 +25,11 @@ it.effect("a name typed twice is told once", () => effect {
 // spec/tracker.md, "One pass of the notifier sends everything that is due and records that it was sent"
 it.effect("one message per person with a chat handle", () => effect {
   const notes: Note[] = [
-    { kind: "Update", task: 1, to: "ana", version: 0, at: 3 },
-    { kind: "Soon", task: 2, to: "ben", version: 4, at: 3 },
-    { kind: "Today", task: 2, to: "ana", version: 1, at: 3 },
-    { kind: "Update", task: 1, to: "ama", version: 0, at: 3 },
-    { kind: "Update", task: 1, to: "constructor", version: 0, at: 3 },
+    { kind: "Update", task: 1, to: "ana", version: 0, at: 3, by: "ben" },
+    { kind: "Soon", task: 2, to: "ben", version: 4, at: 3, by: "" },
+    { kind: "Today", task: 2, to: "ana", version: 1, at: 3, by: "" },
+    { kind: "Update", task: 1, to: "ama", version: 0, at: 3, by: "ben" },
+    { kind: "Update", task: 1, to: "toString", version: 0, at: 3, by: "ben" },
   ]
   try Effect.try(() => assert.deepStrictEqual(messages(notes, handles), [
     { to: "ana", handle: "@ana", text: "✎ #1 changed\n⚠ #2 due today" },

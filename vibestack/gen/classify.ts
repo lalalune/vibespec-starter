@@ -5,8 +5,10 @@ export interface Param { name: string; type: Json }
 /** `guardParams`: the transition's parameters its guard takes, by name, after the state; `emits` if it returns `{ state, out }`. */
 export interface Transition { name: string; params: Param[]; guard: string | undefined; guardParams: string[]; emits: boolean }
 export interface Law { name: string; params: Param[] }
+/** A function declared without a body (`const f: (A) => R`), its parameters named p0, p1, …, and the laws assumed of it. */
+export interface Opaque { name: string; params: Param[]; result: Json; laws: Law[] }
 /** A `step` rule; `via` if it also takes the name of the transition between the two states, `out` if what it output. */
-export interface StepRule { name: string; via: boolean; out: boolean }
+interface StepRule { name: string; via: boolean; out: boolean }
 export interface Roles {
   /** The type of `initial`; undefined for a library, which has definitions and laws but no state machine. */
   stateType: Json | undefined;
@@ -16,12 +18,22 @@ export interface Roles {
   steps: StepRule[];
   /** `leadsTo` rules: from every reachable state, every fair run reaches a state the rule relates it to. */
   leadsTo: string[];
+  /** Laws that are proved; those assumed of an opaque function are in `opaques`. */
   laws: Law[];
+  opaques: Opaque[];
   /** The type of the transitions' `by` parameter: who sent the event, which the program supplies and no event carries. */
   sender: Json | undefined;
   /** What a transition with output returns, the record `{ state, out }`, and the type of `out`, a list of effects. */
   output: { type: Json; out: Json } | undefined;
+  refines: Refinement | undefined;
 }
+
+/**
+ * A machine this spec imports under a name, as this spec spells its types. `refines<Alias>(state)` maps the state onto
+ * it; each transition then corresponds to the machine's transition of the same name, or to none (AGENTS.md, "Refinement").
+ */
+export interface ImportedMachine { alias: string; module: string; stateType: Json; transitions: Transition[] }
+export interface Refinement { fn: string; of: ImportedMachine }
 
 /** The parameter that names who sent an event (AGENTS.md, "What goes in the Quint blocks"). */
 export const SENDER = "by";
@@ -29,9 +41,9 @@ export const SENDER = "by";
 export const VIA = "via";
 /** The last parameter of a `step` rule that sees what the transition output (AGENTS.md, "What goes in the Quint blocks"). */
 const OUT = "out";
-/** The prefixes that make a definition a rule; all but `law` are rules about states. */
+/** The prefixes that make a definition a rule; all but `law` and `refines` are rules about states. */
 const STATE_ROLES = ["always", "sometimes", "step", "leadsTo"];
-export const ROLES = [...STATE_ROLES, "law"];
+export const ROLES = [...STATE_ROLES, "law", "refines"];
 
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
 
@@ -40,9 +52,10 @@ const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
  * The convention: `initial` is the state; a definition from the state to the state is a transition and `can<Name>`
  * its guard, which takes the state and any of the transition's parameters by name. A transition may return the state
  * beside what it outputs, as a record `{ state, out: List[…] }`. `alwaysX(state)`, `stepX(before, [via,] after, [out])`
- * `leadsToX(from, to)` and `sometimesX(state)` are rules; `lawX(...)` is a law.
+ * `leadsToX(from, to)` and `sometimesX(state)` are rules; `lawX(...)` is a law. `refines<Alias>(state)` maps the state
+ * onto a machine in `machines`, those the spec imports under a name.
  */
-export function classify(funs: Json[], stateType: Json | undefined, sig: (d: Json) => { params: Param[]; result: Json }, { shape, resolve, fields }: Types): Roles {
+export function classify(funs: Json[], stateType: Json | undefined, sig: (d: Json) => { params: Param[]; result: Json }, { shape, resolve, fields, holdsSet }: Types, machines: ImportedMachine[]): Roles {
   const stateShape = stateType && shape(stateType);
   const isState = (t: Json) => shape(t) === stateShape;
   const onState = (d: Json, at = 0) => sig(d).params.length > at && isState(sig(d).params[at].type);
@@ -69,7 +82,7 @@ export function classify(funs: Json[], stateType: Json | undefined, sig: (d: Jso
   const leadsTo = named("leadsTo").map((d) =>
     isBool(d) && sig(d).params.length === 2 && onState(d, 0) && onState(d, 1) ? d.name : fail(`${d.name}: a \`leadsTo\` rule takes a state and a later state, and returns bool`));
   const laws: Law[] = named("law").map((d) => (isBool(d) ? { name: d.name, params: sig(d).params } : fail(`${d.name}: a law returns bool`)));
-  const rules = new Set([...always, ...sometimes, ...named("step").map((d) => d.name), ...leadsTo, ...laws.map((l) => l.name)]);
+  const rules = new Set([...always, ...sometimes, ...named("step").map((d) => d.name), ...leadsTo, ...laws.map((l) => l.name), ...named("refines").map((d) => d.name)]);
   const transitions: Transition[] = !stateType ? [] : funs
     .filter((d) => !rules.has(d.name) && onState(d) && (isState(sig(d).result) || outputOf(sig(d).result)))
     .map((d) => {
@@ -104,5 +117,20 @@ export function classify(funs: Json[], stateType: Json | undefined, sig: (d: Jso
     if (!transitions.some((t) => t.guard === g.name)) fail(`${g.name}: no transition named ${g.name[3].toLowerCase()}${g.name.slice(4)}`);
   const senders = transitions.flatMap((t) => t.params.filter((p) => p.name === SENDER));
   if (senders.some((p) => shape(p.type) !== shape(senders[0].type))) fail(`\`${SENDER}\` names who sent an event, so every transition that takes it takes the same type`);
-  return { stateType, transitions, always, sometimes, steps, leadsTo, laws, sender: senders[0]?.type, output };
+  return { stateType, transitions, always, sometimes, steps, leadsTo, laws, opaques: [], sender: senders[0]?.type, output, refines: refinement() };
+
+  function refinement(): Refinement | undefined {
+    const [d, twice] = named("refines");
+    if (!d) return undefined;
+    if (twice) fail(`${twice.name}: a spec refines one machine, and ${d.name} already names it`);
+    const alias = d.name.slice("refines".length);
+    const of = machines.find((m) => m.alias === alias) ?? fail(`${d.name}: \`refines${alias}\` maps the state onto the machine imported as ${alias} (\`import <spec> as ${alias} from "./<spec>"\`), and no machine is imported as ${alias}`);
+    if (!stateType || sig(d).params.length !== 1 || !onState(d) || shape(sig(d).result) !== shape(of.stateType)) fail(`${d.name}: takes the state and returns the state of ${alias}`);
+    // Abstract states are compared with ==, which the proof would do in order for a set (gen/print.ts, `comparable`).
+    if (holdsSet(of.stateType)) fail(`${d.name}: the state of ${alias} holds a set, which a refinement cannot compare yet`);
+    // A transition corresponds to the abstract one of its name, which takes its parameters by name, as a guard does.
+    for (const t of transitions) for (const p of of.transitions.find((u) => u.name === t.name)?.params ?? [])
+      if (!t.params.some((q) => q.name === p.name && shape(q.type) === shape(p.type))) fail(`${t.name} corresponds to ${alias}::${t.name}, which takes \`${p.name}\`: give ${t.name} a parameter \`${p.name}\` of the same type, or another name if it is not that step of ${alias}`);
+    return { fn: d.name, of };
+  }
 }

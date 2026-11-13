@@ -17,7 +17,8 @@ type Order = { status: Status, units: int, due: int, paid: int }
 
 ### Unit price and order size
 
-Every unit costs the same, and one order holds at most 60 units.
+Every unit costs the same, and one order holds a limited number of units. In
+this example a unit costs 5 cents and an order holds at most 60 units.
 
 ```quint
 pure val unitPrice = 5
@@ -52,7 +53,7 @@ pure def addItem(o: Order, qty: int): Order =
 
 ```quint
 pure def alwaysDueMatchesUnits(o: Order): bool =
-  o.units >= 0 and o.due == o.units * unitPrice
+  o.due == o.units * unitPrice
 ```
 
 ## Story: Check out
@@ -97,7 +98,7 @@ pure def alwaysPendingHasBalance(o: Order): bool =
   o.status == Pending implies o.paid < o.due
 ```
 
-### A paid order is paid in full
+### A paid order is paid in full, and something was owed on it
 
 ```quint
 pure def alwaysPaidInFull(o: Order): bool =
@@ -110,12 +111,20 @@ pure def alwaysPaidInFull(o: Order): bool =
 pure def sometimesPaid(o: Order): bool = o.status == Paid
 ```
 
+### An order can be partly paid
+
+```quint
+pure def sometimesPartlyPaid(o: Order): bool = o.status == Pending and o.paid > 0
+```
+
 ## Story: Cancel
 
 > As a shopper, I want to cancel an order I have not finished paying for and
 > get my money back.
 
 ### A pending order can be cancelled, refunding every payment
+
+An order on hold cannot be cancelled until it is released.
 
 ```quint
 pure def canCancel(o: Order): bool = o.status == Pending
@@ -124,6 +133,9 @@ pure def cancel(o: Order): Order = { ...o, status: Cancelled, paid: 0 }
 ```
 
 ### Drafts and cancelled orders hold no money
+
+Discovered by the proof: without it, submitting could not be shown to leave a
+pending order with a balance.
 
 ```quint
 pure def alwaysNoMoneyHeldOutsideCheckout(o: Order): bool =
@@ -183,7 +195,7 @@ pure def reopen(o: Order): Order = { ...o, status: Draft }
 > As a shopper, I want to take back some of the money I have paid on an order
 > that is still pending, so that I can use it elsewhere without cancelling.
 
-### Part of what was paid on a pending order can be taken back
+### Some or all of what was paid on a pending order can be taken back
 
 The shopper takes back a positive amount. The order stays pending.
 
@@ -221,7 +233,8 @@ pure def empty(o: Order): Order = removeItem(o, o.units)
 
 > As shop staff, I want to put a pending order on hold while stock is checked
 > and release it afterwards, so that no payment is taken for something we may
-> not be able to send.
+> not be able to send. While it is on hold, the shopper can neither pay, take
+> money back nor cancel it.
 
 ### Staff can put a pending order on hold and release it again
 
@@ -233,11 +246,15 @@ pure def hold(o: Order): Order = { ...o, status: OnHold }
 
 pure def canRelease(o: Order): bool = o.status == OnHold
 pure def release(o: Order): Order = { ...o, status: Pending }
+```
 
+### An order can be put on hold
+
+```quint
 pure def sometimesOnHold(o: Order): bool = o.status == OnHold
 ```
 
-### No payment is taken while an order is on hold
+### Nothing paid on an order on hold changes: no payment is taken and none is given back
 
 ```quint
 pure def stepNothingIsPaidOnHold(before: Order, after: Order): bool =

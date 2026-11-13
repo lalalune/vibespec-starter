@@ -85,8 +85,10 @@ export function typeWalks(typedefs: Json[], module: string, prefix = "") {
   // --- spellings -------------------------------------------------------------
   const typeName = (d: Json): string => (d.module === module ? prefix + d.name : `${d.module}_${d.base}`);
   const tsType = (t: Json): string => {
+    // An alias of int, bool or str is spelled as what it names: LemmaScript reads a comparison of such an alias with a
+    // string literal as a test of a variant's tag.
+    if (PRIMITIVE[resolve(t).kind]) return PRIMITIVE[resolve(t).kind];
     if (t.kind === "const") return typeName(typedef(t.name));
-    if (PRIMITIVE[t.kind]) return PRIMITIVE[t.kind];
     if (t.kind === "list") return `${tsType(t.elem)}[]`;
     if (t.kind === "set") return `${tsType(setElem(t))}[]`;
     if (t.kind === "fun") return `Record<${tsType(keyOf(t))}, ${tsType(t.res)}>`;
@@ -205,6 +207,6 @@ export function typeWalks(typedefs: Json[], module: string, prefix = "") {
     return fail(`a comparison of type ${t.kind} is not supported`);
   };
 
-  return { fields, typedef, resolve, shape, tagged, isScalar, setElem, keyOf, storedKey, holdsSet, named, ownerOf, typeName, tsType, declaration, qType, wellFormed, copy, decode, canon, comparison };
+  return { fields, typedef, resolve, shape, payload, tagged, isScalar, setElem, keyOf, storedKey, holdsSet, named, ownerOf, typeName, tsType, declaration, qType, wellFormed, copy, decode, canon, comparison };
 }
 export type Types = ReturnType<typeof typeWalks>;

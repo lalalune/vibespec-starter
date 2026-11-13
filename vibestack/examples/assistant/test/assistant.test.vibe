@@ -21,7 +21,6 @@ it.effect("only the person starts a turn and confirms a payment", () => effect {
     const assistant = try Machine
     const agentBegins = try refusal({ type: "begin" }, "Agent")
     try assistant.send({ type: "begin" }, "Person")
-    const agentRecites = try refusal({ type: "choose", choice: "Recite" }, "Agent")
     try assistant.send({ type: "choose", choice: "Lookup" }, "Agent")
     try assistant.send({ type: "reply", request: 1, amount: 5 }, "World")
     try assistant.send({ type: "choose", choice: "Review" }, "Agent")
@@ -31,8 +30,8 @@ it.effect("only the person starts a turn and confirms a payment", () => effect {
     const afterAgent = try assistant.get()
     const afterPerson = try assistant.send({ type: "confirm" }, "Person")
     try Effect.try(() => assert.deepStrictEqual(
-      [agentBegins, asking.phase, agentRecites, agentConfirms, afterAgent.charged, afterPerson.charged],
-      ["Rejected", "Asking", "Rejected", "Rejected", 0, 1]
+      [agentBegins, asking.state.phase, agentConfirms, afterAgent.charged, afterPerson.state.charged],
+      ["Rejected", "Asking", "Rejected", 0, 1]
     ))
   }
 })
@@ -42,9 +41,9 @@ it.effect("take a turn, look up the bill and pay it once, whatever the model say
   const scene: Scene = { page: "Lookalike", bills: [0, 5], done: [] }
   const answers = ["Lookup", "Fill", "Review", "Pay", "Speak", { type: "confirm" }, "Pay", "Fill", "Recite", "Speak"]
   provide machine(), scriptedWorld(scene), scriptedModel(answers) {
-    // spec/assistant.md, "Only the person confirms a payment": nothing is asked yet.
+    // spec/assistant.md, "Only the person confirms a payment, and only while asked": nothing is asked yet.
     const early = try flip(hear("confirm"))
-    // spec/assistant.md, "A reply counts only for the request still waiting": the biller's 0 is refused, its 5 taken.
+    // spec/assistant.md, "Only the world replies, and only to the request still waiting": the biller's 0 is refused, its 5 taken.
     // spec/assistant.md, "Card details go only into the biller's own page": the Fill on the lookalike types nothing.
     const asked = try hear("begin")
     // spec/assistant.md, "A bill is paid only on the biller's own page"
@@ -53,7 +52,7 @@ it.effect("take a turn, look up the bill and pay it once, whatever the model say
     const paid = try hear("confirm")
     // spec/assistant.md, "The model chooses each action, and each costs one from the turn": an answer that is no choice ends the turn.
     const nonsense = try hear("begin")
-    // spec/assistant.md, "A bill is charged once, and only when the person confirms"; spec/assistant.md, "Nothing secret is said aloud"
+    // spec/assistant.md, "A bill is charged once, and only when the person confirms"; spec/assistant.md, "Nothing secret is said aloud": reciting the card is no choice at all.
     const again = try hear("begin")
     const silent = try hear("begin")
     try Effect.try(() => assert.deepStrictEqual(
@@ -73,9 +72,9 @@ it.effect("take a turn, look up the bill and pay it once, whatever the model say
         onLookalike: "Rejected",
         paid: ["Done", { amount: 5, reviewed: true, paid: true }, 1],
         nonsense: ["Done", ["NotAnEvent"]],
-        again: ["Done", 1, ["Rejected"]],
+        again: ["Done", 1, ["NotAnEvent"]],
         silent: ["Done", 2, ["NoAnswer"]],
-        done: [{ tag: "Said", secret: false }, { tag: "Filled", page: "Genuine" }, { tag: "Said", secret: false }]
+        done: [{ tag: "Said", text: "paid" }, { tag: "Filled", page: "Genuine", card: "" }, { tag: "Said", text: "paid" }]
       }
     ))
   }

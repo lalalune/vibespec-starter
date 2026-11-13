@@ -4,6 +4,7 @@ import type * as TS from "typescript";
 import ts from "typescript";
 import { generate, type Model, type Origin } from "./gen.ts";
 import { writeConformance } from "./conform.ts";
+import { simulated } from "./gen/harness.ts";
 import { fail } from "./gen/types.ts";
 import type { Unit } from "./prove.ts";
 import { run } from "./run.ts";
@@ -55,7 +56,10 @@ export function generated(root: string, spec: Spec, ir: any, models: Map<string,
   const model = generate(ir, spec.name, spec.file, (d) => origins.get(d), models);
   fs.writeFileSync(path.join(dir, `${spec.name}.ts`), model.ts);
   fs.writeFileSync(path.join(dir, `${spec.name}.run.qnt`), model.harness);
-  fs.writeFileSync(path.join(dir, `${spec.name}.effect.vibe`), effectAdapter(spec.name, model.source, model.ts));
+  const manifest = path.join(root, "package.json");
+  const namespace = (fs.existsSync(manifest) ? JSON.parse(fs.readFileSync(manifest, "utf8")).name : undefined) ?? fs.realpathSync(root);
+  fs.writeFileSync(path.join(dir, `${spec.name}.effect.vibe`), effectAdapter(spec.name, model.source, model.ts, namespace));
+  if (model.opaques.length) fs.writeFileSync(path.join(dir, `${spec.name}.sim.qnt`), simulated(spec.qnt, model.opaques));
   writeConformance(root, model);
   models.set(spec.name, model);
   return model;
@@ -94,8 +98,9 @@ export function typecheckAll(memory: Memory, specs: Spec[]): Map<string, Promise
  * An imported module comes with its names prefixed by the module's name and
  * without its own obligations, which are proved once, in its own unit; that
  * keeps the cost of a proof proportional to the module, not to everything
- * beneath it. A law an imported module proved is offered to the unit's proof
- * file as a lemma; nothing else of it is.
+ * beneath it. What an imported module's own unit proved (each clause of its
+ * `_ensures` lemmas) is offered to the unit's proof file as a lemma; nothing
+ * else of it is.
  *
  * A unit may have a proof file: spec/<name>.proof.dfy for a spec,
  * src/<path>.proof.dfy for src/<path>.ts.
@@ -118,17 +123,27 @@ export function proofUnits(root: string, models: Model[], srcFiles: SrcFile[] = 
   const asDependency = (name: string, docs: boolean) => withoutObligations(withoutImports(byName.get(name)!.render(`${name}_`, docs)).kept);
   /** A module after what it needs, in its own names; `docs` keeps the doc comments, which the cache key leaves out. */
   const bundle = (m: Model, docs: boolean) => [...needs(m).map((n) => asDependency(n, docs)), withoutImports(m.render("", docs)).kept];
-  /** The laws of modules placed beside a unit, as the unit spells them. */
-  const lawsOf = (names: string[], spelled: (dep: string) => string) =>
-    names.flatMap((dep) => byName.get(dep)!.laws.map((l) => ({ fn: `${spelled(dep)}${l.name}`, law: l.name, from: `${dep}.ts` })));
+  /** The definitions whose `_ensures` lemma a module's own unit proves (gen/typescript.ts). */
+  const proving = (m: Model) => [...m.laws.map((l) => l.name), ...(m.stateType ? [...m.transitions.map((t) => t.name), "step", "initialHolds"] : [])];
+  /** Modules placed beside a unit, each with the prefix the unit spells it with: their text with their obligations, and those lemmas. */
+  const imported = (beside: [string, string][]): Unit["imports"] => ({
+    text: beside.map(([n, prefix]) => withoutImports(byName.get(n)!.render(prefix, false)).kept).join("\n"),
+    lemmas: beside.flatMap(([n, prefix]) => proving(byName.get(n)!).map((def) => ({ fn: `${prefix}${def}`, def, from: `${n}.ts` }))),
+  });
+  const prefixed = (names: string[]) => names.map((n): [string, string] => [n, `${n}_`]);
+  /** What a unit takes on trust from its module's opaque functions: their types, and the laws stated with them. */
+  const assumptions = (m: Model | undefined) => ({ externs: m?.opaques.map((o) => o.name) ?? [], assumed: m?.opaques.flatMap((o) => o.laws.map((l) => l.name)) ?? [] });
   const units: Unit[] = models.map((m) => ({
     unit: `${m.name}.ts`,
     text: bundle(m, true).join("\n"),
     meaning: bundle(m, false).join("\n"),
     src: false,
     proofFile: m.source.replace(/\.md$/, ".proof.dfy"),
-    laws: lawsOf(needs(m), (dep) => `${dep}_`),
-    rests: [], // proved against the definitions of what it imports, never against their obligations
+    imports: imported(prefixed(needs(m))),
+    // Proved against the definitions of what it imports, never against their obligations; but the abstract rules
+    // carry over to a refining spec only as far as the machine it refines proved them (AGENTS.md, "Refinement").
+    rests: m.refines ? [`${m.refines.of.module}.ts`] : [],
+    ...assumptions(m),
     transitions: m.stateType ? m.transitions.map((t) => ({ name: t.name, params: t.params.map((p) => p.name) })) : undefined,
   }));
 
@@ -159,8 +174,9 @@ export function proofUnits(root: string, models: Model[], srcFiles: SrcFile[] = 
       meaning: [...beside(false), `// ---- src/${f} ----`, kept].join("\n"),
       src: true,
       proofFile: `src/${f.replace(/\.ts$/, ".proof.dfy")}`,
-      laws: d ? [...lawsOf(needs(byName.get(d)!), (dep) => `${dep}_`), ...lawsOf([d], () => "")] : [],
+      imports: imported(d ? [...prefixed(needs(byName.get(d)!)), [d, ""]] : []),
       rests: d ? [...needs(byName.get(d)!), d].map((m) => `${m}.ts`) : [],
+      ...assumptions(d ? byName.get(d) : undefined),
     });
   }
   const twice = units.find((u, i) => units.findIndex((v) => v.unit === u.unit) !== i);

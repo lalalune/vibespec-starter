@@ -175,7 +175,7 @@ pure def refuseRequest(m: Msg, rest: List[Msg], sys: System): System =
   { ...sys, server: S::refuse(sys.server, m.client, m.seq, m.op),
     net: reply(m, answer(Refusal, m.client, m.seq, sys.server), rest) }
 
-pure def canServe(sys: System, i: int): bool = isRequest(msgAt(sys.net, i)) and i >= 0 and i < sys.net.length()
+pure def canServe(sys: System, i: int): bool = isRequest(msgAt(sys.net, i))
 pure def serve(sys: System, i: int): System =
   val m = msgAt(sys.net, i)
   val rest = dropAt(sys.net, i)
@@ -211,6 +211,9 @@ pure def duplicate(sys: System, i: int): System = { ...sys, net: sys.net.append(
 ```
 
 ### Anyone may send the server a request in a tab's name
+
+The forger chooses the edit and the number. A number below 1 is never one a
+tab gives, so forging it does nothing that forging an unused number does not.
 
 ```quint
 pure def canForge(sys: System, who: str, seq: int, op: Op): bool = isClient(who) and seq >= 1
@@ -251,7 +254,7 @@ pure def alwaysNoTabIsAheadOfTheServer(sys: System): bool =
   sys.a.seen <= sys.server.version and sys.b.seen <= sys.server.version
 ```
 
-### The history holds the list at every version up to the current one
+### The history has one list for each version, and the last is the current list
 
 ```quint
 pure def alwaysTheHistoryEndsWithTheCurrentList(sys: System): bool =
@@ -367,7 +370,14 @@ pure def alwaysALoneUsersEditIsNeverRefused(sys: System): bool =
   (lone(sys, "a") implies sys.a.refusals == 0) and (lone(sys, "b") implies sys.b.refusals == 0)
 ```
 
-### Without forgeries, the server has answered only numbered edits, and of a tab's queued edits only the oldest
+### A lone user can have several edits accepted
+
+```quint
+pure def sometimesALoneUsersEditsWereAccepted(sys: System): bool =
+  lone(sys, "a") and sys.a.made >= 2 and sys.a.pending.length() == 0
+```
+
+### Without forgeries, the network holds no forged request, the server has answered only numbered edits, and of a tab's queued edits only the oldest
 
 Discovered by the proof: it is what lets a new edit, and every edit behind
 the oldest, be sure that no answer is waiting for it.
@@ -434,7 +444,6 @@ pure def inStep(sys: System, who: str): bool =
     sameTodos(C::view(c), replay(s.todos, c.pending)),
     allowedInTurn(s.todos, unapplied(sys, who)),
     sys.net.every(m => m.kind != Refusal or m.client != who or not(C::waiting(c, m.seq))),
-    c.refusals == 0,
   }
 
 pure def alwaysALoneUsersTabKeepsInStepWithTheServer(sys: System): bool =

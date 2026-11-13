@@ -203,6 +203,12 @@ it.live("new and nested specs are published, deleted specs leave their ledger fo
   const escaped = try post("publish", { files: [{ file: "spec/../outside.md", base: null, text: "x" }], origins: [] })
   try fs.symlink(`${root}/outside.md`, `${root}/spec/escape.md`)
   const linkedOut = try post("publish", { files: [{ file: "spec/escape.md", base: null, text: "x" }], origins: [], force: true })
+  // Nothing but a spec is written or deleted, even when the page insists.
+  const elsewhere = [
+    (try post("publish", { files: [{ file: "docs/evil.md", base: null, text: "# Evil\n" }], origins: [], force: true })).status,
+    (try post("publish", { files: [{ file: "outside.md", base: "", text: null }], origins: [], force: true })).status,
+  ]
+  const untouched = [try fs.exists(`${root}/outside.md`), try fs.exists(`${root}/docs`)]
   const outside = try fs.readFileString(`${root}/outside.md`)
   // The page still loads, and says what is wrong.
   const problem = (try project()).problem
@@ -212,6 +218,7 @@ it.live("new and nested specs are published, deleted specs leave their ledger fo
   const stray = try post("publish", { files: [{ file: index.file, base: index.hash, text: `${index.text}\n## Not meant as a heading\n` }], origins: [] })
   try check(() => {
     assert.deepStrictEqual([escaped.status, linkedOut.status, outside], [400, 400, ""])
+    assert.deepStrictEqual([elsewhere, untouched], [[400, 400], [true, false]])
     assert.match(problem ?? "", /symbolic links/)
     assert.match(stray.body.error, /"Not meant as a heading" would be a heading/)
   })
@@ -238,12 +245,17 @@ it.live("new and nested specs are published, deleted specs leave their ledger fo
 
   // spec/index.md, "A sync that ends well leaves nothing waiting and checks again": a sync that wrote the review
   // ledger, or broke Studio's state, does not end well, and what was waiting still waits.
+  // Only the studio's own agents run, not what every object inherits.
+  const inherited = (try post("agent", { agent: "toString" })).status
+  const afterInherited = (try project()).session.job
   const ledgerSync = (try post("agent", { agent: "ledgerEdit" })).status
   const ledgerEdited = try settled()
   const manifestKept = try fs.exists(`${root}/.studio/manifest.json`)
+  const manifest = manifestKept ? try fs.readFileString(`${root}/.studio/manifest.json`) : ""
   const stateSync = (try post("agent", { agent: "invalidState" })).status
   const broken = try settled()
   try check(() => {
+    assert.deepStrictEqual([inherited, afterInherited], [400, "Idle"])
     assert.deepStrictEqual([ledgerSync, stateSync], [200, 200])
     assert.equal(ledgerEdited.jobs.agent!.status, "failed")
     assert.match(ledgerEdited.jobs.agent!.log.join("\n"), /spec\/lock.json: not marked synced/)
@@ -251,6 +263,18 @@ it.live("new and nested specs are published, deleted specs leave their ledger fo
     assert.deepStrictEqual([ledgerEdited.session.waiting, ledgerEdited.session.verdict], [2, "Unknown"])
     assert.equal(broken.jobs.agent!.status, "failed")
     assert.match(broken.jobs.agent!.log.join("\n"), /ENOTDIR/)
+  })
+
+  // spec/index.md, "What is waiting outlives the studio"
+  try fs.remove(`${root}/.studio`, { recursive: true, force: true })
+  try fs.makeDirectory(`${root}/.studio`)
+  try fs.writeFileString(`${root}/.studio/manifest.json`, manifest)
+  const again = try studioOn(root)
+  const resumed = (try again.project()).session
+  const markedAgain = (try again.post("synced", {})).status
+  try check(() => {
+    assert.deepStrictEqual(resumed, { unpublished: false, waiting: 2, job: "Idle", verdict: "Unknown" })
+    assert.equal(markedAgain, 200)
   })
 }) } })
 

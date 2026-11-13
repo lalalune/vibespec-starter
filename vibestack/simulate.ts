@@ -7,7 +7,7 @@ import { isDeepStrictEqual } from "node:util";
 import type { Model } from "./gen.ts";
 import { SENDER } from "./gen/classify.ts";
 import { run } from "./run.ts";
-import { digest } from "./util.ts";
+import { allDone, digest } from "./util.ts";
 
 export const SAMPLES = 10000;
 export const WITNESS_SAMPLES = 20 * SAMPLES;
@@ -27,13 +27,19 @@ export interface Step {
   state?: unknown;
   /** What the event output, in a spec whose transitions may output (gen/classify.ts, `Roles.output`). */
   out?: unknown[];
+  /** Whether the last step refined the machine the spec refines (AGENTS.md, "Refinement"). */
+  refined?: boolean;
   lawsHold?: boolean;
   /** The fair events this state allows, if the spec declares any. */
   fair?: string[];
+  /** On a trace's first step: the table it chose for each opaque function, as rows of arguments and result, and the result for anything else. */
+  tables?: Record<string, { rows: [unknown[], unknown][]; otherwise: unknown }>;
 }
 
+/** A simulated trace; with opaque functions, from the step that settled their tables (gen/harness.ts), and empty if none did. */
 function readTrace(file: string, model: Model): Step[] {
-  return JSON.parse(fs.readFileSync(file, "utf8")).states.map((st: any): Step => {
+  const states = JSON.parse(fs.readFileSync(file, "utf8")).states.filter((st: any) => !model.opaques.length || st.settled);
+  return states.map((st: any, i: number): Step => {
     // Values are decoded by their type, and sets put in a fixed order, so that they compare equal to TypeScript's.
     const read = (type: any, itf: any) => model.canon(type, model.decode(type, itf));
     const picked = (ps: { name: string; type: any }[]) => Object.fromEntries(ps.map((p) => [p.name, read(p.type, st["mbt::nondetPicks"][p.name].value)]));
@@ -47,10 +53,22 @@ function readTrace(file: string, model: Model): Step[] {
       law: l && { name: l.name, args: picked(l.params) },
       state: model.stateType ? read(model.stateType, st.state) : undefined,
       out: model.output && read(model.output.out, st.emitted),
+      refined: model.refines && st.refined,
       lawsHold: st.lawsHold,
       fair: st.fairEnabled?.["#set"],
+      tables: i || !model.opaques.length ? undefined : Object.fromEntries(model.opaques.map((o) => [o.name, {
+        rows: st[`opaque_${o.name}`]["#map"].map(([k, v]: [any, any]) => [o.params.length === 1 ? [read(o.params[0].type, k)] : k["#tup"].map((x: any, j: number) => read(o.params[j].type, x)), read(o.result, v)]),
+        otherwise: read(o.result, st[`opaque_${o.name}_else`]),
+      }])),
     };
   });
+}
+
+/** Make the generated code's opaque functions answer as the trace's tables do (`opaque` in gen/typescript.ts); returns the domain. */
+export function standIn(domain: any, trace: Step[]) {
+  for (const [name, { rows, otherwise }] of Object.entries(trace[0]?.tables ?? {}))
+    domain.opaque[name] = (...args: unknown[]) => { const row = rows.find(([k]) => isDeepStrictEqual(k, args)); return row ? row[1] : otherwise; };
+  return domain;
 }
 
 /**
@@ -108,26 +126,23 @@ export async function simulate(root: string, model: Model, invariant: string, tr
     const broken = r.out.includes("[violation]");
     // In the order Quint wrote them, so that the same simulation always gives the traces in the same order.
     const files = fs.readdirSync(out).filter((f) => f.endsWith(".itf.json")).sort((x, y) => parseInt(x, 10) - parseInt(y, 10) || x.localeCompare(y));
-    const again = `seed ${seed}; to simulate again: npx quint ${args.join(" ")}`;
+    const again = `seed ${seed}; to simulate again: pnpm exec quint ${args.join(" ")}`;
     // Anything other than "held" or "violated", each with a trace, is Quint failing to run.
     if ((!r.ok && !broken) || !files.length) throw new Error(`quint run did not complete (${again}):\n${r.out.trim()}`);
-    return { broken, traces: files.map((f) => readTrace(path.join(out, f), model)), again };
+    return { broken, traces: files.map((f) => readTrace(path.join(out, f), model)).filter((t) => t.length), again };
   });
   // Every run finishes before anything is said, so that none is left writing into gen/.
-  const settled = await Promise.allSettled(runs);
-  const failure = settled.find((r) => r.status === "rejected");
-  if (failure) throw failure.reason;
-  const done = settled.map((r) => (r as PromiseFulfilledResult<Awaited<(typeof runs)[number]>>).value);
+  const done = await allDone(runs);
   return { broken: done.some((d) => d.broken), traces: done.flatMap((d) => d.traces), again: (done.find((d) => d.broken) ?? done[0]).again };
 }
 
 /**
  * Look for a state that breaks `invariant`, which is how a goal is shown reachable: in longer traces while none is
- * found, fewer of them as they lengthen, so each depth costs about as many events as the first.
+ * found, fewer of them as they lengthen, so each depth costs about as many events as `samples` traces of the first.
  */
-export async function search(root: string, model: Model, invariant: string, step = "step", depths = DEPTHS): ReturnType<typeof simulate> {
+export async function search(root: string, model: Model, invariant: string, step = "step", depths = DEPTHS, samples = WITNESS_SAMPLES): ReturnType<typeof simulate> {
   let run!: Awaited<ReturnType<typeof simulate>>;
-  for (const steps of depths) if ((run = await simulate(root, model, invariant, 1, Math.ceil(WITNESS_SAMPLES * STEPS / steps), step, false, steps)).broken) break;
+  for (const steps of depths) if ((run = await simulate(root, model, invariant, 1, Math.ceil(samples * STEPS / steps), step, false, steps)).broken) break;
   return run;
 }
 export const SEARCHED = `${WITNESS_SAMPLES} traces of ${STEPS} events and longer ones up to ${DEPTHS.at(-1)}`;
@@ -139,6 +154,7 @@ export const SEARCHED = `${WITNESS_SAMPLES} traces of ${STEPS} events and longer
 export function replay(domain: any, trace: Step[], model?: Model) {
   const differ = (what: string) => new Error(`TypeScript and Quint disagree ${what}`);
   const canon = (type: any, value: unknown) => (model ? model.canon(type, value) : value);
+  standIn(domain, trace);
   let s = domain.initial;
   let before = s;
   let emitted: unknown[] = [];
@@ -164,14 +180,22 @@ export function replay(domain: any, trace: Step[], model?: Model) {
 
 /** The first rule a trace breaks, in the spec's words, and how many steps it took; undefined if it breaks none. */
 export function firstBreak(domain: any, model: Model, trace: Step[], cite: (def: string) => string): { why: string; steps: number } | undefined {
+  standIn(domain, trace);
   let before: unknown;
-  for (const [i, { event, law, evaluated, state, out, lawsHold }] of trace.entries()) {
+  for (const [i, { event, law, evaluated, state, out, refined, lawsHold }] of trace.entries()) {
     const found = (why: string) => ({ why, steps: i + 1 });
     if (law && lawsHold === false) return found(`the law ${cite(law.name)} is false for ${JSON.stringify(law.args)}`);
     if (evaluated?.result === false && lawsHold === false && model.laws.some((l) => l.name === evaluated.name))
       return found(`the law ${cite(evaluated.name)} is false in state ${JSON.stringify(state)} with sampled parameters ${JSON.stringify(evaluated.picks)}`);
     const always = model.always.filter((a) => !domain[a](state)).map(cite);
     if (always.length) return found(`a reachable state breaks ${always.join(", ")}`);
+    if (refined === false) {
+      const { fn, of } = model.refines!;
+      const u = event && of.transitions.find((u) => u.name === event.type);
+      return found(!event ? `${cite(fn)} does not map the initial state onto ${of.alias}::initial`
+        : u ? `${cite(event.type)} is not a step of ${of.alias}: it changes ${fn}, but not as ${of.alias}::${u.name}${u.guard ? `, allowed by ${of.alias}::${u.guard},` : ""} would`
+        : `${cite(event.type)} changes ${fn}, but ${of.alias} has no transition ${event.type} for it to be`);
+    }
     const steps = event ? model.steps.filter((r) => !domain[r.name](before, ...(r.via ? [event.type] : []), state, ...(r.out ? [out] : []))).map((r) => cite(r.name)) : [];
     if (steps.length) return found(`a step breaks ${steps.join(", ")}`);
     before = state;
@@ -188,6 +212,7 @@ export function firstBreak(domain: any, model: Model, trace: Step[], cite: (def:
  * to it; then `loop === end` is the state the last of them reaches, and `within` the bound.
  */
 export function lasso(domain: any, model: Model, trace: Step[]): { broken?: { rule: string; from: number; loop: number; end: number; within?: number }; loops: number } {
+  standIn(domain, trace);
   const keys = trace.map((s) => JSON.stringify(s.state));
   const memo = new Map<string, boolean>();
   const relates = (rule: string, i: number, j: number) => {

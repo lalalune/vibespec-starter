@@ -1,6 +1,6 @@
 // Does each check catch the kind of mistake it exists for? Every case builds a
-// scratch project, from this project's own spec or from the small specs in
-// vibestack/fixtures/, breaks one thing, and asserts which stage of `check` fails.
+// scratch project, from the order example (vibestack/examples/order) or from the
+// small specs in vibestack/fixtures/, breaks one thing, and asserts which stage of `check` fails.
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -30,7 +30,7 @@ after(() => roots.forEach((root) => fs.rmSync(root, { recursive: true, force: tr
 
 /** A scratch project holding the given files. */
 function scratch(files: Record<string, string>): string {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "spec-selftest-"));
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "spec-selftest-")));
   roots.push(root);
   for (const [file, text] of Object.entries(files)) {
     fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
@@ -118,7 +118,7 @@ async function run(root: string, accept: false | "reviews" | "unproved" = false)
 const failedStages = async (file: string, edit: (text: string) => string) => (await run(copyOfProject(file, edit))).failed;
 const pendingItems = (root: string) => readSpecs(root).flatMap((spec) => pending(root, spec).map((p) => `${p.where.split("  ")[1]}: ${p.status}${p.note ?? ""}`));
 /** gen/ for one spec, as `check` and `spec gen` generate it. */
-const gen = async (root: string, spec: Spec) => generated(root, spec, await typecheckAll({ root, fresh: true, used: new Set() }, [spec]).get(spec.name)!, new Map());
+const gen = async (root: string, spec: Spec) => generated(root, spec, await typecheckAll({ root, fresh: true, used: new Set() }, readSpecs(root)).get(spec.name)!, new Map());
 /** gen/ for every spec of a project, in dependency order: the files it holds. */
 async function genAll(root: string): Promise<string[]> {
   const specs = readSpecs(root);
@@ -165,8 +165,11 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const model = await gen(lists, parseSpec(lists, "spec/lists.md"));
     assert.equal(model.evals.find((e) => e.name === "stepHasOneEffect")?.params.at(-1)?.from, "emitted");
     const root = fixtures(["mailer"]);
-    const result = await run(root);
+    const swapped = fixtures(["mailer"], (f) => { f["spec/mailer.md"] = f["spec/mailer.md"].replace("List(Saved({ n: n }), Sent({ n: n }))", "List(Sent({ n: n }), Saved({ n: n }))"); });
+    const [result, wrongOrder] = await Promise.all([run(root), run(swapped)]);
     assert.deepEqual(result.failed, ["review"], result.text);
+    // A counterexample shows what each event output.
+    assert.ok(wrongOrder.said("always", /a step breaks .*A message is saved before anything is sent[\s\S]*send\{"n":\d+\}\s+-> sent = 1, out \[\{"tag":"Sent"/), wrongOrder.text);
     const domain = await import(path.join(root, "gen/mailer.ts"));
     assert.deepEqual(domain.step(domain.initial, { type: "send", n: 4 }), {
       state: { sent: 1 }, out: [{ tag: "Saved", n: 4 }, { tag: "Sent", n: 4 }],
@@ -176,6 +179,11 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const emitted = domain.step(domain.initial, { type: "send", n: 4 });
     assert.equal(departure(domain, helper.found, [{ state: domain.initial }, { event: { type: "send", n: 4 }, state: emitted.state, out: emitted.out }]), undefined);
     assert.match(departure(domain, helper.found, [{ event: { type: "send", n: 4 }, state: emitted.state, out: emitted.out.toReversed() }])?.why ?? "", /effects differ/);
+    // Replay compares what TypeScript outputs with what Quint does.
+    const mailer = await gen(root, parseSpec(root, "spec/mailer.md"));
+    const trace = [{ state: domain.initial, out: [] }, { event: { type: "send", n: 4 }, state: emitted.state, out: emitted.out }];
+    replay(domain, trace, mailer);
+    assert.throws(() => replay({ ...domain, step: (s: unknown, e: unknown) => ({ ...domain.step(s, e), out: [] }) }, trace, mailer), /disagree on what \{"type":"send","n":4\} outputs/);
   });
 
   test("conformance observes scalar states, real program traces, and only demands behavior present in the oracle", async () => {
@@ -239,16 +247,22 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const root = fixtures(["door"]);
     const { failed, text } = await run(root);
     assert.deepEqual(failed, ["review"], text);
-    assert.match(fs.readFileSync(path.join(root, "gen/proof/door.log"), "utf8"), /Dafny auditor completed/);
+    const log = fs.readFileSync(path.join(root, "gen/proof/door.log"), "utf8");
+    assert.match(log, /Dafny auditor completed/);
+    assert.doesNotMatch(log, /every assertion isolated/, "a unit that proves whole is not verified again");
   });
 
-  test("a missing guard is found by simulation, as a trace that the same seed gives again, and the later stages say they were skipped", async () => {
+  test("a missing guard is found by simulation, as a trace that the same seed gives again and that is remembered, and the later stages say they were skipped", async () => {
     const root = copyOfProject("spec/index.md", unguarded);
-    const [first, again] = [await run(root), await run(root)];
+    const first = await run(root);
+    fs.rmSync(path.join(root, ".spec-cache"), { recursive: true });
+    const [again, remembered] = [await run(root), await run(root)];
     const trace = first.said("always", /./);
     assert.equal(trace?.ok, false, first.text);
-    assert.match(trace!.detail, /seed \d+; to simulate again: npx quint run gen\/index\.run\.qnt .* --seed \d+/);
+    assert.match(trace!.detail, /seed \d+; to simulate again: pnpm exec quint run gen\/index\.run\.qnt .* --seed \d+/);
     assert.equal(again.said("always", /./)?.detail, trace!.detail, "the same harness gives the same trace");
+    assert.equal(remembered.said("always", /./)?.detail, trace!.detail);
+    assert.ok(!fs.existsSync(path.join(root, "gen/traces")), "a failing simulation is not run again for the same harness");
     assert.ok(first.said("skipped", /^types, proof, tests and traces: /), first.text);
     assert.match(first.next, /^always \(spec\/index\.md\) is the first ✗/);
   });
@@ -322,6 +336,9 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       ["a variant field called tag", "type P = A({ tag: int }) | B\npure val initial: int = 0\npure def tick(n: int): int = n", /cannot be called `tag`/],
       ["a match binder used as a whole value", "type N = { n: int }\ntype P = A(N) | B\npure val initial: int = 0\npure def g(r: N): int = r.n\npure def f(p: P): int = match p { | A(x) => g(x) | _ => 0 }\npure def tick(n: int): int = n", /is what a match arm carries/],
       ["state declared by hand", "pure val initial: int = 0\nvar n: int", /only types, imports, `pure val` and `pure def` belong in a spec/],
+      ["a constant without a value", "pure val initial: int = 0\nconst n: int\npure def tick(k: int): int = k", /a `const` is an opaque function/],
+      ["a step rule's output where no transition outputs", "pure val initial: int = 0\npure def tick(n: int): int = n\npure def stepQuiet(a: int, b: int, out: List[int]): bool = true", /no transition returns `\{ state, out \}`/],
+      ["a refinement of a machine not imported", "pure val initial: int = 0\npure def tick(n: int): int = n\npure def refinesL(n: int): int = n", /no machine is imported as L/],
       ["a rule written as a `pure val`", "pure val initial: int = 0\npure val alwaysNever = false", /is a `pure def` with parameters/],
       ["a sample of the wrong type", 'pure val amountValues = Set("bad")\n' + sampled, /amountValues.*holds.*parameter amount/],
       ["an unused sample set", "pure val typoValues = Set(1)\n" + sampled, /no parameter is named typo/],
@@ -372,6 +389,46 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.ok(stray.said("model", /canRelabel: `who` must be a parameter of relabel/), stray.text);
   });
 
+  test("a secret reaches no place whose type is not secret, but through a declassify function that review names", async () => {
+    const card = (edit: (s: string) => string = (s) => s) => fixtures(["card"], (f) => { f["spec/card.md"] = edit(f["spec/card.md"]); });
+    const shown = 'Shown({ text: if (declassifyNone(w.card)) "none" else "saved" })';
+    const leaks: [string, (s: string) => string, RegExp][] = [
+      ["shown", (s) => s.replace(shown, "Shown({ text: w.card })"), /\bhint \(spec\/card\.md:\d+\): a secret reaches the field text, of type str, which is not secret/],
+      ["choosing what is shown", (s) => s.replace("declassifyNone(w.card)", 'w.card == ""'), /\bhint .*: a secret reaches the field text/],
+      ["through a helper", (s) => s.replace(shown, "show(w.card)").replace("pure def hint(", "pure def show(t: str): Effect = Shown({ text: t })\npure def hint("), /\bshow \(.*: a secret reaches the field text/],
+      ["kept in a field that is not secret", (s) => s.replace("{ card: SecretCard, out", "{ card: SecretCard, note: str, out").replace('{ card: "", out', '{ card: "", note: "", out').replace("{ ...w, card: card }", "{ ...w, card: card, note: card }"), /\bsave .*: a secret reaches the field note/],
+      ["deciding whether an event may happen", (s) => s.replace("pure def pay(", 'pure def canPay(w: Wallet): bool = w.card == "4111"\npure def pay('), /\bcanPay .*: what it returns depends on a secret, but its type bool is not secret/],
+    ];
+    const [ok, ...broken] = await Promise.all([run(card()), ...leaks.map(([, edit]) => run(card(edit)))]);
+    assert.deepEqual(ok.failed, ["review"], ok.text);
+    assert.ok(ok.said("review", /new, and declassifies a secret through declassifyNone/), ok.text);
+    leaks.forEach(([what, , message], i) => assert.equal(broken[i].said("model", message)?.ok, false, `${what}\n${broken[i].text}`));
+  });
+
+  test("an opaque function is simulated as a table its laws allow, chosen per trace, and proved only through its laws", async () => {
+    const proof = "lemma issue_ensures(d: Desk, name: string)\n  ensures (inv(d) ==> alwaysTheLastCodeIsADigit(issue(d, name)))\n{\n  lawCodeIsADigit_ensures(name);\n}\n";
+    const badge = (edit: (s: string) => string = (s) => s, files: Record<string, string> = { "spec/badge.proof.dfy": proof }) =>
+      fixtures(["badge"], (f) => { f["spec/badge.md"] = edit(f["spec/badge.md"]); Object.assign(f, files); });
+    const root = badge();
+    const [ok, unproved, chance, contradiction] = await Promise.all([
+      run(root),
+      run(badge(undefined, {})),
+      run(badge((s) => s.replace("0 <= d.last and d.last <= 9", "d.last <= 5"))),
+      run(badge((s) => s.replace("pure def lawCodeIsADigit", "pure def lawCodeIsNegative(name: str): bool = code(name) < 0\npure def lawCodeIsADigit"),
+        { "spec/user.md": `# User\n\n## Group\n\n### Uses badges\n\n${F}quint\nimport badge as B from "./badge"\npure val two = 2\n${F}\n` })),
+    ]);
+    assert.deepEqual(ok.failed, ["review"], ok.text);
+    assert.ok(ok.said("proof", /^badge\.ts: all 3 obligations proved/), ok.text);
+    assert.match(fs.readFileSync(path.join(root, "gen/proof/badge/badge.dfy"), "utf8"), /^function \{:axiom\} code\(p0: string\): int$[\s\S]*^lemma \{:axiom\} lawCodeIsADigit_ensures\(name: string\)$/m);
+    const gen = await import(path.join(root, "gen/badge.ts"));
+    assert.throws(() => gen.step(gen.initial, { type: "issue", name: "a" }), /code is opaque in spec\/badge\.md/);
+    gen.opaque.code = (name: string) => name.length;
+    assert.equal(gen.step(gen.initial, { type: "issue", name: "abc" }).last, 3);
+    assert.equal(unproved.said("proof", /^badge\.ts: 2 of 3 obligations not proved/)?.ok, false, unproved.text);
+    assert.equal(chance.said("always", /breaks "Story: Issue a badge \/ The last code issued is a digit"/)?.ok, false, chance.text);
+    assert.equal(contradiction.said("always", /no table the simulator chose for code satisfies the laws stated with them/)?.ok, false, contradiction.text);
+    assert.equal(contradiction.said("model", /import of badge: it declares opaque functions \(code\)/)?.ok, false, contradiction.text);
+  });
   test("a rule broken only on the way to a `sometimes` goal is still reported", async () => {
     // Only the witness search goes deep enough: the goal is three steps away and the break is on the way.
     const quint = "pure val initial: int = 0\npure def up(n: int): int = n + 1\npure def canUp(n: int): bool = n < 5\npure def alwaysBelowThree(n: int): bool = n < 3\npure def sometimesFour(n: int): bool = n == 4";
@@ -449,9 +506,27 @@ export effect function filled(sku: string, qty: number) {
     assert.deepEqual(await genAll(root), ["_conformance.ts", "package.json", ...names.flatMap((n) => [`${n}.qnt`, `${n}.run.qnt`, `${n}.ts`, `${n}.effect.vibe`, ...(n === "lib" ? [] : [`${n}.conformance.ts`])])].sort());
     // gen/package.json names no package, so the compiler has no key to derive for a service: the adapter states its own (EK0903).
     assert.deepEqual(JSON.parse(read("gen/package.json", root)), { type: "module" });
-    assert.match(read("gen/vault.effect.vibe", root), /^export service Machine \{\n  static readonly key = "spec\/vault\.md#Machine"$/m);
+    assert.match(read("gen/vault.effect.vibe", root), new RegExp(`^export service Machine \\{\\n  static readonly key = ${JSON.stringify(`${root}/spec/vault.md#Machine`).replace(/[./]/g, "\\$&")}$`, "m"));
     const compiled = await tool("vibelang", ["--noEmit", "-p", "."], root);
     assert.ok(compiled.ok, compiled.out);
+    const counter = ruleSpec("pure val initial: int = 0\npure def add(n: int): int = n + 1");
+    // Two packages may each have spec/index.md: the package's name is part of its machine's key.
+    const named = (name: string) => scratch({ "package.json": JSON.stringify({ ...JSON.parse(PACKAGE["package.json"]), name }), "spec/index.md": counter, "src/.keep": "" });
+    const first = named("first-machine"), second = named("second-machine");
+    await Promise.all([genAll(first), genAll(second)]);
+    fs.writeFileSync(path.join(first, "src/pair.vibe"), `import { Machine as First, machine as first } from "../gen/index.effect.vibe"
+import { Machine as Second, machine as second } from ${JSON.stringify(path.relative(path.join(first, "src"), path.join(second, "gen/index.effect.vibe")).split(path.sep).join("/"))}
+export effect function independent() {
+  provide first(), second() {
+    const a = try First
+    const b = try Second
+    try a.send({ type: "add" })
+    return [try a.get(), try b.get()]
+  }
+}
+`);
+    const paired = await exec(process.execPath, ["--import", "vibelang/register", "--input-type=module", "-e", 'import assert from "node:assert/strict"; import { Effect } from "effect"; import { independent } from "./src/pair.vibe"; assert.deepEqual(await Effect.runPromise(independent()), [1, 0]);'], first);
+    assert.equal(paired.status, 0, paired.stdout + paired.stderr);
   });
 
   test("a machine that binds a name of its Effect adapter is refused, and a library, which has no such names, may bind it", async () => {
@@ -557,8 +632,10 @@ export effect function filled(sku: string, qty: number) {
     assert.ok(tooLate.said("always", /within its bound \(`within_leadsToAhead = 21`\)/), tooLate.text);
   });
 
-  test("nested set samples stay bounded and an inner lambda may shadow a match binder", async () => {
-    const root = oneRule("nested", "Nested values", "type P = A({ xs: List[int] }) | B\npure def sum(p: P): int = match p { | A(x) => x.xs.foldl(0, (n, x) => n + x) | _ => 0 }\npure def lawSum(k: int): bool = sum(A({ xs: List(1, 2) })) == 3\npure def lawCount(xs: List[Set[int]]): bool = xs.length() >= 0\npure def zeros(n: int): Set[int] = Set(n * 0)\npure def lawZeros(n: int): bool = zeros(n).contains(0)");
+  test("nested set samples stay bounded, an inner lambda may shadow a match binder, and forall and subseteq keep their meaning as quantifiers", async () => {
+    // A set's `forall` and `subseteq` are printed negated (print.ts, SET_OPS): the laws are sampled, compared with Quint and proved.
+    const quantifiers = "\npure def positive(x: int): bool = x > 0\npure def lawQuantifiers(xs: Set[int]): bool = xs.subseteq(xs) and (xs.forall(positive) or xs.exists(x => x <= 0)) and not(xs.exists(x => x > 0) and xs.forall(x => x <= 0))";
+    const root = oneRule("nested", "Nested values", "type P = A({ xs: List[int] }) | B\npure def sum(p: P): int = match p { | A(x) => x.xs.foldl(0, (n, x) => n + x) | _ => 0 }\npure def lawSum(k: int): bool = sum(A({ xs: List(1, 2) })) == 3\npure def lawCount(xs: List[Set[int]]): bool = xs.length() >= 0\npure def zeros(n: int): Set[int] = Set(n * 0)\npure def lawZeros(n: int): bool = zeros(n).contains(0)" + quantifiers);
     const { failed, text } = await run(root);
     assert.deepEqual(failed, ["review"], text);
   });
@@ -592,9 +669,10 @@ export effect function filled(sku: string, qty: number) {
 
   test("lists, nested helpers, an imported library, laws, step rules and the proof ledger work together", async () => {
     const shop = (edit?: (files: Record<string, string>) => void) => fixtures(["lib", "shop"], edit);
+    const plainRoot = shop();
     const recorded = shop((f) => { f["src/count.ts"] = 'import { type Cart } from "../gen/shop.ts";\n//@ pure\nexport function count(c: Cart): number {\n  //@ ensures \\result === c.count\n  return c.count;\n}\n'; });
     const [plain, recording, wrongStep, wrongLaw, importsMachine, circle] = await Promise.all([
-      run(shop()),
+      run(plainRoot),
       run(recorded, "unproved"),
       run(shop((f) => { f["spec/shop.md"] = f["spec/shop.md"].replace("count: c.count }", "count: c.count - 1 }"); })),
       run(shop((f) => { f["spec/lib.md"] = f["spec/lib.md"].replace("total(List(n)) == n", "total(List(n)) == n + 1"); })),
@@ -604,6 +682,8 @@ export effect function filled(sku: string, qty: number) {
     // The nested helpers (some inside some inside every) agree between Quint and TypeScript, and simulation passes.
     assert.deepEqual(plain.failed, ["proof", "review"], plain.text);
     assert.ok(plain.said("proof", /not proved/), plain.text);
+    // `every` reaches Dafny as a quantifier over the members, as `some` does, not as Std.Collections.Seq.All (print.ts, LIST_HELPERS).
+    assert.match(fs.readFileSync(path.join(plainRoot, "gen/proof/shop/shop.dfy"), "utf8"), /\n  !\(\(exists l :: l in c\.lines && !\(\(exists t :: t in l\.tags && \(exists m :: m in c\.lines/);
     // Once the unproved obligations are recorded, only the review is left.
     // Hand-written code proved against the shop says that it rests on what is simulated only there.
     assert.match(recording.said("proof", /^spec\/lock\.json: [1-9]\d* added, 0 removed\n/)?.detail ?? "", /^    \+ shop\.ts: /m, recording.text);
@@ -679,6 +759,21 @@ export effect function filled(sku: string, qty: number) {
     const { failed, said, text } = await run(fixtures(["lamp", "room"]));
     assert.deepEqual(failed, ["review"], text);
     assert.ok(said("proof", /^room\.ts: all \d+ obligations proved/), text);
+  });
+
+  test("a spec that refines another is held to it on every step, and proved to be", async () => {
+    const sw = (edit: (s: string) => string = (s) => s) => fixtures(["lamp", "switch"], (f) => { f["spec/switch.md"] = edit(f["spec/switch.md"]); });
+    const [ok, uncounted, lit, started] = await Promise.all([
+      sw(),
+      sw((s) => s.replace("presses: s.presses + 1", "presses: s.presses")),
+      sw((s) => s.replace("{ ...s, held: true }", "{ ...s, held: true, lit: true }")),
+      sw((s) => s.replace("{ lit: false, presses: 0, held: false }", "{ lit: false, presses: 1, held: false }")),
+    ].map((r) => run(r)));
+    assert.deepEqual(ok.failed, ["review"], ok.text);
+    assert.ok(ok.said("proof", /^switch\.ts: all \d+ obligations proved/), ok.text);
+    assert.ok(uncounted.said("always", /\(spec\/switch\.md:\d+\) is not a step of L: it changes refinesL, but not as L::toggle would/), uncounted.text);
+    assert.ok(lit.said("always", /\(spec\/switch\.md:\d+\) changes refinesL, but L has no transition press/), lit.text);
+    assert.ok(started.said("always", /\(spec\/switch\.md:\d+\) does not map the initial state onto L::initial/), started.text);
   });
 
   test("a map is looked up safely, division and remainder agree with Quint for negative numbers, and the parsers admit only what fits", async () => {
@@ -787,6 +882,25 @@ export effect function filled(sku: string, qty: number) {
     assert.equal(trusting.said("proof", /spec\/highest\.proof\.dfy:4: `assume` is not allowed/)?.ok, false, trusting.text);
   });
 
+  test("what an imported machine's unit proved is offered to the importer's proof file, and only once it is proved", async () => {
+    const project = (edit: (f: Record<string, string>) => void = () => {}) => fixtures(["highest", "ticket", "office"], edit);
+    const [proved, unoffered] = await Promise.all([run(project()), run(project((f) => { delete f["spec/ticket.proof.dfy"]; }))]);
+    assert.deepEqual(proved.failed, ["review"], proved.text);
+    assert.ok(proved.said("proof", /^office\.ts: all \d+ obligations proved/), proved.text);
+    // Without the ticket's proof file its transition is not proved, so it is not offered.
+    assert.equal(unoffered.said("proof", /^office\.ts: Dafny could not check it[\s\S]*unresolved identifier: ticket_issue_ensures/)?.ok, false, unoffered.text);
+    // Bump preserves the second invariant but breaks the first at an amount simulation does not sample.
+    const mixedRoot = fixtures(["magic"], (f) => {
+      f["spec/consumer.md"] = ruleSpec('import magic as M from "./magic"\npure def lawGood(k: int): bool = M::alwaysBumpsNonNegative(M::bump({ n: 0, m: 0 }, 777777))\npure def lawBad(k: int): bool = k == 777777 implies M::alwaysNonNegative(M::bump({ n: 0, m: 0 }, 777777))');
+      f["spec/consumer.proof.dfy"] = ["Good", "Bad"].map((name) => `lemma law${name}_ensures(k: int)\n  ensures (law${name}(k) == true)\n{\n  magic_bump_ensures(magic_C(0, 0), 777777);\n}\n`).join("\n");
+    });
+    const mixed = await run(mixedRoot);
+    const consumer = mixed.said("proof", /^consumer\.ts: 1 of 2 obligations not proved/);
+    assert.equal(consumer?.ok, false, mixed.text);
+    assert.match(consumer!.detail, /lawBad: /);
+    assert.doesNotMatch(consumer!.detail, /lawGood: /);
+  });
+
   test("a proof file may only add lemmas, and only bodies to the generated ones; a body is the brace group that ends a lemma, after a complete header", () => {
     const refused: [string, string, RegExp][] = [
       ["a block comment", "lemma A() { /* } */ }", /block comments are not allowed/],
@@ -828,10 +942,16 @@ export effect function filled(sku: string, qty: number) {
     // A helper may not take a generated name, or the library's.
     assert.throws(() => spliced("lemma f(x: int) { }"), /p\.dfy:1: lemma f: the name is already declared/);
     assert.throws(() => spliced("lemma ProofLib() { }"), /the name is already declared/);
+    // Of the library, only what the proof file calls goes in, with everything that uses in turn.
+    const withLib = splice(GENERATED_F, { proof: { file: "p.dfy", text: "lemma H(xs: seq<int>) { ProofLib.FilterMember((x: int) => x > 0, xs, 1); }\n" }, axioms: [], lib: read("vibestack/proof/lib.dfy") }).dfy;
+    assert.deepEqual([...withLib.slice(withLib.indexOf("module ProofLib")).matchAll(/^\s*(?:ghost )?(?:lemma|function|predicate) (\w+)/gm)].map((m) => m[1]), ["Filter", "FilterNil", "FilterCons", "FilterMember"]);
   });
 
   test("an obligation that fails is not assumed while the others are checked", async () => {
-    const { said, text } = await run(fixtures(["twins"]));
+    const root = fixtures(["twins"]);
+    const { said, text } = await run(root);
+    // Verified whole first, then the definition that failed, every assertion isolated, then each postcondition alone.
+    assert.match(fs.readFileSync(path.join(root, "gen/proof/twins.log"), "utf8"), /every assertion isolated[\s\S]*checked on its own/);
     const found = said("proof", /^twins\.ts: 3 of 4 obligations not proved/);
     assert.equal(found?.ok, false, text);
     assert.match(found!.detail, /alwaysBIsAtMostThreeOrNinetyNine/);
@@ -859,13 +979,21 @@ export effect function filled(sku: string, qty: number) {
     assert.ok(failed.includes("review"), failed.join());
   });
 
+  test("a comment in the Quint is reviewed, but the model it annotates is not simulated again", async () => {
+    const root = copyOfProject("spec/index.md", (s) => s.replace("pure val unitPrice = 5", "pure val unitPrice = 5 /* euros */ // per unit"));
+    const { failed, text } = await run(root);
+    assert.deepEqual(failed, ["review"], text);
+    assert.ok(!fs.existsSync(path.join(root, "gen/traces")), text);
+  });
+
   test("init preserves local instructions and refreshes its marked procedure", () => {
     const root = scratch({ "AGENTS.md": "mine\n", "package.json": `{"scripts":{"check":"mine"}}` });
     const added = init(root);
     const agents = path.join(root, "AGENTS.md");
     const expected = `mine\n\n<!-- vibestack:start -->\n${read("AGENTS.md").trim()}\n<!-- vibestack:end -->\n`;
     assert.equal(fs.readFileSync(agents, "utf8"), expected);
-    assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).scripts.check, "mine");
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).scripts, { check: "mine", dev: "spec studio", gen: "spec gen", accept: "spec accept", build: "vibelang", test: "vitest run" });
+    assert.equal(fs.readFileSync(path.join(root, ".gitignore"), "utf8"), "gen/\n.spec-cache/\n.studio/\ndist/\n.vibe/\n");
     assert.ok(["sync", "design"].every((s) => fs.existsSync(path.join(root, `.claude/skills/${s}/SKILL.md`))) && added.includes("tsconfig.json"), added.join());
     assert.match(fs.readFileSync(path.join(root, "CLAUDE.md"), "utf8"), /^@AGENTS\.md$/m);
     assert.deepEqual(init(root), []);
@@ -874,7 +1002,7 @@ export effect function filled(sku: string, qty: number) {
     assert.equal(fs.readFileSync(path.join(root, "CLAUDE.md"), "utf8"), "My existing instructions.\n\n@AGENTS.md\n");
     assert.equal(fs.readFileSync(agents, "utf8"), expected);
     assert.deepEqual(init(root), []);
-    for (const marker of ["onespec", "vibestack"]) {
+    for (const marker of ["onespec", "vibespec", "vibestack"]) {
       fs.writeFileSync(agents, `before\r\n<!-- ${marker}:start -->\r\nold instructions\r\n<!-- ${marker}:end -->\r\nafter\r\n`);
       init(root);
       assert.equal(fs.readFileSync(agents, "utf8"), `before\r\n<!-- vibestack:start -->\r\n${read("AGENTS.md").trim().replace(/\r?\n/g, "\r\n")}\r\n<!-- vibestack:end -->\r\nafter\r\n`);
@@ -917,6 +1045,7 @@ export effect function filled(sku: string, qty: number) {
       name: "fresh", type: "module", scripts, engines: { node: "^22.22.3 || >=24.11.1" },
       dependencies: pinned(...runtime), devDependencies: pinned(...tooling), overrides: one, pnpm: { overrides: one },
     });
+    assert.ok(Object.values({ ...json(fresh, "package.json").dependencies, ...json(fresh, "package.json").devDependencies }).every((version) => typeof version === "string" && !/^(catalog|workspace):/.test(version)));
     assert.deepEqual(init(fresh), []);
 
     // The placeholder `npm init` writes is no test script; a script, a dependency, an override or an ignored path already there stays.
@@ -1057,6 +1186,10 @@ export effect function filled(sku: string, qty: number) {
     assert.equal(said("tests", /^2 citations name no story or rule of the spec\n/)?.detail, dangling.map((d) => `      ${d}`).join("\n"), text);
     assert.equal(said("tests", /^test\/app\.test\.vibe: a VibeLang test, and the package has no `test` script to run it/)?.ok, false, text);
     assert.ok(said("tests", /^pass\n$/), text);
+    // A driver that observes through the generated module checks the oracle against itself.
+    fs.writeFileSync(path.join(root, "test/journeys/checkout.test.ts"), `import { test } from "node:test";\nimport { conformance } from "../../gen/index.conformance.ts";\nimport { initial, step } from "../../gen/index.ts";\ntest("a journey", () => conformance({ reset() {}, dispatch: () => "accepted", observe: () => step(initial, { type: "submit" }) } as never));\n`);
+    const oracle = await run(root);
+    assert.ok(oracle.said("tests", /conformance drivers must reach the application[\s\S]*checkout\.test\.ts:4: driver uses generated step/), oracle.text);
   });
 
   test("a conformance driver that asks the Effect adapter of the generated oracle is refused, though it may name a typed failure", async () => {
@@ -1204,8 +1337,8 @@ export effect function filled(sku: string, qty: number) {
     const after = await run(root);
     assert.deepEqual(after.failed, [], after.text);
     assert.equal(after.next, "all green");
-    // The total is the `ensures` of the generated Dafny: two are left in src/ledger.ts, and its loop invariants are not counted.
-    assert.ok(after.said("proof", /^src-ledger\.ts: all 2 obligations proved/), after.text);
+    // The total is the `ensures` of the generated Dafny: three remain after the paid-order clause is removed; loop invariants are not counted.
+    assert.ok(after.said("proof", /^src-ledger\.ts: all 3 obligations proved/), after.text);
   });
 
   test("a second check in the same project is refused, a lock left by a process that ended is taken over, and unused cache entries go", async () => {
@@ -1232,10 +1365,39 @@ export effect function filled(sku: string, qty: number) {
     const built = await exec(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "build"], copy);
     assert.equal(built.status, 0, built.stdout + built.stderr);
     const script = path.join(copy, "dist/spec.js");
+    fs.chmodSync(script, 0o755);
     const generated = await exec(process.platform === "win32" ? process.execPath : script,
       [...(process.platform === "win32" ? [script] : []), "gen", root], copy);
     assert.equal(generated.status, 0, generated.stdout + generated.stderr);
     assert.equal((await import(path.join(root, "gen/packaged.ts"))).answer, 42);
+
+    // pnpm exposes transitive executables as regular shims while keeping their package beside the tool's dependency.
+    const consumer = oneRule("arithmetic", "A value equals itself", "pure def lawIdentity(n: int): bool = n == n");
+    const installed = path.join(consumer, "node_modules/vibestack");
+    fs.mkdirSync(path.join(installed, "node_modules"), { recursive: true });
+    fs.writeFileSync(path.join(installed, "package.json"), '{"type":"module"}');
+    fs.cpSync(path.join(copy, "dist"), path.join(installed, "dist"), { recursive: true });
+    for (const entry of fs.readdirSync(nodeModules).filter((name) => name !== ".bin"))
+      fs.symlinkSync(path.join(nodeModules, entry), path.join(installed, "node_modules", entry), fs.statSync(path.join(nodeModules, entry)).isDirectory() ? "dir" : "file");
+    const binaries = path.join(consumer, "node_modules/.bin");
+    fs.mkdirSync(binaries, { recursive: true });
+    fs.symlinkSync(path.join(nodeModules, ".pnpm"), path.join(consumer, "node_modules/.pnpm"), "dir");
+    for (const dependency of ["@informalsystems", "typescript"])
+      fs.symlinkSync(path.join(nodeModules, dependency), path.join(consumer, "node_modules", dependency), "dir");
+    for (const command of ["quint", "tsc"]) {
+      const name = process.platform === "win32" ? `${command}.cmd` : command;
+      fs.symlinkSync(path.join(nodeModules, ".bin", name), path.join(binaries, name), "file");
+    }
+    const lsc = path.join(nodeModules, "lemmascript/tools/dist/lsc.js");
+    const shim = path.join(binaries, process.platform === "win32" ? "lsc.cmd" : "lsc");
+    const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+    fs.writeFileSync(shim, process.platform === "win32" ? `@"${process.execPath}" "${lsc}" %*\r\n` : `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(lsc)} "$@"\n`);
+    fs.chmodSync(shim, 0o755);
+    assert.ok(!fs.existsSync(path.join(consumer, "node_modules/lemmascript")));
+    const checked = await runCli(path.join(installed, "dist/spec.js"), consumer, "check", "--json");
+    const proof = JSON.parse(checked.stdout).results.find((result: Result) => result.stage === "proof");
+    assert.ok(proof?.ok, checked.stdout + checked.stderr);
+    assert.match(proof.summary, /all 1 obligations proved/);
   });
 
   test("the command line checks, generates and watches a project directory from its parent", async () => {
@@ -1359,11 +1521,16 @@ export effect function filled(sku: string, qty: number) {
   test("a sibling postcondition cannot pass when its generated definition cannot be copied", () => {
     const dfy = "lemma f_ensures(n: int)\n  ensures n > 0\n  ensures n < 0\n{ }\n";
     const region = { def: "f_ensures", generated: true };
-    const result = isolatedCopies({ dfy, regions: dfy.split("\n").map(() => region) }, new Map([["f_ensures", new Set([2])]]));
+    const others = (ensures: number[]) => ensures.filter((l) => l !== 2).map((l) => [l]);
+    const result = isolatedCopies({ dfy, regions: dfy.split("\n").map(() => region) }, new Map([["f_ensures", others]]));
     assert.equal(result.copies.length, 0);
     assert.deepEqual([...result.closed.keys()], ["f: n < 0"]);
-    const unknown = isolatedCopies({ dfy, regions: [] }, new Map([["missing", new Set([2])]]));
+    const unknown = isolatedCopies({ dfy, regions: [] }, new Map([["missing", others]]));
     assert.match(unknown.errors.join("\n"), /cannot locate the generated definition/);
+    // A copy keeps only the postconditions picked, and each of its lines names the line it copies.
+    const shaped = dfy.replace("{ }", "{\n}");
+    const copied = isolatedCopies({ dfy: shaped, regions: shaped.split("\n").map(() => region) }, new Map([["f_ensures", others]]));
+    assert.deepEqual(copied.copies.map(({ lines, origin }) => ({ lines, origin })), [{ lines: ["lemma isolated0_f_ensures(n: int)", "  ensures n < 0", "{", "}"], origin: [1, 3, 4, 5] }]);
   });
 
   test("a generated runtime helper does not inflate the unit's obligation count", async () => {

@@ -12,6 +12,13 @@ export const digest = (text: string) => createHash("sha256").update(text).digest
 export const sha = (...parts: string[]) => digest(JSON.stringify(parts));
 export const short = (text: string) => digest(text).slice(0, 12);
 export const indent = (s: string, by = 6) => s.split("\n").map((l) => " ".repeat(by) + l).join("\n");
+/** What each promise gives, once every one has finished: a failure is thrown only then, so that nothing is left running. */
+export async function allDone<T>(promises: Promise<T>[]): Promise<T[]> {
+  const settled = await Promise.allSettled(promises);
+  const failure = settled.find((r) => r.status === "rejected");
+  if (failure) throw failure.reason;
+  return settled.map((r) => (r as PromiseFulfilledResult<T>).value);
+}
 
 /** Files and symbolic links below a project directory, excluding directory entries. */
 export const filesUnder = (root: string, dir: string) => !fs.existsSync(path.join(root, dir)) ? []
@@ -103,7 +110,7 @@ export function danglingCitations(root: string, specs: Spec[]): string[] {
         .map(([cited]) => `${f}:${i + 1}  ${cited}`)));
 }
 
-export function packageCode(root: string, dir = ""): string[] {
+function packageCode(root: string, dir = ""): string[] {
   return fs.readdirSync(path.join(root, dir), { withFileTypes: true }).flatMap((e) => {
     const rel = path.join(dir, e.name);
     if (e.isFile()) return /\.(?:[cm]?[jt]sx?|vibex?)$/.test(e.name) && !SIDECAR.test(e.name) ? [rel] : [];

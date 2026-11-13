@@ -5,7 +5,7 @@ model, with links to child specs wherever an area needs its own directory.
 `gen/` is derived from it. Keep the spec true to what the user wants and
 `pnpm check` green.
 
-**Read this file in full before doing any work.**
+**Read this file and [README.md](README.md) in full before doing any work.**
 The spec format, naming rules and everything the tools accept are in
 [Spec reference](#spec-reference) below.
 
@@ -206,18 +206,30 @@ How `pnpm check` runs them:
 # Spec reference
 
 The spec format, the generated code and the code built on it. The agent's
-loop is the [`sync` skill](.claude/skills/sync/SKILL.md).
-
-`pnpm check` runs, in order: `model` (Quint parses and typechecks) →
-`always` (simulation breaks no rule or law) → `sometimes` (every goal is
-reached) → `replay` (generated TypeScript matches Quint) → `types` (the `vibelang` compiler on
-`src/`, tests and `gen/`) → `proof` (Dafny) → `tests` → `traces` (the application
-against the spec, "Conformance") → `review` (what you have not signed off).
+loop is the [`sync` skill](.claude/skills/sync/SKILL.md); the stages of
+`pnpm check` are [below](#stages-of-pnpm-check).
 
 In the vibestack repository, "the order example" is
 `vibestack/examples/order/spec/index.md` and "the tracker example" is
 `vibestack/examples/dashboard/spec/tracker.md`. The root `spec/index.md` is blank, ready
 for a new application.
+
+## Stages of `pnpm check`
+
+Each line of a report names its stage: `✓` passed, `✗` failed, `-` skipped,
+with the reason.
+
+| Stage | Checks | Skipped when |
+|---|---|---|
+| `model` | each spec parses, and its Quint typechecks | never |
+| `always` | `always` rules and laws hold on simulated traces; `leadsTo` rules on fair runs | the spec is not a valid model |
+| `sometimes` | each `sometimes` goal is reached, and each event happens in some simulated state | the model is invalid, or simulation stopped at an `always` failure |
+| `replay` | the generated TypeScript agrees with Quint on the simulated traces | as `sometimes` |
+| `types` | the `vibelang` compiler checks `src/`, the tests and `gen/` ([The VibeLang shell](#the-vibelang-shell)) | a stage above failed; without a `tsconfig.json` it passes as skipped only when there is no `src/` or `test/` |
+| `proof` | Dafny proves each unit's obligations, or `spec/lock.json` records them as simulated only | a stage above failed |
+| `tests` | the package's [tests](#tests) pass, and their citations name a story or rule the spec has | a stage above failed |
+| `traces` | recorded traces and `driver:` programs agree with the spec ([Conformance](#conformance)) | a stage above failed |
+| `review` | every story, rule and contract changed since `spec/lock.json` was accepted ([Review](#review)) | never |
 
 ## Writing a spec
 
@@ -275,9 +287,10 @@ Quint errors are reported at the source file's path and `line:col`.
 
 ### What goes in the Quint blocks
 
-Only types, imports, `pure val` and `pure def`. There is no `var`, no
-`action`, and no `init` or `step`: the state machine around your definitions
-is generated. The role of a definition comes from its name and signature:
+Only types, imports, `pure val`, `pure def` and the `const` of an opaque
+function. There is no `var`, no `action`, and no `init` or `step`: the state
+machine around your definitions is generated. The role of a definition comes
+from its name and signature:
 
 | You write | It is | Generated from it |
 |---|---|---|
@@ -289,8 +302,12 @@ is generated. The role of a definition comes from its name and signature:
 | `pure def stepNeverGoesBack(before: Order, after: Order): bool` | a rule about every single step | a postcondition on every transition; simulated and proved |
 | `pure def stepAuthorized(before: Order, via: str, after: Order): bool` | a step rule that also sees the transition name | a postcondition on every transition |
 | `pure def sometimesPaid(o: Order): bool` | a state that must be reachable | a reachability check with a witness trace |
+| `pure def refinesL(s: Switch): L::Lamp` | the spec [refines](#refinement) the machine imported as `L` | an obligation on every transition and on `initial`; simulated and proved |
 | `pure def leadsToPaid(o: Order, later: Order): bool` | a liveness rule: from every reachable state `o`, every fair run reaches a state `later` that it relates to `o` (`o` itself counts) | a search of simulated traces for a fair run that breaks it ("Liveness", below) |
 | `pure def lawTotalIsNotNegative(xs: List[int]): bool` | a law: true for every value of its parameters | a function proved to return `true`, and sampled by the simulator |
+| `const hash: (str) => int` | an opaque function: a type and no body. The laws in its rule are assumed of it | see [Opaque functions](#opaque-functions) |
+| `type SecretCard = str` | a secret: a type named `Secret…` | nothing new; `check` keeps its values out of every other place ([Secrets](#secrets)) |
+| `pure def declassifyLast4(c: SecretCard): str` | the one way out for a secret | a function whose result is public; review names it |
 | `pure val idValues = Set(1, 2, 3)` | what the simulator tries for a parameter named `id`. It must be a set whose elements match the parameter type; any supported Quint is allowed in it | nothing: it never reaches TypeScript |
 | `pure val weight_pay = 5` | how often the simulator tries `pay`: a whole number from 1 to 100, times as often as an event of weight 1 (the default). For deep interleavings, such as a message lost, repeated and reordered | nothing |
 | `pure val fair_pay = "weak"` or `"strong"` | an assumption for `leadsTo` rules: a fair run does not put `pay` off for ever while its guard keeps allowing it (`"weak"`), or while it allows it again and again (`"strong"`) | nothing |
@@ -355,6 +372,72 @@ circle. Navigation links may point back to a parent. In the generated
 TypeScript a name from another module is spelled
 `<module>_<name>`, for example `lamp_toggle`.
 
+### Opaque functions
+
+`const f: (A, B) => R`, on one line under a rule, declares a function with no
+body: a hash, a check the spec does not model, a model's judgement. What the
+spec knows of it is the laws in the same rule; they are assumed, not proved,
+and review shows them with it. A law about `f` in another rule is proved as
+any law is. `vibestack/fixtures/badge.md` in the vibestack repository is the
+example.
+
+- **Simulated** as a table chosen for each trace: for each argument the
+  simulator tries (the values of its type), a result from the values of `R`,
+  or from `fValues` if the spec defines it. A trace starts only with a table
+  on which every law of `f` holds for every value tried, so a rule that holds
+  only for some tables is broken in simulation. If no table satisfies the
+  laws, they may contradict each other, and `always` fails.
+- **Proved** with `f` uninterpreted (`function {:axiom} f` in the Dafny) and
+  each of its laws as a lemma `<law>_ensures(args)` that a proof file calls.
+- **In TypeScript** the program gives it before anything calls it:
+  `opaque.f = hashName`, from `gen/<name>.ts`; until then `f` throws. Its
+  parameters are `p0`, `p1`, … Nothing proves that what the program gives
+  satisfies the laws: prove that in `src/` with a `//@` contract.
+- Only simple values (`int`, `bool`, `str`, a plain variant) are its
+  arguments, and a spec with an opaque function cannot be imported.
+
+### Secrets
+
+A type whose name starts with `Secret` (`type SecretCard = str`, or a record)
+is secret. `model` refuses a spec in which a secret value can reach a place
+whose type is not secret: a field, a variant's field such as the text of
+something said, an element of a list, set or map, or the result of a
+transition, a guard or a helper. A value computed from a secret, or chosen by a
+condition on one, is secret too, through calls to helpers as well. Rules only
+check, so they may read secrets freely.
+
+The one way out is a definition named `declassify…`: what it returns is
+public. Review marks a rule that defines one, whenever it is new or changed,
+`and declassifies a secret through <name>`; confirm that what it lets out may
+be public. `vibestack/fixtures/card.md` in the vibestack repository is the
+example, and `vibestack/examples/assistant` keeps a saved card out of speech
+this way. The check reads the spec only: the shell must keep secrets out of
+its own logs.
+
+### Refinement
+
+A spec refines a machine it imports under a name by defining
+`refines<Alias>`, which maps its state onto that machine's
+(`vibestack/fixtures/switch.md` refines `lamp.md` in the vibestack
+repository):
+
+```quint
+import lamp as L from "./lamp"
+pure def refinesL(s: Switch): L::Lamp = { mode: if (s.lit) L::On else L::Off, flips: s.presses }
+```
+
+- `refinesL(initial)` must be `L::initial`.
+- Every transition must either leave `refinesL` of the state unchanged, or be
+  the transition of `L` with the same name, allowed by its guard, on
+  `refinesL` of the state before. That transition's parameters are taken from
+  this one's by name, as a guard's are. A transition that `L` has no
+  namesake for must leave `refinesL` unchanged.
+- Simulation checks both on every step, and each is an obligation of the
+  proof. Every reachable state then maps onto a reachable state of `L`, so
+  every rule of `L` holds of `refinesL` of it, as far as `L`'s own unit
+  proved it: the proof line lists what of `L` is simulated only.
+- A spec refines at most one machine, whose state holds no set.
+
 ### Supported Quint
 
 | In a spec | In TypeScript | Notes |
@@ -405,7 +488,10 @@ stage with the name of the construct.
 - **`every`, `some`, `includes` and `listMap` are not Quint.** They are
   rewritten into `foldl` before Quint reads the spec, because Quint evaluates
   a definition that takes a lambda wrongly when it is used inside its own
-  argument.
+  argument. In TypeScript they are the array methods, except that `every`, a
+  set's `forall` and `subseteq` are written `!xs.some(x => !…)`: the proof
+  then sees each as a quantifier over the members
+  (`!(exists x :: x in xs && !…)`), as it sees `some` and `includes`.
 - **The simulator tries small values**: integers −1…6, both booleans, three
   strings, every variant of a plain sum type, and short lists and sets of
   those. Define `<param>Values` to choose, which a record or a variant that
@@ -488,7 +574,8 @@ removed and one new.
 The versioned `spec/lock.json` holds `specs` keyed by source path, `contracts`
 keyed by source file, and `unproved` keyed by proof unit. `pnpm exec spec migrate`
 consolidates older per-spec ledgers without accepting new reviews or proof
-exceptions. Commit the resulting lock with the specs.
+exceptions. A proof exception in the old list form is not carried over: its
+obligations are reported as not proved until proved or accepted again. Commit the resulting lock with the specs.
 
 Removed spec paths stay in review until their removal is accepted.
 
@@ -520,10 +607,11 @@ for each one, in this order:
    to another. Read the list before recording it: an obligation that is false
    is also "not proved".
 
-Counting is per obligation. Dafny checks every `ensures` on its own, a
-failing one is never assumed while another is checked, and the prover works
-to a fixed resource limit (`RESOURCE_LIMIT` in `vibestack/prove.ts`) rather than a
-time limit, so the answer does not depend on the machine. An obligation it
+Counting is per obligation. Dafny verifies each definition whole, and one
+that fails again with every assertion on its own; a failing `ensures` is never
+assumed while another is checked. The prover works to a fixed resource limit
+(`RESOURCE_LIMIT` in `vibestack/prove.ts`, per definition and then per assertion)
+rather than a time limit, so the answer does not depend on the machine. An obligation it
 could not finish is marked `[the prover ran out of resources]`. A lemma
 assumes what every lemma it calls ensures, so an obligation whose proof calls,
 directly or through helpers, a lemma with an obligation not proved is not
@@ -563,7 +651,7 @@ a body.
   `match`, `var`, `reveal`, calls to lemmas, and the attributes `{:trigger}`
   and `{:induction}`.
 - Names from Dafny's standard library (`Std.…`) only as the generated code
-  writes them, such as `Std.Collections.Seq.All`: the library holds axioms,
+  writes them, such as `Std.Collections.Seq.Filter`: the library holds axioms,
   and `dafny audit` does not report them in the unit. `ProofLib.<Name>` only
   for what `vibestack/proof/lib.dfy` declares.
 - Refused: block comments, `@`, any other attribute, character literals, NUL,
@@ -582,8 +670,8 @@ a body.
 
 **What a proof can call:**
 
-- `ProofLib.<Name>(...)` from `vibestack/proof/lib.dfy`, added to every unit that
-  has a proof file: `Filter` (a heap-free view of `Std.Collections.Seq.Filter`,
+- `ProofLib.<Name>(...)` from `vibestack/proof/lib.dfy`, of which every unit that
+  has a proof file gets what the file calls and what that uses: `Filter` (a heap-free view of `Std.Collections.Seq.Filter`,
   see below), `Distinct`, `DistinctBy`, and lemmas about filters
   (`FilterNil`, `FilterCons`, `FilterAppend`, `FilterMember`, `FilterSubset`,
   `FilterNone`, `FilterOne`, `FilterTwo`, `FilterCountOneIffUnique`,
@@ -593,10 +681,17 @@ a body.
   Read the file for what each states. A lemma general enough for any project
   belongs there, with its proof; one about your spec belongs in your proof
   file.
-- A law of an imported module, if its own unit proved it in the same run,
-  neither simulated only nor resting on an obligation that is:
-  `<module>_<law>_ensures(args)` gives `<module>_<law>(args) == true`. (In a
-  `src` unit, the laws of the module it imports are `<law>_ensures`.)
+- What an imported module's own unit proved in the same run, neither
+  simulated only nor resting on an obligation that is: its lemmas
+  `<module>_<fn>_ensures(args)` for each law, transition, `step` and
+  `initialHolds`, with the clauses proved. `<module>_<law>_ensures(args)`
+  gives `<module>_<law>(args) == true`, and `<module>_<transition>_ensures(s, …)`
+  gives each rule of that module for `<module>_<transition>(s, …)`, under its
+  `inv` and guard, so a machine that holds another need not prove its rules
+  again (`vibestack/fixtures/office.md`). (In a `src` unit, those of the module
+  it imports are `<fn>_ensures`.)
+- The laws of the unit's [opaque functions](#opaque-functions), assumed:
+  `<law>_ensures(args)`.
 - The generated `_ensures` lemmas, and Dafny's standard library by the names
   the generated code uses.
 
@@ -610,7 +705,7 @@ supply one to replace it.
   State facts about `ProofLib.Filter`, and connect them to the rule with a
   helper whose `ensures` is the rule's body with `ProofLib.Filter` in place of
   `Std.Collections.Seq.Filter`; it proves with an empty body:
-  `lemma KeysFilter(r: Registry) ensures alwaysAKeyNamesOneProject(r) == Std.Collections.Seq.All(r.entries, (a: Entry) => (|ProofLib.Filter((b: Entry) => (b.key == a.key), r.entries)| == 1)) { }`.
+  `lemma KeysFilter(r: Registry) ensures alwaysAKeyNamesOneProject(r) == !(exists a :: a in r.entries && !(|ProofLib.Filter((b: Entry) => (b.key == a.key), r.entries)| == 1)) { }`.
 - A lambda is the same term only if it is the same text: pass the lambda the
   generated code uses, copied verbatim from the `.dfy`.
 
@@ -645,7 +740,7 @@ type Event = { type: "addItem"; qty: number } | { type: "submit" } | …
 function parseEvent(x: unknown): Event | undefined   // an untrusted value as an event, or not
 function parseState(x: unknown): Order | undefined   // an untrusted value as a state that satisfies inv, or not
 function enabled(current: Order, event: Event): boolean  // do the rules allow event now?
-function step(current: Order, event: Event): Order       // apply event; unchanged if not allowed
+function step(current: Order, event: Event): Order       // apply event; unchanged if not allowed; { state, out } with output
 function inv(current: Order): boolean                    // every always-rule at once
 ```
 
@@ -932,10 +1027,11 @@ toolchain.
   that import machines where rules span them. `check` runs them in dependency
   order and proves each against the *definitions* of what it imports, not
   their proofs, so the cost of a proof grows with the spec, not with
-  everything beneath it.
-- **Only what changed is checked again.** Each passing simulation and proof
-  result is kept in `.spec-cache/` under a fingerprint of the spec, everything it
-  imports and the versions of the tools.
+  everything beneath it. Its proof file may call what their units proved.
+- **Only what changed is checked again.** Each simulation result, a failing
+  one too (its seed is fixed), and each passing proof result is kept in
+  `.spec-cache/` under a fingerprint of the spec's Quint without its comments,
+  everything it imports and the versions of the tools. The specs are simulated at once.
 - **The spec covers the rules, not the plumbing.** Chat, HTTP and storage stay
   hand-written around the generated core, as `vibestack/examples/dashboard/src/notify.vibe`
   does for sending messages.
@@ -967,14 +1063,17 @@ In the vibestack repository:
 | `vibestack/gen/vibe.ts` | `gen/<name>.effect.vibe`, read off the generated TypeScript |
 | `vibestack/scan.ts` | how a spec's lines are read; imports nothing, so Studio's page uses it too |
 | `vibestack/studio/` | Studio, a workspace package with its own spec, checked by `pnpm --filter vibestack-studio check`: change `spec/`, then its shell in `src/` |
-| `vibestack/prove.ts` | proves one unit: checks and splices the proof file, runs LemmaScript and `dafny audit`, and rechecks alone every postcondition a failing one could hide |
+| `vibestack/prove.ts` | proves one unit: checks and splices the proof file, runs LemmaScript and `dafny audit`, verifies again with every assertion isolated each definition that fails, and alone every postcondition a failing one could hide |
 | `vibestack/proof/lib.dfy` | the library proof files call |
+| `vibestack/std/` | specs that ship with the tools, which any spec may import, each with its proof file |
 | `vibestack/conform.ts`, `vibestack/conformance.ts` | the `traces` stage and the conformance runtime generated tests import |
 | `vibestack/gen.ts` | the translator: reads what a module imports and defines |
 | `vibestack/gen/types.ts` | everything decided by a type |
 | `vibestack/gen/print.ts` | expressions |
 | `vibestack/gen/classify.ts` | which definition is a transition, a guard or a rule |
+| `vibestack/gen/secrecy.ts` | where a secret may go |
 | `vibestack/gen/typescript.ts`, `vibestack/gen/harness.ts` | the two outputs |
+| `vibestack/selftest.ts`, `vibestack/fixtures/` | the selftest and the specs it uses besides the order example |
 
 Node runs all of it directly; `pnpm build` compiles it for the packaged
 `spec` command.

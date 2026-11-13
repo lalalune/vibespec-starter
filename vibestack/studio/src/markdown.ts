@@ -11,10 +11,22 @@ export const storyKey = (title: string) => `## ${title.trim()}`;
 export const ruleKey = (story: string, title: string) => `${story.trim()} / ${title.trim()}`;
 /** Which story or rule of which spec a node is, as the manifest and the page's origins name it. */
 export const nodeId = (file: string, key: string) => `${file}\0${key}`;
-/** The order specs are listed in: each index.md before the specs beside it. */
-export const specOrder = (file: string) => file.replace(/(?:^spec\/|\/)index\.md$/, "/");
 /** The mark of each kind of change in the manifest (./doc.ts), in the prompt and on the page. */
 export const SIGN = { added: "+", deleted: "-", changed: "~" } as const;
+
+/** A story, or a rule with its story's id, of an outline in one spec, with its ledger key and node id. */
+export interface OutlineNode { id: string; key: string; story: Story; rule?: Rule; parent?: string }
+export const nodesOfOutline = (file: string, o: Outline): OutlineNode[] => o.stories.flatMap((story) => {
+  const parent = nodeId(file, storyKey(story.title));
+  return [{ id: parent, key: storyKey(story.title), story }, ...story.rules.map((rule) => {
+    const key = ruleKey(story.title, rule.title);
+    return { id: nodeId(file, key), key, story, rule, parent };
+  })];
+});
+
+/** Specs in the order the rail lists them: a directory's index.md before the specs in it. */
+const orderKey = (file: string) => file.replace(/(?:^spec\/|\/)index\.md$/, "/");
+export const specOrder = (a: string, b: string) => orderKey(a).localeCompare(orderKey(b));
 
 /**
  * The outline of a spec's text. Numbers run from 1 in the order of the text, and each story and rule keeps the key it

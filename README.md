@@ -55,7 +55,8 @@ there:
 - **Generated, not written.** Types, guards, transitions and rule checks in
   `gen/<name>.ts` come from the spec. Nobody edits them.
 - **Simulated.** Thousands of random traces look for a reachable state that
-  breaks a rule, and report the shortest one.
+  breaks a rule, or a fair run that never reaches what a
+  [`leadsTo` rule](AGENTS.md#liveness) waits for, and report the shortest one.
 - **Proved.** Dafny proves that every transition keeps every rule, for all
   states and all inputs, and that your hand-written logic meets its contract.
 - **Reviewed.** Every rule that changed is shown with its sentence and its
@@ -72,7 +73,7 @@ flowchart LR
   qnt -- generate --> ts
   ts -- import --> app
 
-  qnt -. "simulate: always / step / law / sometimes" .-> v1([counterexample or witness trace])
+  qnt -. "simulate: always / step / law / leadsTo / sometimes" .-> v1([counterexample or witness trace])
   qnt -. "compare every state and definition" .-> ts
   ts -. "LemmaScript + Dafny" .-> v2([proof for all states and inputs])
   app -. "LemmaScript + Dafny" .-> v2
@@ -239,7 +240,7 @@ current one. Installed as a package, use `pnpm exec spec <command> [<dir>]`.
 | `pnpm accept [<dir>]` | The user's sign-off: checks afresh and records what `review` lists, [all or nothing](AGENTS.md#review) |
 | `pnpm accept unproved` | Records the listed obligations as simulated only. The user's decision |
 | `pnpm new [<path>]` | Fills an empty root index or creates a child [starter spec](AGENTS.md#writing-a-spec) |
-| `node vibestack/spec.ts migrate [<dir>]` | Consolidates old review ledgers into `spec/lock.json`, keeping their approvals |
+| `node vibestack/spec.ts migrate [<dir>]` | Consolidates old review ledgers into `spec/lock.json`, keeping their approvals; proof exceptions in the old list form are dropped and must be proved or accepted again |
 | `node vibestack/spec.ts init [<dir>]` | Sets up an existing project; see [Using it from another package](AGENTS.md#using-it-from-another-package) |
 | `pnpm demo` | Runs the order example's scripted checkout session |
 | `pnpm selftest` | Breaks the pipeline one way at a time and checks each break is caught |
@@ -258,7 +259,7 @@ current one. Installed as a package, use `pnpm exec spec <command> [<dir>]`.
 | [Order checkout](vibestack/examples/order/README.md) | Guards, payments, cancellation and a proved event ledger | `pnpm dev vibestack/examples/order` |
 | [Team dashboard](vibestack/examples/dashboard/README.md) | Shared spreadsheets, chat notifications and a project registry | `pnpm dev vibestack/examples/dashboard` |
 | [Shared to-do list](vibestack/examples/fullstack/README.md) | HTTP server, browser client and two tabs over an unreliable network | `pnpm dev vibestack/examples/fullstack` |
-| [Assistant](vibestack/examples/assistant/README.md) | Trusted senders, bounded turns, late replies and confirmation before payment | `pnpm dev vibestack/examples/assistant` |
+| [Assistant](vibestack/examples/assistant/README.md) | Trusted senders, bounded turns, late replies, confirmation before payment and a secret card | `pnpm dev vibestack/examples/assistant` |
 
 ## Contributing
 
