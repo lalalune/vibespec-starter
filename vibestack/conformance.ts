@@ -56,10 +56,64 @@ export interface Found<E> {
 }
 export type Sent<E> = E & { by?: unknown };
 
-type Trace<E> = [key: string, sent: Sent<E>][];
+/** Events sent to the application, each for one entity: what a failure carries and `replay` takes. */
+export type Trace<E> = [key: string, sent: Sent<E>][];
 
-/** Run the journeys, then seeded random walks; throw at the first disagreement, shrunk to the fewest events that show it. */
+/** A disagreement between the application and its spec, with the fewest events that show it, as data to save and replay. */
+export class ConformanceError<E = unknown> extends Error {
+  readonly trace: Trace<E>;
+  readonly seed: number;
+  /** The journey or walk that found it, or "replay". */
+  readonly origin: string;
+  constructor(message: string, trace: Trace<E>, seed: number, origin: string) {
+    super(message);
+    this.name = "ConformanceError";
+    this.trace = trace;
+    this.seed = seed;
+    this.origin = origin;
+  }
+}
+
+/** Run the journeys, then seeded random walks; throw a ConformanceError at the first disagreement, shrunk to the fewest events that show it. */
 export async function check<S, E, V>(oracle: Oracle<S, E>, found: Found<E>, driver: Driver<E, V>, options: Options<S, V> = {}) {
+  const { differ, fail, seen, outcomes, keys, walks, steps, seed } = runner(oracle, found, driver, options);
+  for (const j of found.journeys) {
+    const trace: Trace<E> = j.events.map((e) => [keys[0], e]);
+    if (await differ(trace)) await fail(`journey "${j.story}" / "${j.rule}"`, trace);
+  }
+  // A walk mostly takes events the spec allows, so that it reaches deep states, and sometimes any event, so that refusals are tried.
+  const random = rng(seed);
+  for (let w = 0; w < walks; w++) {
+    const model = new Map<string, S>();
+    const trace: Trace<E> = [];
+    for (let i = 0; i < steps; i++) {
+      const key = keys[Math.floor(random() * keys.length)];
+      const state = model.get(key) ?? oracle.initial;
+      const allowed = found.events.filter(({ by, ...e }) => oracle.enabled(state, e as E, by));
+      const pool = allowed.length && random() < 0.75 ? allowed : found.events;
+      const sent = pool[Math.floor(random() * pool.length)];
+      const { by, ...event } = sent;
+      trace.push([key, sent]);
+      const after = transition(oracle, found, state, event, by);
+      if (typeof after === "string") throw new Error(after);
+      model.set(key, after.after);
+    }
+    if (await differ(trace)) await fail(`walk ${w + 1} of seed ${seed}`, trace);
+  }
+
+  return { journeys: found.journeys.length, walks, observed: seen.size, outcomes: [...outcomes], effects: found.outputShape ? driver.observeOutput ? "checked" : "not observed" : "none" };
+}
+
+/** Run exactly `trace`, such as one a ConformanceError carried, through the application; throw a ConformanceError if it still disagrees. */
+export async function replay<S, E, V>(oracle: Oracle<S, E>, found: Found<E>, driver: Driver<E, V>, trace: Trace<E>, options: Options<S, V> = {}) {
+  const why = await runner(oracle, found, driver, options).differ(trace);
+  if (why) throw new ConformanceError(`conformance to ${found.source}: a replayed trace of ${trace.length} events:\n${lines(trace)}\n${why}`, trace, options.seed ?? 1, "replay");
+}
+
+const lines = <E>(trace: Trace<E>) => trace.map(([k, e]) => `  ${k} ${show(e)}`).join("\n");
+
+/** What `check` and `replay` share: running a trace through the driver beside the oracle, and shrinking one that disagrees. */
+function runner<S, E, V>(oracle: Oracle<S, E>, found: Found<E>, driver: Driver<E, V>, options: Options<S, V>) {
   const { view, keys = ["a", "b"], walks = 200, steps = 20, seed = 1 } = options;
   if (!found.events.length) throw new Error(`gen/${found.spec}.conformance.ts holds no events yet: \`npm run check\` writes them`);
   if (!keys.length || keys.some((key) => typeof key !== "string" || !key) || new Set(keys).size !== keys.length) throw new Error("conformance keys must be distinct nonempty strings");
@@ -107,35 +161,10 @@ export async function check<S, E, V>(oracle: Oracle<S, E>, found: Found<E>, driv
       const shorter = trace.toSpliced(i, 1);
       if (await differ(shorter)) trace = shorter;
     }
-    const lines = trace.map(([k, e]) => `  ${k} ${show(e)}`).join("\n");
-    throw new Error(`conformance to ${found.source}: ${what}, shrunk to ${trace.length} events:\n${lines}\n${await differ(trace)}`);
+    throw new ConformanceError(`conformance to ${found.source}: ${what}, shrunk to ${trace.length} events:\n${lines(trace)}\n${await differ(trace)}`, trace, seed, what);
   };
 
-  for (const j of found.journeys) {
-    const trace: Trace<E> = j.events.map((e) => [keys[0], e]);
-    if (await differ(trace)) await fail(`journey "${j.story}" / "${j.rule}"`, trace);
-  }
-  // A walk mostly takes events the spec allows, so that it reaches deep states, and sometimes any event, so that refusals are tried.
-  const random = rng(seed);
-  for (let w = 0; w < walks; w++) {
-    const model = new Map<string, S>();
-    const trace: Trace<E> = [];
-    for (let i = 0; i < steps; i++) {
-      const key = keys[Math.floor(random() * keys.length)];
-      const state = model.get(key) ?? oracle.initial;
-      const allowed = found.events.filter(({ by, ...e }) => oracle.enabled(state, e as E, by));
-      const pool = allowed.length && random() < 0.75 ? allowed : found.events;
-      const sent = pool[Math.floor(random() * pool.length)];
-      const { by, ...event } = sent;
-      trace.push([key, sent]);
-      const after = transition(oracle, found, state, event, by);
-      if (typeof after === "string") throw new Error(after);
-      model.set(key, after.after);
-    }
-    if (await differ(trace)) await fail(`walk ${w + 1} of seed ${seed}`, trace);
-  }
-
-  return { journeys: found.journeys.length, walks, observed: seen.size, outcomes: [...outcomes], effects: found.outputShape ? driver.observeOutput ? "checked" : "not observed" : "none" };
+  return { differ, fail, seen, outcomes, keys, walks, steps, seed };
 }
 
 /** The state type, resolved by the generator so sets are sorted only in the variant that owns them. */
