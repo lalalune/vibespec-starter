@@ -149,6 +149,7 @@ its role ([all of them](AGENTS.md#what-goes-in-the-quint-blocks)):
 | `pure def alwaysX(o: Order): bool` | holds in every reachable state |
 | `pure def stepX(before: Order, after: Order): bool` | holds across every transition |
 | `pure def sometimesX(o: Order): bool` | some reachable state has it |
+| `pure def leadsToX(o: Order, later: Order): bool` | every fair run from `o` reaches such a `later` |
 | `pure def lawX(…): bool` | true for every argument |
 
 `gen/order.ts` gets the same definitions in TypeScript. Each transition
@@ -343,7 +344,7 @@ Stages run cheapest first. `✓` passed, `✗` failed, `-` skipped: blocked by a
 | Stage | Question | Strength |
 |---|---|---|
 | `model` | Is the spec well-typed and inside the supported subset? | exact; anything unsupported is refused by name |
-| `always` | Does a reachable state break an `always` rule, a step break a `step` rule, or a sampled argument break a law? | 10,000 random traces; a failure comes with the shortest trace and its seed |
+| `always` | Does a reachable state break an `always` rule, a step break a `step` rule, a sampled argument break a law, or a fair run that stops or loops break a [`leadsTo` rule](AGENTS.md#liveness)? | 10,000 random traces; a failure comes with the shortest trace and its seed |
 | `sometimes` | Can each `sometimes` goal be reached? Does each guard allow its event in some reachable state? | a witness trace is a proof; a failure means 200,000 traces found none. [Guards never seen to refuse](AGENTS.md#writing-good-rules) are listed, not failed |
 | `replay` | Does the generated TypeScript mean what the Quint means? | 400 sampled traces and every witness: every state, every law, and every definition the simulator can evaluate. The rest are listed |
 | `types` | Does the application fit the generated contract? | exact |

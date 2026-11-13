@@ -10,13 +10,15 @@
 // print.ts (expressions), classify.ts (which definition is a transition, a guard
 // or a rule), typescript.ts and harness.ts (the two outputs).
 import { classify, type Law, type Param, type StepRule, type Transition } from "./gen/classify.ts";
-import { harness, type Eval } from "./gen/harness.ts";
+import { harness, type Eval, type Fairness } from "./gen/harness.ts";
 import { printer } from "./gen/print.ts";
 import { typescript } from "./gen/typescript.ts";
 import { fail, typeOfIn, typeWalks, type Json } from "./gen/types.ts";
 
 export interface Model {
   name: string;
+  /** The spec it is generated from: spec/<name>.md, or std/<name>.md for one that ships with the tools. */
+  source: string;
   imports: string[]; // other specs this one imports, in order
   /** The module under a prefix for proof bundles; `docs = false` omits spec comments for cache keys. */
   render: (prefix: string, docs?: boolean) => string;
@@ -25,7 +27,10 @@ export interface Model {
   always: string[];
   sometimes: string[];
   steps: StepRule[];
+  leadsTo: string[];
   laws: Law[];
+  /** Events the spec declares fair (`fair_<event>`), each "weak" or "strong". */
+  fair: Map<string, Fairness>;
   /** The type of who sends events (the transitions' `by`), if they say. */
   sender: Json | undefined;
   evals: Eval[];
@@ -104,7 +109,10 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
   const sampleSets = new Set(defs.filter(isSampleSet).map((d) => d.name as string));
   /** What each sample set holds, and where the spec defines it, so that the harness can hold it to the parameter it is for. */
   const samples = new Map(defs.filter(isSampleSet).map((d) => [d.name as string, { elem: inferred(d.id)!.elem as Json, line: origin(d.name)?.line }]));
-  const code = defs.filter((d) => !isSampleSet(d));
+  // `weight_<event>` and `fair_<event>` tell the simulator how often to try an event and which events a run cannot
+  // put off for ever (AGENTS.md, "What goes in the Quint blocks"); like sample sets, they never reach TypeScript.
+  const settings = defs.filter((d) => d.qualifier === "pureval" && /^(weight|fair)_/.test(d.name));
+  const code = defs.filter((d) => !isSampleSet(d) && !settings.includes(d));
   const localNames = new Set(code.map((d) => d.name as string));
   /** A name the spec binds (a type, definition, parameter or local `val`) must survive translation unchanged. */
   const bind = (n: string): string => {
@@ -145,9 +153,18 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
   const funs = code.filter((d) => d.qualifier === "puredef").sort(bySpecOrder);
   for (const d of funs) if (d.expr.kind !== "lambda") fail(`${d.name}: a \`pure def\` takes parameters; for a constant write \`pure val ${d.name} = …\``);
   // A rule must be a definition: as a `pure val` it would be generated as a constant and never checked.
-  for (const v of vals) if (/^(always|sometimes|step|law|can)[A-Z]/.test(v.name) && typeOf(v.id).kind === "bool") fail(`${v.name}: a rule or guard is a \`pure def\` with parameters (AGENTS.md, "What goes in the Quint blocks"), not a \`pure val\`; if it is a constant, name it otherwise`);
+  for (const v of vals) if (/^(always|sometimes|step|leadsTo|law|can)[A-Z]/.test(v.name) && typeOf(v.id).kind === "bool") fail(`${v.name}: a rule or guard is a \`pure def\` with parameters (AGENTS.md, "What goes in the Quint blocks"), not a \`pure val\`; if it is a constant, name it otherwise`);
   const initial = vals.find((d) => d.name === "initial");
   const roles = classify(funs, initial && typeOf(initial.id), sig, types);
+  const setting = (kind: string, ok: (e: Json) => boolean, want: string) => new Map(settings.filter((d) => d.name.startsWith(`${kind}_`)).map((d) => {
+    const event = d.name.slice(kind.length + 1);
+    const at = `${d.name} (${source}${origin(d.name) ? `:${origin(d.name)!.line}` : ""})`;
+    if (!roles.transitions.some((t) => t.name === event)) fail(`${at}: there is no transition named ${event}; name it \`${kind}_<transition>\``);
+    return [event, ok(d.expr) ? d.expr.value : fail(`${at}: write ${want}`)];
+  }));
+  const weights = setting("weight", (e) => e.kind === "int" && e.value >= 1 && e.value <= 100, "a whole number from 1 to 100: how many times as often as an event of weight 1 the simulator tries it");
+  const fair = setting("fair", (e) => e.kind === "str" && ["weak", "strong"].includes(e.value), '"weak" (taken if it stays possible) or "strong" (taken if it keeps becoming possible)') as Map<string, Fairness>;
+  if (fair.size && !roles.leadsTo.length) fail(`${[...fair.keys()].map((e) => `fair_${e}`).join(", ")}: fairness matters only to \`leadsTo\` rules, and the spec has none`);
 
   // --- TypeScript -------------------------------------------------------------------
   // A heading is prose from the spec; it must not be able to end the comment it is quoted in.
@@ -175,9 +192,9 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
   };
   const own = render("");
 
-  const run = harness(name, source, [...imports, ...typeOnly], funs, sig, samples, roles, types);
+  const run = harness(name, source, [...imports, ...typeOnly], funs, sig, samples, roles, types, { weights, fair });
   return {
-    name, imports, ...roles, evals: run.evals, uncompared: run.uncompared, harness: run.text,
+    name, source, imports, ...roles, fair, evals: run.evals, uncompared: run.uncompared, harness: run.text,
     ts: own.text, render: (prefix, docs) => render(prefix, docs).text, decode: types.decode, canon: types.canon,
     exports: { types: localTypedefs.map((d) => d.name as string), values: [...localNames, ...own.helpers], variants: localVariants, typedefs: localTypedefs, visible: typedefs },
   };

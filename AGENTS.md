@@ -189,8 +189,11 @@ is generated. The role of a definition comes from its name and signature:
 | `pure def alwaysPaidWithinDue(o: Order): bool` | a rule that holds in every reachable state | a conjunct of `inv`; simulated and proved |
 | `pure def stepNeverGoesBack(before: Order, after: Order): bool` | a rule about every single step | a postcondition on every transition; simulated and proved |
 | `pure def sometimesPaid(o: Order): bool` | a state that must be reachable | a reachability check with a witness trace |
+| `pure def leadsToPaid(o: Order, later: Order): bool` | a liveness rule: from every reachable state `o`, every fair run reaches a state `later` that it relates to `o` (`o` itself counts) | a search of simulated traces for a fair run that breaks it ("Liveness", below) |
 | `pure def lawTotalIsNotNegative(xs: List[int]): bool` | a law: true for every value of its parameters | a function proved to return `true`, and sampled by the simulator |
 | `pure val idValues = Set(1, 2, 3)` | what the simulator tries for a parameter named `id`. It must be a set; any Quint is allowed in it | nothing: it never reaches TypeScript |
+| `pure val weight_pay = 5` | how often the simulator tries `pay`: a whole number from 1 to 100, times as often as an event of weight 1 (the default). For deep interleavings, such as a message lost, repeated and reordered | nothing |
+| `pure val fair_pay = "weak"` or `"strong"` | an assumption for `leadsTo` rules: a fair run does not put `pay` off for ever while its guard keeps allowing it (`"weak"`), or while it allows it again and again (`"strong"`) | nothing |
 | any other `pure val` or `pure def` | a constant or helper | the same constant or function |
 
 A helper that takes the state first and returns the state would be taken for
@@ -217,6 +220,14 @@ and near-misses of the conventions above such as `alwayspaid` or `CanPay`.
   `L::alwaysFlipsAreCounted` of each, and add rules about the pair that
   neither lamp could state (`tools/fixtures/room.md` in the vibespec-starter
   repository).
+
+- **`import net as N from "./net"`** takes a spec that ships with the tools,
+  from their `std/` directory, when `spec/` has none of that name. It is
+  simulated and proved with the specs that import it, never reviewed.
+  [`std/net.md`](std/net.md) is a network that loses, repeats and reorders:
+  the numbers of the messages in flight, with `N::send`, `N::take` (to
+  deliver or lose one), `N::repeat`, and laws for an `always` rule that only
+  messages sent are in flight. `tools/fixtures/ping.md` uses it.
 
 A spec is imported once, one way or the other, and imports cannot form a
 circle. In the generated TypeScript a name from another module is spelled
@@ -292,6 +303,29 @@ stage with the name of the construct.
   ends up in the generated code. Bound the simulator with `<param>Values`.
 - Compute something once with a `val` when a rule uses it several times;
   repeated folds are what make simulation slow.
+
+### Liveness
+
+A `leadsTo` rule says something happens, not only that nothing bad does:
+`leadsToPaid(o, later) = o.status == Pending implies later.status == Paid`.
+Its runs are the simulated traces of the `always` stage, each continued for
+ever in one of two ways: it stops at a state, or it returns to a state it
+had reached before and repeats the loop. Either is *fair* unless it puts off
+a fair event: one declared `fair_<event>`, `"weak"` if the event's guard
+allows it in every state of the loop (or in the state it stops at),
+`"strong"` if in any. A fair run breaks the rule when some state on it is
+followed by none the rule relates it to, and `always` fails with that run,
+the state marked.
+
+- Without a `fair_` declaration nothing has to happen, so a run may stop
+  anywhere: declare fair the events the property waits on, the system's own
+  steps and the deliveries the environment promises, and no others.
+- An event lost and sent again forever loops; only `"strong"` fairness of
+  the delivery rules that out (`tools/fixtures/ping.md`).
+- "Allows" is for the values the simulator tries (`<param>Values`).
+- A loop needs a state reached twice. A counter that only grows rules loops
+  out, and then only runs that stop are checked: the stage says how many
+  loops it found. Nothing proves a `leadsTo` rule.
 
 ### Review
 
