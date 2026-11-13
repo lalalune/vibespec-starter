@@ -6,6 +6,9 @@ import { fail, type Json, type Types } from "./types.ts";
 /** A definition the simulator evaluates so that its result can be compared with TypeScript's. */
 export interface Eval { name: string; params: (Param & { from: "state" | "prev" | "pick" })[]; result: Json }
 
+/** A fair event cannot be put off for ever: weakly, while it stays possible; strongly, while it keeps becoming possible. */
+export type Fairness = "weak" | "strong";
+
 /** Values the simulator tries for a parameter of each scalar type (the proof covers all values). */
 const TRIED: Record<string, string> = { int: "(-1).to(6)", bool: "Set(true, false)", str: 'Set("", "a", "b")' };
 
@@ -13,6 +16,7 @@ export function harness(
   module: string, source: string, imports: string[], funs: Json[], sig: (d: Json) => { params: Param[]; result: Json },
   samples: Map<string, { elem: Json; line: number | undefined }>, { stateType, transitions, always, sometimes, steps, laws }: Roles,
   { fields, typedef, resolve, shape, tagged, named, qType }: Types,
+  { weights, fair }: { weights: Map<string, number>; fair: Map<string, Fairness> },
 ): { text: string; evals: Eval[]; uncompared: string[] } {
   const stateShape = stateType && shape(stateType);
   const spell = (t: Json) => { try { return qType(t).replace(/^(M|D_\w+)::/, ""); } catch { return shape(t); } };
@@ -81,13 +85,19 @@ export function harness(
 
   // Harness variables: the state, the state before the last event, whether an event has happened and which, whether
   // the last law tried held, and the result of the last definition evaluated.
-  const vars = [...(stateType ? ["state", "prev", "moved", "last"] : []), "lawsHold", ...(evals.length ? ["out"] : [])];
+  // With fair events, also which of them each state allows (simulate.ts, `lasso`).
+  const vars = [...(stateType ? ["state", "prev", "moved", "last"] : []), "lawsHold", ...(evals.length ? ["out"] : []), ...(fair.size ? ["fairEnabled"] : [])];
   /** An action body: the given conditions and assignments, with every other variable left as it is. */
   const frame = (conditions: string[], set: Record<string, string>) =>
     `all { ${[...conditions, ...vars.map((v) => `${v}' = ${set[v] ?? v}`)].join(", ")} }`;
   const call = (fn: string, params: string[], from = "state") => `M::${fn}(${[from, ...params].join(", ")})`;
   const action = (t: Transition) => `  action ${t.name} = ${braces(t.params, t.name, frame(t.guard ? [call(t.guard, t.guardParams)] : [],
-    { state: call(t.name, t.params.map((p) => p.name)), prev: "state", moved: "true", last: JSON.stringify(t.name) }))}`;
+    { state: call(t.name, t.params.map((p) => p.name)), prev: "state", moved: "true", last: JSON.stringify(t.name), fairEnabled: `fairOn(${call(t.name, t.params.map((p) => p.name))})` }))}`;
+  /** Whether a fair event is possible in state `s`: its guard allows it for some value the simulator tries. */
+  const possible = (t: Transition) => t.guardParams.reduceRight((inner, name) => {
+    const p = t.params.find((p) => p.name === name)!;
+    return `${given(p, t.name) ?? byType(p, p.type)}.exists(${name} => ${inner})`;
+  }, t.guard ? call(t.guard, t.guardParams, "s") : "true");
   // A law is tried on values picked for each parameter. One that takes the state is also evaluated on the states the
   // simulator reaches (below); if the spec gives no `<param>Values` for that parameter, that is the only way it is tried.
   const onReached = (l: Law) => evals.some((v) => v.name === l.name);
@@ -105,7 +115,8 @@ export function harness(
     const guard = transition ? [call(transition.guard!, transition.guardParams.map((name) => argument(v.params.find((p) => p.name === name)!)), argument(v.params[0]))] : [];
     return `  action eval_${v.name} = ${braces(v.params.filter((p) => p.from === "pick"), v.name, frame(guard, { out: `Out_${v.name}(${result})`, ...law }))}`;
   };
-  const events = [...transitions.map((t) => t.name), ...sampled.map((l) => l.name)];
+  // An event of weight n is offered n times, so the simulator, which tries what it is offered in random order, picks it n times as often.
+  const events = [...transitions.flatMap((t) => Array(weights.get(t.name) ?? 1).fill(t.name)), ...sampled.map((l) => l.name)];
   const any = (actions: string[]) => `any { ${(actions.length ? actions : [frame([], {})]).join(", ")} }`;
   const text = [
     `// GENERATED from ${source}. Drives the spec's transitions, laws and definitions for simulation.`,
@@ -115,7 +126,9 @@ export function harness(
     ...(evals.length ? [`  type Out = Nothing | ${evals.map((v) => `Out_${v.name}(${qType(v.result)})`).join(" | ")}`, `  var out: Out`] : []),
     ...(stateType ? [`  var state: ${qType(stateType)}`, `  var prev: ${qType(stateType)}`, `  var moved: bool`, `  var last: str`] : []),
     `  var lawsHold: bool`,
-    `  action init = ${frame([], { state: "M::initial", prev: "M::initial", moved: "false", last: '""', lawsHold: "true", out: "Nothing" })}`,
+    ...(fair.size ? [`  var fairEnabled: Set[str]`,
+      `  pure def fairOn(s: ${qType(stateType)}): Set[str] = Set(${[...fair.keys()].map((e) => JSON.stringify(e)).join(", ")}).filter(e => or { ${transitions.filter((t) => fair.has(t.name)).map((t) => `e == ${JSON.stringify(t.name)} and ${possible(t)}`).join(", ")} })`] : []),
+    `  action init = ${frame([], { state: "M::initial", prev: "M::initial", moved: "false", last: '""', lawsHold: "true", out: "Nothing", fairEnabled: "fairOn(M::initial)" })}`,
     ...transitions.map(action),
     ...sampled.map(lawAction),
     ...evals.map(evalAction),
