@@ -7,9 +7,10 @@
     "noEmit": true,
     "allowImportingTsExtensions": true,
     "rewriteRelativeImportExtensions": true,
-    "erasableSyntaxOnly": true,
     "skipLibCheck": true,
-    "types": ["node"]
+    "types": ["node"],
+    "rootDirs": [".", ".vibe/declarations"]
   },
-  "include": ["src", "test", "gen/*.ts"]
+  "include": ["src", "test", "gen/*.ts", "gen/*.vibe"],
+  "vibe": { "sidecarDir": ".vibe/declarations" }
 }

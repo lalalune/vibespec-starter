@@ -15,11 +15,19 @@
       "es2023",
       "dom",
       "dom.iterable"
+    ],
+    "rootDirs": [
+      "vibestack",
+      ".vibe/build"
     ]
   },
   "include": [
     "vibestack/spec.ts",
-    "vibestack/studio/src/server.ts",
-    "vibestack/studio/src/page.ts"
-  ]
+    "vibestack/studio/src/main.vibe",
+    "vibestack/studio/src/page.ts",
+    "vibestack/studio/gen/*.vibe"
+  ],
+  "vibe": {
+    "sidecarDir": ".vibe/build"
+  }
 }

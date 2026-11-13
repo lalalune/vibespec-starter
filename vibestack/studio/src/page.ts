@@ -5,7 +5,7 @@ import { enabled as allowed, type Event as SessionEvent, type Session } from "..
 import { enabled, headingsAreSound, step, type Event as Edit, type Outline, type Rule, type Story } from "../gen/outline.ts";
 import { bodyOf, itemsOf, nodeId, ruleKey, SIGN, specOrder, storyKey, textBody, textOf, type Item } from "./markdown.ts";
 import type { Result } from "../../spec.ts";
-import type { JobView, Snapshot } from "./server.ts";
+import type { JobView, Snapshot } from "./server.vibe";
 
 type SpecView = Snapshot["specs"][number];
 

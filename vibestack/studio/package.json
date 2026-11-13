@@ -9,6 +9,19 @@
     "check": "node ../spec.ts check",
     "gen": "node ../spec.ts gen",
     "accept": "node ../spec.ts accept",
-    "test": "node --test test/*.test.ts"
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@effect/platform-node": "catalog:",
+    "effect": "catalog:",
+    "vibelang-runtime": "catalog:"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "vibelang": "catalog:",
+    "vibelang-vite": "catalog:",
+    "vite": "catalog:",
+    "vitest": "catalog:"
   }
 }
