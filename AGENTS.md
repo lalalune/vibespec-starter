@@ -783,12 +783,13 @@ repository they are `@repo/ui`; a standalone project keeps its own.
 
 | | Source, kept in Git | Generated, never committed | Command, in the project |
 |---|---|---|---|
-| Tokens | `tokens.json`, and `design.md` describing them | `generated/tokens.css`, `generated/theme.css` (the Tailwind v4 entry) | `node <tools>/design/cli.ts build`, `check` |
-| Stories | the component, and `<Name>.meta.tsx` where its types are not enough | `generated/stories/`: Storybook stories, `catalog.json`, `stories.test.tsx` | `node <tools>/stories/cli.ts gen [--watch] [--check]` |
+| Tokens | `tokens.json`, and `design.md` describing them | `generated/tokens.css`, `generated/theme.css` (the Tailwind v4 entry) | `spec tokens build`, `check` |
+| Stories | the component, and `<Name>.meta.tsx` where its types are not enough | `generated/stories/`: Storybook stories, `catalog.json`, and a mount test and a browser test (accessibility, marked snapshots) of every story | `spec stories gen [--watch] [--check]` |
 
-`<tools>` is `vibestack/` here (`../../vibestack` from a package, `../..`
-from an example). In `@repo/ui`: `pnpm stories`, `pnpm storybook`,
-`pnpm test`; in `@repo/design-system`: `pnpm build`, `pnpm check`.
+`spec` is the tool's command: `pnpm exec spec` in a project that installed
+it, `node ../../spec.ts` in an example. In `@repo/ui`: `pnpm stories`,
+`pnpm storybook`, `pnpm test`, `pnpm test:browser`; in
+`@repo/design-system`: `pnpm build`, `pnpm check`.
 
 - **Never write a story for what the generator can derive.** It reads each
   prop's type, default and JSDoc and writes a Default story, one per option
@@ -814,7 +815,7 @@ from an example). In `@repo/ui`: `pnpm stories`, `pnpm storybook`,
   only where a component has real variants.
 - **A design change is a token change.** Describe it in `design.md`, write
   it as `[{ "path": "color.light.primary", "value": "oklch(…)", "reason": "…" }]`,
-  and run `node <tools>/design/cli.ts apply changes.json`: it refuses an
+  and run `spec tokens apply changes.json`: it refuses an
   unknown path, an invalid value and a contrast below WCAG AA, and prints
   the diff; `--write` applies it and rebuilds the CSS. Prose is never read
   as tokens.

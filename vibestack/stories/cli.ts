@@ -1,7 +1,11 @@
 #!/usr/bin/env node
 // `node <tool>/stories/cli.ts gen [--watch] [--check]`, run from the project whose components it reads.
 import { watch } from "node:fs";
-import { generator, listener } from "./emit.ts";
+import { enableCompileCache } from "node:module";
+
+// Before the TypeScript compiler loads: most of a run that finds nothing changed is compiling it.
+enableCompileCache();
+const { generator, listener } = await import("./emit.ts");
 
 const argv = process.argv.slice(2);
 if (argv[0] !== "gen") {

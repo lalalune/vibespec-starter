@@ -1,5 +1,2 @@
-node_modules/
-.cache/
-generated/
-storybook-static/
+# The fixtures carry a stand-in for generated code, which the root ignores.
 !gen/

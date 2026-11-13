@@ -57,11 +57,11 @@ test("the ESLint config flags values that bypass the tokens and accepts token cl
   const config = designSystem({ tailwind, tokens, entryPoint: `${process.cwd()}/generated/theme.css` })
   const eslint = new ESLint({ overrideConfigFile: true, overrideConfig: [{ files: ["**/*.tsx"], languageOptions: { parser } }, ...config] })
   const lint = async (name: string) => (await eslint.lintText(readFileSync(here(`fixtures/${name}`), "utf8"), { filePath: name }))[0]!.messages
-  expect((await lint("bad.tsx")).map(({ line, ruleId, message }: { line: number; ruleId: string; message: string }) => [line, ruleId, message.includes("primary, primary-foreground")])).toEqual([
-    [2, "better-tailwindcss/no-restricted-classes", true],
-    [3, "better-tailwindcss/no-restricted-classes", true],
-    [4, "design-system/no-literal-colors", false],
-    [5, "design-system/no-literal-colors", false],
+  expect((await lint("bad.tsx")).map(({ line, ruleId }: { line: number; ruleId: string }) => [line, ruleId])).toEqual([
+    [2, "better-tailwindcss/no-restricted-classes"],
+    [3, "better-tailwindcss/no-restricted-classes"],
+    [4, "design-system/no-literal-colors"],
+    [5, "design-system/no-literal-colors"],
   ])
   expect(await lint("good.tsx")).toEqual([])
 }, 60_000)

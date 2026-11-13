@@ -5,7 +5,7 @@ import { basename, dirname, join } from "node:path";
 import ts from "typescript";
 
 /** A value in a metadata file that only running it would give, such as JSX or a function. */
-export const dynamic = Symbol("dynamic");
+const dynamic = Symbol("dynamic");
 
 export interface Prop {
   name: string;
@@ -17,7 +17,7 @@ export interface Prop {
 }
 type Values = Record<string, unknown>;
 /** A `<Component>.meta.ts(x)` as far as it can be read without running it (meta.ts, `ComponentMeta`). */
-export interface Meta {
+interface Meta {
   file: string;
   args: Values;
   examples: Record<string, Values>;
@@ -33,8 +33,8 @@ export interface Meta {
   snapshot: string[];
 }
 /** A hand-written `<Component>.stories.tsx`: its stories replace generated ones of the same name. */
-export interface Manual { file: string; id?: string; title?: string; exports: string[] }
-export interface Model { spec: string; module: string; state: string; events: string[]; file: string; prop?: string; initial: unknown }
+interface Manual { file: string; id?: string; title?: string; exports: string[] }
+interface Model { spec: string; module: string; state: string; events: string[]; file: string; prop?: string; initial: unknown }
 export interface Found {
   name: string;
   file: string;
@@ -60,7 +60,7 @@ export function packageOf(dir: string): { name: string; dir: string } {
 }
 
 /** `spec/billing/index.md` is `billing`, `spec/billing/payments.md` is `billing__payments` (AGENTS.md, "Writing a spec"). */
-export const moduleOf = (spec: string) => spec.replace(/^(\.\/)?spec\//, "").replace(/\.md$/, "").replace(/\/index$/, "").replaceAll("/", "__");
+const moduleOf = (spec: string) => spec.replace(/^(\.\/)?spec\//, "").replace(/\.md$/, "").replace(/\/index$/, "").replaceAll("/", "__");
 const modelFile = (abs: string, spec: string) => join(packageOf(dirname(abs)).dir, "gen", `${moduleOf(spec)}.ts`);
 const modelTag = (text: string) => /@model\s+(\S+)/.exec(text)?.[1];
 
@@ -120,7 +120,7 @@ function bare(node: ts.Expression): ts.Expression {
 }
 
 /** The value an expression writes out, following names declared at the top of its file; `dynamic` where it has to run. */
-export function literal(given: ts.Expression | undefined): unknown {
+function literal(given: ts.Expression | undefined): unknown {
   if (!given) return undefined;
   const node = bare(given);
   if (ts.isStringLiteralLike(node)) return node.text;
@@ -143,8 +143,9 @@ export function literal(given: ts.Expression | undefined): unknown {
         return name === undefined ? [[dynamic, true]] : [[name, ts.isPropertyAssignment(p) ? literal(p.initializer) : ts.isShorthandPropertyAssignment(p) ? literal(p.name) : dynamic]];
       }),
     );
-  const named = ts.isIdentifier(node) && node.text !== "undefined" ? declared(node.getSourceFile(), node.text)?.initializer : undefined;
-  return named ? literal(named) : ts.isIdentifier(node) && node.text === "undefined" ? undefined : dynamic;
+  if (!ts.isIdentifier(node)) return dynamic;
+  const named = declared(node.getSourceFile(), node.text)?.initializer;
+  return named ? literal(named) : node.text === "undefined" ? undefined : dynamic;
 }
 
 const record = (value: unknown): Values => (value && typeof value === "object" && !Array.isArray(value) ? (value as Values) : {});
@@ -252,9 +253,8 @@ export function analyze(built: ts.Program, abs: string): Found[] {
     if (!signature || !/Element|ReactNode|^any$/.test(checker.typeToString(signature.getReturnType()))) return [];
 
     const tags = (name: string) => symbol.getJsDocTags(checker).filter((t) => t.name === name).map((t) => ts.displayPartsToString(t.text).trim());
-    const metaFile = sibling(abs, exportOf.name, "meta").find(existsSync);
-    const metaSource = metaFile ? built.getSourceFile(metaFile) : undefined;
-    const meta = metaSource ? readMeta(checker, metaSource) : undefined;
+    const metaSource = sibling(abs, exportOf.name, "meta").map((path) => built.getSourceFile(path)).find(Boolean);
+    const meta = metaSource && readMeta(checker, metaSource);
     const manual = sibling(abs, exportOf.name, "stories").find(existsSync);
     const { model, state } = (gen && tags("model").length ? readModel(checker, gen, spec) : undefined) ?? {};
 

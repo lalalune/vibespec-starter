@@ -10,9 +10,9 @@
   "scripts": {
     "stories": "node ../../vibestack/stories/cli.ts gen --check",
     "storybook": "storybook dev --no-open",
-    "build": "pnpm stories && storybook build",
-    "test": "pnpm stories && vitest run --project dom",
-    "test:browser": "pnpm stories && vitest run --project browser",
+    "build": "storybook build",
+    "test": "node ../../vibestack/stories/cli.ts gen --check && vitest run --project dom",
+    "test:browser": "node ../../vibestack/stories/cli.ts gen --check && vitest run --project browser",
     "typecheck": "tsc --noEmit -p ."
   },
   "peerDependencies": {

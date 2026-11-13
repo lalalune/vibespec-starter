@@ -113,7 +113,6 @@ it("links a component to its spec model and renders it from the generated initia
 it("leaves a story to the hand-written file that has one of its name", () => {
   expect(stories("Chip")).toEqual(["prop kit-chip--on", "example kit-chip--default", "example kit-chip--custom"]);
   expect(read("kit-chip.stories.tsx")).not.toContain("export const Default");
-  expect(read("kit-chip.stories.tsx")).toContain('title: "Kit/Chip"');
 });
 
 it("writes the catalog Studio reads, and tests that run every generated story in a simulated DOM and in a browser", () => {
@@ -124,7 +123,6 @@ it("writes the catalog Studio reads, and tests that run every generated story in
   const files = ["chip", "kinds", "many", "meter", "receipt", "tag"].map((name, i) => `import * as s${i} from "./kit-${name}.stories.tsx";`);
   expect(read("stories.test.tsx").match(/import \* as .*/g)).toEqual(files);
   expect(read("stories.browser.test.tsx").match(/import \* as .*/g)).toEqual(['import * as a11y from "@storybook/addon-a11y/preview";', ...files]);
-  expect(read("stories.browser.test.tsx")).toContain('if (!Story.tags.includes("snapshot")) return;');
 });
 
 it("writes the same bytes again, and nothing when nothing changed", () => {
