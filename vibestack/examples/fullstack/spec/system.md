@@ -446,7 +446,8 @@ Discovered by the proof: these are what "never refused" rests on. While a
 user is alone, the server has accepted every queued edit it answered, as
 that edit; an acknowledgement of the oldest queued edit carries the current
 version; once the oldest edit is applied, applying it again changes nothing;
-until it is, the tab has seen the current version; a copy on its way to the
+until it is, and whenever nothing is queued, the tab has seen the current
+version; a copy on its way to the
 tab that is newer than the tab's is at the current version; what the user sees is the server's list with the
 queued edits applied; each edit not yet applied makes sense after the ones
 before it; and no refusal is on its way for a queued edit.

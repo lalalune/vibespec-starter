@@ -1,13 +1,36 @@
+import * as NodeServices from "@effect/platform-node/NodeServices"
 import { assert, it } from "@effect/vitest"
-import { machine } from "../gen/assistant.effect.vibe"
-import { hear } from "../src/agent.vibe"
+import { Machine } from "../gen/assistant.effect.vibe"
+import { hear, remember } from "../src/agent.vibe"
+import { durable } from "../src/durable.vibe"
 import { type Scene, scriptedModel, scriptedWorld } from "../src/scripted.vibe"
 
-// spec/assistant.md, "Story: Take a turn"; spec/assistant.md, "Story: Look up the bill"; spec/assistant.md, "Story: Pay a bill"; spec/assistant.md, "Story: Keep my details safe"
-it.effect("take a turn, look up the bill and pay it once, whatever the model says", () => effect {
-  const scene: Scene = { page: "Lookalike", bills: [0, 5], done: [] }
+/** The state of the assistant kept in `file`, opened again as after a crash. */
+effect function reopened(file: string) {
+  provide durable(file) { return try (try Machine).get() }
+}
+
+// spec/assistant.md, "Story: Take a turn"; spec/assistant.md, "Story: Look up the bill"; spec/assistant.md, "Story: Pay a bill"; spec/assistant.md, "Story: Keep my details safe"; spec/assistant.md, "Story: Survive a restart"
+it.effect("take a turn, look up the bill and pay it once, whatever the model says, and survive a restart", () => scoped(effect {
+  const fs = try FileSystem.FileSystem
+  const file = `${try fs.makeTempDirectoryScoped()}/assistant.json`
+  const scene: Scene = { page: "Lookalike", bills: [], done: [] }
+  // The first crash comes while request 1 waits for a biller that has not answered.
+  const waiting = try effect {
+    provide durable(file), scriptedWorld(scene), scriptedModel(["Lookup"]) { return (try hear("begin")).state }
+  }
+  // spec/assistant.md, "A restart loses what was in memory and keeps what was saved": nothing waits after it.
+  const crashed = try reopened(file)
+  // spec/assistant.md, "Only the world replies, and only to the request still waiting": the reply to request 1, which
+  // the rules would have taken before the crash, comes too late.
+  const late = try flip(effect {
+    provide durable(file) { return try (try Machine).send({ type: "reply", request: crashed.request, amount: 5 }, "World") }
+  })
+  scene.bills.push(0, 5)
   const answers = ["Lookup", "Fill", "Review", "Pay", "Speak", { type: "confirm" }, "Pay", "Fill", "Recite", "Speak"]
-  provide machine(), scriptedWorld(scene), scriptedModel(answers) {
+  provide durable(file), scriptedWorld(scene), scriptedModel(answers) {
+    // spec/assistant.md, "Only the person saves a card"
+    try remember("4242")
     // spec/assistant.md, "Only the person confirms a payment, and only while asked": nothing is asked yet.
     const early = try flip(hear("confirm"))
     // spec/assistant.md, "Only the world replies, and only to the request still waiting": the biller's 0 is refused, its 5 taken.
@@ -24,8 +47,9 @@ it.effect("take a turn, look up the bill and pay it once, whatever the model say
     const silent = try hear("begin")
     try Effect.try(() => assert.deepStrictEqual(
       {
+        crash: [waiting.waiting, waiting.request, crashed.waiting, crashed.request, late._tag],
         early: early._tag,
-        asked: [asked.state.phase, asked.state.bill, asked.refused],
+        asked: [asked.state.phase, asked.state.request, asked.state.bill, asked.refused],
         onLookalike: onLookalike._tag,
         paid: [paid.state.phase, paid.state.bill, paid.state.charged],
         nonsense: [nonsense.state.phase, nonsense.refused.map((r) => r._tag)],
@@ -34,15 +58,41 @@ it.effect("take a turn, look up the bill and pay it once, whatever the model say
         done: scene.done
       },
       {
+        crash: [true, 1, false, 1, "Rejected"],
         early: "Rejected",
-        asked: ["Asking", { amount: 5, reviewed: true, paid: false }, []],
+        // spec/assistant.md, "A restart loses what was in memory and keeps what was saved": the next Lookup is request 2.
+        asked: ["Asking", 2, { amount: 5, reviewed: true, paid: false }, []],
         onLookalike: "Rejected",
         paid: ["Done", { amount: 5, reviewed: true, paid: true }, 1],
         nonsense: ["Done", ["NotAnEvent"]],
         again: ["Done", 1, ["NotAnEvent"]],
         silent: ["Done", 2, ["NoAnswer"]],
-        done: [{ tag: "Said", text: "paid" }, { tag: "Filled", page: "Genuine", card: "" }, { tag: "Said", text: "paid" }]
+        // spec/assistant.md, "A payment is submitted exactly when the bill is charged, for its amount, on the biller's own page"
+        done: [
+          { tag: "Submitted", page: "Genuine", amount: 5 }, { tag: "Said", text: "paid" },
+          { tag: "Filled", page: "Genuine", card: "4242" }, { tag: "Said", text: "paid" },
+        ]
       }
     ))
   }
-})
+  // The second crash: the machine above is gone, and only the file is left.
+  // spec/assistant.md, "A restart loses what was in memory and keeps what was saved"; spec/assistant.md, "A bill is charged once, and only when the person confirms"
+  const restored = try reopened(file)
+  // spec/assistant.md, "A bill is charged once, and only when the person confirms": a file that says otherwise is no
+  // state, and neither is one cut short.
+  try fs.writeFileString(file, JSON.stringify({ ...restored, charged: 2 }))
+  const forged = try flip(reopened(file))
+  try fs.writeFileString(file, "{")
+  const torn = try flip(reopened(file))
+  try Effect.try(() => assert.deepStrictEqual(
+    [restored, forged._tag, torn._tag],
+    [
+      {
+        phase: "Idle", budget: 0, page: "Unknown", waiting: false,
+        card: "4242", bill: { amount: 5, reviewed: true, paid: true }, charged: 1, request: 2, answered: 2,
+      },
+      "NotAState",
+      "NotAState",
+    ]
+  ))
+}).pipe(Effect.provide(NodeServices.layer)))

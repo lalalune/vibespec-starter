@@ -10,12 +10,12 @@
       ],
       "Domain / A session": [
         "72fc2b7212f2",
-        "98c7f5027285"
+        "efe70fc1828a"
       ],
       "Domain / A new session has nothing to do": [
         "e3b0c44298fc",
         "defc620ad492",
-        "cd25263964f8"
+        "4c46885f2276"
       ],
       "Domain / What the simulator tries": [
         "e3b0c44298fc",
@@ -27,27 +27,27 @@
       "Story: Edit, then publish / Edits stay in the page until they are published or discarded": [
         "e3b0c44298fc",
         "06fc3b79ab45",
-        "cd25263964f8"
+        "4c46885f2276"
       ],
       "Story: Edit, then publish / Only edits can be published, and not while a job runs": [
         "1c568edc7bb9",
         "1132d9585765",
-        "cd25263964f8"
+        "4c46885f2276"
       ],
       "Story: Edit, then publish / Publishing always starts a check": [
         "25f9cc6f1a19",
         "35e29418cbfd",
-        "cd25263964f8"
+        "4c46885f2276"
       ],
       "Story: Edit, then publish / Edits can wait in the page while a check runs": [
         "e3b0c44298fc",
         "b176ea269db1",
-        "cd25263964f8"
+        "4c46885f2276"
       ],
       "Story: Edit, then publish / A change to the specs on disk makes the last verdict unknown": [
         "138035ee6d59",
         "fe2b176979b6",
-        "cd25263964f8"
+        "4c46885f2276"
       ],
       "## Story: Sync with an agent": [
         "b4ddecf7c0f3"
@@ -55,32 +55,32 @@
       "Story: Sync with an agent / An agent syncs only what is published, and not while a job runs": [
         "e3b0c44298fc",
         "d7eebca8063f",
-        "cd25263964f8"
+        "4c46885f2276"
       ],
       "Story: Sync with an agent / A sync that ends well leaves nothing waiting and checks again": [
         "7610adce5096",
         "9f4a84978389",
-        "cd25263964f8"
+        "4c46885f2276"
       ],
       "Story: Sync with an agent / What is waiting can be marked as synced by hand, when no job runs": [
         "3ea75bcc0251",
         "40f17cfc45ac",
-        "cd25263964f8"
+        "4c46885f2276"
       ],
       "Story: Sync with an agent / What is waiting goes down only by a sync, by hand, or by publishing what undoes a change": [
         "f37a798a4fb3",
         "e1eb8558da4b",
-        "cd25263964f8"
+        "4c46885f2276"
       ],
       "Story: Sync with an agent / A studio that starts again picks up what was waiting": [
         "aa421ab40349",
         "317fdf5a1a25",
-        "cd25263964f8"
+        "4c46885f2276"
       ],
       "Story: Sync with an agent / A sync of published changes can be under way": [
         "e3b0c44298fc",
         "8ffdfe806c81",
-        "cd25263964f8"
+        "4c46885f2276"
       ],
       "## Story: Check": [
         "67f135d205c6"
@@ -88,32 +88,32 @@
       "Story: Check / A check can start whenever no job runs": [
         "e3b0c44298fc",
         "74d77c7205ca",
-        "cd25263964f8"
+        "4c46885f2276"
       ],
       "Story: Check / A finished check gives its verdict": [
         "85e726aa0d08",
         "f5967854440c",
-        "cd25263964f8"
+        "4c46885f2276"
       ],
       "Story: Check / A running job can be stopped, and then nothing is known of its result": [
         "e3b0c44298fc",
         "2c1b85d84da0",
-        "cd25263964f8"
+        "4c46885f2276"
       ],
       "Story: Check / While a check runs, its verdict is unknown": [
         "e3b0c44298fc",
         "af5f877952ae",
-        "cd25263964f8"
+        "4c46885f2276"
       ],
       "Story: Check / A job starts only when none is running": [
         "cf0f281debeb",
         "ac6a8fa23354",
-        "cd25263964f8"
+        "4c46885f2276"
       ],
       "Story: Check / A check can find everything green": [
         "e3b0c44298fc",
         "5f9fef4625ee",
-        "cd25263964f8"
+        "4c46885f2276"
       ],
       "## Story: Sign off": [
         "334a21a1864d"
@@ -121,22 +121,45 @@
       "Story: Sign off / Sign-off needs a check that left only review, nothing unpublished and nothing waiting": [
         "15b6135b6cb0",
         "4ea9e0bf18be",
-        "cd25263964f8"
+        "4c46885f2276"
       ],
       "Story: Sign off / A sign-off is checked again when it ends": [
         "e3b0c44298fc",
         "1518979f7d10",
-        "cd25263964f8"
+        "4c46885f2276"
       ],
       "Story: Sign off / A sign-off starts only from a reviewable check": [
         "e3b0c44298fc",
         "543ed67a1f64",
-        "cd25263964f8"
+        "4c46885f2276"
       ],
       "Story: Sign off / A sign-off can be under way": [
         "e3b0c44298fc",
         "5c0ab926ca2e",
-        "cd25263964f8"
+        "4c46885f2276"
+      ],
+      "## Story: Build the app": [
+        "6bcd12bd00a0"
+      ],
+      "Story: Build the app / The app is built from published specs, when no job runs": [
+        "da1a77378584",
+        "44686e4026a6",
+        "4c46885f2276"
+      ],
+      "Story: Build the app / A build ends, and then no job runs": [
+        "5562101bc3d1",
+        "1ae1828b495b",
+        "4c46885f2276"
+      ],
+      "Story: Build the app / Building changes nothing but the job": [
+        "e3b0c44298fc",
+        "9d15a250030d",
+        "4c46885f2276"
+      ],
+      "Story: Build the app / A build can be under way": [
+        "e3b0c44298fc",
+        "e356e07bb94c",
+        "4c46885f2276"
       ],
       "## Story: Preview the app": [
         "8c083fcb83a4"
@@ -144,17 +167,17 @@
       "Story: Preview the app / The app can be started and stopped whenever, beside any job": [
         "b68472cece77",
         "edebec9d0214",
-        "cd25263964f8"
+        "4c46885f2276"
       ],
       "Story: Preview the app / Running the app changes nothing else": [
         "e3b0c44298fc",
         "6131340b125e",
-        "cd25263964f8"
+        "4c46885f2276"
       ],
       "Story: Preview the app / The app can run while an agent syncs": [
         "e3b0c44298fc",
         "82a150b29c61",
-        "cd25263964f8"
+        "4c46885f2276"
       ]
     },
     "spec/outline.md": {

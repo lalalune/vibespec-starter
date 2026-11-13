@@ -15,7 +15,7 @@
     "storybook": "pnpm -s tokens && storybook dev --no-open",
     "build": "vibelang && pnpm -s tokens && vite build",
     "test": "pnpm -s tokens && pnpm -s stories && vite build --logLevel error && vitest run",
-    "lint": "pnpm -s tokens && eslint src/web",
+    "lint": "pnpm -s tokens && node ../../spec.ts tokens check && eslint src/web",
     "start": "pnpm -s build && node dist/src/main.js"
   },
   "dependencies": {

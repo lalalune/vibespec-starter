@@ -1,4 +1,4 @@
-// A conformance driver for an application written with Effect (AGENTS.md, "Conformance"): test/drivers/<name>.ts
+// A conformance driver for an application written with Effect (SPEC.md, "Conformance"): test/drivers/<name>.ts
 // exports one, and the traces stage of `pnpm check` runs it.
 import { ManagedRuntime, type Effect, type Layer } from "effect";
 import type { Driver, Outcome } from "../conformance.ts";

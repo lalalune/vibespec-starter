@@ -441,7 +441,7 @@ function importedAxioms(gen: string, offered: Offered[]): Additions["axioms"] {
 }
 
 /**
- * The laws assumed of the unit's opaque functions (AGENTS.md, "Opaque functions"), each as a lemma `<law>_ensures`
+ * The laws assumed of the unit's opaque functions (SPEC.md, "Opaque functions"), each as a lemma `<law>_ensures`
  * without a body, from the law's function as LemmaScript generated it.
  */
 function assumedAxioms(gen: string, laws: string[]): Additions["axioms"] {

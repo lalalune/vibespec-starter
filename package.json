@@ -55,6 +55,7 @@
     ".claude/skills",
     "README.md",
     "AGENTS.md",
+    "SPEC.md",
     "LICENSE"
   ],
   "dependencies": {

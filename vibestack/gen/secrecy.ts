@@ -1,4 +1,4 @@
-// Which values carry a secret, and where they may go (AGENTS.md, "Secrets"). A type named Secret<Something> marks
+// Which values carry a secret, and where they may go (SPEC.md, "Secrets"). A type named Secret<Something> marks
 // its values secret. A secret may be kept only in a place whose type is secret: a field, a variant's field, a list,
 // set or map element, or the result of a definition. Every other place is public, since the program may say, log or
 // show it. A value computed from a secret, or chosen by a condition on one, is secret too. A definition named

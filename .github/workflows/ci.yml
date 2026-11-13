@@ -1,9 +1,9 @@
 name: ci
 
-# Every run is `pnpm verify`; Turborepo and spec skip what the change does not
-# reach, from the cache of the last run. What is headed for main, and every
-# push to develop or main, also gets larger property budgets and the
-# standalone examples.
+# Every run is `pnpm verify`, the tools' own self-test included; Turborepo and
+# spec skip what the change does not reach, from the cache of the last run.
+# What is headed for main, and every push to develop or main, also gets larger
+# property budgets. Standalone examples are checked manually.
 on:
   pull_request:
     branches: [develop, main]
@@ -11,7 +11,8 @@ on:
     branches: [develop, main]
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  # A newer commit on a pull request replaces its run; every push to develop or main is checked to the end.
+  group: ci-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
 env:
@@ -44,11 +45,3 @@ jobs:
             **/test/__traces__/
             !**/node_modules/**
           if-no-files-found: ignore
-
-  examples:
-    if: github.event_name == 'push' || github.base_ref == 'main'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup
-      - run: pnpm examples

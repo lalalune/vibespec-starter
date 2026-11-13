@@ -23,7 +23,7 @@ tracker's types from its adapter, and the test drives that adapter's `Machine`.
 | `spec/tracker.md` | state machine | One project's sheet: guarded dashboard edits, unguarded hand edits, warnings and their fixes, notifications |
 | `spec/projects.md` | state machine | Projects: one sheet each, one per chat channel, never guessed |
 | `spec/*.proof.dfy` | proofs | Obligations Dafny cannot prove alone |
-| `src/notify.vibe` | hand-written, tested | One notifier pass → one chat message per person |
+| `src/notify.vibe` | hand-written, tested | One notifier pass → one chat message per person, each retried on its own |
 
 Not modelled: the chat app, HTTP, spreadsheet access, the web dashboard.
 
@@ -33,21 +33,25 @@ Not modelled: the chat app, HTTP, spreadsheet access, the web dashboard.
 |---|---|
 | `messages` | notes grouped into one message per person |
 | `Chat` | the chat app as a service: `post(handle, text)`, failing with `Undelivered` |
-| `send` | posts one pass's messages in order, one after another; how many went out |
+| `pass` | one notifier pass: sends `notify` to the tracker's `Machine` and posts that pass's `out`, the notes it just recorded, in order; each post is retried on its own (twice, a second apart) while the chat app answers `Undelivered`, and a message it never takes is returned as undelivered while the rest still go out; any other failure ends the pass |
 
 `test/notify.test.vibe` walks the journey through the tracker's `Machine` and
-gives `send` the one fake, a `Chat` that records what is posted to it.
+gives `pass` the one fake, a `Chat` that records what is posted to it and
+turns some posts away; `TestClock` moves time past the retries.
+
+Delivery is at most once. `pass` records the notes in `sent` before it posts
+them, so a message the chat app never takes, or one lost to a crash between
+recording and posting, is never sent again.
 
 `gen/*.ts` stays TypeScript; the adapters only wrap it.
 
 ## What the checks found
 
 - **A name typed twice was notified twice.** A cell is a list, not a set
-  (`ana, ana`), and "Nothing is sent twice" failed in simulation. Fixed by
-  the rule "A person named twice in a cell is told once"; `test/notify.test.vibe`
-  types a name twice.
+  (`ana, ana`), and "Nothing is sent twice" failed in simulation. Fixed: the
+  notifier treats a cell as a set of people, and `test/notify.test.vibe` types
+  a name twice.
 - **A rename left a name in a cell twice.** Fixed: a rename removes duplicate
   names from every owners cell.
 
-Obligations that hold in simulation only are listed under `unproved` in
-`spec/lock.json`.
+Every obligation of the three specs is proved; none rests on simulation alone.

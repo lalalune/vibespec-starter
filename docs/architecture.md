@@ -72,7 +72,7 @@ the two variables:
 | nightly (`fuzz.yml`) | 20000 | the run's id, or the seed it is started with |
 
 A failure prints its seed and the shrunk counterexample; a driver's is saved
-([AGENTS.md, "Conformance"](../AGENTS.md#conformance)).
+([SPEC.md, "Conformance"](../SPEC.md#conformance)).
 
 ## Which test, for what
 
@@ -115,7 +115,7 @@ Asynchronous Effect programs are tested, not proved. Each `proof` line of
 
 `apps/*` deploy; `packages/*` are shared by them; `vibestack/` is the tools;
 `vibestack/examples/*` stand alone. The root's `check` is also the check of
-each package a directory of `spec/` names (AGENTS.md, "One spec tree"); a
+each package a directory of `spec/` names (SPEC.md, "One spec tree"); a
 package with a `spec/` of its own, as Studio and each example have, is a
 project of its own. ESLint (`eslint.config.js`) refuses an
 import of another package beyond its `exports`, React in domain and tool
@@ -130,7 +130,7 @@ read. What each excludes, and why, is at the top of `knip.config.js` and in
 | When | Runs |
 |---|---|
 | every pull request and push | `pnpm verify`: build, types, tests, browser tests, every `check`, ESLint, Stylelint, Knip, Madge, `pnpm selftest` |
-| pull request into `main`; push to `develop` or `main` | the same, with the examples beside it |
+| pull request into `main`; push to `develop` or `main` | the same, with larger budgets |
 | nightly | every `check`, with a new seed; saved counterexamples become a pull request into `develop` |
 
 Each row's budget is in [Seeds and budgets](#seeds-and-budgets). A failing
@@ -140,3 +140,5 @@ Each run restores pnpm's store, Turborepo's cache and every `.spec-cache/`
 from the last, so a change pays only for what it reaches; superseded runs are
 cancelled. There is no remote cache: the restored local one already covers
 repeat runs of the same inputs.
+
+Standalone examples are checked manually with `pnpm examples`, outside CI.

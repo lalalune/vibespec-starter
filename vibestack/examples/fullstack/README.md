@@ -97,7 +97,7 @@ work around their absence. Each is a good first exercise:
   compares lists and records by structure.
 - **List operations.** `dropAt`, and its induction, can become `removeAt`.
 - **Liveness.** "Both tabs eventually agree" is stated as "sometimes they
-  agree"; a `leadsTo` rule with `fair_` events can state it (AGENTS.md,
+  agree"; a `leadsTo` rule with `fair_` events can state it (SPEC.md,
   "Liveness").
 
 ## Limits of the spec language met here

@@ -49,8 +49,13 @@
         "64683bf1b57b"
       ],
       "Story: Take a turn / Every choice spends the budget": [
-        "18a0d9e857ba",
+        "b412e92007d2",
         "1a662f0e8a18",
+        "64683bf1b57b"
+      ],
+      "Story: Take a turn / A turn being planned ends": [
+        "849d569f3129",
+        "6f67d803ea25",
         "64683bf1b57b"
       ],
       "Story: Take a turn / A turn can end": [
@@ -140,6 +145,11 @@
       "Story: Keep my details safe / Nothing secret is said aloud": [
         "6d826fa970af",
         "188b04fc435c"
+      ],
+      "Story: Keep my details safe / The model sees nothing secret": [
+        "721c21aafcbd",
+        "fedcbf208f0c",
+        "64683bf1b57b"
       ],
       "## Story: Survive a restart": [
         "d18b1057975f"

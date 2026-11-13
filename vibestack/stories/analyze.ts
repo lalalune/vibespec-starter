@@ -60,7 +60,7 @@ export function packageOf(dir: string): { name: string; dir: string } {
   return dirname(dir) === dir ? { name: basename(dir), dir } : packageOf(dirname(dir));
 }
 
-/** `spec/billing/index.md` is `billing`, `spec/billing/payments.md` is `billing__payments` (AGENTS.md, "Writing a spec"). */
+/** `spec/billing/index.md` is `billing`, `spec/billing/payments.md` is `billing__payments` (SPEC.md, "Writing a spec"). */
 const moduleOf = (spec: string) => spec.replace(/^(\.\/)?spec\//, "").replace(/\.md$/, "").replace(/\/index$/, "").replaceAll("/", "__");
 const modelFile = (abs: string, spec: string) => join(packageOf(dirname(abs)).dir, "gen", `${moduleOf(spec)}.ts`);
 const modelTag = (text: string) => /@model\s+(\S+)/.exec(text)?.[1];

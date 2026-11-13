@@ -16,7 +16,7 @@ for each one, in this order:
    work, like any other translation.
 2. **State the missing fact**, if the obligation is false for some state that
    satisfies every rule: no proof can help then. Add it as an `always` rule
-   or a law (the inductiveness case in [AGENTS.md](../../../AGENTS.md#writing-good-rules), "Writing good rules"). Moving arithmetic into a small
+   or a law (the inductiveness case in [SPEC.md](../../../SPEC.md#writing-good-rules), "Writing good rules"). Moving arithmetic into a small
    function with a law in a library spec, or writing a loop by hand in
    `src/`, also gives Dafny smaller steps.
 3. **Accept simulation for it**: the user's decision, never the agent's, and
@@ -117,7 +117,7 @@ a body.
   `inv` and guard, so a machine that holds another need not prove its rules
   again (`vibestack/fixtures/office.md`). (In a `src` unit, those of the module
   it imports are `<fn>_ensures`.)
-- The laws of the unit's [opaque functions](../../../AGENTS.md#opaque-functions), assumed:
+- The laws of the unit's [opaque functions](../../../SPEC.md#opaque-functions), assumed:
   `<law>_ensures(args)`.
 - The generated `_ensures` lemmas, and Dafny's standard library by the names
   the generated code uses.
@@ -168,7 +168,7 @@ event log, write TypeScript under `src/` with
 - Any `.ts` file under `src/` that contains `//@` is proved by
   `pnpm check`, as the unit `src-<path>`; under an owner's `src/`, as
   `apps-<name>-src-<path>`, against the module in the owner's `gen/`. Its
-  `//@` lines are its contract, reviewed like a rule (see [Review](../../../AGENTS.md#review)).
+  `//@` lines are its contract, reviewed like a rule (see [Review](../../../SPEC.md#review)).
 - Such a file may import one generated module and nothing else, and only by
   name: no `as`, default or namespace import. Its annotations may mention
   anything that module defines (`inv`, guards, rules), imported or not.

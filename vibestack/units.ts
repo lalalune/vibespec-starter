@@ -179,7 +179,7 @@ export function proofUnits(root: string, models: Model[], srcFiles: SrcFile[] = 
     proofFile: m.source.replace(/\.md$/, ".proof.dfy"),
     imports: imported(prefixed(needs(m))),
     // Proved against the definitions of what it imports, never against their obligations; but the abstract rules
-    // carry over to a refining spec only as far as the machine it refines proved them (AGENTS.md, "Refinement").
+    // carry over to a refining spec only as far as the machine it refines proved them (SPEC.md, "Refinement").
     rests: m.refines ? [`${m.refines.of.module}.ts`] : [],
     ...assumptions(m),
     transitions: m.stateType ? m.transitions.map((t) => ({ name: t.name, params: t.params.map((p) => p.name) })) : undefined,

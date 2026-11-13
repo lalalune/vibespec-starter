@@ -25,6 +25,12 @@ pure val unitPrice = 5
 pure val maxUnits = 60
 ```
 
+### An order holds between no units and the most it may hold
+
+```quint
+pure def alwaysWithinOrderSize(o: Order): bool = 0 <= o.units and o.units <= maxUnits
+```
+
 ## Story: Fill a draft
 
 > As a shopper, I want to put items into a new order, so that I can buy
@@ -69,6 +75,13 @@ Submitting freezes the order: it becomes pending and waits for payment.
 pure def canSubmit(o: Order): bool = o.status == Draft and o.units > 0
 
 pure def submit(o: Order): Order = { ...o, status: Pending }
+```
+
+### A submitted order keeps its units and its amount due until it is a draft again
+
+```quint
+pure def stepSubmittedKeepsItsItems(before: Order, after: Order): bool =
+  before.status != Draft implies (after.units == before.units and after.due == before.due)
 ```
 
 ### A payment never exceeds the balance
@@ -259,6 +272,26 @@ pure def sometimesOnHold(o: Order): bool = o.status == OnHold
 ```quint
 pure def stepNothingIsPaidOnHold(before: Order, after: Order): bool =
   before.status == OnHold implies after.paid == before.paid
+```
+
+### An order on hold is not cancelled
+
+```quint
+pure def stepOnHoldIsNotCancelled(before: Order, after: Order): bool =
+  before.status == OnHold implies after.status != Cancelled
+```
+
+### An order on hold is released
+
+Staff do not leave an order on hold for ever: the next thing that happens to it
+is its release.
+
+```quint
+pure def leadsToReleased(o: Order, later: Order): bool =
+  o.status == OnHold implies later.status != OnHold
+
+pure val fair_release = "weak"
+pure val within_leadsToReleased = 1
 ```
 
 ### An order on hold still has a balance

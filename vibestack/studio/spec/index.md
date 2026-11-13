@@ -23,7 +23,7 @@ so nothing unchecked is signed off. `previewing` is whether the project's app is
 running beside the studio.
 
 ```quint
-type Job = Idle | Checking | Syncing | SigningOff
+type Job = Idle | Checking | Syncing | SigningOff | Building
 type Verdict = Unknown | Failing | Reviewable | Green
 type Session = { unpublished: bool, waiting: int, job: Job, verdict: Verdict, previewing: bool }
 ```
@@ -235,6 +235,45 @@ pure def stepSignOffFollowsReview(before: Session, via: str, after: Session): bo
 
 ```quint
 pure def sometimesSigningOff(s: Session): bool = s.job == SigningOff
+```
+
+## Story: Build the app
+
+> As a spec author, I want to build the application the specs describe from
+> the studio, so that I have what ships, built from what was checked.
+
+### The app is built from published specs, when no job runs
+
+The build is the project's own `build` script, or, at the root of a workspace,
+the `build` script of every app under `apps/`.
+
+```quint
+pure def canBuild(s: Session): bool = s.job == Idle and not(s.unpublished)
+pure def build(s: Session): Session = { ...s, job: Building }
+```
+
+### A build ends, and then no job runs
+
+Whether it worked is in its log.
+
+```quint
+pure def canBuilt(s: Session): bool = s.job == Building
+pure def built(s: Session): Session = { ...s, job: Idle }
+```
+
+### Building changes nothing but the job
+
+```quint
+pure def stepBuildChangesOnlyTheJob(before: Session, via: str, after: Session): bool =
+  (via == "build" or via == "built") implies
+    (after.unpublished == before.unpublished and after.waiting == before.waiting
+      and after.verdict == before.verdict and after.previewing == before.previewing)
+```
+
+### A build can be under way
+
+```quint
+pure def sometimesBuilding(s: Session): bool = s.job == Building
 ```
 
 ## Story: Preview the app

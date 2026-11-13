@@ -27,7 +27,7 @@ export interface Step {
   state?: unknown;
   /** What the event output, in a spec whose transitions may output (gen/classify.ts, `Roles.output`). */
   out?: unknown[];
-  /** Whether the last step refined the machine the spec refines (AGENTS.md, "Refinement"). */
+  /** Whether the last step refined the machine the spec refines (SPEC.md, "Refinement"). */
   refined?: boolean;
   lawsHold?: boolean;
   /** The fair events this state allows, if the spec declares any. */

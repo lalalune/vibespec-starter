@@ -509,6 +509,8 @@ export function init(root: string, warn: (message: string) => void = (message) =
       done.push(`.agents/skills/${name}`);
     }
   }
+  // AGENTS.md links to it.
+  add("SPEC.md", () => fs.readFileSync(path.join(pkg, "SPEC.md"), "utf8"));
   const agents = path.join(root, "AGENTS.md");
   const procedure = fs.readFileSync(path.join(pkg, "AGENTS.md"), "utf8").trim();
   const previous = fs.existsSync(agents) ? fs.readFileSync(agents, "utf8") : "";
@@ -556,22 +558,25 @@ export function init(root: string, warn: (message: string) => void = (message) =
     const [runtime, tooling] = [lacking(VIBELANG.dependencies), lacking(VIBELANG.devDependencies)];
     const needs = Object.keys({ ...runtime, ...tooling });
     if (needs.length) {
-      json.engines = { node: "^22.22.3 || >=24.11.1", ...json.engines };
       json.dependencies = { ...json.dependencies, ...runtime };
       json.devDependencies = { ...json.devDependencies, ...tooling };
       // Effect's packages share one version; a transitive copy at another is refused when the runtime loads.
-      // npm reads `overrides`, pnpm `pnpm.overrides`.
-      const one = { "@effect/platform-node-shared": pins["@effect/platform-node"] };
-      json.overrides = { ...one, ...json.overrides };
-      json.pnpm = { ...json.pnpm, overrides: { ...one, ...json.pnpm?.overrides } };
+      json.pnpm = { ...json.pnpm, overrides: { "@effect/platform-node-shared": pins["@effect/platform-node"], ...json.pnpm?.overrides } };
     }
+    // AGENTS.md, "The stack"
+    const managed = json.packageManager === undefined;
+    if (managed) json.packageManager = "pnpm@10.24.0";
+    const runtimeDefault = json.engines?.node === undefined;
+    if (runtimeDefault) json.engines = { ...json.engines, node: ">=26" };
     const typed = json.type === undefined;
     if (typed) json.type = "module";
     else if (json.type !== "module") warn(`package.json: "type" is ${JSON.stringify(json.type)}, so Node runs src/ and test/ as CommonJS, where an import statement fails; set "type": "module" if those files use ES imports (gen/ has its own package.json)`);
-    if (added.length || typed || needs.length) {
+    if (added.length || typed || needs.length || managed || runtimeDefault) {
       fs.writeFileSync(manifest, JSON.stringify(json, null, 2) + "\n");
       if (added.length) done.push(`package.json scripts: ${added.map(([n]) => n).join(", ")}`);
       if (needs.length) done.push(`package.json VibeLang toolchain: ${needs.join(", ")} (run your package manager's install)`);
+      if (managed) done.push("package.json packageManager: pnpm@10.24.0");
+      if (runtimeDefault) done.push("package.json engines.node: >=26");
       if (typed) done.push('package.json "type": "module"');
     }
   }
@@ -585,7 +590,7 @@ export function init(root: string, warn: (message: string) => void = (message) =
 const starter = (name: string, fence = "`".repeat(3)) => `# ${name}
 
 What the application is for, in a sentence or two. Replace the story and its
-rules with your own; AGENTS.md says how to write them.
+rules with your own; SPEC.md says how to write them.
 
 ## Story: Keep a tally
 

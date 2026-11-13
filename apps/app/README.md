@@ -6,7 +6,7 @@ replacing it.
 
 Its requirements are [`spec/app/index.md`](../../spec/app/index.md), in the one spec tree at the repository root.
 `pnpm check` there generates `gen/app.ts` and `gen/app.effect.vibe` here, and checks this package's types, proofs,
-tests and traces (AGENTS.md, "One spec tree").
+tests and traces (SPEC.md, "One spec tree").
 
 | Piece | Shows | Checked by |
 |---|---|---|

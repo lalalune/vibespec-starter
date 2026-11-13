@@ -40,12 +40,13 @@ type Bill = { amount: int, reviewed: bool, paid: bool }
 
 ### What the program carries out
 
-The assistant does not speak or type itself. A choice returns what the
-program must carry out beside the new state: a sentence to say, or the saved
-card typed into a page.
+The assistant does not speak, type or pay itself. A choice, or the person's
+confirmation, returns what the program must carry out beside the new state: a
+sentence to say, the saved card typed into a page, or a payment of an amount
+submitted on a page.
 
 ```quint
-type Effect = Said({ text: str }) | Filled({ page: Page, card: SecretCard })
+type Effect = Said({ text: str }) | Filled({ page: Page, card: SecretCard }) | Submitted({ page: Page, amount: int })
 ```
 
 ### The assistant
@@ -125,13 +126,27 @@ pure def alwaysBudgetBounded(s: Assistant): bool =
 
 ### Every choice spends the budget
 
-So a turn holds at most four model choices. Waiting for the person or
-the outside world has no time bound; this is a bound on model actions, not a
-proof that every participant eventually responds.
+So a turn holds at most four model choices. That planning then ends is the
+next rule.
 
 ```quint
 pure def stepChoicesSpendBudget(before: Assistant, via: str, after: Assistant): bool =
   via == "choose" implies after.budget < before.budget
+```
+
+### A turn being planned ends
+
+If the model's choices are not put off for ever, a turn being planned comes
+to be asking the person, done, or idle after a restart. Pages loading and
+replies arriving cannot hold it in planning. This does not say that the
+person answers when asked, or that the biller replies: a turn may wait on
+either without end.
+
+```quint
+pure def leadsToPlanningEnds(s: Assistant, later: Assistant): bool =
+  s.phase == Planning implies later.phase != Planning
+
+pure val fair_choose = "weak"
 ```
 
 ### A turn can end
@@ -195,14 +210,17 @@ pure def load(s: Assistant, page: Page, by: Actor): Assistant = { ...s, page: pa
 ### Only the person confirms a payment, and only while asked
 
 The person can confirm only on the biller's own page, for a reviewed bill not
-yet paid. The turn then goes back to planning, or ends if no budget is left.
+yet paid. Confirming submits the bill's amount on that page. The turn then goes
+back to planning, or ends if no budget is left.
 
 ```quint
 pure def canConfirm(s: Assistant, by: Actor): bool =
   by == Person and s.phase == Asking and s.page == Genuine and s.bill.reviewed and not(s.bill.paid)
 
-pure def confirm(s: Assistant, by: Actor): Assistant =
-  { ...s, phase: if (s.budget > 0) Planning else Done, bill: { ...s.bill, paid: true }, charged: s.charged + 1 }
+pure def confirm(s: Assistant, by: Actor): Chosen = {
+  state: { ...s, phase: if (s.budget > 0) Planning else Done, bill: { ...s.bill, paid: true }, charged: s.charged + 1 },
+  out: List(Submitted({ page: s.page, amount: s.bill.amount })),
+}
 ```
 
 ### Only the person declines a payment
@@ -249,6 +267,20 @@ pure def stepChargedOnlyOnConfirm(before: Assistant, via: str, after: Assistant)
   after.charged != before.charged implies via == "confirm"
 ```
 
+### A payment is submitted exactly when the bill is charged, for its amount, on the biller's own page
+
+So, with the rule above, a bill is submitted once, and only after the person
+confirms.
+
+```quint
+pure def submissions(out: List[Effect]): int =
+  out.foldl(0, (n, e) => match e { | Submitted(p) => n + 1 | _ => n })
+
+pure def stepSubmittedWhenCharged(before: Assistant, after: Assistant, out: List[Effect]): bool =
+  submissions(out) == after.charged - before.charged
+    and out.every(e => match e { | Submitted(p) => p.page == Genuine and p.amount == after.bill.amount | _ => true })
+```
+
 ### A bill can be paid
 
 ```quint
@@ -259,6 +291,29 @@ pure def sometimesPaid(s: Assistant): bool = s.bill.paid
 
 > As a person, I want my card details typed only into the biller's own site,
 > and nothing secret read aloud.
+
+### Only the person saves a card
+
+The card typed into the biller's page is the one the person saved last.
+
+```quint
+pure def canSaveCard(s: Assistant, by: Actor): bool = by == Person
+
+pure def saveCard(s: Assistant, card: SecretCard, by: Actor): Assistant = { ...s, card: card }
+```
+
+### The saved card changes only when the person saves one
+
+```quint
+pure def stepCardOnlySaved(before: Assistant, via: str, after: Assistant): bool =
+  after.card != before.card implies via == "saveCard"
+```
+
+### A card can be saved
+
+```quint
+pure def sometimesCardSaved(s: Assistant): bool = s.card != ""
+```
 
 ### Card details go only into the biller's own page
 
@@ -284,6 +339,19 @@ decided by it, can reach what is said, or any other place that is not secret.
 type SecretCard = str
 ```
 
+### The model sees nothing secret
+
+What the model is shown to choose its next action: the turn, the page and the
+bill. `Seen` has no secret field, so `check` refuses any of its fields that
+the card could reach.
+
+```quint
+type Seen = { phase: Phase, budget: int, page: Page, waiting: bool, bill: Bill }
+
+pure def seen(s: Assistant): Seen =
+  { phase: s.phase, budget: s.budget, page: s.page, waiting: s.waiting, bill: s.bill }
+```
+
 ## Story: Survive a restart
 
 > As a person, I want a crash in the middle of a task to lose nothing paid or
@@ -291,11 +359,14 @@ type SecretCard = str
 
 ### A restart loses what was in memory and keeps what was saved
 
-The request number is saved, so a request after the restart never reuses one
-from before it, and a late reply to the old one is refused.
+A crash comes from outside the program, so only the world restarts it. The
+request number is saved, so a request after the restart never reuses one from
+before it, and a late reply to the old one is refused.
 
 ```quint
-pure def restart(s: Assistant): Assistant =
+pure def canRestart(s: Assistant, by: Actor): bool = by == World
+
+pure def restart(s: Assistant, by: Actor): Assistant =
   { ...s, phase: Idle, budget: 0, page: Unknown, waiting: false }
 ```
 

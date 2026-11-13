@@ -1,4 +1,4 @@
-// Runs the real application against its spec, with the generated module as the oracle (AGENTS.md, "Conformance"):
+// Runs the real application against its spec, with the generated module as the oracle (SPEC.md, "Conformance"):
 // conform.ts runs it on each test/drivers/<name>.ts in the traces stage. Copied into gen/ as _conformance.ts for the
 // types a driver is written to, so it imports nothing.
 
@@ -132,7 +132,7 @@ export async function replay<S, E, V>(oracle: Oracle<S, E>, found: Found<E>, dri
 /**
  * Each kind of event, after the shortest journey prefix that allows it: malformed, it must be refused and change
  * nothing; with an extra field and fields that change on a second read, it must do what the clean event does, as
- * the application copies what it decodes (AGENTS.md, "Using the generated code"). Returns how many were sent.
+ * the application copies what it decodes (SPEC.md, "Using the generated code"). Returns how many were sent.
  */
 async function probe<S, E, V>(oracle: Oracle<S, E>, found: Found<E>, driver: Driver<E, V>, key: string,
   run: (trace: Trace<E>) => Promise<Map<string, S> | string>, view?: (state: S) => V) {

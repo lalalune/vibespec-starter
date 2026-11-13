@@ -1,13 +1,14 @@
 // The program around spec/assistant.md: it knows who sent each event from the service the event came
 // through, never from what was said (spec/assistant.md, "Who sends an event").
-import { Machine, type NotAnEvent, type Rejected } from "../gen/assistant.effect.vibe"
+import { Machine, type NotAnEvent, type Rejected, seen } from "../gen/assistant.effect.vibe"
 import type * as T from "../gen/assistant.effect.vibe"
 
 export error NoAnswer { from: T.Actor }
 
 /** The model that chooses the agent's actions. What it returns is untrusted. */
 export service Model {
-  choose(seen: T.Assistant): unknown!NoAnswer
+  // spec/assistant.md, "The model sees nothing secret"
+  choose(shown: T.Seen): unknown!NoAnswer
 }
 
 /** Websites and devices: the biller's answer to a request, the page the browser shows, and what the program does to them. */
@@ -30,12 +31,17 @@ export interface Turn {
 effect function observe() {
   const machine = try Machine
   const world = try World
-  const seen = (try machine.send({ type: "load", page: try world.page() }, "World")).state
-  if (!seen.waiting) return seen
+  const loaded = (try machine.send({ type: "load", page: try world.page() }, "World")).state
+  if (!loaded.waiting) return loaded
   // spec/assistant.md, "Only the world replies, and only to the request still waiting": no answer, or one refused, changes nothing.
   return effect {
-    return (try machine.receive({ type: "reply", request: seen.request, amount: try world.bill(seen.request) }, "World")).state
-  } catch () => seen
+    return (try machine.receive({ type: "reply", request: loaded.request, amount: try world.bill(loaded.request) }, "World")).state
+  } catch () => loaded
+}
+
+/** The card the person saves, sent as the Person (spec/assistant.md, "Only the person saves a card"). */
+export effect function remember(card: T.SecretCard): void!Rejected!Machine {
+  try (try Machine).send({ type: "saveCard", card }, "Person")
 }
 
 /**
@@ -48,13 +54,16 @@ export effect function hear(said: Said): Turn!Rejected!(Machine | Model | World)
   const world = try World
   const refused: Refusal[] = []
   try observe()
-  let state = (try machine.send({ type: said }, "Person")).state
+  const heard = try machine.send({ type: said }, "Person")
+  // spec/assistant.md, "What the program carries out": a confirmation submits the payment.
+  for (const carried of heard.out) try world.perform(carried)
+  let state = heard.state
   // spec/assistant.md, "Every choice spends the budget": each pass makes one choice, so there are at most `maxActions`.
   while (state.phase === "Planning") {
     // The model's answer can only become the Agent's choice. Any other answer finishes the turn, which
     // spec/assistant.md, "A turn's budget stays within bounds, and a turn being planned has some left" allows.
     const chosen = effect {
-      return try machine.receive({ type: "choose", choice: try model.choose(state) }, "Agent")
+      return try machine.receive({ type: "choose", choice: try model.choose(seen(state)) }, "Agent")
     } catch effect (error) => {
       refused.push(error)
       return try machine.send({ type: "choose", choice: "Finish" }, "Agent")

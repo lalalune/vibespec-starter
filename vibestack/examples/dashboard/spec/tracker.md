@@ -120,7 +120,8 @@ pure def ancestors(s: Tracker, id: int): List[int] =
 
 An owner who is not a member of the project; a parent or related task that is
 missing; a task that waits on or is related to itself; a chain of dependencies
-that loops; a related link that the other task does not link back.
+that loops back to the task; a related link that the other task does not link
+back.
 
 ```quint
 type Code = UnknownOwner | UnknownParent | UnknownRelated | SelfParent | SelfRelated | Cycle | OneSided
@@ -178,6 +179,26 @@ refused unless that person is on the project's team.
 
 ```quint
 pure def isMember(s: Tracker, actor: str): bool = s.owners.includes(actor)
+```
+
+### A task edited through the dashboard is signed by a member
+
+After any edit through the dashboard, each task either carries a signature
+(when and by whom it was last updated) that a task of the same number had
+before the edit, or is signed by someone who was on the team before the edit.
+The rule does not say which member signs, nor that only the edited task's
+signature changes: it rules out an edit through the dashboard leaving a task
+signed by someone outside the team. A fix, a hand edit and the notifier are
+not edits through the dashboard. This rule sees only signatures, so deleting
+a task, renaming or removing a person, and a fix are kept to members by their
+guards alone.
+
+```quint
+pure def keepsItsSignature(before: Tracker, t: Task): bool =
+  before.tasks.some(b => b.id == t.id and b.updatedAt == t.updatedAt and b.updatedBy == t.updatedBy)
+
+pure def stepADashboardEditIsSignedByAMember(before: Tracker, after: Tracker): bool =
+  after.last == App implies after.tasks.every(t => keepsItsSignature(before, t) or isMember(before, t.updatedBy))
 ```
 
 ### Only a hand edit can make the data worse
@@ -361,7 +382,8 @@ and a person may be removed from the team, leaving their name in owners cells.
 Rows are added only through the dashboard. The task number and bookkeeping
 columns (last edit, last announcement, reminders sent) are protected from
 direct edits; when a hand edit to a row arrives, the system records the time,
-and `sheet` as the editor, so no owner counts as its author.
+and `sheet` as the editor, so no owner counts as its author unless a team
+member is named `sheet`.
 
 ```quint
 pure def canHandAddOwner(s: Tracker, id: int, name: str): bool = hasTask(s, id)
@@ -396,7 +418,7 @@ pure def handDeleteOwner(s: Tracker, owner: str): Tracker =
 pure def sometimesTheDataHasAProblem(s: Tracker): bool = problems(s).length() > 0
 ```
 
-### A one-click fix removes its problem and adds none
+### A one-click fix removes a problem and adds none
 
 A fix is picked by its position in the warning list; a position outside the
 list fixes nothing. A loop has no automatic fix, because someone must decide
@@ -473,10 +495,23 @@ pure def recorded(t: Task, at: int): Task =
     toldSoon: if (reminder(t, at) == DueSoon) t.toldSoon.append(t.due) else t.toldSoon,
     toldDue: if (reminder(t, at) == DueToday) t.toldDue.append(t.due) else t.toldDue }
 
-pure def notify(s: Tracker): Tracker =
-  { ...s, last: Notifier,
-    sent: s.sent.concat(s.tasks.foldl(List(), (acc, t) => acc.concat(notesFor(s, t)))),
-    tasks: s.tasks.listMap(t => recorded(t, s.now)) }
+type Notified = { state: Tracker, out: List[Note] }
+
+pure def notify(s: Tracker): Notified =
+  val notes = s.tasks.foldl(List(), (acc, t) => acc.concat(notesFor(s, t)))
+  { state: { ...s, last: Notifier, sent: s.sent.concat(notes), tasks: s.tasks.listMap(t => recorded(t, s.now)) }, out: notes }
+```
+
+### A pass sends exactly the notes it records
+
+The notes a pass of the notifier hands to the shell to post are the ones it
+adds to the record of what was sent, in the same order, and no other change
+sends anything. The record is written before anything is posted, so a note
+is recorded as sent whether or not the chat app takes it.
+
+```quint
+pure def stepAPassSendsWhatItRecords(before: Tracker, via: str, after: Tracker, out: List[Note]): bool =
+  after.sent == before.sent.concat(out) and (via == "notify" or out.length() == 0)
 ```
 
 ### No one is told of their own edit
@@ -515,8 +550,8 @@ pure def lawEachNameIsListedOnce(xs: List[str]): bool =
 
 ### Every note sent is recorded on its task
 
-A note only ever names a task number that has been issued, and while that task
-exists it records the note: an announced edit is no newer than the task's last
+A note only ever names a task number no higher than the last one issued, and
+while that task exists it records the note: an announced edit is no newer than the task's last
 announced version, and a reminder's date is among the dates already reminded
 for, ahead or on the day.
 
