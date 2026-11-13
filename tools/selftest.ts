@@ -121,7 +121,7 @@ pure def push(s: State, n: int): Did = { state: s.append(n), out: List(n) }
 pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = out.length() == 1`);
     const model = await gen(lists, parseSpec(lists, "spec/lists.md"));
     assert.equal(model.evals.find((e) => e.name === "stepHasOneEffect")?.params.at(-1)?.from, "emitted");
-    const root = fixtures(["mailer"]);
+    const root = fixtures(["mailer"], (files) => { files["spec/mailer.proof.dfy"] = read("tools/fixtures/mailer.proof.dfy"); });
     const result = await run(root);
     assert.deepEqual(result.failed, ["review"], result.text);
     const domain = await import(path.join(root, "gen/mailer.ts"));
