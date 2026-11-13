@@ -1,0 +1,40 @@
+// spec/index.md, "Story: Keep a short list"
+// The shell: the list of spec/index.md, kept in a KeyValueStore, which main.tsx makes the browser's localStorage.
+import * as KeyValueStore from "effect/persistence/KeyValueStore"
+import { type Event, type Tasks, Machine, Rejected, apply, decodeState, initial, machine } from "../gen/index.effect.vibe"
+import { Saved } from "./tasks.schema.ts"
+
+const KEY = "tasks"
+
+/** The store did not take the list. */
+export error NotSaved { cause: unknown }
+
+effect function saved() { return KeyValueStore.toSchemaStore(try KeyValueStore.KeyValueStore, Saved) }
+
+/** The stored list, or an empty one where the store holds nothing the rules call a list. */
+export effect function load() {
+  const store = try saved()
+  return effect { return try decodeState(Option.getOrUndefined(try store.get(KEY))) } catch () => initial
+}
+
+/** The one writer of the list a `Machine` holds. */
+export service TaskList {
+  /** Stores the list `event` leads to, then makes the change: a list that cannot be stored stays as it was. */
+  send(event: Event): Tasks!(Rejected | NotSaved)
+}
+
+/** A `Machine` that starts from the stored list, and the `TaskList` that changes it. */
+export const stored = Layer.unwrap(effect {
+  const store = try saved()
+  const one = try Semaphore.make(1)
+  const list = Layer.effect(TaskList, effect {
+    const held = try Machine
+    return {
+      send: (event) => Semaphore.withPermit(one, effect {
+        try mapError(store.set(KEY, try apply(try held.get(), event)), (cause) => new NotSaved({ cause }))
+        return try held.send(event)
+      })
+    }
+  })
+  return Layer.provideMerge(list, machine(try load()))
+})

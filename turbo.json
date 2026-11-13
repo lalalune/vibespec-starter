@@ -118,16 +118,18 @@
     },
     "//#lint:js": {
       "inputs": [
-        "**/*.{ts,tsx,js,mjs}",
+        "**/*.{ts,tsx,js,mjs,vibe}",
         "eslint.config.js",
         "package.json",
         "!vibestack/examples/**",
         "!**/gen/**",
-        "!**/dist/**"
+        "!**/dist/**",
+        "**/tsconfig.json"
       ],
       "outputs": [],
       "dependsOn": [
-        "@repo/design-system#build"
+        "@repo/design-system#build",
+        "@repo/web#typecheck"
       ]
     },
     "//#lint:css": {
@@ -143,10 +145,12 @@
     "//#analyze": {
       "inputs": [
         "**/*.{ts,tsx,js,mjs,json}",
-        "knip.json",
+        "knip.config.js",
         "!vibestack/examples/**",
         "!**/gen/**",
-        "!**/dist/**"
+        "!**/dist/**",
+        "**/*.vibe",
+        ".madgerc"
       ],
       "outputs": []
     },

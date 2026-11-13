@@ -57,6 +57,9 @@ catalogs:
     '@types/react-dom':
       specifier: ^19.3.0
       version: 19.3.0
+    '@vitejs/plugin-react':
+      specifier: ^6.3.0
+      version: 6.3.0
     '@vitest/browser':
       specifier: 5.1.0
       version: 5.1.0
@@ -227,6 +230,88 @@ importers:
         version: 8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1)
       vitest:
         specifier: 5.1.0
+        version: 5.1.0(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(@vitest/browser-playwright@5.1.0)(@vitest/ui@5.1.0)(happy-dom@21.0.4)(jsdom@31.0.1)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))
+
+  apps/web:
+    dependencies:
+      '@repo/design-system':
+        specifier: workspace:*
+        version: link:../../packages/design-system
+      '@repo/ui':
+        specifier: workspace:*
+        version: link:../../packages/ui
+      effect:
+        specifier: 4.1.1
+        version: 4.1.1
+      react:
+        specifier: 'catalog:'
+        version: 19.3.1
+      react-dom:
+        specifier: 'catalog:'
+        version: 19.3.1(react@19.3.1)
+      vibelang-runtime:
+        specifier: 0.0.12
+        version: 0.0.12(@effect/platform-node@4.1.1(effect@4.1.1)(redis@6.3.1(@opentelemetry/api@1.10.0)))(effect@4.1.1)
+    devDependencies:
+      '@effect/vitest':
+        specifier: 4.1.1
+        version: 4.1.1(effect@4.1.1)(vitest@5.1.0)
+      '@tailwindcss/vite':
+        specifier: 'catalog:'
+        version: 4.3.5(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))
+      '@testing-library/dom':
+        specifier: 'catalog:'
+        version: 10.4.2
+      '@testing-library/react':
+        specifier: 'catalog:'
+        version: 16.3.3(@testing-library/dom@10.4.2)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
+      '@testing-library/user-event':
+        specifier: 'catalog:'
+        version: 14.6.10(@testing-library/dom@10.4.2)
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.6.6
+      '@types/react':
+        specifier: 'catalog:'
+        version: 19.3.0
+      '@types/react-dom':
+        specifier: 'catalog:'
+        version: 19.3.0(@types/react@19.3.0)
+      '@vitejs/plugin-react':
+        specifier: 'catalog:'
+        version: 6.3.0(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))
+      '@vitest/browser':
+        specifier: 'catalog:'
+        version: 5.1.0(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))(vitest@5.1.0)
+      '@vitest/browser-playwright':
+        specifier: 'catalog:'
+        version: 5.1.0(playwright@1.65.0)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))(vitest@5.1.0)
+      happy-dom:
+        specifier: 'catalog:'
+        version: 21.0.4
+      playwright:
+        specifier: 'catalog:'
+        version: 1.65.0
+      tailwindcss:
+        specifier: 'catalog:'
+        version: 4.3.5
+      typescript:
+        specifier: 'catalog:'
+        version: 6.0.3
+      vibelang:
+        specifier: 0.0.12
+        version: 0.0.12(@babel/core@7.29.13)(effect@4.1.1)
+      vibelang-vite:
+        specifier: 0.0.12
+        version: 0.0.12(vibelang@0.0.12(@babel/core@7.29.13)(effect@4.1.1))(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))
+      vibestack:
+        specifier: workspace:*
+        version: link:../..
+      vite:
+        specifier: 'catalog:'
+        version: 8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1)
+      vitest:
+        specifier: 'catalog:'
         version: 5.1.0(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(@vitest/browser-playwright@5.1.0)(@vitest/ui@5.1.0)(happy-dom@21.0.4)(jsdom@31.0.1)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))
 
   packages/design-system:
@@ -2526,6 +2611,22 @@ packages:
     resolution: {integrity: sha512-a0M+uwCuQZEPAo65NYkFSJ14O5c213KoSZmPdoCfuFvUhfULi4T2Z6Tpjv6lTVMW9RoLm74RpRAjNEa43KcN+g==}
     peerDependencies:
       valibot: ^1.5.0
+
+  '@vitejs/plugin-react@6.3.0':
+    resolution: {integrity: sha512-H9E955aVvD2F4zNHCw4eIZbIfF6xKldlh7MNu+hSU7xwQzh65lI/N+CJWqmfhi0PEjDXIt/H7T7J/4wU63KJiw==}
+    engines: {node: ^20.19.0 || >=22.12.0}
+    peerDependencies:
+      '@rolldown/plugin-babel': ^0.1.7 || ^0.2.0 || ^0.3.0
+      babel-plugin-react-compiler: ^1.0.0
+      oxc-transform-react: '>=0.152.0 <0.157.0'
+      vite: ^8.0.0
+    peerDependenciesMeta:
+      '@rolldown/plugin-babel':
+        optional: true
+      babel-plugin-react-compiler:
+        optional: true
+      oxc-transform-react:
+        optional: true
 
   '@vitest/browser-playwright@5.1.0':
     resolution: {integrity: sha512-3PbVvX/KNeUEzUeTTXw5bQDyfJS+WqU/UJ8RNWIojHb0mE6d/IBjuLmt+i7OpJ00tjNWv0O6XBm5ler/tEf3eg==}
@@ -6821,6 +6922,11 @@ snapshots:
   '@valibot/to-json-schema@1.8.0(valibot@1.5.0(typescript@6.0.3))':
     dependencies:
       valibot: 1.5.0(typescript@6.0.3)
+
+  '@vitejs/plugin-react@6.3.0(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))':
+    dependencies:
+      '@rolldown/pluginutils': 1.1.0
+      vite: 8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1)
 
   '@vitest/browser-playwright@5.1.0(playwright@1.65.0)(vite@8.3.5(@types/node@26.6.6)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.1))(vitest@5.1.0)':
     dependencies:
