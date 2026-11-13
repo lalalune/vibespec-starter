@@ -472,7 +472,7 @@ export effect function filled(sku: string, qty: number) {
     await Promise.all([generate(first), generate(second)]);
     fs.mkdirSync(path.join(first, "src"), { recursive: true });
     fs.writeFileSync(path.join(first, "src/pair.vibe"), `import { Machine as First, machine as first } from "../gen/index.effect.vibe"
-import { Machine as Second, machine as second } from ${JSON.stringify(path.join(second, "gen/index.effect.vibe"))}
+import { Machine as Second, machine as second } from ${JSON.stringify(path.relative(path.join(first, "src"), path.join(second, "gen/index.effect.vibe")).split(path.sep).join("/"))}
 export effect function independent() {
   provide first(), second() {
     const a = try First
