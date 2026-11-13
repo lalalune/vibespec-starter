@@ -61,7 +61,8 @@ holds no business rules. A shared type lives with the contract that owns it.
 
 | Command | Does |
 |---|---|
-| `pnpm dev` | Studio |
+| `pnpm dev` | Studio, and every package's `dev` script beside it |
+| `pnpm studio [<dir>]` | Studio alone, on one project |
 | `pnpm quick` | the fast local check: types, tests, ESLint and Stylelint, in every package |
 | `pnpm verify` | what CI runs: build, types, tests, browser tests, every `check`, lint, Knip, Madge, the examples |
 | `pnpm all <task>…` | one or more kinds of task in every package: `pnpm all build typecheck test` |
