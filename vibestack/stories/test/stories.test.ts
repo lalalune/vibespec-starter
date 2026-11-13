@@ -1,7 +1,6 @@
-// The generator on a copy of test/fixtures that nothing else reads or writes: in the system's temporary
-// directory, with test/project's install linked in so that React, CVA and Effect resolve. It runs from any
-// working directory; from test/project, `pnpm exec vitest run --project generator`.
-import { cpSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+// The generator on a copy of test/fixtures that nothing else reads or writes, in the system's temporary
+// directory. The copy needs no install: fixtures/modules, its `node_modules`, declares what the fixtures import.
+import { cpSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, expect, it } from "vitest";
@@ -9,7 +8,7 @@ import { type Component, generator, watched } from "../emit.ts";
 
 const root = mkdtempSync(join(realpathSync(tmpdir()), "stories-fixtures-"));
 cpSync(join(import.meta.dirname, "fixtures"), root, { recursive: true });
-symlinkSync(join(import.meta.dirname, "project", "node_modules"), join(root, "node_modules"));
+renameSync(join(root, "modules"), join(root, "node_modules"));
 afterAll(() => rmSync(root, { recursive: true }));
 
 const out = join(root, "generated", "stories");
