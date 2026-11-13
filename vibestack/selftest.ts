@@ -15,6 +15,7 @@ import { LIB_FILE, isolatedCopies, parseProofFile, readVerdict, splice } from ".
 import { exec, run as tool } from "./run.ts";
 import { migrateLocks, pendingSpecs, readLedger, showPending, writeLedger } from "./review.ts";
 import { nodeRunsVibelang, packageScripts, testInputs, testReceipt } from "./util.ts";
+import { profile } from "./testing/profile.ts";
 import { canonical, check as conformanceCheck, ConformanceError, departure, replay as replayTrace } from "./conformance.ts";
 import { conformance as checkTraces, conformanceFound } from "./conform.ts";
 import { acceptContracts, acceptReviews, check, checkVerifiedSource, danglingCitations, expandListHelpers, generated, init, parseSpec, pending, pendingContracts, readSpecs, replay, show, typecheckAll, type Result, type Spec } from "./spec.ts";
@@ -577,7 +578,8 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
 
   test("a shell written for a transition the spec has since renamed no longer fits the generated contract", async () => {
     const { said, next, text } = await run(copyOfProject("spec/index.md", (s) => s.replace(/\b(a|canA)ddItem\b/g, "$1ddItems")));
-    assert.equal(said("types", /src\/demo\.vibe\(\d+,\d+\): error TS\d+: Type '"addItem"' is not assignable/)?.summary, "application does not fit the generated contract", text);
+    assert.equal(said("types", /./)?.summary, "application does not fit the generated contract", text);
+    assert.match(stripVTControlCharacters(text), /src\/demo\.vibe(?:\(\d+,\d+\):|:\d+:\d+ -) error TS2820: Type '"addItem"' is not assignable/);
     assert.match(next, /^types \(src\/ and test\/\) is the first ✗: update src\/ and test\/ to the generated contract/);
   });
 
@@ -1310,8 +1312,9 @@ pure def lawOwn(own: int): bool = shadowOwn(own) == own`));
     assert.match(read("apps/app/gen/app.effect.vibe", root), /key = "@scratch\/app\/spec\/app\/index\.md#Machine"/);
     assert.match(read("gen/app.effect.vibe", root), new RegExp(`key = "${path.basename(root)}/spec/app/index\\.md#Machine"`));
     assert.ok(["area.ts", "own.ts", "app.ts"].every((f) => fs.existsSync(path.join(root, "gen", f))) && !fs.existsSync(path.join(root, "apps/own/gen")));
+    const normal = profile("normal");
     for (const [stage, said] of [["types", /^apps\/app: application typechecks/], ["tests", /^apps\/app: pass/], ["traces", /^apps\/app: script driver:app: simulated states and refused events agree with spec\/app\/index\.md/],
-      ["traces", /^apps\/app: test\/drivers\/app\.ts: 1 walks of seed 1 agree with spec\/app\/index\.md/],
+      ["traces", new RegExp(`^apps/app: test/drivers/app\\.ts: ${normal.runs} walks of seed ${normal.seed} agree with spec/app/index\\.md`)],
       ["proof", /^apps-app-src-one\.ts: all 1 obligations proved/], ["review", /^apps\/app\/src\/: recorded as reconciled: apps\/app\/src\/one\.ts/]] as const)
       assert.ok(first.said(stage, said), `${stage}\n${first.text}`);
     assert.deepEqual(Object.keys(JSON.parse(read("spec/lock.json", root)).contracts), ["apps/app/src/one.ts"]);
@@ -1345,7 +1348,8 @@ pure def lawOwn(own: int): bool = shadowOwn(own) == own`));
       assert.ok(found.said(stage, pattern), found.text);
     };
     says(recursing, ["tests"], "tests", /^apps\/app: fail\n[\s\S]*a test script cannot run spec check or accept: the check already runs the tests/);
-    says(mistyped, ["types"], "types", /^apps\/app: application does not fit the generated contract\n[\s\S]*src\/wrong\.ts\(1,14\): error TS2322/);
+    says(mistyped, ["types"], "types", /^apps\/app: application does not fit the generated contract/);
+    assert.match(stripVTControlCharacters(mistyped.text), /src\/wrong\.ts(?:\(1,14\):|:1:14 -) error TS2322: Type 'string' is not assignable to type 'number'/);
     says(failing, ["tests"], "tests", /^apps\/app: fail\n[\s\S]*never holds/);
     // The disagreement is saved, shrunk, in the owner, and replayed first from then on.
     says(departing, ["traces"], "traces", /^apps\/app: test\/drivers\/app\.ts: the program departs from the spec\n[\s\S]*conformance to spec\/app\/index\.md: (journey|walk)[\s\S]*Saved as test\/counterexamples\/app\/[0-9a-f]{12}\.json, which/);
