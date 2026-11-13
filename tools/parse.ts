@@ -5,7 +5,7 @@ import { LIST_HELPERS } from "./gen.ts";
 export interface Rule { key: string; story: string; line: number; prose: string; code: string; defs: string[] }
 /** A `##` heading: a story or another group of rules. Its prose is the text between the heading and its first rule. */
 export interface Story { title: string; line: number; prose: string }
-/** `meaning` is the Quint as written, with every line of prose blank: what a cache key may depend on. */
+/** `meaning` is the Quint as written, with every line of prose and every comment blank: what a cache key may depend on. */
 export interface Spec { name: string; file: string; rules: Rule[]; stories: Story[]; imports: string[]; qnt: string; meaning: string }
 
 /** Why a name cannot name a spec, or undefined if it can. */
@@ -102,7 +102,7 @@ export function parseSpec(root: string, file: string, text = fs.readFileSync(pat
   });
   if (fence?.quint && scan(block).mode) throw new Error(`${file}: a quint block is never closed, and a comment or string in it is still open`);
   try {
-    return { name, file, rules, stories, imports, qnt: expandListHelpers(qnt.join("\n")) + "\n}\n", meaning: meaning.join("\n") };
+    return { name, file, rules, stories, imports, qnt: expandListHelpers(qnt.join("\n")) + "\n}\n", meaning: uncommented(meaning.join("\n")) };
   } catch (e) {
     throw new Error(`${file}:${(e as Error).message}`);
   }
@@ -113,23 +113,28 @@ export function parseSpec(root: string, file: string, text = fs.readFileSync(pat
  * built-in `foldl`, in place and without moving a line (see LIST_HELPERS in
  * gen.ts for why). Strings and comments are left alone.
  */
-/** Which characters of Quint are code, as opposed to part of a string or a comment, and what is still open at the end. */
-function scan(text: string): { code: boolean[]; mode: "" | '"' | "//" | "/*" } {
+/** Which characters of Quint are code and which are comments (the rest is strings), and what is still open at the end. */
+function scan(text: string): { code: boolean[]; comment: boolean[]; mode: "" | '"' | "//" | "/*" } {
   const code: boolean[] = [];
+  const comment: boolean[] = [];
   let mode: "" | '"' | "//" | "/*" = "";
   for (let i = 0; i < text.length; i++) {
     const two = text.slice(i, i + 2);
     if (mode === "" && text[i] === '"') mode = '"';
     else if (mode === "" && two === "//") mode = "//";
-    else if (mode === "" && two === "/*") { i++; mode = "/*"; }
+    else if (mode === "" && two === "/*") { comment[i++] = true; mode = "/*"; }
     else if (mode === "") { code[i] = true; continue; }
     else if (mode === '"' && text[i] === "\\") i++;
     else if (mode === '"' && text[i] === '"') mode = "";
     else if (mode === "//" && text[i] === "\n") mode = "";
-    else if (mode === "/*" && two === "*/") { i++; mode = ""; }
+    else if (mode === "/*" && two === "*/") { comment[i++] = comment[i] = true; mode = ""; }
+    if (mode === "//" || mode === "/*") comment[i] = true;
   }
-  return { code, mode: mode === "//" ? "" : mode };
+  return { code, comment, mode: mode === "//" ? "" : mode };
 }
+
+/** Quint with every comment blanked out, where code is kept, and no space at the end of a line: what the model and the simulation depend on. */
+const uncommented = (text: string) => { const { comment } = scan(text); return text.replace(/[^\n]/g, (c, i: number) => (comment[i] ? " " : c)).replace(/[ \t]+$/gm, ""); };
 
 export function expandListHelpers(text: string): string {
   const { code } = scan(text);

@@ -7,7 +7,7 @@ import { isDeepStrictEqual } from "node:util";
 import type { Model } from "./gen.ts";
 import { SENDER } from "./gen/classify.ts";
 import { run } from "./prove.ts";
-import { digest } from "./util.ts";
+import { allDone, digest } from "./util.ts";
 
 export const SAMPLES = 10000;
 export const WITNESS_SAMPLES = 20 * SAMPLES;
@@ -110,20 +110,17 @@ export async function simulate(root: string, model: Model, invariant: string, tr
     return { broken, traces: files.map((f) => readTrace(path.join(out, f), model)), again };
   });
   // Every run finishes before anything is said, so that none is left writing into gen/.
-  const settled = await Promise.allSettled(runs);
-  const failure = settled.find((r) => r.status === "rejected");
-  if (failure) throw failure.reason;
-  const done = settled.map((r) => (r as PromiseFulfilledResult<Awaited<(typeof runs)[number]>>).value);
+  const done = await allDone(runs);
   return { broken: done.some((d) => d.broken), traces: done.flatMap((d) => d.traces), again: (done.find((d) => d.broken) ?? done[0]).again };
 }
 
 /**
  * Look for a state that breaks `invariant`, which is how a goal is shown reachable: in longer traces while none is
- * found, fewer of them as they lengthen, so each depth costs about as many events as the first.
+ * found, fewer of them as they lengthen, so each depth costs about as many events as `samples` traces of the first.
  */
-export async function search(root: string, model: Model, invariant: string, step = "step", depths = DEPTHS): ReturnType<typeof simulate> {
+export async function search(root: string, model: Model, invariant: string, step = "step", depths = DEPTHS, samples = WITNESS_SAMPLES): ReturnType<typeof simulate> {
   let run!: Awaited<ReturnType<typeof simulate>>;
-  for (const steps of depths) if ((run = await simulate(root, model, invariant, 1, Math.ceil(WITNESS_SAMPLES * STEPS / steps), step, true, steps)).broken) break;
+  for (const steps of depths) if ((run = await simulate(root, model, invariant, 1, Math.ceil(samples * STEPS / steps), step, true, steps)).broken) break;
   return run;
 }
 export const SEARCHED = () => `${WITNESS_SAMPLES} traces of ${STEPS} events and longer ones up to ${DEPTHS.at(-1)}`;

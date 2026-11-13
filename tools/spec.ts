@@ -10,7 +10,7 @@ import { contracts, pending, pendingContracts, acceptReviews, acceptContracts, m
 import { entry, remembered, collectGarbage, dafnyVersion, type Memory } from "./cache.ts";
 import { gen, generated, typecheckAll, proofUnits, strayProofFiles } from "./units.ts";
 import { SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, STEPS, DEPTHS, SEARCHED, simulate, search, firstBreak, showTrace, replay, type Step } from "./simulate.ts";
-import { sha, indent, tests } from "./util.ts";
+import { sha, indent, tests, allDone } from "./util.ts";
 
 export { readSpecs, badSpecName, parseSpec, scanSpec, expandListHelpers, type Spec, type Rule, type Story } from "./parse.ts";
 export { pending, pendingContracts, acceptReviews, acceptContracts, fingerprint, dependencies, type Pending } from "./review.ts";
@@ -20,6 +20,9 @@ export { danglingCitations } from "./util.ts";
 
 export interface Result { ok: boolean; stage: "model" | "always" | "sometimes" | "replay" | "types" | "proof" | "tests" | "review" | "skipped"; summary: string; detail: string; where?: string }
 export const show = ({ ok, stage, summary, detail }: Result) => `${stage === "skipped" ? "-" : ok ? "✓" : "✗"} ${stage.padEnd(9)} ${summary}${detail ? "\n" + detail.trimEnd() : ""}`;
+
+/** The one simulation result that is not remembered: anything else comes back the same from the same harness and seed. */
+const COULD_NOT_RUN = "the simulator could not run";
 
 /** The one most useful thing to do after a check, given what it found. */
 export function nextStep(results: Result[]): string {
@@ -113,6 +116,8 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
   const typed = typecheckAll(memory, specs);
   // Node caches imported modules by path, so each run loads its generated code from a directory of its own.
   const loaded = path.join(root, "gen", `run-${Date.now()}`);
+  /** Each spec's simulation starts once its model is generated; they run at once and are reported in the specs' order. */
+  const simulations: { spec: Spec; model: Model; found: Promise<Result[]> }[] = [];
 
   for (const spec of specs) {
     const cite = (def: string) => {
@@ -138,9 +143,10 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
     report(true, "model", `${spec.file}: ${parts.filter(([n]) => n).map((p) => p.join(" ")).join(", ") || "definitions only"}`, "", spec.file);
     if (!model.stateType && !model.laws.length && !model.evals.length) continue;
 
-    // A spec whose model and harness are unchanged, and that passed, is not simulated again.
+    // A spec whose model and harness are unchanged is not simulated again: the seed is part of what is simulated, so a
+    // failure comes back the same. Only a simulator that could not run is tried again.
     const closure = (names: string[]): string => names.map((n) => { const dep = specs.find((x) => x.name === n)!; return closure(dep.imports) + dep.meaning; }).join("");
-    const found = await remembered<Result[]>(memory, entry(root, "simulate", [closure(spec.imports), spec.meaning, model.harness, String([SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, STEPS, ...DEPTHS]), process.env.SPEC_SEED ?? ""]), async () => {
+    const found = remembered<Result[]>(memory, entry(root, "simulate", [closure(spec.imports), spec.meaning, model.harness, String([SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, STEPS, ...DEPTHS]), process.env.SPEC_SEED ?? ""]), async () => {
       const said: Result[] = [];
       const say = (ok: boolean, stage: Result["stage"], summary: string, detail = "") => said.push({ ok, stage, summary, detail });
       try {
@@ -167,13 +173,10 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
         // can, supplies more traces to replay. Each witness search stops at its goal or at a broken rule, whichever
         // comes first (see the harness). All of them finish before anything is reported, failures included.
         const sim = await simulate(root, model, "inv", REPLAYED, SAMPLES, "step", true);
-        const settled = await Promise.allSettled([
+        const [probe, ...searches] = await allDone([
           simulate(root, model, "inv", REPLAYED, COMPARED_SAMPLES, "probe", true),
           ...model.sometimes.map((w) => search(root, model, `never_${w}`)),
         ]);
-        const failure = settled.find((r) => r.status === "rejected");
-        if (failure) throw failure.reason;
-        const [probe, ...searches] = settled.map((r) => (r as PromiseFulfilledResult<Awaited<ReturnType<typeof simulate>>>).value);
         const witnesses = model.sometimes.map((w, i) => ({ w, run: searches[i] }));
         const runs = [sim, probe, ...searches.filter((run) => run.broken)];
         if (broke(runs)) return said;
@@ -194,21 +197,21 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
         }
         const neverAllowed: { t: (typeof guarded)[number]; again?: string }[] = [];
         const neverRefused: string[] = [];
-        for (const t of guarded) {
-          const g = t.guard!;
-          // The harness has a witness invariant for every guard whose arguments the simulator can supply. Only a
-          // guard that never allows its event fails the check, so only that search goes deeper.
-          const searchable = model.evals.some((v) => v.name === g);
-          for (const side of ["allows", "refuses"] as const) {
-            if (seen.get(g)![side]) continue;
-            const found = searchable ? await search(root, model, `never_${side}_${g}`, "probe", side === "allows" ? DEPTHS : [STEPS]) : undefined;
-            if (found?.broken) {
-              if (broke([found])) return said;
-              seen.get(g)![side] = true;
-              traces.push(...found.traces);
-            } else if (side === "refuses") neverRefused.push(g);
-            else neverAllowed.push({ t, again: found?.again });
-          }
+        // The harness has a witness invariant for every guard whose arguments the simulator can supply. The searches
+        // run at once and are read in the guards' order. Only a guard that never allows its event fails the check, so
+        // only that search goes deeper and gets the witness budget; one that never refuses it is only reported.
+        const missing = guarded.flatMap((t) => (["allows", "refuses"] as const).filter((side) => !seen.get(t.guard!)![side]).map((side) => ({ t, side })));
+        const searched = await allDone(missing.map(({ t, side }) => model.evals.some((v) => v.name === t.guard)
+          ? search(root, model, `never_${side}_${t.guard}`, "probe", side === "allows" ? DEPTHS : [STEPS], side === "allows" ? WITNESS_SAMPLES : SAMPLES)
+          : Promise.resolve(undefined)));
+        for (const [i, { t, side }] of missing.entries()) {
+          const found = searched[i];
+          if (found?.broken) {
+            if (broke([found])) return said;
+            seen.get(t.guard!)![side] = true;
+            traces.push(...found.traces);
+          } else if (side === "refuses") neverRefused.push(t.guard!);
+          else neverAllowed.push({ t, again: found?.again });
         }
         say(true, "always", `no rule broken in ${SAMPLES + COMPARED_SAMPLES} simulated traces`);
         for (const { w, run } of witnesses) {
@@ -231,14 +234,19 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
           + (missed.length ? `; not compared on their own, because the simulator had no arguments for them: ${missed.join(", ")}` : ""));
       } catch (e) {
         const mismatch = (e as Error).message.startsWith("TypeScript and Quint disagree");
-        say(false, mismatch ? "replay" : "always", mismatch ? "this is a bug in the generator (tools/gen.ts, tools/gen/), not in the spec" : "the simulator could not run", indent((e as Error).message));
+        say(false, mismatch ? "replay" : "always", mismatch ? "this is a bug in the generator (tools/gen.ts, tools/gen/), not in the spec" : COULD_NOT_RUN, indent((e as Error).message));
       }
       return said;
-    }, (said) => said.every((r) => r.ok));
-    for (const r of found) report(r.ok, r.stage, r.summary, r.detail, spec.file);
-    const ran = new Set(found.map((r) => r.stage));
+    }, (said) => !said.some((r) => r.summary === COULD_NOT_RUN));
+    found.catch(() => {}); // a failure is reported in its turn, not as an unhandled rejection
+    simulations.push({ spec, model, found });
+  }
+  for (const { spec, model, found } of simulations) {
+    const said = await found;
+    for (const r of said) report(r.ok, r.stage, r.summary, r.detail, spec.file);
+    const ran = new Set(said.map((r) => r.stage));
     const notRun = (["sometimes", "replay"] as const).filter((s) => !ran.has(s) && (s !== "sometimes" || model.sometimes.length));
-    if (notRun.length && found.some((r) => !r.ok)) skip(`${notRun.join(" and ")} of ${spec.file}`, "simulation stopped at the failure above");
+    if (notRun.length && said.some((r) => !r.ok)) skip(`${notRun.join(" and ")} of ${spec.file}`, "simulation stopped at the failure above");
   }
 
   const complete = allOk;
@@ -261,31 +269,32 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
         said(false, "proof", `${f} belongs to no proof unit: spec/<name>.proof.dfy belongs to spec/<name>.md, and src/<path>.proof.dfy to src/<path>.ts if that file contains //@`, "", f);
       const lib = fs.readFileSync(LIB_FILE, "utf8");
       const proved = new Map<string, Proof>();
-      // Units are proved at the same time, each as soon as the units it may take laws from are done; they are
-      // reported in order.
+      // Units are proved at the same time and reported in order. One with a proof file is offered every law of the
+      // units it imports, and keeps that result only if each of those units proved them all in this run; otherwise
+      // it is proved again with the laws they did prove.
       const running = new Map<string, Promise<Proof>>();
       const proofTexts = new Map<string, string | undefined>();
       for (const u of units) {
         const proofPath = path.join(root, u.proofFile);
         const proofText = fs.existsSync(proofPath) ? fs.readFileSync(proofPath, "utf8") : undefined;
         proofTexts.set(u.unit, proofText);
+        const proving = (laws: string[]) => remembered(memory, entry(root, "prove", [u.unit, u.meaning, proofText ?? "", proofText === undefined ? "" : lib, laws.join(" ")]),
+          () => prove(root, u, { proof: proofText === undefined ? undefined : { file: u.proofFile, text: proofText }, lib, laws }), (p) => !p.errors.length);
         running.set(u.unit, (async () => {
-          if (proofText !== undefined) await Promise.allSettled(u.laws.map((l) => running.get(l.from)));
-          // A law of an imported module is offered only if its own unit proved it, in this run.
+          const offered = proofText === undefined ? [] : u.laws.map((l) => l.fn);
+          const first = proving(offered);
+          await Promise.allSettled([first, ...u.laws.map((l) => running.get(l.from))]);
           const laws = u.laws.filter(({ law, from }) => {
             const p = proved.get(from);
             return p && !p.errors.length && !p.unproved.some((x) => x.startsWith(`${law}: `));
           }).map((l) => l.fn);
-          const offered = { proof: proofText === undefined ? undefined : { file: u.proofFile, text: proofText }, lib, laws };
-          const proof = await remembered(memory, entry(root, "prove", [u.unit, u.meaning, proofText ?? "", proofText === undefined ? "" : lib, proofText === undefined ? "" : laws.join(" ")]), () => prove(root, u, offered), (p) => !p.errors.length);
+          const proof = offered.every((fn) => laws.includes(fn)) ? await first : await proving(laws);
           proved.set(u.unit, proof);
           return proof;
         })());
       }
       // Every unit finishes, whatever another one does, before anything is reported.
-      const settledProofs = await Promise.allSettled(units.map((u) => running.get(u.unit)!));
-      const thrown = settledProofs.find((r) => r.status === "rejected");
-      if (thrown) throw thrown.reason;
+      await allDone(units.map((u) => running.get(u.unit)!));
       for (const u of units) {
         const proofText = proofTexts.get(u.unit);
         const proof = proved.get(u.unit)!;
@@ -304,7 +313,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
         const fresh = proof.unproved.filter((x) => !valid.includes(x));
         const stale = valid.filter((x) => !proof.unproved.includes(x));
         if (proof.unproved.length) ledger[u.unit] = { text: meaning, unproved: proof.unproved };
-        const listed = (xs: string[]) => indent(xs.map((x) => (proof.exhausted.includes(x) ? `${x}   [the prover ran out of resources]` : x)).join("\n"));
+        const listed = (xs: string[]) => indent(xs.map((x) => (proof.exhausted.includes(x) ? `${x}   [the prover ran out of resources]` : proof.resting[x] ? `${x}   [rests on ${proof.resting[x]}]` : x)).join("\n"));
         // Hand-written code proved against a module that is only partly proved rests on what is not.
         const assumed = u.rests.flatMap((r) => (proved.get(r)?.unproved.length ? [`${proved.get(r)!.unproved.length} of ${r}`] : []));
         const assuming = (assumed.length ? `, assuming the obligations that are simulated only (${assumed.join(", ")})` : "")
@@ -337,8 +346,12 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
     }
       return out;
     }
-    // The typecheck runs while the proofs do; it is reported first.
-    const typecheck = fs.existsSync(path.join(root, "tsconfig.json")) ? run("tsc", ["--noEmit", "-p", "."], root) : undefined;
+    // The typecheck runs while the proofs do; it is reported first. tsc keeps what it learned in the cache directory,
+    // and rereads only the files whose text changed.
+    const buildInfo = path.join(".spec-cache", "tsbuildinfo");
+    memory.used.add(path.basename(buildInfo));
+    if (memory.fresh) fs.rmSync(path.join(root, buildInfo), { force: true });
+    const typecheck = fs.existsSync(path.join(root, "tsconfig.json")) ? run("tsc", ["--noEmit", "-p", ".", "--incremental", "--tsBuildInfoFile", buildInfo], root) : undefined;
     const proofsDone = provingAll();
     if (typecheck) {
       const tsc = await typecheck;
