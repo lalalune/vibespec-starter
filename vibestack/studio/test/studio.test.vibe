@@ -77,7 +77,7 @@ const APP = `require("node:http").createServer((_, res) => res.end("door app")).
 // spec/index.md, "Story: Edit, then publish"; spec/index.md, "Story: Sync with an agent"; spec/index.md, "Story: Check"; spec/index.md, "Story: Preview the app"
 it.live("a spec is published with its origins, checked, synced by an agent, and refused while a job runs; the app runs beside it", effect () => { provide services { try scoped(effect {
   const fs = try FileSystem.FileSystem
-  const root = try scratch({ "spec/door.md": try fs.readFileString(`${TOOLS}/fixtures/door.md`), "app.js": APP, "package.json": JSON.stringify({ name: "door", scripts: { start: "node app.js" } }) })
+  const root = try scratch({ "spec/door.md": try fs.readFileString(`${TOOLS}/fixtures/door.md`), "app.js": APP, "package.json": JSON.stringify({ name: "door", scripts: { start: "node app.js", build: "node -e \"require('node:fs').writeFileSync('built.txt', 'door')\"" } }) })
   const { get, send, post, project, settled } = try studioOn(root)
 
   // The page and what its HTML loads are served; nothing else under the tools is.
@@ -162,6 +162,14 @@ it.live("a spec is published with its origins, checked, synced by an agent, and 
     // spec/index.md, "Running the app changes nothing else"
     assert.deepStrictEqual([beside.session.previewing, beside.session.job], [true, "Checking"])
     assert.equal(gone.previewing, false)
+  })
+
+  // spec/index.md, "Story: Build the app": the project's build script runs as a job, and the session is idle after.
+  const building = (try post("build", {})).status
+  const builtState = try settled()
+  const output = try fs.readFileString(`${root}/built.txt`)
+  try check(() => {
+    assert.deepStrictEqual([building, builtState.app.buildable, builtState.jobs.build!.status, builtState.session.job, output], [200, true, "passed", "Idle", "door"])
   })
 }) } })
 
