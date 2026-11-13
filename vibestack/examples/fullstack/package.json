@@ -2,16 +2,38 @@
   "name": "fullstack-todo",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@10.24.0",
   "engines": {
-    "node": ">=24"
+    "node": ">=26"
   },
   "scripts": {
     "check": "node ../../spec.ts check",
     "gen": "node ../../spec.ts gen",
     "accept": "node ../../spec.ts accept",
-    "start": "node src/main.ts"
+    "build": "vibelang && vite build",
+    "test": "playwright install chromium && vitest run",
+    "start": "pnpm -s build && node dist/src/main.js"
   },
   "devDependencies": {
-    "@types/node": "^24.0.0"
+    "@types/node": "catalog:",
+    "@effect/vitest": "4.1.1",
+    "vibelang": "0.0.12",
+    "vibelang-vite": "0.0.12",
+    "vite": "8.3.5",
+    "vitest": "5.1.0",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
+    "@tailwindcss/vite": "catalog:",
+    "playwright": "catalog:"
+  },
+  "dependencies": {
+    "@effect/platform-node": "4.1.1",
+    "effect": "4.1.1",
+    "vibelang-runtime": "0.0.12",
+    "@repo/ui": "workspace:*",
+    "@repo/design-system": "workspace:*",
+    "react": "catalog:",
+    "react-dom": "catalog:"
   }
 }

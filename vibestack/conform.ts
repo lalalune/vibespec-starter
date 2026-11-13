@@ -3,16 +3,17 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
-import { compareObservation, departure, transition, type Found, type Line, type Oracle } from "./conformance.ts";
+import { compareObservation, departure, transition, type Found, type Line, type Oracle, type Sent } from "./conformance.ts";
 import type { Model } from "./gen.ts";
 import { heading, type Spec } from "./parse.ts";
 import type { Step } from "./simulate.ts";
 import { indent, type Reported } from "./util.ts";
 
-export interface Machine { domain: Oracle<any, any>; model: Model; found: Found<any> }
+export type Simulated = Found<any> & { traces: Sent<any>[][] };
+export interface Machine { domain: Oracle<any, any>; model: Model; found: Simulated }
 
 /** The events and witnessed journeys already examined by the simulator. */
-export function conformanceFound(domain: any, model: Model, spec: Spec, traces: Step[][], witnesses: { w: string; trace: Step[] }[]): Found<any> {
+export function conformanceFound(model: Model, spec: Spec, traces: Step[][], witnesses: { w: string; trace: Step[] }[]): Simulated {
   const events = new Map<string, any>();
   for (const { event } of traces.flat()) if (event) events.set(JSON.stringify(event), event);
   for (const { evaluated } of traces.flat()) {
@@ -77,7 +78,7 @@ function driver(root: string, command: string) {
     const answer = await Promise.race([answers.next(), new Promise<undefined>((resolve) => { timer = setTimeout(() => resolve(undefined), ANSWER_WITHIN); })]);
     clearTimeout(timer);
     const fail = (message: string): never => { throw new Error(`${message} to ${JSON.stringify(request)}${stderr ? `; stderr: ${stderr}` : ""}`); };
-    if (!answer || answer.done) return fail((launchError as Error | undefined)?.message ?? (answer ? "the driver ended without an answer" : "the driver did not answer within 10 seconds"));
+    if (!answer || answer.done) return fail((launchError as Error | undefined)?.message ?? (answer ? "the driver ended without an answer" : `the driver did not answer within ${ANSWER_WITHIN / 1000} seconds`));
     let value: any;
     try { value = JSON.parse(answer.value); } catch { return fail("the driver did not answer with JSON"); }
     if (!value || typeof value !== "object" || Array.isArray(value) || !Object.hasOwn(value, "state") || Object.keys(value).some((key) => key !== "state" && key !== "out"))
@@ -94,9 +95,7 @@ async function drive(root: string, machine: Machine, command: string): Promise<s
   const { domain, model, found } = machine;
   const program = driver(root, command);
   try {
-    const traces = found.traces ?? found.journeys.map((journey) => journey.events);
-    if (!traces.length) return "the simulator produced no traces for this driver";
-    for (const [n, events] of traces.entries()) {
+    for (const [n, events] of found.traces.entries()) {
       const initial = await program.ask({});
       const lines: Line[] = [{ state: initial.state }];
       const resetProblem = compareObservation(domain, found, domain.initial, initial.state);
@@ -124,18 +123,20 @@ async function drive(root: string, machine: Machine, command: string): Promise<s
 /** Every configured trace and program is run afresh; outside service state is not part of a source-code cache key. */
 export async function conformance(root: string, machines: Map<string, Machine>, scripts: Record<string, string>): Promise<Reported<"traces">[]> {
   const results: Reported<"traces">[] = [];
-  const add = (where: string, problem: string | undefined, summary: string) => results.push([!problem, "traces", problem ? `${where}: the program departs from the spec` : `${where}: ${summary}`, problem ? indent(problem) : "", where]);
+  const add = (where: string, machine: Machine | undefined, problem: string | undefined, subject: string) => results.push([!problem, "traces",
+    `${where}: ${problem ? "the program departs from the spec" : `${subject} agree with ${machine!.model.source}${machine!.found.outputShape ? "; effects checked where out is reported" : ""}`}`,
+    problem ? indent(problem) : "", where]);
   const dir = path.join(root, TRACES);
   for (const file of fs.existsSync(dir) ? fs.readdirSync(dir).filter((file) => file.endsWith(".jsonl")).sort() : []) {
     const machine = machines.get(file.split(".")[0]);
     const lines = fs.readFileSync(path.join(dir, file), "utf8").trimEnd().split("\n").map((line) => { try { return JSON.parse(line); } catch { return line; } });
     const off = machine && departure(machine.domain, machine.found, lines);
-    add(`${TRACES}/${file}`, machine ? off && `line ${off.line}: ${off.why}` : "no state-machine spec has this name", `${lines.length} recorded lines agree with ${machine?.model.source}${machine?.found.outputShape ? "; effects checked where out is reported" : ""}`);
+    add(`${TRACES}/${file}`, machine, machine ? off && `line ${off.line}: ${off.why}` : "no state-machine spec has this name", `${lines.length} recorded lines`);
   }
   for (const [name, command] of Object.entries(scripts).filter(([name]) => name.startsWith("driver:"))) {
     const machine = machines.get(name.slice("driver:".length));
     const problem = machine && typeof command === "string" ? await drive(root, machine, command).catch((error: Error) => error.message) : "no state-machine spec has this name, or its driver is not a command";
-    add(`script ${name}`, problem, `simulated states and refused events agree with ${machine?.model.source}${machine?.found.outputShape ? "; effects checked where out is reported" : ""}`);
+    add(`script ${name}`, machine, problem, "simulated states and refused events");
   }
   return results;
 }

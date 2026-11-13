@@ -3,11 +3,29 @@
     "target": "es2023",
     "module": "nodenext",
     "strict": true,
-    "noEmit": true,
-    "allowImportingTsExtensions": true,
-    "erasableSyntaxOnly": true,
     "skipLibCheck": true,
-    "types": ["node"]
+    "types": [
+      "node",
+      "vite/client"
+    ],
+    "rootDir": ".",
+    "rootDirs": [
+      ".",
+      ".vibe/declarations"
+    ],
+    "outDir": "dist",
+    "noEmitOnError": true,
+    "rewriteRelativeImportExtensions": true,
+    "jsx": "react-jsx",
+    "allowArbitraryExtensions": true
   },
-  "include": ["src", "test", "gen/*.ts"]
+  "include": [
+    "src",
+    "test",
+    "gen/*.ts",
+    "gen/*.vibe"
+  ],
+  "vibe": {
+    "sidecarDir": ".vibe/declarations"
+  }
 }

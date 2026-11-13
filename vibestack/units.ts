@@ -3,6 +3,7 @@ import path from "node:path";
 import type * as TS from "typescript";
 import ts from "typescript";
 import { generate, type Model, type Origin } from "./gen.ts";
+import { effectAdapter } from "./gen/vibe.ts";
 import { writeConformance } from "./conform.ts";
 import { fail } from "./gen/types.ts";
 import type { Unit } from "./prove.ts";
@@ -30,9 +31,9 @@ function genDir(root: string): string {
 function typeErrors(spec: Spec, ir: any, out: string, specs: Spec[]): Error {
   const errors = (ir?.errors ?? []).map((e: any) => {
     const at = e.locs?.[0];
-    const file = specs.find((s) => s.name === path.basename(at?.source ?? "", ".qnt"))?.file ?? spec.file;
-    const col = !at ? undefined : file === spec.file ? originalColumn(spec.tangled, spec.qnt, at.start.line, at.start.col) : at.start.col;
-    return at ? `${file}:${at.start.line + 1}${col === undefined ? "" : `:${col + 1}`}  ${e.explanation}` : e.explanation;
+    const owner = specs.find((s) => s.name === path.basename(at?.source ?? "", ".qnt")) ?? spec;
+    const col = at && originalColumn(owner.tangled, owner.qnt, at.start.line, at.start.col);
+    return at ? `${owner.file}:${at.start.line + 1}${col === undefined ? "" : `:${col + 1}`}  ${e.explanation}` : e.explanation;
   });
   return new Error(errors.join("\n") || out);
 }
@@ -43,7 +44,7 @@ export function generated(root: string, spec: Spec, ir: any, models: Map<string,
   const top = new Set<string>((ir.modules?.find((m: any) => m.name === spec.name)?.declarations ?? [])
     .filter((d: any) => d.kind === "def" || d.kind === "typedef").map((d: any) => d.name));
   const assigned = new Set(spec.rules.flatMap(defines));
-  const untracked = [...top].find((name) => !assigned.has(name) && !spec.builtins?.includes(name));
+  const untracked = [...top].find((name) => !assigned.has(name) && !spec.builtins.includes(name));
   if (untracked) {
     const rule = spec.rules.find((r) => r.locals.includes(untracked));
     throw new Error(`${spec.file}:${rule?.line ?? 1}: \`${untracked}\` is a top-level definition with no rule assignment; start it on its own line in the same column as the definition above it`);
@@ -52,6 +53,9 @@ export function generated(root: string, spec: Spec, ir: any, models: Map<string,
   for (const r of spec.rules) for (const d of r.defs) origins.set(d, { rule: r.key, line: r.line });
   const model = generate(ir, spec.name, spec.file, (d) => origins.get(d), models);
   fs.writeFileSync(path.join(dir, `${spec.name}.ts`), model.ts);
+  const manifest = path.join(root, "package.json");
+  const namespace = (fs.existsSync(manifest) ? JSON.parse(fs.readFileSync(manifest, "utf8")).name : undefined) ?? fs.realpathSync(root);
+  fs.writeFileSync(path.join(dir, `${spec.name}.effect.vibe`), effectAdapter(spec.name, spec.file, model.ts, namespace));
   fs.writeFileSync(path.join(dir, `${spec.name}.run.qnt`), model.harness);
   writeConformance(root, model);
   models.set(spec.name, model);
@@ -85,20 +89,20 @@ export function typecheckAll(memory: Memory, specs: Spec[]): Map<string, Promise
   }));
 }
 
-
 /**
  * LemmaScript verifies one file at a time and does not carry definitions across
  * imports, so every unit is proved as a bundle: what it imports, then itself.
  * An imported module comes with its names prefixed by the module's name and
  * without its own obligations, which are proved once, in its own unit; that
  * keeps the cost of a proof proportional to the module, not to everything
- * beneath it. A law an imported module proved is offered to the unit's proof
- * file as a lemma; nothing else of it is.
+ * beneath it. What an imported module's own unit proved (each clause of its
+ * `_ensures` lemmas) is offered to the unit's proof file as a lemma; nothing
+ * else of it is.
  *
  * A unit may have a proof file: spec/<name>.proof.dfy for a spec,
  * src/<path>.proof.dfy for src/<path>.ts.
  */
-export async function proofUnits(root: string, models: Model[], srcFiles: SrcFile[] = readSrc(root)): Promise<Unit[]> {
+export function proofUnits(root: string, models: Model[], srcFiles: SrcFile[] = readSrc(root)): Unit[] {
   const byName = new Map(models.map((m) => [m.name, m]));
   const withoutImports = (text: string) => {
     const file = ts.createSourceFile("unit.ts", text, ts.ScriptTarget.Latest, true);
@@ -113,17 +117,24 @@ export async function proofUnits(root: string, models: Model[], srcFiles: SrcFil
     for (const dep of m.imports) if (!seen.includes(dep)) { needs(byName.get(dep)!, seen); seen.push(dep); }
     return seen;
   };
-  const asDependency = (name: string, docs = true) => withoutObligations(withoutImports(byName.get(name)!.render(`${name}_`, docs)).kept);
-  /** The laws of modules placed beside a unit, as the unit spells them. */
-  const lawsOf = (names: string[], spelled: (dep: string) => string) =>
-    names.flatMap((dep) => byName.get(dep)!.laws.map((l) => ({ fn: `${spelled(dep)}${l.name}`, law: l.name, from: `${dep}.ts` })));
+  const asDependency = (name: string, docs: boolean) => withoutObligations(withoutImports(byName.get(name)!.render(`${name}_`, docs)).kept);
+  /** A module after what it needs, in its own names; `docs` keeps the doc comments, which the cache key leaves out. */
+  const bundle = (m: Model, docs: boolean) => [...needs(m).map((n) => asDependency(n, docs)), withoutImports(m.render("", docs)).kept];
+  /** The definitions whose `_ensures` lemma a module's own unit proves (gen/typescript.ts). */
+  const proving = (m: Model) => [...m.laws.map((l) => l.name), ...(m.stateType ? [...m.transitions.map((t) => t.name), "step", "initialHolds"] : [])];
+  /** Modules placed beside a unit, each with the prefix the unit spells it with: their text with their obligations, and those lemmas. */
+  const imported = (beside: [string, string][]): Unit["imports"] => ({
+    text: beside.map(([n, prefix]) => withoutImports(byName.get(n)!.render(prefix, false)).kept).join("\n"),
+    lemmas: beside.flatMap(([n, prefix]) => proving(byName.get(n)!).map((def) => ({ fn: `${prefix}${def}`, def, from: `${n}.ts` }))),
+  });
+  const prefixed = (names: string[]) => names.map((n): [string, string] => [n, `${n}_`]);
   const units: Unit[] = models.map((m) => ({
     unit: `${m.name}.ts`,
-    text: [...needs(m).map((n) => asDependency(n)), withoutImports(m.render("")).kept].join("\n"),
-    meaning: [...needs(m).map((n) => asDependency(n, false)), withoutImports(m.render("", false)).kept].join("\n"),
+    text: bundle(m, true).join("\n"),
+    meaning: bundle(m, false).join("\n"),
     src: false,
     proofFile: m.source.replace(/\.md$/, ".proof.dfy"),
-    laws: lawsOf(needs(m), (dep) => `${dep}_`),
+    imports: imported(prefixed(needs(m))),
     rests: [], // proved against the definitions of what it imports, never against their obligations
     transitions: m.stateType ? m.transitions.map((t) => ({ name: t.name, params: t.params.map((p) => p.name) })) : undefined,
   }));
@@ -146,7 +157,7 @@ export async function proofUnits(root: string, models: Model[], srcFiles: SrcFil
     if (new Set(deps).size > 1) throw new Error(`src/${f}: verified code may import one generated module; put what it needs from the others into that module's spec`);
     // The module it imports sits beside it under its own names, as the code refers to them.
     const d = deps[0];
-    const beside = (docs: boolean) => d ? [...needs(byName.get(d)!).map((n) => asDependency(n, docs)), withoutObligations(withoutImports(byName.get(d)!.render("", docs)).kept)] : [];
+    const beside = (docs: boolean) => d ? bundle(byName.get(d)!, docs).map(withoutObligations) : [];
     units.push({
       requires: used.filter((k) => k === "requires").length,
       unit: `src-${f.replaceAll("/", "-")}`,
@@ -155,7 +166,7 @@ export async function proofUnits(root: string, models: Model[], srcFiles: SrcFil
       meaning: [...beside(false), `// ---- src/${f} ----`, kept].join("\n"),
       src: true,
       proofFile: `src/${f.replace(/\.ts$/, ".proof.dfy")}`,
-      laws: d ? [...lawsOf(needs(byName.get(d)!), (dep) => `${dep}_`), ...lawsOf([d], () => "")] : [],
+      imports: imported(d ? [...prefixed(needs(byName.get(d)!)), [d, ""]] : []),
       rests: d ? [...needs(byName.get(d)!), d].map((m) => `${m}.ts`) : [],
     });
   }
@@ -214,10 +225,3 @@ export const proofFiles = (root: string) => ["spec", "src"].flatMap((dir) => fil
 
 /** Proof files that belong to no unit: a typo, or a source file that is no longer proved. */
 export const strayProofFiles = (root: string, units: Unit[]) => proofFiles(root).filter((f) => !units.some((u) => u.proofFile === f));
-
-/**
- * Obligations that hold in simulation but that Dafny cannot prove on its own,
- * accepted by a person: per unit, the list, and a fingerprint of the unit's
- * text and proof file when they were accepted. A list accepted for another
- * text no longer counts.
- */

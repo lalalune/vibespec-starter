@@ -24,7 +24,7 @@ export function bin(cmd: string, root: string): string {
       dir = path.dirname(dir);
     }
   }
-  throw new Error(`${cmd} is not installed; run npm install`);
+  throw new Error(`${cmd} is not installed; run pnpm install`);
 }
 
 /** How many programs run at once; the others wait for one to end. */
@@ -34,7 +34,7 @@ const waiting: (() => void)[] = [];
 
 /**
  * Run a program to the end, once fewer than SLOTS are running, and return what it wrote. One that cannot be started
- * is an error; one that writes too much or runs too long is stopped, and `stopped` says so.
+ * is an error; one that writes too much, runs too long or is killed by a signal is stopped, and `stopped` says so.
  */
 export async function exec(exe: string, args: string[], cwd: string, env?: NodeJS.ProcessEnv): Promise<{ status: number; stdout: string; stderr: string; stopped?: string }> {
   if (busy < SLOTS) busy++;
@@ -43,11 +43,13 @@ export async function exec(exe: string, args: string[], cwd: string, env?: NodeJ
   const shell = WINDOWS && !/\.exe$/i.test(exe);
   const quote = (a: string) => (shell && (a === "" || /[\s"&|<>^%()!,;=]/.test(a)) ? `"${a.replace(/"/g, '""')}"` : a);
   const name = path.basename(exe).replace(/\.cmd$/, "");
+  const started = Date.now();
   try {
     return await new Promise((resolve, reject) => execFile(quote(exe), args.map(quote), { cwd, env, encoding: "utf8", maxBuffer: OUTPUT_LIMIT, timeout: TOOL_TIMEOUT, shell }, (e, stdout, stderr) => {
       const code = (e as NodeJS.ErrnoException | null)?.code as unknown;
       const stopped = code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" ? `${name} wrote more than ${OUTPUT_LIMIT / 2 ** 20} MB of output and was stopped`
         : e?.killed ? `${name} ran for more than ${TOOL_TIMEOUT / 60_000} minutes and was stopped`
+        : e?.signal ? `${name} was killed by ${e.signal} after ${Math.round((Date.now() - started) / 1000)} s`
         : undefined;
       if (typeof code === "string" && !stopped) reject(e);
       else resolve({ status: e ? (typeof code === "number" ? code : -1) : 0, stdout, stderr, stopped });
@@ -66,7 +68,7 @@ export const NEEDS_DAFNY = "the proof stage needs Dafny 4.11 on the PATH";
 export async function run(cmd: string, args: string[], cwd: string): Promise<{ ok: boolean; out: string }> {
   const exe = cmd === "dafny" ? cmd : bin(cmd, cwd);
   const r = await exec(exe, args, cwd).catch((e: Error) => {
-    throw new Error(`${cmd} could not be run (${exe}): ${e.message}${cmd === "dafny" ? `; ${NEEDS_DAFNY}` : "; run npm install"}`);
+    throw new Error(`${cmd} could not be run (${exe}): ${e.message}${cmd === "dafny" ? `; ${NEEDS_DAFNY}` : "; run pnpm install"}`);
   });
   return { ok: r.status === 0 && !r.stopped, out: `${r.stdout}${r.stderr}${r.stopped ? `\n${r.stopped}\n` : ""}` };
 }

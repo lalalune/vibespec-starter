@@ -8,18 +8,18 @@ lemma VersionBridge(s: Server)
 { }
 
 lemma OnceBridge(s: Server)
-  ensures alwaysNoRequestIsAnsweredTwice(s) == Std.Collections.Seq.All(s.log, (a: Answered) => (|ProofLib.Filter((b: Answered) => ((b.client == a.client) && (b.seq_ == a.seq_)), s.log)| == 1))
+  ensures alwaysNoRequestIsAnsweredTwice(s) == !(exists a :: a in s.log && !(|ProofLib.Filter((b: Answered) => ((b.client == a.client) && (b.seq_ == a.seq_)), s.log)| == 1))
 { }
 
 lemma IdsBridge(s: Server)
-  ensures alwaysIdsAreUnique(s) == Std.Collections.Seq.All(s.todos, (t: todo_Todo) => (|ProofLib.Filter((u: todo_Todo) => (u.id == t.id), s.todos)| == 1))
+  ensures alwaysIdsAreUnique(s) == !(exists t :: t in s.todos && !(|ProofLib.Filter((u: todo_Todo) => (u.id == t.id), s.todos)| == 1))
 { }
 
 // A log entry for a request the log does not hold keeps every request answered once.
 lemma OnceAppend(log: seq<Answered>, x: Answered)
-  requires Std.Collections.Seq.All(log, (a: Answered) => (|ProofLib.Filter((b: Answered) => ((b.client == a.client) && (b.seq_ == a.seq_)), log)| == 1))
+  requires !(exists a :: a in log && !(|ProofLib.Filter((b: Answered) => ((b.client == a.client) && (b.seq_ == a.seq_)), log)| == 1))
   requires forall h :: h in log ==> !((h.client == x.client) && (h.seq_ == x.seq_))
-  ensures Std.Collections.Seq.All(log + [x], (a: Answered) => (|ProofLib.Filter((b: Answered) => ((b.client == a.client) && (b.seq_ == a.seq_)), log + [x])| == 1))
+  ensures !(exists a :: a in log + [x] && !(|ProofLib.Filter((b: Answered) => ((b.client == a.client) && (b.seq_ == a.seq_)), log + [x])| == 1))
 {
   var log2 := log + [x];
   forall i | 0 <= i < |log2|
@@ -45,9 +45,9 @@ lemma OnceAppend(log: seq<Answered>, x: Answered)
 
 // A to-do with an id the list does not hold keeps ids unique.
 lemma IdsAppend(todos: seq<todo_Todo>, x: todo_Todo)
-  requires Std.Collections.Seq.All(todos, (t: todo_Todo) => (|ProofLib.Filter((u: todo_Todo) => (u.id == t.id), todos)| == 1))
+  requires !(exists t :: t in todos && !(|ProofLib.Filter((u: todo_Todo) => (u.id == t.id), todos)| == 1))
   requires forall t :: t in todos ==> t.id != x.id
-  ensures Std.Collections.Seq.All(todos + [x], (t: todo_Todo) => (|ProofLib.Filter((u: todo_Todo) => (u.id == t.id), todos + [x])| == 1))
+  ensures !(exists t :: t in todos + [x] && !(|ProofLib.Filter((u: todo_Todo) => (u.id == t.id), todos + [x])| == 1))
 {
   var all := todos + [x];
   forall i | 0 <= i < |all|
@@ -71,17 +71,18 @@ lemma IdsAppend(todos: seq<todo_Todo>, x: todo_Todo)
   }
 }
 
-// An edit other than a creation keeps every id where it was.
+// An edit other than a creation keeps every id where it was, and every removed to-do removed.
 lemma IdsEdit(todos: seq<todo_Todo>, op: todo_Op)
   requires op.kind != "create"
-  requires Std.Collections.Seq.All(todos, (t: todo_Todo) => (|ProofLib.Filter((u: todo_Todo) => (u.id == t.id), todos)| == 1))
+  requires !(exists t :: t in todos && !(|ProofLib.Filter((u: todo_Todo) => (u.id == t.id), todos)| == 1))
   ensures |todo_applyOp(todos, op)| == |todos|
   ensures forall i :: 0 <= i < |todos| ==> todo_applyOp(todos, op)[i].id == todos[i].id
-  ensures Std.Collections.Seq.All(todo_applyOp(todos, op), (t: todo_Todo) => (|ProofLib.Filter((u: todo_Todo) => (u.id == t.id), todo_applyOp(todos, op))| == 1))
+  ensures forall i :: 0 <= i < |todos| ==> todos[i].deleted ==> todo_applyOp(todos, op)[i].deleted
+  ensures !(exists t :: t in todo_applyOp(todos, op) && !(|ProofLib.Filter((u: todo_Todo) => (u.id == t.id), todo_applyOp(todos, op))| == 1))
 {
   var after := todo_applyOp(todos, op);
   assert |after| == |todos|;
-  forall i | 0 <= i < |todos| ensures after[i].id == todos[i].id { }
+  forall i | 0 <= i < |todos| ensures after[i].id == todos[i].id && (todos[i].deleted ==> after[i].deleted) { }
   forall i | 0 <= i < |after|
     ensures |ProofLib.Filter((u: todo_Todo) => (u.id == after[i].id), after)| == 1
   {
@@ -113,12 +114,12 @@ lemma CommitKeeps(s: Server, client: string, seq_: int, op: todo_Op)
     var t := todo_Todo(op.id, op.title, false, false);
     IdsAppend(s.todos, t);
     assert after.todos == s.todos + [t];
-    forall i | 0 <= i < |s.todos| ensures exists u :: u in after.todos && u.id == s.todos[i].id {
+    forall i | 0 <= i < |s.todos| ensures exists u :: u in after.todos && u.id == s.todos[i].id && (u.deleted || !s.todos[i].deleted) {
       assert after.todos[i] in after.todos;
     }
   } else {
     IdsEdit(s.todos, op);
-    forall i | 0 <= i < |s.todos| ensures exists u :: u in after.todos && u.id == s.todos[i].id {
+    forall i | 0 <= i < |s.todos| ensures exists u :: u in after.todos && u.id == s.todos[i].id && (u.deleted || !s.todos[i].deleted) {
       assert after.todos[i] in after.todos;
     }
   }
@@ -198,7 +199,7 @@ lemma RefuseKeeps(s: Server, client: string, seq_: int, op: todo_Op)
   OnceBridge(after);
   OnceAppend(s.log, x);
   assert after.todos == s.todos;
-  forall i | 0 <= i < |s.todos| ensures exists u :: u in after.todos && u.id == s.todos[i].id {
+  forall i | 0 <= i < |s.todos| ensures exists u :: u in after.todos && u.id == s.todos[i].id && (u.deleted || !s.todos[i].deleted) {
     assert after.todos[i] in after.todos;
   }
 }

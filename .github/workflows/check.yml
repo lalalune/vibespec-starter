@@ -3,30 +3,71 @@ name: check
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - "vibestack/examples/**"
   pull_request:
-    paths-ignore:
-      - "vibestack/examples/**"
 
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      # Dafny's action installs Node 16 for itself, so the project Node version must come after it.
       - uses: dafny-lang/setup-dafny-action@v1
         with:
           dafny-version: "4.11.0"
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v7
         with:
           node-version: 26
-          cache: npm
-      - run: npm ci --workspaces=false
-      - run: npm run check
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Quint's evaluator, which it would otherwise download on every run. `.spec-cache/` is never restored: CI
+      # checks from scratch.
+      - uses: actions/cache@v4
+        with:
+          path: ~/.quint
+          key: quint-${{ hashFiles('pnpm-lock.yaml') }}
+      - run: pnpm check
+      - run: pnpm -r --if-present typecheck
+      - run: pnpm --filter @repo/ui --filter @repo/design-system --filter @repo/storybook test
+      - run: pnpm --filter fullstack-todo exec playwright install --with-deps chromium
+      - run: pnpm --filter fullstack-todo gen
+      - run: pnpm --filter fullstack-todo test
       - if: always()
         uses: actions/upload-artifact@v7
         with:
           name: proof
           path: gen/proof/
           if-no-files-found: ignore
+
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v4
+        id: changed
+        with:
+          filters: |
+            tools:
+              - "vibestack/**"
+              - "packages/**"
+              - "pnpm-*.yaml"
+              - "package*.json"
+      - if: steps.changed.outputs.tools == 'true'
+        uses: dafny-lang/setup-dafny-action@v1
+        with:
+          dafny-version: "4.11.0"
+      - if: steps.changed.outputs.tools == 'true'
+        uses: pnpm/action-setup@v4
+      - if: steps.changed.outputs.tools == 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: pnpm
+      - if: steps.changed.outputs.tools == 'true'
+        run: pnpm install --frozen-lockfile
+      - if: steps.changed.outputs.tools == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.quint
+          key: quint-${{ hashFiles('pnpm-lock.yaml') }}
+      - if: steps.changed.outputs.tools == 'true'
+        run: pnpm selftest

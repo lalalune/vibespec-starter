@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=24"
+    "node": ">=26"
   },
   "scripts": {
     "dev": "node vibestack/spec.ts studio",
@@ -11,14 +11,15 @@
     "gen": "node vibestack/spec.ts gen",
     "accept": "node vibestack/spec.ts accept",
     "new": "node vibestack/spec.ts new",
-    "demo": "npm run demo --workspace order-example",
+    "start": "vibelang --noEmit false && node build/src/main.js",
+    "test": "vitest run",
+    "demo": "pnpm --filter order-example demo",
     "selftest": "node --test vibestack/selftest.ts",
-    "build": "node vibestack/spec.ts gen vibestack/studio && node -e \"fs.rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json && node -e \"fs.chmodSync('dist/spec.js', 0o755); fs.mkdirSync('dist/proof', { recursive: true }); fs.copyFileSync('vibestack/proof/lib.dfy', 'dist/proof/lib.dfy'); fs.cpSync('vibestack/studio/src/public', 'dist/studio/src/public', { recursive: true }); fs.cpSync('vibestack/std', 'dist/std', { recursive: true }); fs.copyFileSync('vibestack/conformance.ts', 'dist/conformance.ts')\"",
-    "prepare": "npm run build && node vibestack/spec.ts gen --if-valid",
-    "check:dashboard": "npm run check --workspace dashboard-model"
+    "build": "pnpm --filter @repo/design-system build && pnpm --filter vibestack-studio exec vite build && node vibestack/spec.ts gen vibestack/studio && node -e \"fs.rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json && node -e \"fs.chmodSync('dist/spec.js', 0o755); fs.mkdirSync('dist/proof', { recursive: true }); fs.copyFileSync('vibestack/proof/lib.dfy', 'dist/proof/lib.dfy'); fs.cpSync('vibestack/studio/src/public', 'dist/studio/src/public', { recursive: true }); fs.cpSync('vibestack/std', 'dist/std', { recursive: true }); fs.copyFileSync('vibestack/conformance.ts', 'dist/conformance.ts')\"",
+    "prepare": "pnpm build && node vibestack/spec.ts gen --if-valid"
   },
   "version": "0.1.0",
-  "description": "Stories, rules and a Quint model in one Markdown file; verified TypeScript out.",
+  "description": "Stories, rules and Quint in a Markdown spec tree; verified TypeScript out.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -43,19 +44,23 @@
     ".claude/skills",
     "README.md",
     "AGENTS.md",
-    "CONTRIBUTING.md",
     "LICENSE"
   ],
   "dependencies": {
     "@informalsystems/quint": "^0.33.1",
-    "lemmascript": "^0.6.8",
+    "lemmascript": "0.6.8",
     "typescript": "^6.0.3"
   },
   "devDependencies": {
-    "@types/node": "^24.0.0"
+    "@types/node": "^26.6.6",
+    "@effect/platform-node": "4.1.1",
+    "@effect/vitest": "4.1.1",
+    "effect": "4.1.1",
+    "vibelang": "0.0.12",
+    "vibelang-runtime": "0.0.12",
+    "vibelang-vite": "0.0.12",
+    "vite": "8.3.5",
+    "vitest": "5.1.0"
   },
-  "workspaces": [
-    "vibestack/examples/*",
-    "vibestack/studio"
-  ]
+  "packageManager": "pnpm@10.24.0"
 }

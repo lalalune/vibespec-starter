@@ -18,16 +18,13 @@ request with the same number can be told apart from a retry.
 ```quint
 import todo.* from "./todo"
 
-type Answered = { client: str, seq: int, op: { kind: str, id: str, title: str, done: bool }, ok: bool }
+type Answered = { client: str, seq: int, op: Op, ok: bool }
 type Server = {
-  todos: List[{ id: str, title: str, done: bool, deleted: bool }],
+  todos: List[Todo],
   version: int,
   log: List[Answered],
 }
 ```
-
-The inline to-do and edit records have the same fields and types as `Todo`
-and `Op`, so the server shares their data shape with the client and system.
 
 ### A new server has an empty list at version 0
 
@@ -50,7 +47,7 @@ pure val seqValues = Set(1, 2, 3)
 > to-dos with one request each, so that the browser never has to send the
 > whole list.
 
-### A request is answered only once
+### The log tells which requests were answered, and with which edit each was accepted
 
 A request the log already holds is not applied again. It is a retry only if
 it carries the edit the log records for its client and number: the shell
@@ -134,7 +131,7 @@ pure def stepEachRequestRaisesTheVersionByAtMostOne(before: Server, after: Serve
     and (after.version == before.version or after.version == before.version + 1)
 ```
 
-### Two clients can both change the list, and a request can be refused
+### Two clients can both change the list, and a request can be refused after a change
 
 ```quint
 pure def sometimesTwoClientsChangedIt(s: Server): bool =
@@ -156,12 +153,16 @@ pure def alwaysIdsAreUnique(s: Server): bool =
   s.todos.every(t => s.todos.select(u => u.id == t.id).length() == 1)
 ```
 
-### A to-do is never taken out of the list; removing it leaves a tombstone
+### A to-do is never taken out of the list, and a removed one stays removed
 
 ```quint
 pure def stepNoToDoIsForgotten(before: Server, after: Server): bool =
-  before.todos.every(t => after.todos.some(u => u.id == t.id))
+  before.todos.every(t => after.todos.some(u => u.id == t.id and (u.deleted or not(t.deleted))))
+```
 
+### A to-do can be removed, leaving a tombstone
+
+```quint
 pure def sometimesATombstone(s: Server): bool = s.todos.some(t => t.deleted)
 ```
 
@@ -171,7 +172,7 @@ pure def sometimesATombstone(s: Server): bool = s.todos.some(t => t.deleted)
 > want the server's state invariants stated as laws, so that my proofs can
 > use them rather than prove them again.
 
-### Applying or refusing a new request keeps every rule of the server
+### Applying or refusing a new request keeps the server's state invariants
 
 For these laws, the server's rules are its three state invariants: the version
 counts accepted edits, requests are logged once, and to-do ids are unique.
