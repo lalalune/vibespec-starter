@@ -9,9 +9,10 @@
 // name is spelled. The rest is in gen/: types.ts (everything decided by a type),
 // print.ts (expressions), classify.ts (which definition is a transition, a guard
 // or a rule), typescript.ts and harness.ts (the two outputs).
-import { classify, type Law, type Param, type StepRule, type Transition } from "./gen/classify.ts";
+import { classify, type Law, type Opaque, type Param, type Roles, type StepRule, type Transition } from "./gen/classify.ts";
 import { harness, type Eval, type Fairness } from "./gen/harness.ts";
 import { BUILTIN, printer } from "./gen/print.ts";
+import { checkSecrets } from "./gen/secrecy.ts";
 import { typescript } from "./gen/typescript.ts";
 import { fail, typeOfIn, typeWalks, type Json } from "./gen/types.ts";
 import type { ComparisonShape } from "./conformance.ts";
@@ -24,9 +25,10 @@ export interface Model {
   /**
    * The module as the prover reads it, under a prefix for proof bundles; `docs = false` omits spec comments for cache
    * keys. It differs from `ts`, which Node runs, only where `ts` checks at run time what the proof takes as given
-   * (Scope.proof in gen/print.ts).
+   * (Scope.proof in gen/print.ts). `bound` names opaque functions a src/ file defines: the module calls those, and
+   * the laws stated with them are obligations (units.ts, proofUnits).
    */
-  render: (prefix: string, docs?: boolean) => string;
+  render: (prefix: string, docs?: boolean, bound?: string[]) => string;
   stateType: Json | undefined; // undefined for a library: definitions and laws, no state machine
   transitions: Transition[];
   always: string[];
@@ -36,6 +38,8 @@ export interface Model {
   laws: Law[];
   /** Events the spec declares fair (`fair_<event>`), each "weak" or "strong". */
   fair: Map<string, Fairness>;
+  /** Functions the spec declares without a body, and the laws assumed of each. */
+  opaques: Opaque[];
   /** The type of who sends events (the transitions' `by`), if they say. */
   sender: Json | undefined;
   /** What transitions with output return, `{ state, out }`, and the type of `out`. */
@@ -77,12 +81,12 @@ export const LIST_HELPERS: Record<string, { init: string; step: (acc: string, bo
 
 /** Names a spec may not bind: the generated code, the harness or the proof library (ProofLib) use them, or TypeScript reserves them. */
 const TAKEN = new Set(`
-  init step probe inv enabled parseEvent parseState parseSender initialHolds Event current event raw state prev moved last outcome emitted lawsHold Out Nothing ProofLib
+  init step probe settle settled opaque inv enabled parseEvent parseState parseSender initialHolds Event current event raw state prev moved last outcome emitted lawsHold Out Nothing ProofLib
   Number Math Object Array JSON Record Set Map String Boolean Symbol Error undefined NaN Infinity globalThis
   break case catch class const continue debugger default delete do else enum export extends false finally for function
   if import in instanceof new null return super switch this throw true try typeof var void while with yield let static await
 `.split(/\s+/).filter(Boolean));
-const GENERATED = /^(eval|quotient|remainder|exact|equal|lookup\d+|std|set|Out)_|^x\d+$|__\d+$/;
+const GENERATED = /^(eval|quotient|remainder|exact|equal|lookup\d+|std|set|Out|opaque|table|else)_|^x\d+$|__\d+$/;
 
 export function generate(ir: Json, name: string, source: string, origin: (def: string) => Origin | undefined, deps: Map<string, Model>): Model {
   const decls: Json[] = (ir.modules.find((m: Json) => m.name === name) ?? fail(`module ${name} not found`)).declarations;
@@ -92,6 +96,7 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
   // brings any spec in, a state machine included, under the names O::pay, O::Order and so on.
   const links = decls.filter((d) => d.kind === "import").map((d) => {
     const dep = deps.get(d.protoName) ?? fail(`import of ${d.protoName}: there is no spec/${d.protoName}.md`);
+    if (dep.opaques.length) fail(`import of ${d.protoName}: it declares opaque functions (${dep.opaques.map((o) => o.name).join(", ")}), which only its own spec can simulate; move them into the spec that imports it`);
     if (d.qualifiedName) return { module: dep.name, exports: dep.exports, alias: d.qualifiedName as string };
     if (d.defName !== "*") fail(`import ${d.protoName}: write \`import ${d.protoName}.* from "./${d.protoName}"\` or \`import ${d.protoName} as X from "./${d.protoName}"\``);
     if (dep.stateType) fail(`import of ${d.protoName}: a spec with a state of its own is imported under a name, as in \`import ${d.protoName} as X from "./${d.protoName}"\``);
@@ -113,7 +118,7 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
   for (const d of decls) if (d.kind === "def" && BUILTIN.test(d.name) && origin(d.name))
     fail(`${d.name} is reserved for generated collection operations`);
   const defs = decls.filter((d) => d.kind === "def" && !localVariants.includes(d.name) && !BUILTIN.test(d.name));
-  for (const d of [...decls.filter((d) => !["def", "typedef", "import"].includes(d.kind)), ...defs.filter((d) => d.qualifier !== "puredef" && d.qualifier !== "pureval")])
+  for (const d of [...decls.filter((d) => !["def", "typedef", "import", "const"].includes(d.kind)), ...defs.filter((d) => d.qualifier !== "puredef" && d.qualifier !== "pureval")])
     fail(`${d.name ?? d.kind}: only types, imports, \`pure val\` and \`pure def\` belong in a spec (state and actions are generated)`);
   const inferred = (id: number): Json | undefined => ir.types[id]?.type;
   const typeOf = typeOfIn(inferred);
@@ -125,7 +130,10 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
   // put off for ever (AGENTS.md, "What goes in the Quint blocks"); like sample sets, they never reach TypeScript.
   const settings = defs.filter((d) => d.qualifier === "pureval" && /^(weight|fair)_/.test(d.name));
   const code = defs.filter((d) => !isSampleSet(d) && !settings.includes(d));
-  const localNames = new Set(code.map((d) => d.name as string));
+  // `const f: (A, B) => R` is an opaque function: no body, only the laws stated with it (AGENTS.md, "Opaque functions").
+  const consts = decls.filter((d) => d.kind === "const");
+  for (const d of consts) if (d.typeAnnotation.kind !== "oper" || !d.typeAnnotation.args.length) fail(`${d.name}: a \`const\` is an opaque function, written \`const ${d.name}: (A, B) => R\` on one line`);
+  const localNames = new Set([...code, ...consts].map((d) => d.name as string));
   const beneath = (m: string): string[] => [m, ...deps.get(m)!.imports.flatMap(beneath)];
   const prefixes = [...new Set(imports.flatMap(beneath))];
   /** A name the spec binds (a type, definition, parameter or local `val`) must survive translation unchanged. */
@@ -177,10 +185,20 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
   // A rule must be a definition: as a `pure val` it would be generated as a constant and never checked.
   for (const v of vals) if (/^(always|sometimes|step|leadsTo|law|can)[A-Z]/.test(v.name) && typeOf(v.id).kind === "bool") fail(`${v.name}: a rule or guard is a \`pure def\` with parameters (AGENTS.md, "What goes in the Quint blocks"), not a \`pure val\`; if it is a constant, name it otherwise`);
   const initial = vals.find((d) => d.name === "initial");
-  const roles = classify(funs, initial && typeOf(initial.id), sig, types);
+  const where = (d: string) => `${d} (${source}${origin(d) ? `:${origin(d)!.line}` : ""})`;
+  const declared = classify(funs, initial && typeOf(initial.id), sig, types);
+  // The laws in an opaque function's rule are what is assumed of it; every other law is proved. Its table has a row
+  // for each argument tried, so it takes only simple values (AGENTS.md, "Opaque functions").
+  const opaques: Opaque[] = consts.map((d) => ({
+    name: bind(d.name), result: d.typeAnnotation.res,
+    params: d.typeAnnotation.args.map((type: Json, i: number) => (types.isScalar(type) ? { name: `p${i}`, type } : fail(`${where(d.name)}: an opaque function takes only int, bool, str or a plain variant, since the simulator tries a result for each argument`))),
+    laws: declared.laws.filter((l) => origin(l.name)?.rule === origin(d.name)?.rule),
+  }));
+  const roles: Roles = { ...declared, laws: declared.laws.filter((l) => !opaques.some((o) => o.laws.includes(l))), opaques };
+  checkSecrets({ funs, vals, sig, inferred, where, variants }, declared, types);
   const setting = (kind: string, ok: (e: Json) => boolean, want: string) => new Map(settings.filter((d) => d.name.startsWith(`${kind}_`)).map((d) => {
     const event = d.name.slice(kind.length + 1);
-    const at = `${d.name} (${source}${origin(d.name) ? `:${origin(d.name)!.line}` : ""})`;
+    const at = where(d.name);
     if (!roles.transitions.some((t) => t.name === event)) fail(`${at}: there is no transition named ${event}; name it \`${kind}_<transition>\``);
     return [event, ok(d.expr) ? d.expr.value : fail(`${at}: write ${want}`)];
   }));
@@ -202,14 +220,17 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
     ...typeOnly.map((m) => `import { ${[...new Set(typedefs.filter((d) => d.module === m).map((d) => d.base as string))].map((b) => `type ${b} as ${m}_${b}`).join(", ")} } from "./${m}.ts";`),
   ];
   /** The module's TypeScript with its own top-level names under a prefix, and the helper functions it turned out to need. */
-  const render = (prefix: string, docs = true, proof = true): { text: string; helpers: string[] } => {
+  const render = (prefix: string, docs = true, proof = true, bound: string[] = []): { text: string; helpers: string[] } => {
     const local = (n: string) => prefix + n;
     const helper = (which: string) => local(`${which}_${name}`);
     // A definition from another module is spelled <module>_<name>, however it was imported.
     const ref = (n: string) => (localNames.has(n) ? local(n) : cameFrom.has(n) ? `${cameFrom.get(n)}_${n.split("::").pop()}` : n);
     const scoped = typeWalks(typedefs, name, prefix);
     const print = printer({ types: scoped, inferred, ref, helper, bind, variants, definitions: new Set([...localNames, ...cameFrom.keys()]), sampleSets, proof });
-    const text = typescript({ header, typedefs: [...localTypedefs].sort(bySpecOrder), vals, funs, sig, typeOf, doc: docs ? doc : () => "", local }, roles, scoped, print, helper);
+    const text = typescript({ header, typedefs: [...localTypedefs].sort(bySpecOrder), vals, funs, sig, typeOf, doc: docs ? doc : () => "", local, source }, {
+      ...roles, opaques: roles.opaques.filter((o) => !bound.includes(o.name)),
+      laws: [...roles.laws, ...roles.opaques.filter((o) => bound.includes(o.name)).flatMap((o) => o.laws)],
+    }, scoped, print, helper);
     return { text, helpers: [...[...print.helpers].map(helper), ...print.lookups.map((_, i) => helper(`lookup${i}`))] };
   };
   const own = render("", true, false);
@@ -217,7 +238,7 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
   const run = harness(name, source, [...imports, ...typeOnly], funs, sig, samples, roles, types, { weights, fair });
   return {
     name, source, imports, ...roles, fair, evals: run.evals, uncompared: run.uncompared, harness: run.text,
-    ts: own.text, render: (prefix, docs) => render(prefix, docs).text, decode: types.decode, canon: types.canon,
+    ts: own.text, render: (prefix, docs, bound) => render(prefix, docs, true, bound).text, decode: types.decode, canon: types.canon,
     shape: roles.stateType ? types.comparison(roles.stateType) : undefined,
     outputShape: roles.output ? types.comparison(roles.output.out) : undefined,
     exports: { types: localTypedefs.map((d) => d.name as string), values: [...localNames, ...own.helpers], variants: localVariants, typedefs: localTypedefs, visible: typedefs, samples: ownSamples },

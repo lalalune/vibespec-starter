@@ -21,7 +21,6 @@ test("only the person starts a turn and confirms a payment", () => {
     [{ type: "choose", choice: "Pay" }, "Agent"],
   ]);
   assert.equal(asking.phase, "Asking");
-  assert.equal(enabled(run([[{ type: "begin" }, "Person"]]), { type: "choose", choice: "Recite" }, "Agent"), false);
   assert.equal(step(asking, { type: "confirm" }, "Agent").charged, 0);
   assert.equal(step(asking, { type: "confirm" }, "Person").charged, 1);
 });

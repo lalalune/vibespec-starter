@@ -4,6 +4,7 @@ import type * as TS from "typescript";
 import ts from "typescript";
 import { generate, type Model, type Origin } from "./gen.ts";
 import { writeConformance } from "./conform.ts";
+import { simulated } from "./gen/harness.ts";
 import { fail } from "./gen/types.ts";
 import { run, type Unit } from "./prove.ts";
 import { originalColumn, readSpecs, type Spec } from "./parse.ts";
@@ -53,6 +54,7 @@ export function generated(root: string, spec: Spec, ir: any, models: Map<string,
   fs.writeFileSync(path.join(dir, `${spec.name}.ts`), model.ts);
   fs.writeFileSync(path.join(dir, `${spec.name}.run.qnt`), model.harness);
   writeConformance(root, model);
+  if (model.opaques.length) fs.writeFileSync(path.join(dir, `${spec.name}.sim.qnt`), simulated(spec.qnt, model.opaques));
   models.set(spec.name, model);
   return model;
 }
@@ -126,7 +128,9 @@ export async function proofUnits(root: string, models: Model[], srcFiles: SrcFil
     const kept = imports.reduceRight((rest, d) => rest.slice(0, d.getFullStart()) + rest.slice(d.getEnd()), text);
     return { kept, from: imports.map((d) => (d.moduleSpecifier as TS.StringLiteral).text) };
   };
-  const withoutObligations = (text: string) => text.replace(/^\s*\/\/@ ensures .*\n/gm, "");
+  /** The text without its obligations, but for those of the functions named in `keep`. */
+  const withoutObligations = (text: string, keep: string[] = []) =>
+    text.replace(/^(export function (\w+).*\n)?\s*\/\/@ ensures .*\n/gm, (all, head, fn) => (keep.includes(fn) ? all : head ?? ""));
   /** The modules a module needs beside it, dependencies first. */
   const needs = (m: Model, seen: string[] = []): string[] => {
     for (const dep of m.imports) if (!seen.includes(dep)) { needs(byName.get(dep)!, seen); seen.push(dep); }
@@ -136,6 +140,11 @@ export async function proofUnits(root: string, models: Model[], srcFiles: SrcFil
   /** The laws of modules placed beside a unit, as the unit spells them. */
   const lawsOf = (names: string[], spelled: (dep: string) => string) =>
     names.flatMap((dep) => byName.get(dep)!.laws.map((l) => ({ fn: `${spelled(dep)}${l.name}`, law: l.name, from: `${dep}.ts` })));
+  /** What a unit takes on trust from its module's opaque functions: their types, and the laws stated with them. */
+  const assumptions = (m: Model | undefined, bound: string[] = []) => {
+    const trusted = m?.opaques.filter((o) => !bound.includes(o.name)) ?? [];
+    return { externs: trusted.map((o) => o.name), assumed: trusted.flatMap((o) => o.laws.map((l) => l.name)) };
+  };
   const units: Unit[] = models.map((m) => ({
     unit: `${m.name}.ts`,
     text: [...needs(m).map((n) => asDependency(n)), withoutImports(m.render("")).kept].join("\n"),
@@ -144,6 +153,7 @@ export async function proofUnits(root: string, models: Model[], srcFiles: SrcFil
     proofFile: m.source.replace(/\.md$/, ".proof.dfy"),
     laws: lawsOf(needs(m), (dep) => `${dep}_`),
     rests: [], // proved against the definitions of what it imports, never against their obligations
+    ...assumptions(m),
     transitions: m.stateType ? m.transitions.map((t) => ({ name: t.name, params: t.params.map((p) => p.name) })) : undefined,
   }));
 
@@ -165,7 +175,12 @@ export async function proofUnits(root: string, models: Model[], srcFiles: SrcFil
     if (new Set(deps).size > 1) throw new Error(`src/${f}: verified code may import one generated module; put what it needs from the others into that module's spec`);
     // The module it imports sits beside it under its own names, as the code refers to them.
     const d = deps[0];
-    const beside = (docs: boolean) => d ? [...needs(byName.get(d)!).map((n) => asDependency(n, docs)), withoutObligations(withoutImports(byName.get(d)!.render("", docs)).kept)] : [];
+    const m = d ? byName.get(d)! : undefined;
+    // An opaque function of that module which the file defines is bound to it (AGENTS.md, "Opaque functions"): in the
+    // bundle the module calls the file's function, and the laws stated with it are proved instead of assumed.
+    const bound = m?.opaques.filter((o) => new RegExp(`^(export\\s+)?function\\s+${o.name}\\b`, "m").test(kept)) ?? [];
+    const names = bound.map((o) => o.name);
+    const beside = (docs: boolean) => m ? [...needs(m).map((n) => asDependency(n, docs)), withoutObligations(withoutImports(m.render("", docs, names)).kept, bound.flatMap((o) => o.laws.map((l) => l.name)))] : [];
     units.push({
       requires: used.filter((k) => k === "requires").length,
       unit: `src-${f.replaceAll(path.sep, "-")}`,
@@ -176,6 +191,7 @@ export async function proofUnits(root: string, models: Model[], srcFiles: SrcFil
       proofFile: `src/${f.replace(/\.ts$/, ".proof.dfy")}`,
       laws: d ? [...lawsOf(needs(byName.get(d)!), (dep) => `${dep}_`), ...lawsOf([d], () => "")] : [],
       rests: d ? [...needs(byName.get(d)!), d].map((m) => `${m}.ts`) : [],
+      ...assumptions(m, names),
     });
   }
   const twice = units.find((u, i) => units.findIndex((v) => v.unit === u.unit) !== i);

@@ -5,6 +5,8 @@ export interface Param { name: string; type: Json }
 /** `guardParams`: the transition's parameters its guard takes, by name, after the state; `emits` if it returns `{ state, out }`. */
 export interface Transition { name: string; params: Param[]; guard: string | undefined; guardParams: string[]; emits: boolean }
 export interface Law { name: string; params: Param[] }
+/** A function declared without a body (`const f: (A) => R`); its parameters are named p0, p1, … */
+export interface Opaque { name: string; params: Param[]; result: Json; laws: Law[] }
 /** A `step` rule; `via` if it also takes the name of the transition between the two states, `out` if what it output. */
 export interface StepRule { name: string; via: boolean; out: boolean }
 export interface Roles {
@@ -17,6 +19,7 @@ export interface Roles {
   /** `leadsTo` rules: from every reachable state, every fair run reaches a state the rule relates it to. */
   leadsTo: string[];
   laws: Law[];
+  opaques: Opaque[];
   /** The type of the transitions' `by` parameter: who sent the event, which the program supplies and no event carries. */
   sender: Json | undefined;
   /** What a transition with output returns, the record `{ state, out }`, and the type of `out`, a list of effects. */
@@ -100,5 +103,5 @@ export function classify(funs: Json[], stateType: Json | undefined, sig: (d: Jso
     if (!transitions.some((t) => t.guard === g.name)) fail(`${g.name}: no transition named ${g.name[3].toLowerCase()}${g.name.slice(4)}`);
   const senders = transitions.flatMap((t) => t.params.filter((p) => p.name === SENDER));
   if (senders.some((p) => shape(p.type) !== shape(senders[0].type))) fail(`\`${SENDER}\` names who sent an event, so every transition that takes it takes the same type`);
-  return { stateType, transitions, always, sometimes, steps, leadsTo, laws, sender: senders[0]?.type, output };
+  return { stateType, transitions, always, sometimes, steps, leadsTo, laws, opaques: [], sender: senders[0]?.type, output };
 }
