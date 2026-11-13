@@ -116,8 +116,8 @@ from the directory where you run the command. With the packaged CLI, use
 its specs, source, tests and review ledger throughout. See [Examples](#examples)
 for the bundled project paths.
 
-For a terminal workflow, `npx spec watch` reruns checks when a spec, source
-file or test changes.
+For a terminal workflow, `node vibespec/spec.ts watch` reruns checks when a
+spec, source file or test changes.
 
 ## Build your project
 
@@ -158,8 +158,8 @@ every example workspace. To check just your project, or a project in another
 directory, use the CLI directly:
 
 ```bash
-npx spec check .
-npx spec check ../my-project
+node vibespec/spec.ts check .
+node vibespec/spec.ts check ../my-project
 ```
 
 Each report ends with a `next:` line. The agent follows it until only your
@@ -256,23 +256,27 @@ Before committing your application's starting point:
 | `npx spec studio <project-path>` | Opens another project with the packaged CLI |
 | `npm run check` | Checks the root project, then all example workspaces; ends each project with a `next:` line |
 | `npm run check --workspaces --if-present` | Checks all bundled example workspaces |
-| `npx spec check <directory>` | Checks only the selected project |
-| `npx spec check <directory> --json` | The selected project's check as one JSON object ([shape](AGENTS.md#changing-the-tools)) |
+| `node vibespec/spec.ts check <directory>` | Checks only the selected project |
+| `node vibespec/spec.ts check <directory> --json` | The selected project's check as one JSON object ([shape](AGENTS.md#changing-the-tools)) |
 | `npm run gen` | Generates `gen/` only |
-| `npx spec gen <directory>` | Generates the selected project's `gen/` only |
-| `npx spec watch <directory>` | Rechecks the selected project when its spec, source or tests change |
+| `node vibespec/spec.ts gen <directory>` | Generates the selected project's `gen/` only |
+| `node vibespec/spec.ts watch <directory>` | Rechecks the selected project when its spec, source or tests change |
 | `npm run accept` | The user's sign-off: checks afresh and records what `review` lists, [all or nothing](AGENTS.md#review) |
-| `npx spec accept <directory>` | Signs off on the selected project's reviewed changes |
+| `node vibespec/spec.ts accept <directory>` | Signs off on the selected project's reviewed changes |
 | `npm run accept -- unproved` | Records the listed obligations as simulated only. The user's decision |
 | `npm run new` / `npm run new -- <path>` | Fills an empty root index or creates a child [starter spec](AGENTS.md#writing-a-spec) |
-| `npx spec migrate <directory>` | Consolidates that project's old review ledgers into `spec/lock.json`, preserving their recorded approvals |
+| `node vibespec/spec.ts migrate <directory>` | Consolidates that project's old review ledgers into `spec/lock.json`, preserving their recorded approvals |
 | `npm run demo` | Runs the order example's scripted checkout session |
 | `npm run check:dashboard` | `check` on `vibespec/examples/dashboard` |
 | `npm run selftest` | Breaks the pipeline one way at a time and checks each break is caught |
 | `npm run build` | Compiles the tools into `dist/`, the packaged `spec` command |
-| `npx spec init <directory>` | Sets up an existing project folder; see [Using it from another package](AGENTS.md#using-it-from-another-package) |
+| `node vibespec/spec.ts init <directory>` | Sets up an existing project folder; see [Using it from another package](AGENTS.md#using-it-from-another-package) |
 
-For the direct `spec` commands, omit `<directory>` to use the current project.
+Run the `node vibespec/spec.ts` commands from this repository's root. When
+Vibespec is installed as a package in another project, use `npx spec` with
+the same command and arguments instead.
+
+Omit `<directory>` to use the current project.
 Pass a project folder, not an individual Markdown file; `init` creates its
 `spec/` directory when needed.
 Relative paths, absolute paths and quoted paths containing spaces are supported.
@@ -349,8 +353,8 @@ project; the examples with executable applications also have their own
 run commands below. Check or generate one example by passing its path:
 
 ```bash
-npx spec check vibespec/examples/order
-npx spec gen vibespec/examples/order
+node vibespec/spec.ts check vibespec/examples/order
+node vibespec/spec.ts gen vibespec/examples/order
 ```
 
 Replace the path to work on any other project. Output and caches stay in the
@@ -552,7 +556,7 @@ Run the application from the repository root, then open
 [localhost:3000](http://localhost:3000) in two browser windows:
 
 ```bash
-npx spec gen vibespec/examples/fullstack
+node vibespec/spec.ts gen vibespec/examples/fullstack
 npm start --workspace fullstack-todo
 ```
 
