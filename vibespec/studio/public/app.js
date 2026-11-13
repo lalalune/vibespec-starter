@@ -390,7 +390,7 @@ function renderRail() {
   };
   rail.replaceChildren(
     h("select", { class: "project", "aria-label": "Project", onchange: (e) => { location.search = `?project=${encodeURIComponent(e.target.value)}`; } },
-      S.projects.map((p) => h("option", { value: p.id, selected: p.id === S.project }, p.id === "." ? p.name : `${p.name} (example)`))),
+      S.projects.map((p) => h("option", { value: p.id, selected: p.id === S.project }, p.name))),
     h("ul", { class: "specs" }, S.specs.map((spec) => {
       const review = Object.keys(S.snap?.specs.find((s) => s.file === spec.file)?.review ?? {}).length;
       const status = isDirty(spec) ? ["dirty", "unpublished changes"] : fails.has(spec.file) ? ["bad", "failing checks"] : review ? ["review", `${review} to review`] : ["", ""];

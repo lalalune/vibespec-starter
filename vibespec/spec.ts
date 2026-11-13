@@ -585,7 +585,7 @@ const isMain = (): boolean => {
   }
 };
 
-const USAGE = "usage: spec check [<directory>] [--json] | watch [<directory>] | gen [<directory>] [--if-valid] | accept [<directory>] [unproved] | new [<path>] | init [<directory>] | migrate [<directory>] | studio [<example|directory>] [--port <n>]";
+const USAGE = "usage: spec check [<directory>] [--json] | watch [<directory>] | gen [<directory>] [--if-valid] | accept [<directory>] [unproved] | new [<path>] | init [<directory>] | migrate [<directory>] | studio [<directory>] [--port <n>]";
 
 /**
  * Check, then check again whenever spec/, src/, test/ or tsconfig.json changes. One process stays warm between runs
