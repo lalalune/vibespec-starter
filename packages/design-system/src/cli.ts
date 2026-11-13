@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { type Tokens, applyChanges, check, parseTokens, syncDoc, themeCss, tokensCss } from "./index.ts"
 
 const at = (file: string) => new URL(`../${file}`, import.meta.url)
@@ -16,7 +16,10 @@ const [command, file, flag] = process.argv.slice(2)
 try {
   if (command === "build") build(load())
   else if (command === "check") {
-    const issues = check(load(), read("design.md"))
+    const tokens = load()
+    const issues = check(tokens, read("design.md"))
+    for (const [file, expected] of [["generated/tokens.css", tokensCss(tokens)], ["generated/theme.css", themeCss(tokens)]])
+      if (!existsSync(at(file!)) || read(file!) !== expected) issues.push(`${file}: missing or stale; run design-tokens build`)
     if (issues.length) throw new Error(issues.join("\n"))
   } else if (command === "apply" && file) {
     const { tokens, diff } = applyChanges(load(), JSON.parse(readFileSync(file, "utf8")))

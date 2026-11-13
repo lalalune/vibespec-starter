@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "stories": "node ../../cli.ts gen",
+    "stories": "node ../../../../packages/storybook/src/cli.ts gen",
     "storybook": "storybook dev --no-open",
     "build-storybook": "storybook build",
     "test": "vitest run"

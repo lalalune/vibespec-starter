@@ -2,6 +2,7 @@ packages:
   - apps/*
   - packages/*
   - vibespec/studio
+  - vibespec/examples/*
 
 # One version of each shared dependency; a package writes "catalog:".
 # VibeLang 0.0.12 accepts Effect 4.1.1 only, so Effect and its packages are

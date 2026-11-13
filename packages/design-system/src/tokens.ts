@@ -25,7 +25,7 @@ export const Tokens = Schema.Struct({
 export type Tokens = typeof Tokens.Type
 
 /** The only way a proposed change enters: a token's dotted path, its new value and why. */
-export const TokenChange = Schema.Struct({ path: Schema.String, value: Schema.String, reason: Schema.String })
+export const TokenChange = Schema.Struct({ path: Schema.String, value: Schema.String, reason: Schema.NonEmptyString })
 export type TokenChange = typeof TokenChange.Type
 
 const strict = { onExcessProperty: "error", errors: "all" } as const

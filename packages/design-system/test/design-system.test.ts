@@ -33,6 +33,7 @@ test("apply accepts a valid change and rejects an unknown path, an invalid color
   expect(() => applyChanges(tokens, [{ ...primary, value: "#4f46e5" }])).toThrow(/oklch/)
   expect(() => applyChanges(tokens, [{ ...primary, value: "oklch(0.9 0.05 277)" }])).toThrow(/color\.light\.primary-foreground on primary: contrast .* is below 4\.5/)
   expect(() => applyChanges(tokens, [{ path: primary.path, value: primary.value }])).toThrow(/reason/)
+  expect(() => applyChanges(tokens, [{ ...primary, reason: "" }])).toThrow(/reason/)
 })
 
 test("check passes on the committed tokens and design.md, and detects a stale design.md", () => {

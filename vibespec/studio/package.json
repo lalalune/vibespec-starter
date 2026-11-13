@@ -10,5 +10,15 @@
     "gen": "node ../spec.ts gen",
     "accept": "node ../spec.ts accept",
     "test": "node --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@repo/ui": "workspace:*",
+    "@repo/storybook": "workspace:*",
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:"
   }
 }

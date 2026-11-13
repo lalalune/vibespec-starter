@@ -10,8 +10,18 @@
     "verbatimModuleSyntax": true,
     "resolveJsonModule": true,
     "jsx": "react-jsx",
-    "lib": ["es2023", "dom", "dom.iterable"],
-    "skipLibCheck": true
+    "lib": [
+      "es2023",
+      "dom",
+      "dom.iterable"
+    ],
+    "skipLibCheck": true,
+    "types": [
+      "node"
+    ]
   },
-  "include": ["src", "test/*.ts"]
+  "include": [
+    "src",
+    "test/*.ts"
+  ]
 }

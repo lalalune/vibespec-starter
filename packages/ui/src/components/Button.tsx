@@ -30,10 +30,24 @@ export type ButtonProps = ComponentProps<"button"> &
   };
 
 /** An action a person can take. */
-export function Button({ variant, size, loading = false, asChild = false, type = "button", disabled, className, children, ...props }: ButtonProps) {
+export function Button({ variant, size, loading = false, asChild = false, type = "button", disabled, className, children, onClick, onClickCapture, ...props }: ButtonProps) {
   const Comp = asChild ? Slot : "button";
+  const unavailable = disabled || loading;
   return (
-    <Comp type={asChild ? undefined : type} disabled={disabled || loading} aria-busy={loading || undefined} className={cn(buttonVariants({ variant, size }), className)} {...props}>
+    <Comp
+      {...props}
+      type={asChild ? undefined : type}
+      disabled={unavailable}
+      aria-disabled={unavailable || undefined}
+      aria-busy={loading || undefined}
+      tabIndex={asChild && unavailable ? -1 : props.tabIndex}
+      className={cn(buttonVariants({ variant, size }), className)}
+      onClickCapture={(event) => {
+        if (unavailable) { event.preventDefault(); event.stopPropagation(); }
+        else onClickCapture?.(event);
+      }}
+      onClick={onClick}
+    >
       {loading && <Spinner size="sm" aria-hidden />}
       <Slottable>{children}</Slottable>
     </Comp>
