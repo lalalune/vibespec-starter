@@ -15,7 +15,7 @@
     "selftest": "node --test vibestack/selftest.ts",
     "build": "turbo run build //#build:tool",
     "prepare": "pnpm build:tool && node vibestack/spec.ts gen --if-valid",
-    "build:tool": "node vibestack/spec.ts gen vibestack/studio && node -e \"fs.rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json && node -e \"fs.chmodSync('dist/spec.js', 0o755); fs.mkdirSync('dist/proof', { recursive: true }); fs.copyFileSync('vibestack/proof/lib.dfy', 'dist/proof/lib.dfy'); fs.cpSync('vibestack/studio/src/public', 'dist/studio/src/public', { recursive: true }); fs.cpSync('vibestack/std', 'dist/std', { recursive: true }); fs.copyFileSync('vibestack/conformance.ts', 'dist/conformance.ts')\"",
+    "build:tool": "node vibestack/spec.ts gen vibestack/studio && pnpm --filter vibestack-studio build && node -e \"fs.rmSync('dist', { recursive: true, force: true })\" && vibelang -p tsconfig.build.json && node -e \"fs.chmodSync('dist/spec.js', 0o755); fs.mkdirSync('dist/proof', { recursive: true }); fs.copyFileSync('vibestack/proof/lib.dfy', 'dist/proof/lib.dfy'); fs.cpSync('vibestack/studio/dist/page', 'dist/studio/dist/page', { recursive: true }); fs.cpSync('vibestack/std', 'dist/std', { recursive: true }); fs.copyFileSync('vibestack/conformance.ts', 'dist/conformance.ts')\"",
     "test": "turbo run test //#test:tool",
     "test:affected": "turbo run test //#test:tool --affected",
     "test:browser": "turbo run test:browser",
@@ -60,19 +60,20 @@
     "LICENSE"
   ],
   "dependencies": {
+    "@effect/platform-node": "4.1.1",
     "@informalsystems/quint": "^0.33.1",
+    "effect": "4.1.1",
     "lemmascript": "^0.6.8",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "vibelang-runtime": "0.0.12"
   },
   "devDependencies": {
-    "@effect/platform-node": "4.1.1",
     "@effect/vitest": "4.1.1",
     "@eslint-react/eslint-plugin": "catalog:",
     "@eslint/js": "catalog:",
     "@types/node": "catalog:",
     "@vitest/browser": "catalog:",
     "@vitest/browser-playwright": "catalog:",
-    "effect": "4.1.1",
     "eslint": "catalog:",
     "eslint-plugin-better-tailwindcss": "catalog:",
     "eslint-plugin-boundaries": "catalog:",
@@ -87,7 +88,6 @@
     "turbo": "catalog:",
     "typescript-eslint": "catalog:",
     "vibelang": "0.0.12",
-    "vibelang-runtime": "0.0.12",
     "vibelang-vite": "0.0.12",
     "vite": "8.3.5",
     "vitest": "5.1.0"

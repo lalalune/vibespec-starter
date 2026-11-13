@@ -31,7 +31,9 @@ export default {
       "ignoreDependencies": [
         "@informalsystems/quint",
         "lemmascript",
-        "@vitest/browser"
+        "@vitest/browser",
+        "@effect/platform-node",
+        "vibelang-runtime"
       ]
     },
     "packages/ui": {
@@ -56,14 +58,16 @@ export default {
     },
     "vibestack/studio": {
       "entry": [
-        "src/server.ts",
-        "src/page.ts",
-        "test/*.test.ts",
-        "src/components.ts"
+        "src/project.ts",
+        "src/doc.ts"
       ],
       "project": [
-        "src/**/*.ts",
-        "test/**/*.ts"
+        "src/**/*.{ts,tsx}"
+      ],
+      "ignoreDependencies": [
+        "@effect/vitest",
+        "playwright",
+        "tailwindcss"
       ]
     },
     "apps/*": {

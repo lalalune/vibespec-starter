@@ -9,6 +9,30 @@
     "check": "node ../spec.ts check",
     "gen": "node ../spec.ts gen",
     "accept": "node ../spec.ts accept",
-    "test": "node --test test/*.test.ts"
+    "test": "vitest run",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "@effect/platform-node": "4.1.1",
+    "effect": "4.1.1",
+    "vibelang-runtime": "0.0.12"
+  },
+  "devDependencies": {
+    "@effect/vitest": "4.1.1",
+    "@repo/design-system": "workspace:*",
+    "@repo/ui": "workspace:*",
+    "@tailwindcss/vite": "catalog:",
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
+    "playwright": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "tailwindcss": "catalog:",
+    "vibelang": "0.0.12",
+    "vibelang-vite": "0.0.12",
+    "vite": "catalog:",
+    "vitest": "catalog:"
   }
 }

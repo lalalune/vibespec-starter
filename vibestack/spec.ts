@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // The spec pipeline and command line. Parsing, review, generation, simulation and proof each have one implementation.
+import { spawn } from "node:child_process";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Model } from "./gen.ts";
@@ -715,11 +717,12 @@ if (isMain()) {
     } else if (command === "watch" && takes([])) {
       await watch(root);
     } else if (command === "studio" && takes([], ["*"], ["--port", "*"], ["*", "--port", "*"])) {
-      // The studio imports this module; defer loading it until the command module has finished evaluating.
-      import("./studio/src/server.ts").then(({ serve }) => serve(root, args)).catch((e: Error) => {
-        console.error(e.message);
-        process.exitCode = 1;
-      });
+      // Studio is VibeLang: built, its entry is JavaScript; from source, Node loads it through VibeLang's loader.
+      const built = import.meta.filename.endsWith(".js");
+      const entry = path.join(import.meta.dirname, "studio/src", built ? "main.js" : "main.vibe");
+      const loader = built ? [] : ["--import", pathToFileURL(createRequire(path.join(import.meta.dirname, "studio/package.json")).resolve("vibelang/register")).href];
+      const child = spawn(process.execPath, [...loader, entry, ...args], { cwd: root, stdio: "inherit" });
+      child.on("exit", (code, signal) => { process.exitCode = code ?? (signal ? 1 : 0); });
     } else if (command === "migrate" && takes([])) {
       const release = lockProject(root);
       try {
