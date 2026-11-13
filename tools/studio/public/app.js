@@ -615,7 +615,7 @@ function takeTheirs(file) {
 
 // --- the build panel ------------------------------------------------------------------------------------
 
-const STAGES = ["model", "always", "sometimes", "replay", "types", "proof", "tests", "review"];
+const STAGES = ["model", "always", "sometimes", "replay", "types", "proof", "tests", "traces", "review"];
 
 function renderBuild() {
   const build = document.getElementById("build");

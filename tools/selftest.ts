@@ -104,7 +104,7 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.equal(trace?.ok, false, first.text);
     assert.match(trace!.detail, /seed \d+; to simulate again: npx quint run gen\/order\.run\.qnt .* --seed \d+/);
     assert.equal(again.said("always", /./)?.detail, trace!.detail, "the same harness gives the same trace");
-    assert.ok(first.said("skipped", /^types, proof and tests: /), first.text);
+    assert.ok(first.said("skipped", /^types, proof, tests and traces: /), first.text);
     assert.match(first.next, /^always \(spec\/order\.md\) is the first ✗/);
   });
 

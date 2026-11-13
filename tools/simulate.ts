@@ -172,7 +172,7 @@ export function firstBreak(domain: any, model: Model, trace: Step[], cite: (def:
  * What differs between two values, as `path = value` for each part that changed. Records and maps are compared
  * entry by entry; a variant whose tag changed, a list or a scalar is shown whole.
  */
-const changes = (a: any, b: any, at = ""): string[] =>
+export const changes = (a: any, b: any, at = ""): string[] =>
   isDeepStrictEqual(a, b) ? []
   : b === undefined ? [`${at} removed`]
   : [a, b].every((x) => x && typeof x === "object" && !Array.isArray(x)) && a.tag === b.tag
