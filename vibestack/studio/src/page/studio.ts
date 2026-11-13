@@ -7,7 +7,7 @@ import { enabled, step, type Event as Edit, type Outline, type Rule, type Story 
 import { bodyOf, nodeId, ruleKey, specOrder, storyKey, textBody, textOf, type Item } from "../markdown.ts";
 import type { Result } from "../../../spec.ts";
 import type { Snapshot } from "../project.ts";
-import type { ComponentIndex } from "./Components.tsx";
+import type { ComponentIndex } from "../catalog.ts";
 
 export type SpecView = Snapshot["specs"][number];
 /** One spec as this page holds it: the outline being edited, and what it was when loaded (`base` is its hash on disk). */

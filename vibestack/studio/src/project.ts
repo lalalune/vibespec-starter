@@ -12,7 +12,7 @@ import { filesUnder, projectRoot, short } from "../../util.ts";
 import type { Session, Verdict } from "../gen/index.ts";
 import { manifestOf, nodesOf, type Ids, type Manifest } from "./doc.ts";
 import { outlineOf, specOrder } from "./markdown.ts";
-import type { ComponentIndex } from "./page/Components.tsx";
+import type { ComponentIndex } from "./catalog.ts";
 
 const EXT = path.extname(import.meta.filename);
 /** The tools: vibestack/ from source, dist/ when built. */
