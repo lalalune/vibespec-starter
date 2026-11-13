@@ -13,7 +13,7 @@ import { migrateLocks, pendingSpecs, readLedger, writeLedger } from "./review.ts
 import { danglingCitations } from "./util.ts";
 import { nodesOf } from "./studio/doc.ts";
 import { startStudio } from "./studio/server.ts";
-import { acceptContracts, acceptReviews, check, checkVerifiedSource, expandListHelpers, gen, init, parseSpec, pending, pendingContracts, readSpecs, replay, show, type Result } from "./spec.ts";
+import { acceptContracts, acceptReviews, badSpecName, check, checkVerifiedSource, expandListHelpers, gen, init, parseSpec, pending, pendingContracts, readSpecs, replay, show, type Result } from "./spec.ts";
 
 const project = path.join(import.meta.dirname, "..");
 const read = (file: string): string => {
@@ -110,6 +110,22 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     const { failed, text } = await run(root);
     assert.deepEqual(failed, ["review"], text);
     assert.match(fs.readFileSync(path.join(root, "gen/proof/door.log"), "utf8"), /Dafny auditor completed/);
+  });
+
+  test("a local variant keeps its Quint type without requiring names for other local values", async () => {
+    const root = oneRule("decision", "A local decision agrees with its condition", [
+      "type Decision = Accept | Reject",
+      "pure def isAccepted(kind: Decision): bool = kind == Accept",
+      "pure def lawLocalDecision(flag: bool): bool =",
+      "  val kind = if (flag) Accept else Reject",
+      "  isAccepted(kind) == flag",
+    ].join("\n"));
+    const { failed, text, said } = await run(root);
+    assert.deepEqual(failed, ["review"], text);
+    assert.ok(said("proof", /^decision\.ts: all 1 obligations proved/), text);
+    const record = oneRule("recordLocal", "A local record keeps its value", "pure def value(n: int): int =\n  val box = { value: n }\n  box.value");
+    await gen(record, parseSpec(record, "spec/recordLocal.md"));
+    assert.equal((await import(path.join(record, "gen/recordLocal.ts"))).value(7), 7);
   });
 
   test("a missing guard is found by simulation, as a trace that the same seed gives again, and the later stages say they were skipped", async () => {
@@ -705,6 +721,17 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.deepEqual(failed, ["tests"], text);
     assert.ok(said("tests", /^1 citations[\s\S]*test\/journeys\/checkout\.test\.ts:4 {2}spec\/order\.md, "Refunds are instant"$/), text);
     assert.ok(said("tests", /^pass\n$/), text);
+  });
+
+  test("the application is checked against its spec through a driver: a shell that skips a guard or loses an event is caught and shrunk, and a driver that uses the spec's code is refused", async () => {
+    const skipsGuard = await run(copyOfProject("src/app.ts", (s) => s.replace(/ {4}if \(!enabled\(order, event\)\) throw new Rejected\([^\n]*\n/, "")));
+    assert.deepEqual(skipsGuard.failed, ["tests"], skipsGuard.text);
+    assert.ok(skipsGuard.said("tests", /conformance to spec\/order\.md[\s\S]*the spec refuses it, the application accepted it/), skipsGuard.text);
+    const dedupes = await run(copyOfProject("src/app.ts", (s) => s.replace("[...(this.logs.get(id) ?? []), event]", "[...new Map([...(this.logs.get(id) ?? []), event].map((e) => [JSON.stringify(e), e])).values()]")));
+    assert.ok(dedupes.said("tests", /conformance to spec\/order\.md[\s\S]*shrunk to 2 events/), dedupes.text);
+    const peeks = await run(copyOfProject("test/app.test.ts", (s) => s.replace('from "../src/app.ts";', 'from "../src/app.ts";\nimport { enabled } from "../gen/order.ts";')));
+    assert.ok(peeks.said("tests", /^1 conformance tests import the spec's code[\s\S]*import \{ enabled \} from "\.\.\/gen\/order\.ts"/), peeks.text);
+    assert.match(badSpecName("conformance") ?? "", /gen\/conformance\.ts/);
   });
 
   test("nothing stale survives in gen/", async () => {

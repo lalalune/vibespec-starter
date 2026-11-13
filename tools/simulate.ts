@@ -5,6 +5,8 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import type { Model } from "./gen.ts";
+import type { Found } from "./conformance.ts";
+import type { Spec } from "./parse.ts";
 import { SENDER } from "./gen/classify.ts";
 import { run } from "./prove.ts";
 import { digest } from "./util.ts";
@@ -189,3 +191,44 @@ export const showTrace = (trace: Step[]) =>
     const result = (law || evaluated) && !event ? String(lawsHold) : i ? changes(shown[i - 1].state, state).join(", ") || "no change" : JSON.stringify(state);
     return `      ${what.padEnd(30)} -> ${result}`;
   }).join("\n");
+
+/**
+ * What a conformance check of the real application needs (AGENTS.md, "Conformance"): every event the simulator took
+ * or tried a guard with, and for each `sometimes` rule reached a shortest journey to it, searched breadth first over
+ * those events and never longer than the witness the simulator found.
+ */
+export function conformanceFound(domain: any, model: Model, spec: Spec, traces: Step[][], witnesses: { w: string; trace: Step[] }[]): Found<unknown> {
+  const key = (x: unknown) => JSON.stringify(x);
+  const events = new Map<string, any>();
+  for (const { event, evaluated } of traces.flat()) {
+    if (event) events.set(key(event), event);
+    const t = evaluated && model.transitions.find((t) => t.guard === evaluated.name && t.params.every((p) => p.name in evaluated.picks));
+    const tried = t && { type: t.name, ...Object.fromEntries(t.params.map((p) => [p.name, evaluated!.picks[p.name]])) };
+    if (tried) events.set(key(tried), tried);
+  }
+  const candidates = [...events.values()].sort((a, b) => (key(a) < key(b) ? -1 : 1));
+  const after = (s: unknown, { [SENDER]: by, ...e }: any) => (domain.enabled(s, e, by) ? domain.step(s, e, by) : undefined);
+  const journeys = witnesses.map(({ w, trace }) => {
+    const taken = trace.flatMap((s) => (s.event ? [s.event] : []));
+    let best: any[] | undefined = domain[w](domain.initial) ? [] : undefined;
+    let frontier = [{ s: domain.initial, path: [] as any[] }];
+    const visited = new Set([key(model.canon(model.stateType, domain.initial))]);
+    let budget = 50_000;
+    search: for (let depth = 0; !best && depth < taken.length && frontier.length; depth++) {
+      const next: typeof frontier = [];
+      for (const { s, path } of frontier) for (const e of candidates) {
+        const t = after(s, e);
+        if (t === undefined || visited.has(key(model.canon(model.stateType, t)))) continue;
+        visited.add(key(model.canon(model.stateType, t)));
+        if (domain[w](t)) { best = [...path, e]; break search; }
+        if (--budget < 0) break search;
+        next.push({ s: t, path: [...path, e] });
+      }
+      frontier = next;
+    }
+    const rule = spec.rules.find((r) => r.defs.includes(w))!;
+    const story = spec.stories.findLast((t) => t.line < rule.line)?.title ?? "";
+    return { story, rule: rule.key.slice(story.length + 3), events: best ?? taken };
+  });
+  return { spec: spec.name, events: candidates, journeys, sets: model.sets };
+}

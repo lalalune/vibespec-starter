@@ -331,7 +331,8 @@ pure def alwaysEveryMessageBelongsToANumberedEdit(sys: System): bool =
 ### A forger can get an edit applied in a tab's name
 
 ```quint
-pure def sometimesAForgedEditWasApplied(sys: System): bool = sys.forged >= 1 and sys.server.version >= 1
+pure def sometimesAForgedEditWasApplied(sys: System): bool =
+  sys.forged >= 1 and sys.server.log.some(h => h.ok and not(numbered(sys, h.client, h.seq)))
 ```
 
 ### The count of forged requests is never negative

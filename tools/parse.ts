@@ -26,6 +26,7 @@ const meaningSources = new WeakMap<Spec, string>();
 /** Why a name cannot name a spec, or undefined if it can. */
 export function badSpecName(name: string): string | undefined {
   if (!/^[a-z][A-Za-z0-9]*$/.test(name)) return `a spec's file name becomes a module name, so it must look like \`order.md\` or \`orderBook.md\``;
+  if (name === "conformance") return "`conformance` cannot name a spec: gen/conformance.ts runs every spec's conformance check";
 }
 
 /** The path supplies a unique module name; an index names the directory that owns it. */

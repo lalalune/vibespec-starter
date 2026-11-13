@@ -36,6 +36,8 @@ export interface Model {
   decode: (type: Json, itf: any) => any;
   /** The same value with every set in a fixed order, so that two sets compare equal however they were built. */
   canon: (type: Json, value: any) => any;
+  /** Where the state holds sets (types.ts, `sets`); empty for a library. */
+  sets: string[][];
   /** What importers may refer to: `typedefs` are owned here; `visible` includes imported types. */
   exports: { types: string[]; values: string[]; variants: string[]; typedefs: Json[]; visible: Json[] };
   ts: string;
@@ -179,7 +181,7 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
   const run = harness(name, source, [...imports, ...typeOnly], funs, sig, samples, roles, types);
   return {
     name, source, imports, ...roles, evals: run.evals, uncompared: run.uncompared, harness: run.text,
-    ts: own.text, render: (prefix, docs) => render(prefix, docs).text, decode: types.decode, canon: types.canon,
+    ts: own.text, render: (prefix, docs) => render(prefix, docs).text, decode: types.decode, canon: types.canon, sets: roles.stateType ? types.sets(roles.stateType) : [],
     exports: { types: localTypedefs.map((d) => d.name as string), values: [...localNames, ...own.helpers], variants: localVariants, typedefs: localTypedefs, visible: typedefs },
   };
 }

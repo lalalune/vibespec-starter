@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { conformance } from "../gen/index.conformance.ts";
 import { OrderBook, Rejected } from "../src/app.ts";
 
 /** A book whose order A1 has been sent `events`, in order. */
@@ -9,6 +10,18 @@ function book(...events: object[]): OrderBook {
   return b;
 }
 const submitted = (qty: number) => book({ type: "addItem", qty }, { type: "submit" });
+
+// spec/index.md, "Story: Check out"; spec/index.md, "Story: Put an order on hold"; spec/index.md, "Story: Cancel"
+test("the order book does what spec/index.md says", async () => {
+  let current = new OrderBook();
+  await conformance({
+    reset: () => { current = new OrderBook(); },
+    dispatch: (id, event) => {
+      try { current.dispatch(id, event); return "accepted"; } catch (e) { if (e instanceof Rejected) return "refused"; throw e; }
+    },
+    observe: (id) => current.get(id),
+  });
+});
 
 // spec/index.md, "Story: Check out"
 test("an order is filled, submitted and paid off in instalments", () => {

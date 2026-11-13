@@ -382,7 +382,7 @@ Stages run cheapest first. `✓` passed, `✗` failed, `-` skipped: blocked by a
 | `replay` | Does the generated TypeScript mean what the Quint means? | 400 sampled traces and every witness: every state, every law, and every definition the simulator can evaluate. The rest are listed |
 | `types` | Does the application fit the generated contract? | exact |
 | `proof` | Does every transition preserve every `always` and `step` rule, does every law hold, and does hand-written logic meet its `//@` contract? | all states, all inputs, counted per obligation under a fixed resource limit. What Dafny cannot prove alone is proved in a proof file (`spec/<path>.proof.dfy`: lemmas only, checked to add nothing but proof), or listed; a listed obligation passes only once the user records it in `spec/lock.json` under `unproved`, for that text of the unit |
-| `tests` | Does the shell work with the real services around it? | whole user journeys, where the checks above cannot see ([AGENTS.md](AGENTS.md#tests)) |
+| `tests` | Does the application do what the spec says, with the real services around it? | the generated conformance check through a driver: a shortest journey per `sometimes` rule, then random walks, shrunk on failure ([AGENTS.md](AGENTS.md#conformance)); hand-written journeys for what the spec does not model |
 | `review` | Does every story have rules and every rule Quint? Has every new or changed story, rule and `//@` contract been reconciled? | exact |
 
 ## What lives where
@@ -402,6 +402,7 @@ Keep `spec/`, `src/`, `test/` and `tools/` in git, lock files included.
 | `tools/parse.ts`, `tools/review.ts` | Literate specs and review ledgers |
 | `tools/cache.ts`, `tools/run.ts` | Stage caches and bounded tool execution |
 | `tools/units.ts`, `tools/simulate.ts`, `tools/util.ts` | Generation, proof units, simulation, replay and shell tests |
+| `tools/conformance.ts` | The conformance runtime copied into `gen/`: journeys, walks, shrinking |
 | `tools/prove.ts`, `tools/proof/lib.dfy` | The proof stage for one unit, with the checks on proof files, and the library of general lemmas proof files call |
 | `tools/gen.ts`, `tools/gen/` | Quint → TypeScript and the simulation harness |
 | `tools/selftest.ts`, `tools/fixtures/` | Tests of the pipeline itself, and the small specs they use |
@@ -415,6 +416,7 @@ Keep `spec/`, `src/`, `test/` and `tools/` in git, lock files included.
 | **Derived** (not in git) | |
 | `gen/<name>.ts`, `gen/<name>.qnt` | Generated TypeScript, and the tangled Quint model |
 | `gen/<name>.run.qnt` | The simulation harness that `npx quint run` and `quint verify` take |
+| `gen/<name>.conformance.ts`, `gen/conformance.ts` | What the check found for testing the application against a state machine, and the runner-agnostic check a driver calls ([AGENTS.md](AGENTS.md#conformance)) |
 | `gen/traces/`, `gen/proof/` | The last simulated traces; the final Dafny and logs of each proof unit |
 | `dist/` | The built `spec` command, from `npm run build` |
 
