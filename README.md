@@ -1,6 +1,6 @@
 <div align="center">
 
-# onespec
+# Vibespec (Starter Template)
 
 **Write user stories. Get formally verified TypeScript.**
 
