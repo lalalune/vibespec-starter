@@ -1,4 +1,4 @@
-import type { Event } from "../gen/order.ts";
+import type { Event } from "../gen/index.ts";
 import { OrderBook, Rejected } from "./app.ts";
 
 const book = new OrderBook();

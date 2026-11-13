@@ -9,12 +9,18 @@ import os from "node:os";
 import path from "node:path";
 import { after, describe, test } from "node:test";
 import { LIB_FILE, parseProofFile, readVerdict, splice } from "./prove.ts";
+import { migrateLocks, pendingSpecs, readLedger, writeLedger } from "./review.ts";
+import { danglingCitations } from "./util.ts";
 import { nodesOf } from "./studio/doc.ts";
-import { startStudio } from "./studio/server.ts";
+import { projectsOf, startStudio } from "./studio/server.ts";
 import { acceptContracts, acceptReviews, badSpecName, check, checkVerifiedSource, expandListHelpers, gen, init, parseSpec, pending, pendingContracts, readSpecs, replay, show, type Result } from "./spec.ts";
 
 const project = path.join(import.meta.dirname, "..");
-const read = (file: string) => fs.readFileSync(path.join(project, file), "utf8");
+const read = (file: string): string => {
+  const example = file === "spec/order.md" ? "spec/index.md" : /^(src|test)\//.test(file) || file === "tsconfig.json" ? file : undefined;
+  const text = fs.readFileSync(path.join(project, ...(example ? ["vibespec/examples/order", example] : [file])), "utf8");
+  return example ? text.replaceAll("gen/index.", "gen/order.").replaceAll("spec/index.md", "spec/order.md") : text;
+};
 const F = "`".repeat(3);
 const roots: string[] = [];
 const nodeModules = (function find(dir: string): string {
@@ -49,7 +55,16 @@ const oneRule = (name: string, heading: string, quint: string) => scratch({ [`sp
 // This project's spec and src with whatever awaits sign-off here accepted, checked once
 // so that every copy starts with its cache: an edit then re-runs only what it changes.
 const pristine = scratch({});
-for (const dir of ["spec", "src", "test", "tsconfig.json"]) fs.cpSync(path.join(project, dir), path.join(pristine, dir), { recursive: true });
+fs.mkdirSync(path.join(pristine, "spec"));
+fs.writeFileSync(path.join(pristine, "spec/order.md"), read("spec/order.md"));
+for (const dir of ["src", "test"]) {
+  fs.cpSync(path.join(project, "vibespec/examples/order", dir), path.join(pristine, dir), { recursive: true });
+  for (const file of fs.readdirSync(path.join(pristine, dir))) {
+    const target = path.join(pristine, dir, file);
+    if (file.endsWith(".ts")) fs.writeFileSync(target, read(`${dir}/${file}`));
+  }
+}
+fs.copyFileSync(path.join(project, "vibespec/examples/order/tsconfig.json"), path.join(pristine, "tsconfig.json"));
 fs.symlinkSync(nodeModules, path.join(pristine, "node_modules"), "dir");
 for (const spec of readSpecs(pristine)) acceptReviews(pristine, spec);
 acceptContracts(pristine);
@@ -581,6 +596,15 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.equal(fs.readFileSync(agents, "utf8"), expected);
     assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).scripts.check, "mine");
     assert.ok(["sync", "design"].every((s) => fs.existsSync(path.join(root, `.claude/skills/${s}/SKILL.md`))) && added.includes("tsconfig.json"), added.join());
+    assert.equal(fs.readFileSync(path.join(root, "spec/index.md"), "utf8"), "");
+    for (const name of ["sync", "design"]) {
+      const source = path.join(root, ".claude/skills", name);
+      const link = path.join(root, ".agents/skills", name);
+      assert.ok(fs.lstatSync(link).isSymbolicLink());
+      assert.equal(fs.realpathSync(link), fs.realpathSync(source));
+      fs.appendFileSync(path.join(source, "SKILL.md"), "\nShared edit\n");
+      assert.equal(fs.readFileSync(path.join(link, "SKILL.md"), "utf8"), fs.readFileSync(path.join(source, "SKILL.md"), "utf8"));
+    }
     assert.match(fs.readFileSync(path.join(root, "CLAUDE.md"), "utf8"), /^@AGENTS\.md$/m);
     assert.deepEqual(init(root), []);
     fs.writeFileSync(path.join(root, "CLAUDE.md"), "My existing instructions.\n");
@@ -601,6 +625,101 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
       assert.throws(() => init(root), /repair.*markers/);
       assert.equal(fs.readFileSync(agents, "utf8"), invalid);
     }
+    const existing = scratch({ ".claude/skills/sync/SKILL.md": "my sync\n", ".agents/skills/sync/SKILL.md": "my Codex sync\n" });
+    const broken = path.join(existing, ".agents/skills/design");
+    fs.symlinkSync("missing-design", broken, "dir");
+    init(existing);
+    assert.deepEqual([".claude/skills/sync/SKILL.md", ".agents/skills/sync/SKILL.md"].map((file) => fs.readFileSync(path.join(existing, file), "utf8")), ["my sync\n", "my Codex sync\n"]);
+    assert.equal(fs.readlinkSync(broken), "missing-design");
+    assert.deepEqual(init(existing), []);
+  });
+
+  test("nested specs link to children and reuse a machine through its directory index", async () => {
+    const root = scratch({
+      "spec/index.md": "# Home\n\n[Room](./rooms/)\n[Other lamp](./other/light/index.md)\n",
+      "spec/rooms/index.md": read("vibespec/fixtures/room.md").replace('import lamp as L from "./lamp"', 'import /* from "wrong" */ lamp\n  as L\n  from\n  "./light"'),
+      "spec/rooms/light/index.md": read("vibespec/fixtures/lamp.md"),
+      "spec/rooms/light/index.proof.dfy": "",
+      "spec/other/light/index.md": read("vibespec/fixtures/lamp.md"),
+      "src/app.ts": `// ${"spec/rooms/index.md"}, ${JSON.stringify("Story: Light a room")}\nexport { initial, step } from "../gen/rooms.ts";\n`,
+    });
+    const specs = readSpecs(root);
+    assert.deepEqual(specs.find((s) => s.name === "index")?.links, ["spec/rooms/index.md", "spec/other/light/index.md"]);
+    assert.deepEqual(specs.find((s) => s.name === "rooms")?.imports, ["rooms__light"]);
+    assert.deepEqual(danglingCitations(root, specs), []);
+    const first = await run(root, "reviews");
+    assert.deepEqual(first.failed, [], first.text);
+    assert.ok(first.said("proof", /^rooms\.ts: all \d+ obligations proved/), first.text);
+    const room = await import(path.join(root, "gen/rooms.ts"));
+    const lit = room.step(room.step(room.initial, { type: "toggleLeft" }), { type: "toggleRight" });
+    assert.equal(room.sometimesFullyLit(lit), true);
+    assert.equal(room.inv(lit), true);
+    assert.ok(fs.existsSync(path.join(root, "gen/other__light.ts")));
+    fs.appendFileSync(path.join(root, "spec/rooms/light/index.md"), `\n${F}quint\npure val label = "lamp"\n${F}\n`);
+    const changed = readSpecs(root);
+    assert.ok(pending(root, changed.find((s) => s.name === "rooms")!, changed).some((p) => p.note?.includes("spec/rooms/light/index.md")));
+  });
+
+  test("nested spec paths refuse missing links, escaped targets, duplicate modules, cycles and symlinks", () => {
+    const cases: [Record<string, string>, RegExp][] = [
+      [{ "spec/index.md": "[Missing](./missing/)\n" }, /no spec at this path/],
+      [{ "spec/index.md": "[Outside](../outside.md)\n", "outside.md": "" }, /stay within spec/],
+      [{ "spec/index.md": "[Outside](..%2Foutside.md)\n", "outside.md": "" }, /stay within spec/],
+      [{ "spec/index.md": "", "spec/room.md": "", "spec/room/index.md": "" }, /same module name/],
+      [{ "spec/index.md": "", "spec/a/index.md": `# A\n### Import\n${F}quint\nimport b.* from "../b"\n${F}\n`,
+        "spec/b/index.md": `# B\n### Import\n${F}quint\nimport a.* from "../a"\n${F}\n` }, /circle/],
+    ];
+    for (const [files, error] of cases) assert.throws(() => readSpecs(scratch(files)), error);
+    const root = scratch({ "spec/index.md": "", "outside.md": "" });
+    fs.symlinkSync(path.join(root, "outside.md"), path.join(root, "spec/linked.md"));
+    assert.throws(() => readSpecs(root), /symbolic links/);
+  });
+
+  test("one lock preserves migrated reviews, contracts and proof acceptance and records deleted specs", async () => {
+    const root = fixtures(["door"]);
+    for (const spec of readSpecs(root)) acceptReviews(root, spec);
+    const proof = { door: { text: "previously-reviewed", unproved: ["an obligation"] } };
+    writeLedger(root, proof);
+    const lockPath = path.join(root, "spec/lock.json");
+    const before = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+    before.contracts["src/old.ts"] = "old-contract";
+    fs.writeFileSync(path.join(root, "spec/door.lock.json"), JSON.stringify(before.specs["spec/door.md"]));
+    fs.writeFileSync(path.join(root, "spec/src.lock.json"), JSON.stringify(before.contracts));
+    fs.writeFileSync(path.join(root, "spec/unproved.lock.json"), JSON.stringify(before.unproved));
+    fs.rmSync(lockPath);
+    assert.deepEqual(migrateLocks(root), ["spec/door.lock.json", "spec/src.lock.json", "spec/unproved.lock.json"]);
+    assert.deepEqual(JSON.parse(fs.readFileSync(lockPath, "utf8")), before);
+    assert.deepEqual(readLedger(root), proof);
+    assert.deepEqual(pending(root, readSpecs(root)[0]), []);
+    assert.equal(fs.existsSync(path.join(root, "spec/door.lock.json")), false);
+    fs.rmSync(path.join(root, "spec/door.md"));
+    fs.writeFileSync(path.join(root, "spec/index.md"), "");
+    assert.deepEqual(pendingSpecs(root, readSpecs(root)).map((p) => p.where), ["spec/door.md"]);
+    const removed = await run(root, "reviews");
+    assert.deepEqual(removed.failed, [], removed.text);
+    const after = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+    assert.deepEqual(Object.keys(after.specs), ["spec/index.md"]);
+    assert.deepEqual(pendingSpecs(root, readSpecs(root)), []);
+    assert.deepEqual(after.contracts, {});
+    assert.deepEqual(after.unproved, proof);
+    fs.mkdirSync(path.join(root, "spec/child"));
+    fs.writeFileSync(path.join(root, "spec/child/index.md"), "");
+    fs.writeFileSync(path.join(root, "spec/index.md"), "# Home\n\n[Child](./child/)\n");
+    assert.deepEqual((await run(root, "reviews")).failed, []);
+    fs.writeFileSync(path.join(root, "spec/index.md"), "# Home\n\n[Open child](./child/)\n");
+    const linked = readSpecs(root);
+    assert.ok(pending(root, linked.find((s) => s.name === "index")!, linked).some((p) => p.status === "document changed"));
+    assert.deepEqual((await run(root, "reviews")).failed, []);
+    assert.deepEqual(pending(root, readSpecs(root).find((s) => s.name === "index")!), []);
+  });
+
+  test("malformed unified review records fail before checks can accept them", async () => {
+    const root = scratch({ "spec/index.md": "", "spec/lock.json": JSON.stringify({ version: 1, specs: { "spec/index.md": { invalid: false } }, contracts: {}, unproved: {} }) });
+    const before = fs.readFileSync(path.join(root, "spec/lock.json"), "utf8");
+    const result = await run(root, "reviews");
+    assert.deepEqual(result.failed, ["model"], result.text);
+    assert.match(result.text, /invalid review records/);
+    assert.equal(fs.readFileSync(path.join(root, "spec/lock.json"), "utf8"), before);
   });
 
   test("the package's own test script is what runs, never the check itself, and a test citing a heading the spec does not have is caught", async () => {
@@ -627,6 +746,15 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.ok(dedupes.said("tests", /conformance to spec\/order\.md[\s\S]*shrunk to 2 events/), dedupes.text);
     const peeks = await run(copyOfProject("test/app.test.ts", (s) => s.replace('from "../src/app.ts";', 'from "../src/app.ts";\nimport { enabled } from "../gen/order.ts";')));
     assert.ok(peeks.said("tests", /^1 conformance tests import the spec's code[\s\S]*import \{ enabled \} from "\.\.\/gen\/order\.ts"/), peeks.text);
+    const nested = copyOfProject("src/app.ts", (s) => s.replace(/ {4}if \(!enabled\(order, event\)\) throw new Rejected\([^\n]*\n/, ""));
+    fs.mkdirSync(path.join(nested, "spec/checkout"));
+    fs.renameSync(path.join(nested, "spec/order.md"), path.join(nested, "spec/checkout/index.md"));
+    for (const dir of ["src", "test"]) for (const file of fs.readdirSync(path.join(nested, dir))) {
+      const target = path.join(nested, dir, file);
+      fs.writeFileSync(target, fs.readFileSync(target, "utf8").replaceAll("gen/order.", "gen/checkout.").replaceAll("spec/order.md", "spec/checkout/index.md"));
+    }
+    const nestedResult = await run(nested);
+    assert.ok(nestedResult.said("tests", /conformance to spec\/checkout\/index\.md[\s\S]*the spec refuses it, the application accepted it/), nestedResult.text);
     assert.match(badSpecName("conformance") ?? "", /gen\/conformance\.ts/);
   });
 
@@ -635,67 +763,120 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     fs.mkdirSync(path.join(root, "gen"), { recursive: true });
     fs.writeFileSync(path.join(root, "gen/renamed.ts"), "export const stale = true;\n");
     await check(root);
-    assert.deepEqual(fs.readdirSync(path.join(root, "gen")).filter((f) => f.endsWith(".ts")), ["order.ts"]);
+    assert.deepEqual(fs.readdirSync(path.join(root, "gen")).filter((f) => f.endsWith(".ts")), ["conformance.ts", "order.conformance.ts", "order.ts"]);
   });
 
-  test("the studio publishes a spec with its origins, checks it, refuses remote or concurrent writes, and an agent's sync clears the manifest", async () => {
-    const root = fixtures(["door"]);
+  test("the studio publishes edits with a manifest, refuses stale, remote or misread ones, and an agent's sync clears the manifest", async () => {
+    const root = copyOfProject();
+    const projects = projectsOf(root);
+    const example = projects.find((p) => p.name === "dashboard")!;
+    assert.equal(example.root, path.join(project, "vibespec/examples/dashboard"));
     // A stand-in for an agent's command line, at its boundary: it keeps the prompt it was given and answers as Claude Code does.
     const agent = `let p = ""; process.stdin.on("data", (d) => (p += d)).on("end", () => { require("fs").writeFileSync("prompt.txt", p); console.log(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "synced" }] } })); });`;
-    const studio = await startStudio({ projects: [{ id: ".", name: "Door", root }], port: 0, agents: { fake: { label: "Fake", command: () => [process.execPath, ["-e", agent]] } } });
-    const url = studio.url.replace("localhost", "127.0.0.1");
-    const post = (route: string, body: unknown, headers: Record<string, string> = {}) => fetch(`${url}/api/${route}`, {
-      method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body),
-    });
+    const studio = await startStudio({ projects, port: 0, agents: { fake: { label: "Fake", command: () => [process.execPath, ["-e", agent]] } } });
     try {
+      const get = async () => (await fetch(`${studio.url}/api/project?project=.`)).json();
+      const post = async (what: string, body: object, headers: Record<string, string> = {}) => { const r = await fetch(`${studio.url}/api/${what}?project=.`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) }); return { status: r.status, body: await r.json() }; };
+      const settled = async (kind?: string) => {
+        for (let s = await get(); ; s = await get()) {
+          if (kind ? s.jobs[kind]?.status !== "running" : !Object.values(s.jobs).some((j: any) => j.status === "running")) return s;
+          await new Promise((r) => setTimeout(r, 50));
+        }
+      };
       for (const file of ["/", "/app.js", "/style.css"]) {
-        const asset = await fetch(url + file);
+        const asset = await fetch(studio.url + file);
         assert.equal(asset.status, 200, file);
         assert.ok((await asset.arrayBuffer()).byteLength > 0, file);
       }
-      const first = await (await fetch(`${url}/api/project`)).json();
-      assert.deepEqual(first.specs.map((spec: { file: string }) => spec.file), ["spec/door.md"]);
+      const first = await (await fetch(`${studio.url}/api/project`)).json();
+      assert.deepEqual(first.specs.map((spec: { file: string }) => spec.file), ["spec/order.md"]);
       for (const route of ["spec", "accept"]) {
         const remote = await post(route, { name: "remote" }, { origin: "https://untrusted.example" });
         assert.equal(remote.status, 403, route);
       }
       const hostile = await new Promise<number>((resolve, reject) => {
-        http.get(`${url}/api/project`, { headers: { host: "untrusted.example" } }, (response) => {
+        http.get(`${studio.url}/api/project`, { headers: { host: "untrusted.example" } }, (response) => {
           response.resume();
           resolve(response.statusCode!);
         }).on("error", reject);
       });
       assert.equal(hostile, 403);
       assert.equal((await post("spec", { name: "plain" }, { "content-type": "text/plain" })).status, 415);
-      const original = first.specs[0];
-      const text = original.text + "\nThe door remains available.\n";
-      const origins = nodesOf(original.file, text).map((n) => [n.id, n.id]);
-      const body = { files: [{ file: original.file, base: original.hash, text }], origins };
-      const published = await post("publish", body);
-      assert.equal(published.status, 200, await published.clone().text());
-      const manifest = (await published.json()).manifest;
-      assert.ok(manifest.changes.some((c: { kind: string; what: string[] }) => c.kind === "rule" && c.what.includes("prose")));
-      assert.equal(fs.readFileSync(path.join(root, original.file), "utf8"), text);
+      const exampleState = await (await fetch(`${studio.url}/api/project?project=${encodeURIComponent(example.id)}`)).json();
+      assert.equal(exampleState.project.root, example.root);
+      assert.ok(exampleState.specs.some((s: { file: string }) => s.file === "spec/tracker.md"));
+      const before = (await get()).specs.find((s: { file: string }) => s.file === "spec/order.md");
+      const id = (key: string) => `spec/order.md\0${key}`;
+      // Rename a rule, delete one, and add a story, as the page sends them: every heading with what it was on disk.
+      const text = before.text.replace("### A payment never exceeds the balance", "### A payment never goes past the balance")
+        .replace(/### An order can be cancelled\n\n```quint\n.*\n```\n\n/, "") + "\n## Story: Start again\n\n> As a shopper, I want to start again.\n";
+      const origins = nodesOf("spec/order.md", text).map((n) => [n.id, n.key.includes("goes past") ? id("Story: Check out / A payment never exceeds the balance") : n.key.includes("Start again") ? null : n.id]);
+      const files = [{ file: "spec/order.md", base: before.hash, text }];
+      assert.equal((await post("publish", { files: [{ ...files[0], base: "stale" }], origins })).status, 409);
+      const misread = await post("publish", { files: [{ ...files[0], text: text + "\n## Not meant as a heading\n" }], origins });
+      assert.match(misread.body.error, /"Not meant as a heading" would be a heading/);
+      assert.equal((await post("publish", { files, origins })).status, 200);
+      assert.equal(fs.readFileSync(path.join(root, "spec/order.md"), "utf8"), text);
       assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, ".studio/state.json"), "utf8")).ids, Object.fromEntries(origins));
-      const concurrent = await Promise.all([post("publish", body), post("spec", { name: "parallel" })]);
-      for (const response of concurrent) assert.equal(response.status, 400, await response.text());
+      const concurrent = await Promise.all([post("publish", { files, origins }), post("spec", { name: "parallel" })]);
+      for (const response of concurrent) assert.equal(response.status, 400, JSON.stringify(response.body));
       assert.ok(!fs.existsSync(path.join(root, "spec/parallel.md")));
-      const settled = async (kind: string) => {
-        for (let current = await (await fetch(`${url}/api/project`)).json(); ; current = await (await fetch(`${url}/api/project`)).json()) {
-          if (current.jobs[kind]?.status !== "running") return current;
-          await new Promise((resolve) => setTimeout(resolve, 50));
-        }
-      };
-      const checked = await settled("check");
-      assert.equal(checked.jobs.check?.status, "failed");
-      assert.equal(checked.check?.next.includes("npm run accept"), true);
-      // The agent gets the manifest in its prompt; its success clears the manifest, and its report stays beside the check after it.
+      const { changes } = JSON.parse(fs.readFileSync(path.join(root, ".studio/manifest.json"), "utf8"));
+      assert.deepEqual(changes.map((c: { action: string; key: string; what: string[] }) => [c.action, c.key, c.what]), [
+        ["changed", "Story: Check out / A payment never goes past the balance", ['renamed from "A payment never exceeds the balance"']],
+        ["added", "## Story: Start again", []],
+        ["deleted", "Story: Cancel / An order can be cancelled", []],
+      ]);
+      // Publishing starts a check; the agent waits for it, gets the manifest in its prompt, and its success clears the manifest.
+      const checked = await settled();
+      assert.ok(checked.jobs.check, "publishing starts a check");
+      assert.ok(checked.specs[0].review["## Story: Start again"]?.startsWith("story has no rules"), JSON.stringify(checked.specs[0].review));
       assert.equal((await post("agent", { agent: "fake" })).status, 200);
       const synced = await settled("agent");
       assert.deepEqual([synced.jobs.agent.status, synced.jobs.agent.log], ["passed", ["synced"]]);
-      assert.match(fs.readFileSync(path.join(root, "prompt.txt"), "utf8"), /~ rule spec\/door\.md: .*\(prose\)/);
+      assert.match(fs.readFileSync(path.join(root, "prompt.txt"), "utf8"), /\+ story spec\/order\.md: ## Story: Start again/);
       assert.ok(!fs.existsSync(path.join(root, ".studio/manifest.json")));
-      await settled("check");
+      await settled();
+      const created = await post("spec", { name: "nested/child" });
+      assert.equal(created.status, 200, JSON.stringify(created.body));
+      assert.equal(created.body.file, "spec/nested/child/index.md");
+      const child = readSpecs(root).find((s) => s.file === "spec/nested/child/index.md")!;
+      acceptReviews(root, child);
+      const ledger = fs.readFileSync(path.join(root, "spec/lock.json"), "utf8");
+      const escaped = await post("publish", { files: [{ file: "spec/../outside.md", base: null, text: "" }], origins: [] });
+      assert.equal(escaped.status, 400);
+      assert.equal(fs.existsSync(path.join(root, "outside.md")), false);
+      fs.symlinkSync(path.join(root, "outside.md"), path.join(root, "spec/escape.md"));
+      assert.equal((await post("publish", { files: [{ file: "spec/escape.md", base: null, text: "" }], origins: [] })).status, 400);
+      assert.equal(fs.existsSync(path.join(root, "outside.md")), false);
+      fs.rmSync(path.join(root, "spec/escape.md"));
+      const linked = await post("publish", { files: [{ file: "spec/index.md", base: null, text: "[Child](./nested/child/)\n" }], origins: [] });
+      assert.equal(linked.status, 200, JSON.stringify(linked.body));
+      const waitForCheck = async () => {
+        let snap = await (await fetch(`${studio.url}/api/project`)).json();
+        while (snap.jobs.check?.status === "running") {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+          snap = await (await fetch(`${studio.url}/api/project`)).json();
+        }
+        assert.notEqual(snap.jobs.check?.status, "running");
+        return snap;
+      };
+      const nested = await waitForCheck();
+      assert.deepEqual(nested.specs.map((s: { file: string }) => s.file), ["spec/index.md", "spec/nested/child/index.md", "spec/order.md"]);
+      const index = nested.specs.find((s: { file: string }) => s.file === "spec/index.md");
+      const childIndex = nested.specs.find((s: { file: string }) => s.file === child.file);
+      const deleted = await post("publish", { files: [
+        { file: index.file, base: index.hash, text: "" },
+        { file: childIndex.file, base: childIndex.hash, text: null },
+      ], origins: [] });
+      assert.equal(deleted.status, 200, JSON.stringify(deleted.body));
+      const manifestAfterDelete = deleted.body.manifest;
+      assert.ok(manifestAfterDelete.changes.some((c: { kind: string; spec: string }) => c.kind === "spec" && c.spec === "spec/index.md"));
+      assert.equal(fs.existsSync(path.join(root, child.file)), false);
+      assert.equal(fs.readFileSync(path.join(root, "spec/lock.json"), "utf8"), ledger);
+      const final = await waitForCheck();
+      assert.ok(final.check.results.some((r: Result) => r.stage === "review" && /removed spec/.test(r.summary)));
+
     } finally {
       await studio.close();
     }
@@ -867,6 +1048,12 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     fs.mkdirSync(path.dirname(lock), { recursive: true });
     fs.writeFileSync(lock, `${process.pid}\n`);
     await assert.rejects(check(root), /another check or accept is running in this project \(process \d+\)/);
+    fs.writeFileSync(path.join(root, "spec/door.lock.json"), "{}");
+    const migration = await runCli(path.join(project, "vibespec/spec.ts"), root, "migrate");
+    assert.equal(migration.status, 1);
+    assert.match(migration.stderr, /another check or accept is running/);
+    assert.ok(fs.existsSync(path.join(root, "spec/door.lock.json")));
+    fs.rmSync(path.join(root, "spec/door.lock.json"));
     fs.writeFileSync(lock, `${spawnSync(process.execPath, ["-e", ""]).pid}\n`);
     const unused = path.join(root, ".spec-cache/000000000000000000000000.json");
     fs.writeFileSync(unused, "{}");
@@ -880,10 +1067,20 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
   test("the command line: spec new, the arguments it accepts, gen --if-valid and check --json", async () => {
     const cli = (root: string, ...args: string[]) => runCli(path.join(project, "vibespec/spec.ts"), root, ...args);
     const root = scratch({});
+    const blank = scratch({ "spec/index.md": "" });
+    assert.equal((await cli(blank, "new")).status, 0);
+    assert.match(fs.readFileSync(path.join(blank, "spec/index.md"), "utf8"), /## Story:/);
+    assert.equal((await cli(blank, "new")).status, 1);
+    assert.equal((await cli(blank, "new", "area/child")).status, 0);
+    assert.ok(fs.existsSync(path.join(blank, "spec/area/child/index.md")));
+    assert.equal((await cli(blank, "new", "../escape")).status, 1);
+    fs.writeFileSync(path.join(blank, "spec/conflict.md"), "");
+    assert.equal((await cli(blank, "new", "conflict")).status, 1);
+    assert.equal(fs.existsSync(path.join(blank, "spec/conflict")), false);
     assert.equal((await cli(root, "new", "Tally")).status, 1);
-    assert.equal((await cli(root, "new", "src")).status, 1);
+    assert.equal((await cli(scratch({}), "new", "src")).status, 0);
     assert.equal((await cli(root, "new", "tally")).status, 0);
-    assert.match((await cli(root, "new", "tally")).stderr, /spec\/tally\.md already exists/);
+    assert.match((await cli(root, "new", "tally")).stderr, /spec\/tally\/index\.md already exists/);
     assert.equal((await cli(root, "accept", "unprovd")).status, 2);
     assert.equal((await cli(root, "check", "--everything")).status, 2);
     // The starter spec passes every stage but review, and proves without a proof file.
@@ -891,7 +1088,7 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.deepEqual([...new Set(checked.results.filter((r: Result) => !r.ok).map((r: Result) => r.stage))], ["review"], JSON.stringify(checked, null, 2));
     for (const stage of ["model", "always", "sometimes", "replay", "proof"]) assert.ok(checked.results.some((r: Result) => r.stage === stage && r.ok), stage);
     assert.match(checked.next, /npm run accept/);
-    fs.appendFileSync(path.join(root, "spec/tally.md"), `\n### Broken\n\n${F}quint\npure def\n${F}\n`);
+    fs.appendFileSync(path.join(root, "spec/tally/index.md"), `\n### Broken\n\n${F}quint\npure def\n${F}\n`);
     const lenient = await cli(root, "gen", "--if-valid");
     assert.equal(lenient.status, 0, lenient.stderr);
     assert.match(lenient.stdout, /^note: gen\/ was not generated/);
@@ -917,7 +1114,7 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     const spliced = (body: string) => splice(gen, { proof: { file: "p.dfy", text: `${header}${body}\n}\n` }, axioms: [], lib }).dfy;
     // Std.Ordinal.TimesIncreasingOnLeft is a false {:axiom}; dafny audit reports it only against the library's own file.
     assert.throws(() => spliced("  Std.Ordinal.TimesIncreasingOnLeft(0, 0, 0);"), /p\.dfy:4: `Std\.Ordinal\.TimesIncreasingOnLeft` is not allowed[^\n]*\(Std\.Collections\.Seq\.All\)/);
-    assert.throws(() => spliced("  ProofLib.Seq.LemmaFlattenConcat<int>([], []);"), /`ProofLib\.Seq\.LemmaFlattenConcat` is not a lemma or function of tools\/proof\/lib\.dfy/);
+    assert.throws(() => spliced("  ProofLib.Seq.LemmaFlattenConcat<int>([], []);"), /`ProofLib\.Seq\.LemmaFlattenConcat` is not a lemma or function of vibespec\/proof\/lib\.dfy/);
     assert.throws(() => spliced("  assert (xs).Std.Ordinal == 0;"), /`Std` may only begin a name/);
     assert.ok(spliced("  assert Std.Collections.Seq.All(xs, (x: int) => x > 0) == f(xs);\n  ProofLib.FilterNil((x: int) => true, []);").includes("ProofLib.FilterNil"));
   });
@@ -1049,7 +1246,7 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.equal(inc?.ok, false, text);
     assert.match(inc!.summary, /Hand-written code is not simulated, so they must be proved/);
     assert.doesNotMatch(inc!.summary, /accept -- unproved/);
-    const ledger = path.join(root, "spec/unproved.lock.json");
+    const ledger = path.join(root, "spec/lock.json");
     assert.ok(!fs.existsSync(ledger) || !fs.readFileSync(ledger, "utf8").includes("src-inc.ts"), text);
   });
 });

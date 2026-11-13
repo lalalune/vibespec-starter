@@ -230,5 +230,5 @@ export function conformanceFound(domain: any, model: Model, spec: Spec, traces: 
     const story = spec.stories.findLast((t) => t.line < rule.line)?.title ?? "";
     return { story, rule: rule.key.slice(story.length + 3), events: best ?? taken };
   });
-  return { spec: spec.name, events: candidates, journeys, sets: model.sets };
+  return { spec: spec.name, source: spec.file, events: candidates, journeys, sets: model.sets };
 }

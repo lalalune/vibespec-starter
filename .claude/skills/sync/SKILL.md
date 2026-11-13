@@ -1,6 +1,6 @@
 ---
 name: sync
-description: Bring the stories, rules, Quint model and generated TypeScript of this repository back into step. Use after any change to spec/*.md or src/, when the user adds or edits a story or rule, when they edit Quint by hand, or when `npm run check` shows a ✗.
+description: Bring the stories, rules, Quint model and generated TypeScript of this repository back into step. Use after any change to spec/**/*.md or src/, when the user adds or edits a story or rule, when they edit Quint by hand, or when `npm run check` shows a ✗.
 ---
 
 # Sync the spec
@@ -17,7 +17,7 @@ Read AGENTS.md and README.md in full first, once per session.
    Under `review` it prints a changed rule's prose and Quint, a story's text
    and rules, and a contract's `//@` lines; for a **new** rule, read it in the
    spec. The last line, `next:`, names what to do first.
-2. Resolve what `next:` names, using the table below, by editing `spec/*.md`
+2. Resolve what `next:` names, using the table below, by editing `spec/**/*.md`
    (and `src/` or the tests only when `types` or `tests` asks for it, or when
    a story you formalized leaves the verified core: then extend its journey,
    AGENTS.md "Tests").
@@ -32,6 +32,7 @@ Give up and report after five rounds on the same failure.
 
 | Report says | Translate |
 |---|---|
+| `review` … **document changed** | Read the title, introduction and links; confirm that they describe the spec and point to the intended children. |
 | `review` … **story has no rules** | Story → rules. Under the story, write one `###` rule for each thing the story requires: a sentence a product owner would call true or false. Then write each rule's Quint. If the story makes a new kind of state possible, add a `sometimes` rule for it. |
 | `review` … **new story** or **story changed** | Story → rules. Check that the story's rules, listed under it, say everything it asks for; write the missing ones. |
 | `review` … **not formalized** | Rule → model. Write Quint that says exactly what the sentence says and no more. If that model then breaks a rule, the trace shows what the sentence left out. |
@@ -53,9 +54,9 @@ Give up and report after five rounds on the same failure.
 | `replay` | Generated TypeScript and Quint disagree. That is a bug in the tools, not in the spec. Stop and report it. |
 | `types` | Update `src/` and the tests to the new generated contract. |
 | `- skipped types: no tsconfig.json` | Not a failure only for a spec-only package without `src/` or `test/`; otherwise add a tsconfig.json with `spec init`. |
-| `proof` … "not proved" | It holds in simulation; it is yours to prove. First decide whether it is true for every state that satisfies all the rules. If it is not (you can name such a state), no proof can help: the missing fact about reachable states becomes a new `always` rule, a discovered rule. If it is, prove it in the unit's proof file, `spec/<name>.proof.dfy` or `src/<path>.proof.dfy`: copy the obligation's `lemma …_ensures` header from `gen/proof/<unit>/<unit>.dfy` and write its body, calling `ProofLib` lemmas and your own helper lemmas (AGENTS.md, "Proof files"). Only what you cannot prove goes in your report, with what you tried; recording it as simulated only is the user's last resort, not yours. |
+| `proof` … "not proved" | It holds in simulation; it is yours to prove. First decide whether it is true for every state that satisfies all the rules. If it is not (you can name such a state), no proof can help: the missing fact about reachable states becomes a new `always` rule, a discovered rule. If it is, prove it in the unit's proof file, `spec/<path>.proof.dfy` or `src/<path>.proof.dfy`: copy the obligation's `lemma …_ensures` header from `gen/proof/<unit>/<unit>.dfy` and write its body, calling `ProofLib` lemmas and your own helper lemmas (AGENTS.md, "Proof files"). Only what you cannot prove goes in your report, with what you tried; recording it as simulated only is the user's last resort, not yours. |
 | `proof` … "Dafny could not check it" | The generated or hand-written code is not something Dafny accepts (an unguarded lookup, index or division, or a wrong annotation), or the proof file is refused or does not verify: a stale header, a forbidden construct, a helper lemma that fails. The lines under it say which, with the file and line. |
-| `proof` … "belongs to no proof unit" | A stray proof file. Rename it to `spec/<name>.proof.dfy` for `spec/<name>.md`, or `src/<path>.proof.dfy` for a `src/<path>.ts` that contains `//@`; or delete it. |
+| `proof` … "belongs to no proof unit" | A stray proof file. Rename it to `spec/<path>.proof.dfy` for `spec/<path>.md`, or `src/<path>.proof.dfy` for a `src/<path>.ts` that contains `//@`; or delete it. |
 | `proof` … "the proof stage needs Dafny 4.11 on the PATH" | Dafny is missing or not 4.11.x. Tell the user; do not work around it. |
 | `proof`, a `src-…` unit | Fix the hand-written code, its `//@` annotation, or its proof file. The full output is in `gen/proof/<unit>.log`. |
 | `tests` … citations name no story or rule | Cite the story or rule by its heading as the spec now has it. If it was removed, the test that cites it is yours to review: does any rule still ask for what it checks? |

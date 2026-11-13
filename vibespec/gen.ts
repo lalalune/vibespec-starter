@@ -17,6 +17,7 @@ import { fail, typeOfIn, typeWalks, type Json } from "./gen/types.ts";
 
 export interface Model {
   name: string;
+  source: string;
   imports: string[]; // other specs this one imports, in order
   /** The module under a prefix for proof bundles; `docs = false` omits spec comments for cache keys. */
   render: (prefix: string, docs?: boolean) => string;
@@ -179,7 +180,7 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
 
   const run = harness(name, source, [...imports, ...typeOnly], funs, sig, samples, roles, types);
   return {
-    name, imports, ...roles, evals: run.evals, uncompared: run.uncompared, harness: run.text,
+    name, source, imports, ...roles, evals: run.evals, uncompared: run.uncompared, harness: run.text,
     ts: own.text, render: (prefix, docs) => render(prefix, docs).text, decode: types.decode, canon: types.canon, sets: roles.stateType ? types.sets(roles.stateType) : [],
     exports: { types: localTypedefs.map((d) => d.name as string), values: [...localNames, ...own.helpers], variants: localVariants, typedefs: localTypedefs, visible: typedefs },
   };

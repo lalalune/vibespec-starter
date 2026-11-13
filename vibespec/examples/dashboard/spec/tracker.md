@@ -286,8 +286,9 @@ pure def deleteTask(s: Tracker, id: int): Tracker =
 
 ### Renaming or removing a person through the dashboard rewrites every cell that names them
 
-Renaming a person removes duplicate names from every owners cell, even if the
-new name had already been entered there directly.
+Renaming a person removes duplicate names from each cell, including when the
+new name was entered there directly. Removing a person removes every
+occurrence of that name.
 
 ```quint
 pure def canRenameOwner(s: Tracker, owner: str, name: str): bool =

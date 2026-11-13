@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "specs": {
+    "spec/index.md": {
+      "@document": [
+        "e3b0c44298fc"
+      ]
+    }
+  },
+  "contracts": {},
+  "unproved": {}
+}

@@ -113,8 +113,8 @@ export function danglingCitations(root: string, specs: Spec[], code = packageCod
   const names = (s: Spec, h: string) => s.stories.some((t) => t.title === h) || s.rules.some((r) => heading(s, r) === h);
   return code.flatMap(({ file: f, text }) =>
     text.split("\n").flatMap((line, i) =>
-      [...line.matchAll(/(?<![\w/.-])spec\/(\w+)\.md, "([^"]+)"/g)]
-        .filter(([, name, h]) => !specs.some((s) => s.name === name && names(s, h)))
+      [...line.matchAll(/(?<![\w/.-])(spec\/(?:[A-Za-z0-9]+\/)*[A-Za-z0-9]+\.md), "([^"]+)"/g)]
+        .filter(([, file, h]) => !specs.some((s) => s.file === file && names(s, h)))
         .map(([cited]) => `${f}:${i + 1}  ${cited}`)));
 }
 

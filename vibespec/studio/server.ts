@@ -1,4 +1,4 @@
-// The spec studio: a local web page to read, edit, reorder and regroup the stories and rules of spec/*.md, publish
+// The spec studio: a local web page to read, edit, reorder and regroup the stories and rules of spec/**/*.md, publish
 // them with a manifest of what changed, and run the check, an agent's sync, and the user's sign-off.
 // README, "The studio".
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
@@ -6,7 +6,8 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
-import { badSpecName, newSpec, parseSpec, pending, readSpecs, type Result } from "../spec.ts";
+import { newSpec, parseSpec, pending, readSpecs, type Result } from "../spec.ts";
+import { specFiles, specName } from "../parse.ts";
 import { manifestOf, nodesOf, parseDoc, promptFor, type Ids, type Manifest } from "./doc.ts";
 
 /** The `spec` command beside this file, as source or as built. */
@@ -61,11 +62,9 @@ const writeJson = (file: string, value: unknown) => {
 const stateFile = (root: string) => path.join(studioDir(root), "state.json");
 const manifestFile = (root: string) => path.join(studioDir(root), "manifest.json");
 
-/** Every spec/*.md, by its path from the project root. */
+/** Every Markdown spec in the tree, by its path from the project root. */
 function specTexts(root: string): Record<string, string> {
-  const dir = path.join(root, "spec");
-  const files = fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => f.endsWith(".md")).sort() : [];
-  return Object.fromEntries(files.map((f) => [`spec/${f}`, fs.readFileSync(path.join(dir, f), "utf8")]));
+  return Object.fromEntries(specFiles(root).map((file) => [file, fs.readFileSync(path.join(root, file), "utf8")]));
 }
 
 /** The repository's examples, from either the source or the built command; a published package has none. */
@@ -121,7 +120,8 @@ function snapshot(live: Live, agents: Record<string, Agent>) {
   const short = promptFor(manifest, context, DEEPLINK_LIMIT);
   return {
     project: live.project,
-    specs: Object.entries(texts).map(([file, text]) => ({ file, name: path.basename(file, ".md"), hash: hash(text), text, doc: parseDoc(text), review: review[file] ?? {} })),
+    specs: Object.entries(texts).sort(([a], [b]) => a.replace(/(?:^spec\/|\/)index\.md$/, "/").localeCompare(b.replace(/(?:^spec\/|\/)index\.md$/, "/")))
+      .map(([file, text]) => ({ file, name: file.slice(5, -3), module: specName(file), hash: hash(text), text, doc: parseDoc(text), review: review[file] ?? {} })),
     problem,
     manifest,
     prompt,
@@ -165,7 +165,7 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
   const watch = (live: Live) => {
     if (live.watcher || !fs.existsSync(path.join(live.project.root, "spec"))) return;
     let timer: NodeJS.Timeout | undefined;
-    live.watcher = fs.watch(path.join(live.project.root, "spec"), () => {
+    live.watcher = fs.watch(path.join(live.project.root, "spec"), { recursive: true }, () => {
       clearTimeout(timer);
       timer = setTimeout(() => broadcast(live, "files", {}), 150);
     });
@@ -236,9 +236,15 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
     if (conflicts.length) return { status: 409, body: { error: "changed on disk since you loaded it", conflicts } };
     const next = { ...disk };
     for (const f of body.files) {
-      if (!/^spec\/[^/]+\.md$/.test(f.file)) return { status: 400, body: { error: `${f.file} is not a spec` } };
-      const bad = badSpecName(path.basename(f.file, ".md"));
-      if (bad) return { status: 400, body: { error: bad } };
+      if (!/^spec\/(?:[a-z][A-Za-z0-9]*\/)*[a-z][A-Za-z0-9]*\.md$/.test(f.file)) return { status: 400, body: { error: `${f.file} is not a spec` } };
+      try {
+        specName(f.file);
+        let target = root;
+        for (const segment of f.file.split("/")) {
+          target = path.join(target, segment);
+          if (fs.lstatSync(target, { throwIfNoEntry: false })?.isSymbolicLink()) throw new Error(`${f.file}: spec paths may not be symlinks`);
+        }
+      } catch (e) { return { status: 400, body: { error: (e as Error).message } }; }
       if (f.text === null) delete next[f.file];
       else {
         try { parseSpec(root, f.file, f.text); } catch (e) { return { status: 400, body: { error: (e as Error).message } }; }
@@ -261,7 +267,7 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
     }
     for (const f of body.files) {
       const target = path.join(root, f.file);
-      if (f.text === null) for (const ext of [".md", ".lock.json", ".proof.dfy"]) fs.rmSync(target.replace(/\.md$/, ext), { force: true });
+      if (f.text === null) for (const ext of [".md", ".proof.dfy"]) fs.rmSync(target.replace(/\.md$/, ext), { force: true });
       else if (disk[f.file] !== f.text) { fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, f.text); }
     }
     const manifest = manifestOf(root, state.baseline, next, ids);
