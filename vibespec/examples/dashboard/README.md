@@ -3,7 +3,7 @@
 Tasks in a shared spreadsheet, edited by hand and through a chat dashboard.
 
 ```sh
-pnpm check:dashboard
+pnpm --filter dashboard-model check
 ```
 
 | Path | Kind | Covers |
@@ -12,7 +12,7 @@ pnpm check:dashboard
 | `spec/tracker.md` | state machine | One project's sheet: guarded dashboard edits, unguarded hand edits, warnings and their fixes, notifications |
 | `spec/projects.md` | state machine | Projects: one sheet each, one per chat channel, never guessed |
 | `spec/*.proof.dfy` | proofs | Obligations Dafny cannot prove alone |
-| `src/notify.ts` | hand-written, tested | One notifier pass → one chat message per person |
+| `src/notify.vibe` | hand-written, tested | One notifier pass → one chat message per person |
 
 Not modelled: the chat app, HTTP, spreadsheet access, the web dashboard.
 
@@ -20,10 +20,13 @@ Not modelled: the chat app, HTTP, spreadsheet access, the web dashboard.
 
 - **A name typed twice was notified twice.** A cell is a list, not a set
   (`ana, ana`), and "Nothing is sent twice" failed in simulation. Fixed: the
-  notifier treats a cell as a set of people, and `test/notify.test.ts` types
+  notifier treats a cell as a set of people, and `test/notify.test.vibe` types
   a name twice.
 - **A rename left a name in a cell twice.** Fixed: a rename removes duplicate
   names from every owners cell.
 
 Obligations that hold in simulation only are listed under `unproved` in
 `spec/lock.json`.
+
+The VibeLang shell uses the generated tracker adapter and sends notifications
+through the `Chat` service. `pnpm test` runs the notifier journeys.

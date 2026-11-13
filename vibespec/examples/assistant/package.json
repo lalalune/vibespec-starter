@@ -3,12 +3,15 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=24"
+    "node": ">=26"
   },
   "scripts": {
     "check": "node ../../spec.ts check",
     "gen": "node ../../spec.ts gen",
-    "accept": "node ../../spec.ts accept"
+    "accept": "node ../../spec.ts accept",
+    "build": "vibelang",
+    "test": "vitest run",
+    "demo": "pnpm -s gen && node --import vibelang/register src/demo.vibe"
   },
   "devDependencies": {
     "@types/node": "^24.0.0"

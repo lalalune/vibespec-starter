@@ -1,0 +1,86 @@
+// spec/client.md, "Story: Edit the list in the browser"; spec/client.md, "Story: Hear back from the server"
+// A tab applies events with the generated client machine; these tests drive
+// it the way the page does.
+import { assert, it } from "@effect/vitest"
+import { type Client, type Event, initial, inv, step, view, visible } from "../gen/client.effect.vibe"
+
+const run = (events: Event[], from: Client = initial) => events.reduce(step, from)
+const milk = { id: "x", title: "milk", done: false, deleted: false }
+
+it.effect("an edit shows at once and waits in the queue", () => effect {
+  const c = run([{ type: "create", id: "x", title: "milk" }])
+  try Effect.try(() => {
+    assert.deepStrictEqual(visible(c), [milk])
+    assert.deepStrictEqual(c.confirmed, [])
+    assert.deepStrictEqual(c.pending.map((p) => p.seq), [1])
+  })
+})
+
+it.effect("an acknowledgement takes the edit out of the queue and brings the server's list", () => effect {
+  const c = run([{ type: "create", id: "x", title: "milk" }, { type: "receiveAck", seq: 1, version: 1, todos: [milk] }])
+  try Effect.try(() => {
+    assert.strictEqual(c.pending.length, 0)
+    assert.strictEqual(c.seen, 1)
+    assert.deepStrictEqual(view(c), [milk])
+  })
+})
+
+it.effect("an older copy of the list is ignored", () => effect {
+  const c = run([{ type: "receiveSnapshot", version: 2, todos: [milk] }, { type: "receiveSnapshot", version: 1, todos: [] }])
+  try Effect.try(() => {
+    assert.strictEqual(c.seen, 2)
+    assert.deepStrictEqual(c.confirmed, [milk])
+  })
+})
+
+it.effect("a refused edit leaves the queue and is counted once", () => effect {
+  const c = run([
+    { type: "create", id: "x", title: "milk" },
+    { type: "receiveRefusal", seq: 1, version: 0, todos: [] },
+    { type: "receiveRefusal", seq: 1, version: 0, todos: [] },
+  ])
+  try Effect.try(() => {
+    assert.strictEqual(c.pending.length, 0)
+    assert.strictEqual(c.refusals, 1)
+    assert.deepStrictEqual(visible(c), [])
+  })
+})
+
+it.effect("edits made offline queue up, and the page hears nothing until it is back", () => effect {
+  const c = run([
+    { type: "goOffline" },
+    { type: "create", id: "x", title: "milk" },
+    { type: "setDone", id: "x", done: true },
+    { type: "receiveSnapshot", version: 3, todos: [] },
+  ])
+  try Effect.try(() => {
+    assert.strictEqual(c.pending.length, 2)
+    assert.strictEqual(c.seen, 0)
+    assert.deepStrictEqual(visible(c), [{ ...milk, done: true }])
+  })
+})
+
+it.effect("edits the rules do not allow change nothing", () => effect {
+  const c = run([{ type: "create", id: "x", title: "" }, { type: "setDone", id: "nobody", done: true }])
+  try Effect.try(() => assert.deepStrictEqual(c, initial))
+})
+
+it.effect("a confirmed copy that already holds a queued edit shows it once", () => effect {
+  const c = run([{ type: "create", id: "x", title: "milk" }, { type: "receiveSnapshot", version: 1, todos: [milk] }])
+  try Effect.try(() => {
+    assert.strictEqual(c.pending.length, 1)
+    assert.deepStrictEqual(view(c), [milk])
+  })
+})
+
+it.effect("a batch of pushes is drained in order and keeps the client's rules", () => effect {
+  const c = run([
+    { type: "receiveSnapshot", version: 1, todos: [milk] },
+    { type: "receiveSnapshot", version: 3, todos: [] },
+    { type: "receiveSnapshot", version: 2, todos: [milk] },
+  ])
+  try Effect.try(() => {
+    assert.strictEqual(c.seen, 3)
+    assert.isTrue(inv(c))
+  })
+})

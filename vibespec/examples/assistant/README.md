@@ -1,7 +1,7 @@
 # Assistant
 
 An illustrative agent turn driving a bill payment, in one spec:
-[spec/assistant.md](spec/assistant.md). `npm run check` simulates and proves it.
+[spec/assistant.md](spec/assistant.md). `pnpm check` simulates and proves it, then runs the VibeLang shell journeys.
 
 | Behaviour | Rule |
 |---|---|
@@ -12,3 +12,8 @@ An illustrative agent turn driving a bill payment, in one spec:
 | Card details and payment go only to the biller's own page | `alwaysFilledOnlyGenuine`, `stepPaidOnlyOnGenuine` |
 | The model cannot have the card read aloud | `alwaysNothingSecretSaid` |
 | The program carries out effects from an outbox | `outbox`, `drain` |
+
+The VibeLang shell in `src/agent.vibe` drives the generated `Machine` through
+`Model` and `World` services. The scripted services are shared by the demo and
+`test/assistant.test.vibe`; live authentication, payment execution and durable
+storage remain outside this example.

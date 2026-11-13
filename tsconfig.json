@@ -4,7 +4,14 @@
     "module": "nodenext",
     "strict": true,
     "noEmit": true,
-    "allowImportingTsExtensions": true,
+    "rootDir": ".",
+    "rootDirs": [
+      ".",
+      ".vibe/declarations"
+    ],
+    "outDir": "build",
+    "noEmitOnError": true,
+    "rewriteRelativeImportExtensions": true,
     "erasableSyntaxOnly": true,
     "skipLibCheck": true,
     "types": [
@@ -13,11 +20,17 @@
   },
   "include": [
     "vibespec",
-    "gen/*.ts"
+    "src",
+    "test",
+    "gen/*.ts",
+    "gen/*.vibe"
   ],
   "exclude": [
     "vibespec/examples",
     "vibespec/studio",
     "node_modules"
-  ]
+  ],
+  "vibe": {
+    "sidecarDir": ".vibe/declarations"
+  }
 }

@@ -3,6 +3,7 @@ import path from "node:path";
 import type * as TS from "typescript";
 import ts from "typescript";
 import { generate, type Model, type Origin } from "./gen.ts";
+import { effectAdapter } from "./gen/vibe.ts";
 import { writeConformance } from "./conform.ts";
 import { fail } from "./gen/types.ts";
 import type { Unit } from "./prove.ts";
@@ -52,6 +53,9 @@ export function generated(root: string, spec: Spec, ir: any, models: Map<string,
   for (const r of spec.rules) for (const d of r.defs) origins.set(d, { rule: r.key, line: r.line });
   const model = generate(ir, spec.name, spec.file, (d) => origins.get(d), models);
   fs.writeFileSync(path.join(dir, `${spec.name}.ts`), model.ts);
+  const manifest = path.join(root, "package.json");
+  const namespace = (fs.existsSync(manifest) ? JSON.parse(fs.readFileSync(manifest, "utf8")).name : undefined) ?? fs.realpathSync(root);
+  fs.writeFileSync(path.join(dir, `${spec.name}.effect.vibe`), effectAdapter(spec.name, spec.file, model.ts, namespace));
   fs.writeFileSync(path.join(dir, `${spec.name}.run.qnt`), model.harness);
   writeConformance(root, model);
   models.set(spec.name, model);
