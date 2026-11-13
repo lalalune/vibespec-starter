@@ -13,6 +13,7 @@
 // counted as not proved too.
 
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { SENDER } from "./gen/classify.ts";
@@ -695,7 +696,10 @@ function helperNames(root: string): Promise<ReadonlySet<string>> {
   return helpers ??= (async () => {
     const lsc = bin("lsc", root);
     const real = fs.realpathSync(lsc);
-    const file = [path.join(path.dirname(real), "dafny-emit.js"), path.join(path.dirname(lsc), "..", "lemmascript", "tools", "dist", "dafny-emit.js")].find((f) => fs.existsSync(f));
+    // pnpm's executable is a shell shim; the declared dependency still resolves beside this package.
+    let dependency: string | undefined;
+    try { dependency = createRequire(import.meta.url).resolve("lemmascript/tools/dist/dafny-emit.js"); } catch { /* use the executable's installation below */ }
+    const file = [path.join(path.dirname(real), "dafny-emit.js"), path.join(path.dirname(lsc), "..", "lemmascript", "tools", "dist", "dafny-emit.js"), dependency].find((f): f is string => f !== undefined && fs.existsSync(f));
     if (!file) throw new Error("LemmaScript's dafny-emit.js was not found beside lsc");
     const names = (await import(pathToFileURL(file).href)).DAFNY_HELPER_NAMES;
     if (!(names instanceof Set)) throw new Error("LemmaScript's dafny-emit.js does not export DAFNY_HELPER_NAMES");

@@ -1299,13 +1299,42 @@ export effect function independent() {
   test("a rebuilt packaged command can generate a project from the repository root", async () => {
     const root = oneRule("packaged", "A packaged value", "pure val answer = 42");
     const copy = toolchain(scratch({ "package.json": read("package.json"), "tsconfig.build.json": read("tsconfig.build.json") }), "quint", "lsc", "tsc");
-    const built = await exec(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "build"], copy);
-    assert.equal(built.status, 0, built.stdout + built.stderr);
+    const built = await tool("tsc", ["-p", "tsconfig.build.json"], copy);
+    assert.ok(built.ok, built.out);
+    fs.mkdirSync(path.join(copy, "dist/proof"), { recursive: true });
+    fs.copyFileSync(LIB_FILE, path.join(copy, "dist/proof/lib.dfy"));
+    fs.cpSync(path.join(project, "vibestack/std"), path.join(copy, "dist/std"), { recursive: true });
     const script = path.join(copy, "dist/spec.js");
+    fs.chmodSync(script, 0o755);
     const generated = await exec(process.platform === "win32" ? process.execPath : script,
       [...(process.platform === "win32" ? [script] : []), "gen", root], copy);
     assert.equal(generated.status, 0, generated.stdout + generated.stderr);
     assert.equal((await import(path.join(root, "gen/packaged.ts"))).answer, 42);
+
+    // pnpm exposes transitive executables as regular shims while keeping their package beside the tool's dependency.
+    const consumer = oneRule("arithmetic", "One stays one", "pure def lawOne(): bool = 1 == 1");
+    const installed = path.join(consumer, "node_modules/vibestack");
+    fs.mkdirSync(path.join(installed, "node_modules"), { recursive: true });
+    fs.writeFileSync(path.join(installed, "package.json"), '{"type":"module"}');
+    fs.cpSync(path.join(copy, "dist"), path.join(installed, "dist"), { recursive: true });
+    for (const entry of fs.readdirSync(nodeModules).filter((name) => name !== ".bin"))
+      fs.symlinkSync(path.join(nodeModules, entry), path.join(installed, "node_modules", entry), fs.statSync(path.join(nodeModules, entry)).isDirectory() ? "dir" : "file");
+    const binaries = path.join(consumer, "node_modules/.bin");
+    fs.mkdirSync(binaries, { recursive: true });
+    for (const command of ["quint", "tsc"]) {
+      const name = process.platform === "win32" ? `${command}.cmd` : command;
+      fs.symlinkSync(path.join(nodeModules, ".bin", name), path.join(binaries, name), "file");
+    }
+    const lsc = path.join(nodeModules, "lemmascript/tools/dist/lsc.js");
+    const shim = path.join(binaries, process.platform === "win32" ? "lsc.cmd" : "lsc");
+    const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+    fs.writeFileSync(shim, process.platform === "win32" ? `@"${process.execPath}" "${lsc}" %*\r\n` : `#!/bin/sh\nexec ${quote(process.execPath)} ${quote(lsc)} "$@"\n`);
+    fs.chmodSync(shim, 0o755);
+    assert.ok(!fs.existsSync(path.join(consumer, "node_modules/lemmascript")));
+    const checked = await runCli(path.join(installed, "dist/spec.js"), consumer, "check", "--json");
+    const proof = JSON.parse(checked.stdout).results.find((result: Result) => result.stage === "proof");
+    assert.ok(proof?.ok, checked.stdout + checked.stderr);
+    assert.match(proof.summary, /all 1 obligations proved/);
   });
 
   test("the command line checks, generates and watches a project directory from its parent", async () => {
