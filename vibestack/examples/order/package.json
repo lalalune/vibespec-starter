@@ -2,6 +2,7 @@
   "name": "order-example",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@10.24.0",
   "engines": {
     "node": ">=26"
   },
@@ -9,6 +10,26 @@
     "check": "node ../../spec.ts check",
     "gen": "node ../../spec.ts gen",
     "accept": "node ../../spec.ts accept",
-    "demo": "pnpm -s gen && node src/demo.ts"
+    "build": "vibelang",
+    "test": "vitest run",
+    "demo": "pnpm -s gen && node --import vibelang/register src/demo.vibe"
+  },
+  "dependencies": {
+    "@effect/platform-node": "4.1.1",
+    "effect": "4.1.1",
+    "vibelang-runtime": "0.0.12"
+  },
+  "devDependencies": {
+    "@effect/vitest": "4.1.1",
+    "@types/node": "^24.0.0",
+    "vibelang": "0.0.12",
+    "vibelang-vite": "0.0.12",
+    "vite": "8.3.5",
+    "vitest": "5.1.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "@effect/platform-node-shared": "4.1.1"
+    }
   }
 }

@@ -5,34 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Shared to-do list</title>
   <style>
-    :root {
-      color-scheme: light dark;
-      --bg: #fbfaf7; --fg: #1d1b18; --muted: #6b665e; --line: #e4e0d8; --accent: #c2410c; --ok: #2f9e44;
-      --s1: .5rem; --s2: 1rem; --s3: 2rem; --radius: .5rem;
-    }
-    @media (prefers-color-scheme: dark) {
-      :root { --bg: #181715; --fg: #f1eee8; --muted: #a39e94; --line: #34312c; --accent: #ff7a3d; --ok: #51cf66; }
-    }
-    body { background: var(--bg); color: var(--fg); font: 17px/1.5 system-ui, sans-serif; max-width: 32rem; margin: var(--s3) auto; padding: 0 var(--s2); }
-    header { display: flex; align-items: center; gap: var(--s2); }
-    h1 { flex: 1; margin: 0; font-size: 2rem; letter-spacing: -.02em; }
-    button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
-    button:disabled { opacity: .3; cursor: default; }
-    .icon { width: 2rem; height: 2rem; border-radius: var(--radius); font-size: 1.25rem; font-weight: 700; line-height: 1; }
-    .icon:hover:not(:disabled) { color: var(--accent); }
-    .online::before { content: ""; display: block; width: .875rem; height: .875rem; border-radius: 50%; border: 2px solid var(--ok); }
-    .online[aria-pressed="true"]::before { background: var(--ok); }
-    .refused { color: var(--accent); font-weight: 600; }
-    form { display: flex; gap: var(--s1); margin: var(--s3) 0 var(--s2); }
-    form input { flex: 1; font: inherit; color: inherit; background: none; border: 0; border-bottom: 2px solid var(--line); padding: var(--s1) 0; }
-    form input:focus { outline: none; border-color: var(--accent); }
-    form .icon { background: var(--accent); color: var(--bg); }
-    ul { list-style: none; padding: 0; margin: 0; }
-    li { display: flex; gap: var(--s1); align-items: center; padding: var(--s1) 0; border-bottom: 1px solid var(--line); }
-    li input { accent-color: var(--accent); width: 1.125rem; height: 1.125rem; }
-    li .title { flex: 1; text-align: left; }
-    li:has(:checked) .title { text-decoration: line-through; color: var(--muted); }
-    li.unconfirmed { opacity: .5; }
+    body { font: 16px/1.5 system-ui, sans-serif; max-width: 32rem; margin: 2rem auto; padding: 0 1rem; }
+    ul { list-style: none; padding: 0; }
+    li { display: flex; gap: .5rem; align-items: center; padding: .25rem 0; }
+    li .title { flex: 1; text-align: left; background: none; border: 0; color: inherit; font: inherit; cursor: pointer; }
+    li.done .title { text-decoration: line-through; color: #666; }
+    form { display: flex; gap: .5rem; }
+    form input { flex: 1; }
+    .status { color: #666; font-size: .875rem; }
   </style>
   <script type="importmap">
     {
@@ -48,7 +28,7 @@
   <script type="module">
     import React from "react";
     import { createRoot } from "react-dom/client";
-    import { mount } from "/src/web/app.ts";
+    import { mount } from "/app.js";
     mount(React, createRoot, document.getElementById("root"));
   </script>
 </body>

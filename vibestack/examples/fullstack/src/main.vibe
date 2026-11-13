@@ -1,0 +1,17 @@
+// spec/server.md, "Story: Change the list over HTTP"
+// Start the backend: `npm start`, then open http://localhost:3000 in two windows.
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import { server } from "./server.vibe"
+
+effect function main() {
+  const port = try Config.withDefault(Config.Port("PORT"), 3000)
+  // `npm run build` puts this file in dist/src and the frontend in dist/web.
+  const web = try (try Path.Path).fromFileUrl(new URL("../web", import.meta.url))
+  provide server(web, port) {
+    try Console.log(`shared to-do list on http://localhost:${port}`)
+    try never
+  }
+}
+
+NodeRuntime.runMain(Effect.provide(main(), NodeServices.layer))

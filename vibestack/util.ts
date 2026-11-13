@@ -5,6 +5,7 @@ import { exec } from "./run.ts";
 import { heading, type Spec } from "./parse.ts";
 import type { Result } from "./spec.ts";
 import ts from "typescript";
+import { FAILURES } from "./gen/vibe.ts";
 
 export const digest = (text: string) => createHash("sha256").update(text).digest("hex");
 /** A hash of several texts, in which no two lists of texts give the same input. */
@@ -41,11 +42,21 @@ export function plainText(file: string, text: string): string {
   return plain;
 }
 
+/** The declarations the VibeLang compiler writes for a `.vibe` module: its output, not the package's code. */
+const SIDECAR = /\.d\.vibex?\.ts$/;
+
+/** Does this Node run `.vibe` sources (`node --import vibelang/register`)? The loader needs 22.22.3 on the 22 line, or 24.11.1 and later. */
+export function nodeRunsVibelang(version = process.versions.node): boolean {
+  const [major, minor, patch] = version.split(".").map(Number);
+  const from = (a: number, b: number) => minor > a || (minor === a && patch >= b);
+  return major === 22 ? from(22, 3) : major === 24 ? from(11, 1) : major > 24;
+}
+
 export interface SrcFile { file: string; code: string; ts: boolean }
 /** Every such file, read once: a check proves and reviews the same text, even if a file changes while it runs. */
 export function readSrc(root: string): SrcFile[] {
   const src = path.join(root, "src");
-  const files = filesUnder(root, "src").map((f) => f.slice(4)).filter((f) => /\.(?:[mc]?ts|tsx|[mc]?jsx?)$/.test(f));
+  const files = filesUnder(root, "src").map((f) => f.slice(4)).filter((f) => /\.(?:[mc]?ts|tsx|[mc]?jsx?|vibex?)$/.test(f) && !SIDECAR.test(f));
   return files.map((f) => ({ file: f, code: fs.readFileSync(path.join(src, f), "utf8"), ts: /\.ts$/.test(f) })).filter((u) => u.code.includes("//@"));
 }
 
@@ -77,7 +88,11 @@ export async function tests(root: string, specs: Spec[], scripts: Record<string,
     // Node's on test/**/*.test.ts. The placeholder `npm init` writes is no script.
     const script = /no test specified/.test(scripts.test ?? "") ? undefined : scripts.test;
     const files = filesUnder(root, "test").filter((f) => f.endsWith(".test.ts"));
-    const [command, args] = script ? [packageManager(root), ["run", "test"]] : [process.execPath, ["--test", ...files]];
+    // A test in VibeLang cannot import node:test, so Node's runner below would pass over it without a word.
+    const unrun = script ? [] : filesUnder(root, "test").filter((f) => /\.test\.vibex?$/.test(f));
+    if (unrun.length) said.push([false, "tests", `${unrun.join(", ")}: a VibeLang test, and the package has no \`test\` script to run it; add one, such as \`vitest run\``, undefined, "test/"]);
+    // Without a script, Node's runner: tests in TypeScript may import the `.vibe` shell, which the loader compiles.
+    const [command, args] = script ? [packageManager(root), ["run", "test"]] : [process.execPath, ["--import", "vibelang/register", "--test", ...files]];
     if (script || files.length) {
       const { NODE_TEST_CONTEXT: _, ...env } = process.env;
       const t = await exec(command, args, root, { ...env, SPEC_TESTS: fs.realpathSync(root) });
@@ -107,7 +122,7 @@ export function danglingCitations(root: string, specs: Spec[]): string[] {
 export function packageCode(root: string, dir = ""): string[] {
   return fs.readdirSync(path.join(root, dir), { withFileTypes: true }).flatMap((e) => {
     const rel = path.join(dir, e.name);
-    if (e.isFile()) return /\.[cm]?[jt]sx?$/.test(e.name) ? [rel] : [];
+    if (e.isFile()) return /\.(?:[cm]?[jt]sx?|vibex?)$/.test(e.name) && !SIDECAR.test(e.name) ? [rel] : [];
     const skip = /^(node_modules|dist|build|out|coverage|\..*)$/.test(e.name) || rel === "gen" || fs.existsSync(path.join(root, rel, "package.json"));
     return e.isDirectory() && !skip ? packageCode(root, rel) : [];
   }).sort();
@@ -131,10 +146,12 @@ function conformanceImports(root: string): string[] {
         if (bindings && ts.isNamespaceImport(bindings)) namespaces.add(bindings.name.text);
         if (bindings && ts.isNamedImports(bindings)) for (const element of bindings.elements)
           if (!element.isTypeOnly && (element.propertyName?.text ?? element.name.text) === "conformance") calls.add(element.name.text);
-      } else if (/\bgen\/[^/]+\.ts$/.test(module) && !module.endsWith("/_conformance.ts")) {
+      } else if (/\bgen\/[^/]+\.(?:ts|effect\.vibe)$/.test(module) && !module.endsWith("/_conformance.ts")) {
+        // The Effect face of a generated module is the same oracle; its typed failures are not.
         if (statement.importClause.name) oracle.add(statement.importClause.name.text);
         if (bindings && ts.isNamespaceImport(bindings)) oracle.add(bindings.name.text);
-        if (bindings && ts.isNamedImports(bindings)) for (const element of bindings.elements) if (!element.isTypeOnly) oracle.add(element.name.text);
+        if (bindings && ts.isNamedImports(bindings)) for (const element of bindings.elements)
+          if (!element.isTypeOnly && !FAILURES.includes(element.propertyName?.text ?? element.name.text)) oracle.add(element.name.text);
       }
     }
     const visit = (node: ts.Node) => {

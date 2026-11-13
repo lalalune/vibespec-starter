@@ -12,3 +12,5 @@ _apalache-out/
 .cache/
 generated/
 storybook-static/
+.vibe/
+build/

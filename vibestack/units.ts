@@ -11,6 +11,7 @@ import { importedMeanings, originalColumn, type Spec } from "./parse.ts";
 import { defines } from "./review.ts";
 import { entry, recall, store, type Memory } from "./cache.ts";
 import { filesUnder, plainText, readSrc, type SrcFile } from "./util.ts";
+import { effectAdapter } from "./gen/vibe.ts";
 
 const ANNOTATIONS = ["backend", "pure", "requires", "ensures", "invariant", "decreases", "type", "ghost", "assert"];
 
@@ -53,6 +54,7 @@ export function generated(root: string, spec: Spec, ir: any, models: Map<string,
   const model = generate(ir, spec.name, spec.file, (d) => origins.get(d), models);
   fs.writeFileSync(path.join(dir, `${spec.name}.ts`), model.ts);
   fs.writeFileSync(path.join(dir, `${spec.name}.run.qnt`), model.harness);
+  fs.writeFileSync(path.join(dir, `${spec.name}.effect.vibe`), effectAdapter(spec.name, model.source, model.ts));
   writeConformance(root, model);
   models.set(spec.name, model);
   return model;
