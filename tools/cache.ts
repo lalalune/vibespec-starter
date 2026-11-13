@@ -11,7 +11,7 @@ import { sha } from "./util.ts";
  * offered to.
  */
 const toolchains = new Map<string, Promise<string>>();
-function toolchainId(stage: "model" | "simulate" | "prove"): Promise<string> {
+function toolchainId(stage: "model" | "simulate" | "prove" | "tests"): Promise<string> {
   let id = toolchains.get(stage);
   if (!id) toolchains.set(stage, (id = (async () => {
     const version = (dep: string) => {
@@ -51,7 +51,7 @@ export interface Memory { root: string; fresh: boolean; used: Set<string> }
 /** An entry of `.spec-cache`. A simulation's entry names its budget, so that a check with another budget leaves it alone. */
 interface Entry { name: string; file: string }
 const cacheDir = (root: string) => path.join(root, ".spec-cache");
-export async function entry(root: string, stage: "model" | "simulate" | "prove", key: string[], profile = ""): Promise<Entry> {
+export async function entry(root: string, stage: "model" | "simulate" | "prove" | "tests", key: string[], profile = ""): Promise<Entry> {
   const name = `${stage}-${profile ? `${profile}-` : ""}${sha(await toolchainId(stage), ...key).slice(0, 24)}.json`;
   return { name, file: path.join(cacheDir(root), name) };
 }

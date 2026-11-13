@@ -23,6 +23,7 @@ export function badSpecName(name: string): string | undefined {
   if (!/^[a-z][A-Za-z0-9]*$/.test(name)) return `a spec's file name becomes a module name, so it must look like \`order.md\` or \`orderBook.md\``;
   // Their lock files would be the ledgers the tools keep beside the specs.
   if (name === "src" || name === "unproved") return `\`${name}\` cannot name a spec: spec/${name}.lock.json is a ledger the tools keep`;
+  if (name === "conformance") return "`conformance` cannot name a spec: gen/conformance.ts runs every spec's conformance check";
 }
 
 /**
