@@ -24,6 +24,7 @@ import ts from "typescript";
 import { generate, LIST_HELPERS, type Model, type Origin } from "./gen.ts";
 import { fail } from "./gen/types.ts";
 import { LIB_FILE, prove, run, runAsync, type Proof, type Unit } from "./prove.ts";
+import { plainText } from "./util.ts";
 
 // How much is simulated. SPEC_QUICK=1 simulates a tenth as much, for iterating; `accept` never does.
 let SAMPLES = 10000; // simulated traces per check
@@ -37,11 +38,20 @@ const ANNOTATIONS = ["backend", "pure", "requires", "ensures", "invariant", "dec
 
 // --- the spec file -----------------------------------------------------------
 
-export interface Rule { key: string; story: string; line: number; prose: string; code: string; defs: string[] }
+/** `defs` are the rule's top-level definitions and types; `locals` the names it binds inside a definition (`val x = …` in a body). */
+export interface Rule { key: string; story: string; line: number; prose: string; code: string; defs: string[]; locals: string[] }
 /** A `##` heading: a story or another group of rules. Its prose is the text between the heading and its first rule. */
 export interface Story { title: string; line: number; prose: string }
-/** `meaning` is the Quint as written, with every line of prose blank: what a cache key may depend on. */
-export interface Spec { name: string; file: string; rules: Rule[]; stories: Story[]; imports: string[]; qnt: string; meaning: string }
+/**
+ * One `import` of another spec: `import m.*` (star), `import m.x` (names), `import m as A` (alias), or `import m`,
+ * whose names are reached only as `m::x`.
+ */
+export interface Import { module: string; alias?: string; star: boolean; names: string[] }
+/**
+ * `meaning` is the Quint as written, with every line of prose blank and every comment in the Quint reduced to a space:
+ * what a cache key may depend on. `tangled` is `qnt` before the list helpers were expanded, to map Quint's columns back.
+ */
+export interface Spec { name: string; file: string; rules: Rule[]; stories: Story[]; imports: string[]; uses: Import[]; qnt: string; tangled: string; meaning: string }
 
 /** Why a name cannot name a spec, or undefined if it can. */
 export function badSpecName(name: string): string | undefined {
@@ -66,15 +76,38 @@ export function parseSpec(root: string, file: string): Spec {
   const qnt: string[] = [];
   const meaning: string[] = [];
   const imports: string[] = [];
+  const uses: Import[] = [];
   let story: Story | undefined;
   let rule: Rule | undefined;
   let fence: { mark: string; quint: boolean } | undefined;
   // The Quint of the block in progress, to check that no comment or string runs on past its end.
   let block = "";
-  const source = fs.readFileSync(path.join(root, file), "utf8").replace(/\r\n/g, "\n");
-  // Quint and Markdown may not agree on where a line ends at these, and prose could then end a comment early.
-  const odd = source.search(/[\r\v\f\u0085\u2028\u2029]/);
-  if (odd >= 0) throw new Error(`${file}:${source.slice(0, odd).split("\n").length}: a line break other than \\n; save the file with plain line endings`);
+  // How deeply the Quint so far nests in brackets of any kind, carried from block to block.
+  let depth = 0;
+  /**
+   * Record the definitions of a finished block. Quint lets a body open with `val x = …` and no brace, so a definition
+   * at depth 0 counts as a local of the one above it when it is indented further than that one. A misread the other
+   * way would hide a dependency from review; `gen` refuses one by comparing with the names Quint declares.
+   */
+  const declare = (text: string, r: Rule) => {
+    const { code } = scan(text);
+    let at = 0;
+    let top: number | undefined;
+    for (const line of text.split("\n")) {
+      const indent = line.length - line.trimStart().length;
+      const def = line.match(/^\s*(?:pure\s+)?(def|val|type)\s+(\w+)/);
+      if (def && code[at + indent]) {
+        // A type is never local.
+        if (def[1] === "type" || (depth === 0 && (top === undefined || indent <= top))) { r.defs.push(def[2]); if (depth === 0) top = indent; }
+        else r.locals.push(def[2]);
+      }
+      for (let i = 0; i < line.length; i++) if (code[at + i]) depth += "([{".includes(line[i]) ? 1 : ")]}".includes(line[i]) ? -1 : 0;
+      depth = Math.max(depth, 0);
+      at += line.length + 1;
+    }
+  };
+  // Quint and Markdown may not agree on where a line ends at an odd line break, and prose could then end a comment early.
+  const source = plainText(file, fs.readFileSync(path.join(root, file), "utf8"));
   source.split("\n").forEach((text, i) => {
     const marker = text.match(/^\s*(`{3,}|~{3,})(.*)$/);
     const closes = fence && marker && marker[1][0] === fence.mark[0] && marker[1].length >= fence.mark.length && !marker[2].trim();
@@ -82,16 +115,20 @@ export function parseSpec(root: string, file: string): Spec {
       // Prose is tangled as `//` comments, which is only safe if no comment or string runs on into it from the code.
       const open = fence!.quint ? scan(block).mode : "";
       if (open) throw new Error(`${file}:${i + 1}: a ${open === '"' ? "string" : "comment"} is still open at the end of this quint block; close it inside the block`);
+      if (fence!.quint) declare(block, rule!);
       fence = undefined;
       block = "";
     } else if (fence?.quint) {
       block += text + "\n";
       meaning.push(text);
       rule!.code += text + "\n";
-      const def = text.match(/^\s*(?:pure\s+)?(?:def|val|type)\s+(\w+)/);
-      if (def) rule!.defs.push(def[1]);
-      const dep = text.match(/^\s*import\s+(\w+)\b/);
-      if (dep) imports.push(dep[1]);
+      const dep = text.match(/^\s*import\s+(\w+)(?:\s*\([^)]*\))?(?:\s*\.\s*(\*|\w+))?(?:\s+as\s+(\w+))?/);
+      if (dep) {
+        imports.push(dep[1]);
+        // A form this does not recognise is read as `.*`, which can only add dependencies.
+        const plain = /^\s*(?:from\b|$)/.test(text.slice(dep[0].length));
+        uses.push({ module: dep[1], alias: dep[3], star: !plain || dep[2] === "*", names: dep[2] && dep[2] !== "*" ? [dep[2]] : [] });
+      }
       qnt.push(text);
       return;
     } else if (!fence && marker && (marker[1][0] === "~" || !marker[2].includes("`"))) {
@@ -100,10 +137,13 @@ export function parseSpec(root: string, file: string): Spec {
       fence = { mark: marker[1], quint };
     } else if (!fence && text.startsWith("## ")) {
       story = { title: text.slice(3).trim(), line: i + 1, prose: "" };
+      // The ledger records a story under its title, so a second one would share its entry.
+      const twin = stories.find((s) => s.title === story!.title);
+      if (twin) throw new Error(`${file}:${i + 1}: duplicate story "${story.title}" (also at line ${twin.line}); give each ## heading its own title`);
       stories.push(story);
       rule = undefined;
     } else if (!fence && text.startsWith("### ")) {
-      rule = { key: `${story?.title ?? ""} / ${text.slice(4).trim()}`, story: story?.title ?? "", line: i + 1, prose: "", code: "", defs: [] };
+      rule = { key: `${story?.title ?? ""} / ${text.slice(4).trim()}`, story: story?.title ?? "", line: i + 1, prose: "", code: "", defs: [], locals: [] };
       if (rules.some((r) => r.key === rule!.key)) throw new Error(`${file}:${i + 1}: duplicate rule "${rule.key}"`);
       rules.push(rule);
     } else if (rule) rule.prose += text + "\n";
@@ -111,12 +151,51 @@ export function parseSpec(root: string, file: string): Spec {
     qnt.push(i === 0 ? `module ${name} { // ${text}` : text ? `// ${text}` : "");
     meaning.push(i === 0 ? `module ${name} {` : "");
   });
-  if (fence?.quint && scan(block).mode) throw new Error(`${file}: a quint block is never closed, and a comment or string in it is still open`);
+  if (fence?.quint) {
+    if (scan(block).mode) throw new Error(`${file}: a quint block is never closed, and a comment or string in it is still open`);
+    declare(block, rule!);
+  }
+  const tangled = qnt.join("\n");
   try {
-    return { name, file, rules, stories, imports, qnt: expandListHelpers(qnt.join("\n")) + "\n}\n", meaning: meaning.join("\n") };
+    return { name, file, rules, stories, imports, uses, qnt: expandListHelpers(tangled) + "\n}\n", tangled, meaning: codeOnly(meaning.join("\n")) };
   } catch (e) {
     throw new Error(`${file}:${(e as Error).message}`);
   }
+}
+
+/** Which characters of Quint are code, as opposed to part of a string or a comment, which are comments, and what is still open at the end. */
+function scan(text: string): { code: boolean[]; comment: boolean[]; mode: "" | '"' | "//" | "/*" } {
+  const code: boolean[] = [];
+  const comment: boolean[] = [];
+  let mode: "" | '"' | "//" | "/*" = "";
+  for (let i = 0; i < text.length; i++) {
+    const two = text.slice(i, i + 2);
+    if (mode === "" && text[i] === '"') mode = '"';
+    else if (mode === "" && two === "//") { comment[i] = comment[i + 1] = true; i++; mode = "//"; }
+    else if (mode === "" && two === "/*") { comment[i] = comment[i + 1] = true; i++; mode = "/*"; }
+    else if (mode === "") code[i] = true;
+    else if (mode === '"' && text[i] === "\\") i++;
+    else if (mode === '"' && text[i] === '"') mode = "";
+    else if (mode === "//" && text[i] === "\n") mode = "";
+    else if (mode === "//") comment[i] = true;
+    else if (mode === "/*" && two === "*/") { comment[i] = comment[i + 1] = true; i++; mode = ""; }
+    else if (mode === "/*") comment[i] = true;
+  }
+  return { code, comment, mode: mode === "//" ? "" : mode };
+}
+
+/**
+ * Quint with every comment reduced to one space, line breaks kept: what it means, whatever the comments say. Strings are
+ * kept whole, and a comment still separates the tokens around it.
+ */
+function codeOnly(text: string): string {
+  const { comment } = scan(text);
+  let out = "";
+  for (let i = 0; i < text.length; i++) {
+    if (!comment[i] || text[i] === "\n") out += text[i];
+    else if (!comment[i - 1] || text[i - 1] === "\n") out += " ";
+  }
+  return out;
 }
 
 /**
@@ -124,27 +203,11 @@ export function parseSpec(root: string, file: string): Spec {
  * built-in `foldl`, in place and without moving a line (see LIST_HELPERS in
  * gen.ts for why). Strings and comments are left alone.
  */
-/** Which characters of Quint are code, as opposed to part of a string or a comment, and what is still open at the end. */
-function scan(text: string): { code: boolean[]; mode: "" | '"' | "//" | "/*" } {
-  const code: boolean[] = [];
-  let mode: "" | '"' | "//" | "/*" = "";
-  for (let i = 0; i < text.length; i++) {
-    const two = text.slice(i, i + 2);
-    if (mode === "" && text[i] === '"') mode = '"';
-    else if (mode === "" && two === "//") mode = "//";
-    else if (mode === "" && two === "/*") { i++; mode = "/*"; }
-    else if (mode === "") { code[i] = true; continue; }
-    else if (mode === '"' && text[i] === "\\") i++;
-    else if (mode === '"' && text[i] === '"') mode = "";
-    else if (mode === "//" && text[i] === "\n") mode = "";
-    else if (mode === "/*" && two === "*/") { i++; mode = ""; }
-  }
-  return { code, mode: mode === "//" ? "" : mode };
-}
-
 export function expandListHelpers(text: string): string {
   const { code } = scan(text);
   let count = 0;
+  /** The line breaks of a piece of text that is dropped, so that no line moves. */
+  const breaks = (s: string) => s.replace(/[^\n]/g, "");
   const expand = (from: number, to: number): string => {
     const call = /\.(every|some|includes|listMap)\(/g;
     let out = "";
@@ -161,15 +224,33 @@ export function expandListHelpers(text: string): string {
       const arg = expand(call.lastIndex, end - 1);
       const n = count++;
       const acc = `std_${m[1]}_${n}`;
-      const lambda = arg.match(/^\s*\(?\s*(\w+)\s*\)?\s*=>([\s\S]*)$/);
-      const item = m[1] === "includes" || !lambda ? `std_x_${n}` : lambda[1];
-      const body = m[1] === "includes" ? `${item} == (${arg})` : lambda ? lambda[2] : `${arg.trim()}(${item})`;
+      const lambda = arg.match(/^(\s*\(?\s*(\w+)\s*\)?\s*=>)([\s\S]*)$/);
+      const item = m[1] === "includes" || !lambda ? `std_x_${n}` : lambda[2];
+      const body = m[1] === "includes" ? `${item} == (${arg})`
+        : lambda ? breaks(lambda[1]) + lambda[3]
+        : `${breaks(arg.match(/^\s*/)![0])}${arg.trim()}(${item})${breaks(arg.match(/\s*$/)![0])}`;
       out += `${text.slice(at, m.index)}.foldl(${LIST_HELPERS[m[1]].init}, (${acc}, ${item}) => ${LIST_HELPERS[m[1]].step(acc, body)})`;
       at = call.lastIndex = end;
     }
     return out + text.slice(at, to);
   };
   return expand(0, text.length);
+}
+
+/**
+ * Where a column Quint reports on an expanded line of `qnt` lies on the line as tangled: the same column before the
+ * first rewrite, shifted after the last, and undefined inside a rewrite, where no column of the original matches.
+ */
+export function originalColumn(tangled: string, qnt: string, line: number, col: number): number | undefined {
+  const was = tangled.split("\n")[line] ?? "";
+  const is = qnt.split("\n")[line] ?? "";
+  if (was === is) return col;
+  let head = 0;
+  while (head < was.length && head < is.length && was[head] === is[head]) head++;
+  if (col < head) return col;
+  let tail = 0;
+  while (tail < was.length - head && tail < is.length - head && was[was.length - 1 - tail] === is[is.length - 1 - tail]) tail++;
+  return col >= is.length - tail ? col - (is.length - was.length) : undefined;
 }
 
 // --- review ledger: has anyone confirmed that prose and model still agree? ----
@@ -184,15 +265,22 @@ const proseFingerprint = (prose: string) => short(prose.replace(/\s+/g, " ").tri
 export const fingerprint = (r: Rule): [string, string] => [proseFingerprint(r.prose), short(r.code.split("\n").map((l) => l.trimEnd()).join("\n").trim())];
 /** A story is recorded under its heading, which no rule's key can be. */
 const storyKey = (s: Story) => `## ${s.title}`;
-const rulesOf = (spec: Spec, s: Story) => spec.rules.filter((r) => r.story === s.title && r.line > s.line);
+/** Story titles are unique (see parseSpec), so a story's rules are the ones filed under its title. */
+const rulesOf = (spec: Spec, s: Story) => spec.rules.filter((r) => r.story === s.title);
 
-/** The identifiers a piece of Quint mentions, outside comments and strings. */
-const mentions = (code: string) => new Set(code.replace(/\/\*[\s\S]*?\*\/|\/\/.*|"(?:[^"\\\n]|\\.)*"/g, " ").match(/[A-Za-z_]\w*/g) ?? []);
+/** Quint with every string and comment blanked out, line breaks kept. */
+const bare = (text: string) => { const { code } = scan(text); return text.replace(/[^\n]/g, (c, i) => (code[i] ? c : " ")); };
+/** The identifiers a piece of Quint mentions, outside comments and strings: `A::n` as a qualified pair, every other one bare. */
+function mentions(code: string): { bare: Set<string>; qualified: [string, string][] } {
+  const qualified: [string, string][] = [];
+  const rest = bare(code).replace(/([A-Za-z_]\w*)\s*::\s*([A-Za-z_]\w*)/g, (_, q, n) => { qualified.push([q, n]); return " "; });
+  return { bare: new Set(rest.match(/[A-Za-z_]\w*/g) ?? []), qualified };
+}
 /** The names a rule's Quint defines: its definitions and types, and the variants of its sum types. */
 function defines(rule: Rule): string[] {
   const variants: string[] = [];
   let inType = false;
-  for (const line of rule.code.replace(/\/\/.*/g, "").split("\n")) {
+  for (const line of bare(rule.code).split("\n")) {
     const declared = line.match(/^\s*(?:pure\s+)?(?:def|val|type|import|var|const)\b/);
     if (declared) inType = /^\s*type\s+\w+\s*=/.test(line);
     if (!inType) continue;
@@ -217,17 +305,29 @@ interface Dependency { spec: Spec; rule: Rule; names: Set<string> }
 
 /**
  * The rules whose Quint `rule` relies on, directly or through others, in its own spec and in the specs it imports.
- * A name is looked up first in the spec that mentions it, then in the specs that one imports. The scan is
+ * A bare name is looked up first in the spec that mentions it, then in the specs that one imports with `.*` or by that
+ * name; `A::n` only in the spec imported as `A` (or, if no import is called `A`, as a bare name would be). The scan is
  * conservative: an identifier that happens to share a definition's name counts as a use of it.
  */
 export function dependencies(spec: Spec, rule: Rule, specs: Spec[]): Dependency[] {
   const found = new Map<string, Dependency>();
+  const homes = (from: Import[], n: string) => from.flatMap((u) => {
+    const d = specs.find((x) => x.name === u.module);
+    return d ? (namesOf(d).get(n) ?? []).map((x) => [d, x] as const) : [];
+  });
   const visit = (s: Spec, r: Rule) => {
-    for (const n of mentions(r.code)) {
+    const { bare: names, qualified } = mentions(r.code);
+    const unqualified = (n: string) => {
       const own = namesOf(s).get(n);
-      const homes = own ? own.map((x) => [s, x] as const)
-        : s.imports.flatMap((i) => { const d = specs.find((x) => x.name === i); return d ? (namesOf(d).get(n) ?? []).map((x) => [d, x] as const) : []; });
-      for (const [ds, dr] of homes) {
+      return own ? own.map((x) => [s, x] as const) : homes(s.uses.filter((u) => u.star || u.names.includes(n)), n);
+    };
+    const uses: [string, (readonly [Spec, Rule])[]][] = [...names].map((n) => [n, unqualified(n)]);
+    for (const [q, n] of qualified) {
+      const via = s.uses.filter((u) => (u.alias ?? u.module) === q);
+      uses.push([`${q}::${n}`, via.length ? homes(via, n) : unqualified(n)]);
+    }
+    for (const [n, at] of uses)
+      for (const [ds, dr] of at) {
         if (dr === r || dr === rule) continue;
         const key = `${ds.file}\0${dr.key}`;
         const seen = found.get(key);
@@ -235,7 +335,6 @@ export function dependencies(spec: Spec, rule: Rule, specs: Spec[]): Dependency[
         found.set(key, { spec: ds, rule: dr, names: new Set([n]) });
         visit(ds, dr);
       }
-    }
   };
   visit(spec, rule);
   return [...found.values()];
@@ -263,14 +362,22 @@ const ASKS = {
 const showPending = (p: Pending) => `${p.where}\n      ${p.status}${p.note ?? ""}: ${ASKS[p.status]}`;
 
 type Lock = Record<string, string[]>;
-const readLock = (root: string, spec: Spec): Lock => (fs.existsSync(lockFile(root, spec)) ? JSON.parse(fs.readFileSync(lockFile(root, spec), "utf8")) : {});
+/** A spec's ledger. `locks` remembers the ones read, for a caller that reads many in a row while none of them changes. */
+const readLock = (root: string, spec: Spec, locks?: Map<string, Lock>): Lock => {
+  const file = lockFile(root, spec);
+  const known = locks?.get(file);
+  if (known) return known;
+  const lock: Lock = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : {};
+  locks?.set(file, lock);
+  return lock;
+};
 
 /**
  * Stories and rules to reconcile since `accept`. A rule's model is its own Quint and that of every rule it relies
  * on (see `dependencies`), so a change to a helper, a type or an imported definition flags every rule that uses it.
  */
-export function pending(root: string, spec: Spec, specs: Spec[] = readSpecs(root)): Pending[] {
-  const lock = readLock(root, spec);
+export function pending(root: string, spec: Spec, specs: Spec[] = readSpecs(root), locks = new Map<string, Lock>()): Pending[] {
+  const lock = readLock(root, spec, locks);
   const out: Pending[] = [];
   for (const s of spec.stories) {
     const was = lock[storyKey(s)];
@@ -289,7 +396,7 @@ export function pending(root: string, spec: Spec, specs: Spec[] = readSpecs(root
     let note: string | undefined;
     if (status && relied) {
       // Name the rules it relies on whose own Quint is not what was recorded for them.
-      const changed = deps.filter((d) => readLock(root, d.spec)[d.rule.key]?.[1] !== fingerprint(d.rule)[1]);
+      const changed = deps.filter((d) => readLock(root, d.spec, locks)[d.rule.key]?.[1] !== fingerprint(d.rule)[1]);
       note = changed.length ? ` through ${changed.map((d) => `${[...d.names].join(", ")} (${d.spec === spec ? "" : `${d.spec.file}: `}${d.rule.key})`).join("; ")}`
         : was[1] === code ? (was.length < 3 ? " (what it relies on was not recorded before)" : " through a definition it relies on") : undefined;
     }
@@ -316,24 +423,59 @@ export function acceptReviews(root: string, spec: Spec, specs: Spec[] = readSpec
 // --- the contracts of hand-written verified code ------------------------------------
 
 /**
- * Every file under src/ that LemmaScript would read, because `//@` appears in it, with its text: the .ts files, which
- * are proved, or with `other` the scripts of any other kind, which are refused rather than left unproved.
+ * A file under src/ that LemmaScript would read, because `//@` appears in it, with its text: a .ts file, which is
+ * proved, or (`ts` false) a script of any other kind, which is refused rather than left unproved.
  */
-function srcUnits(root: string, other = false): { file: string; code: string }[] {
+export interface SrcFile { file: string; code: string; ts: boolean }
+/** Every such file, read once: a check proves and reviews the same text, even if a file changes while it runs. */
+export function readSrc(root: string): SrcFile[] {
   const src = path.join(root, "src");
-  const kind = other ? /\.(?:[mc]ts|tsx|[mc]?jsx?)$/ : /\.ts$/;
-  const files = fs.existsSync(src) ? (fs.readdirSync(src, { recursive: true }) as string[]).filter((f) => kind.test(f)).sort() : [];
-  return files.map((f) => ({ file: f, code: fs.readFileSync(path.join(src, f), "utf8") })).filter((u) => u.code.includes("//@"));
+  const files = fs.existsSync(src) ? (fs.readdirSync(src, { recursive: true }) as string[]).filter((f) => /\.(?:[mc]?ts|tsx|[mc]?jsx?)$/.test(f)).sort() : [];
+  return files.map((f) => ({ file: f, code: fs.readFileSync(path.join(src, f), "utf8"), ts: /\.ts$/.test(f) })).filter((u) => u.code.includes("//@"));
 }
 const contractsFile = (root: string) => path.join(root, "spec/src.lock.json");
-const contractOf = (code: string) => code.split("\n").filter((l) => l.includes("//@")).map((l) => l.trim());
-/** The contract of every proved src file, its `//@` lines, under its path. */
-const contracts = (root: string) => new Map(srcUnits(root).map((u) => [`src/${u.file.split(path.sep).join("/")}`, contractOf(u.code)]));
+/**
+ * The contract of a file: every `//@` comment line, under the declarations it sits in (`f: //@ requires …`), so that
+ * moving an annotation from one function to another changes it. A `//@` later in a comment is prose, except
+ * `//@ backend`, which LemmaScript reads wherever it appears.
+ */
+function contractOf(file: string, code: string): string[] {
+  const sf = ts.createSourceFile(file, code, ts.ScriptTarget.Latest, true);
+  const named = (n: ts.Node): string | undefined =>
+    // A local variable is not a declaration a contract is about; a constant of the file is.
+    ts.isVariableStatement(n) ? (ts.isSourceFile(n.parent) ? n.declarationList.declarations.map((d) => d.name.getText(sf)).join(", ") : undefined)
+    : (ts.isFunctionDeclaration(n) || ts.isMethodDeclaration(n) || ts.isClassDeclaration(n) || ts.isInterfaceDeclaration(n) || ts.isTypeAliasDeclaration(n)
+      || ts.isPropertyDeclaration(n) || ts.isPropertySignature(n)) && n.name ? n.name.getText(sf) : undefined;
+  /** The names of the declarations around a position, outermost first; a comment belongs to the declaration it leads. */
+  const owners = (at: number): string[] => {
+    const chain: string[] = [];
+    for (let n: ts.Node | undefined = sf; n; ) {
+      const inner: ts.Node | undefined = n.getChildren(sf).find((c) => c.getFullStart() <= at && at < c.getEnd());
+      const name = inner && named(inner);
+      if (name) chain.push(name);
+      n = inner;
+    }
+    return chain;
+  };
+  const out: string[] = [];
+  let at = 0;
+  for (const line of code.split("\n")) {
+    const text = line.trim();
+    if (text.startsWith("//@") || /\/\/@[ \t]*backend\b/.test(line)) {
+      const owner = owners(at + line.indexOf("//@")).join(".");
+      out.push(owner ? `${owner}: ${text}` : text);
+    }
+    at += line.length + 1;
+  }
+  return out;
+}
+/** The contract of every proved src file, under its path. */
+const contracts = (src: SrcFile[]) => new Map(src.filter((u) => u.ts).map((u) => [`src/${u.file.split(path.sep).join("/")}`, contractOf(u.file, u.code)]));
 
 /** The `//@` contracts in src/ that are new, changed or gone since `accept`. A file that loses every `//@` is gone. */
-export function pendingContracts(root: string): Pending[] {
+export function pendingContracts(root: string, src = readSrc(root)): Pending[] {
   const lock: Record<string, string> = fs.existsSync(contractsFile(root)) ? JSON.parse(fs.readFileSync(contractsFile(root), "utf8")) : {};
-  const now = contracts(root);
+  const now = contracts(src);
   const out: Pending[] = [];
   for (const [file, lines] of now) {
     const status = !(file in lock) ? "new contract" : lock[file] !== short(lines.join("\n")) ? "contract changed" : undefined;
@@ -344,8 +486,8 @@ export function pendingContracts(root: string): Pending[] {
 }
 
 /** Record the `//@` contract of every proved src file as reconciled. */
-export function acceptContracts(root: string) {
-  const lines = [...contracts(root)].map(([file, c]) => `  ${JSON.stringify(file)}: ${JSON.stringify(short(c.join("\n")))}`);
+export function acceptContracts(root: string, src = readSrc(root)) {
+  const lines = [...contracts(src)].map(([file, c]) => `  ${JSON.stringify(file)}: ${JSON.stringify(short(c.join("\n")))}`);
   if (lines.length) fs.writeFileSync(contractsFile(root), `{\n${lines.join(",\n")}\n}\n`);
   else fs.rmSync(contractsFile(root), { force: true });
 }
@@ -429,9 +571,17 @@ export function gen(root: string, spec: Spec, models = new Map<string, Model>())
   const errors = ir.errors.map((e: any) => {
     const at = e.locs[0];
     const file = at?.source ? `spec/${path.basename(at.source, ".qnt")}.md` : spec.file;
-    return at ? `${file}:${at.start.line + 1}:${at.start.col + 1}  ${e.explanation}` : e.explanation;
+    // A list helper's expansion moves the columns after it on its line; inside it, only the line is certain.
+    const col = !at ? undefined : file === spec.file ? originalColumn(spec.tangled, spec.qnt, at.start.line, at.start.col) : at.start.col;
+    return at ? `${file}:${at.start.line + 1}${col === undefined ? "" : `:${col + 1}`}  ${e.explanation}` : e.explanation;
   });
   if (!typed.ok) throw new Error(errors.join("\n") || typed.out);
+  // A definition read as local is not one a rule can rely on in review; Quint says which ones are not local.
+  const top = new Set((ir.modules?.find((m: any) => m.name === spec.name)?.declarations ?? []).filter((d: any) => d.kind === "def" || d.kind === "typedef").map((d: any) => d.name));
+  for (const r of spec.rules)
+    for (const n of r.locals)
+      if (top.has(n) && !spec.rules.some((o) => defines(o).includes(n)))
+        throw new Error(`${spec.file}:${r.line}: \`${n}\` in "${r.key}" is defined at the top level, but it is indented further than the definition above it, as a local definition would be; start it in the same column`);
   const origins = new Map<string, Origin>();
   for (const r of spec.rules) for (const d of r.defs) origins.set(d, { rule: r.key, line: r.line });
   const model = generate(ir, spec.name, spec.file, (d) => origins.get(d), models);
@@ -554,7 +704,7 @@ const showTrace = (trace: Step[]) =>
  * A unit may have a proof file: spec/<name>.proof.dfy for a spec,
  * src/<path>.proof.dfy for src/<path>.ts.
  */
-function proofUnits(root: string, models: Model[]): Unit[] {
+function proofUnits(root: string, models: Model[], srcFiles: SrcFile[]): Unit[] {
   const byName = new Map(models.map((m) => [m.name, m]));
   const withoutImports = (text: string) => {
     const file = ts.createSourceFile("unit.ts", text, ts.ScriptTarget.Latest, true);
@@ -585,9 +735,9 @@ function proofUnits(root: string, models: Model[]): Unit[] {
   }));
 
   const src = path.join(root, "src");
-  const other = srcUnits(root, true)[0];
+  const other = srcFiles.find((u) => !u.ts);
   if (other) throw new Error(`src/${other.file}: \`//@\` appears in it, but only .ts files under src/ are proved; rename it to .ts or remove the annotations`);
-  for (const { file: f, code } of srcUnits(root)) {
+  for (const { file: f, code } of srcFiles.filter((u) => u.ts)) {
     // Wherever `//@` appears, even after other text on the line, LemmaScript may read it.
     const used = [...code.matchAll(/\/\/@\s*([\w-]*)/g)].map((m) => m[1]);
     const refused = used.find((k) => !ANNOTATIONS.includes(k));
@@ -624,13 +774,13 @@ function proofUnits(root: string, models: Model[]): Unit[] {
  * Refuse in hand-written verified code what the proof would read one way and Node another: a renamed, default or
  * namespace import, an export other than of a function, constant, type or interface declared in the file, any other
  * top-level statement (LemmaScript does not model one, though Node runs it), and a `//@` that is not in a `//`
- * comment (one in a block comment or a string is not an annotation, though it looks like one). And NUL, which no
- * source needs.
+ * comment (one in a block comment or a string is not an annotation, though it looks like one). And NUL and odd line
+ * breaks (see plainText), at which the compiler and the contract's lines would not agree where a line ends.
  */
 function checkVerifiedSource(file: string, code: string) {
   const sf = ts.createSourceFile(file, code, ts.ScriptTarget.Latest, true);
   const refuse = (at: number, why: string): never => { throw new Error(`${file}:${sf.getLineAndCharacterOfPosition(at).line + 1}: ${why}`); };
-  if (code.includes("\0")) refuse(code.indexOf("\0"), "NUL characters are not allowed");
+  plainText(file, code);
   for (const s of sf.statements) {
     const modifier = (ts.canHaveModifiers(s) ? ts.getModifiers(s) ?? [] : []).find((m) => m.kind !== ts.SyntaxKind.ExportKeyword);
     if (modifier) refuse(modifier.getStart(), `\`${modifier.getText()}\` is not allowed in verified code`);
@@ -776,7 +926,10 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
   /** The cache entries this run read or wrote; after a run in which every stage ran, the others are deleted. */
   const used = new Set<string>();
   let specs: Spec[];
+  // Read once, so that what is proved is what is reviewed and recorded.
+  let srcFiles: SrcFile[];
   try {
+    srcFiles = readSrc(root);
     specs = readSpecs(root);
   } catch (e) {
     report(false, "model", (e as Error).message);
@@ -914,7 +1067,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
       const ledger: Record<string, Accepted> = {};
       let recordable = true;
       fs.rmSync(path.join(root, "gen/proof"), { recursive: true, force: true });
-      const units = proofUnits(root, [...models.values()]);
+      const units = proofUnits(root, [...models.values()], srcFiles);
       for (const f of strayProofFiles(root, units))
         said(false, "proof", `${f} belongs to no proof unit: spec/<name>.proof.dfy belongs to spec/<name>.md, and src/<path>.proof.dfy to src/<path>.ts if that file contains //@`, "", f);
       const lib = fs.readFileSync(LIB_FILE, "utf8");
@@ -1022,8 +1175,9 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
   fs.rmSync(loaded, { recursive: true, force: true });
 
   // A spec that is not a valid model has nothing to reconcile yet. Everything is recorded at once, or nothing is.
-  const todos = valid.map((spec) => ({ spec, todo: pending(root, spec, specs) }));
-  const contractsToDo = pendingContracts(root);
+  const locks = new Map<string, Lock>();
+  const todos = valid.map((spec) => ({ spec, todo: pending(root, spec, specs, locks) }));
+  const contractsToDo = pendingContracts(root, srcFiles);
   const formal = todos.every(({ todo }) => !todo.some((t) => t.status === "story has no rules" || t.status === "not formalized"));
   const record = accept === "reviews" && allOk && formal;
   const why = accept !== "reviews" ? "then run `npm run accept`" : !allOk ? "nothing was accepted: fix the stages above first" : "every story needs rules and every rule a quint block before anything can be accepted";
@@ -1038,9 +1192,9 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
     } else report(!todo.length, "review", todo.length ? `${spec.file}: ${todo.length} item(s) to reconcile, ${why}` : `${spec.file}: prose and model reconciled for all ${spec.rules.length} rules and ${spec.stories.length} stories`,
       items(todo, "What moved, in full"), spec.file);
   }
-  const proved = contracts(root).size;
+  const proved = contracts(srcFiles).size;
   if (record && contractsToDo.length) {
-    acceptContracts(root);
+    acceptContracts(root, srcFiles);
     report(true, "review", `src/: recorded as reconciled: ${contractsToDo.map((t) => t.where).join("; ")}`, "", "src/");
   } else if (contractsToDo.length) report(false, "review", `src/: ${contractsToDo.length} contract(s) to reconcile, ${why}`, items(contractsToDo, "The contracts, in full"), "src/");
   else if (proved) report(true, "review", `src/: the //@ contracts of all ${proved} proved files reconciled`, "", "src/");
