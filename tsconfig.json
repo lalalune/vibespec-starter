@@ -9,5 +9,6 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["tools", "gen/*.ts"]
+  "include": ["vibespec", "gen/*.ts"],
+  "exclude": ["vibespec/examples", "node_modules"]
 }

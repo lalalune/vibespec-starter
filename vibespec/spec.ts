@@ -243,7 +243,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
             run.traces.filter((t) => domain[w](t.at(-1)?.state)).sort((x, y) => x.length - y.length).slice(0, 1).map((trace) => ({ w, trace }))));
       } catch (e) {
         const mismatch = (e as Error).message.startsWith("TypeScript and Quint disagree");
-        say(false, mismatch ? "replay" : "always", mismatch ? "this is a bug in the generator (tools/gen.ts, tools/gen/), not in the spec" : "the simulator could not run", indent((e as Error).message));
+        say(false, mismatch ? "replay" : "always", mismatch ? "this is a bug in the generator (vibespec/gen.ts, vibespec/gen/), not in the spec" : "the simulator could not run", indent((e as Error).message));
       }
       return { said, tested };
     }, ({ said }) => said.every((r) => r.ok));
@@ -418,12 +418,22 @@ export function init(root: string): string[] {
   const pkg = path.join(import.meta.dirname, "..");
   const done: string[] = [];
   const add = (file: string, content: () => string) => {
-    if (fs.existsSync(path.join(root, file))) return;
+    if (fs.lstatSync(path.join(root, file), { throwIfNoEntry: false })) return;
     fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
     fs.writeFileSync(path.join(root, file), content());
     done.push(file);
   };
-  for (const doc of [".claude/skills/sync/SKILL.md", ".claude/skills/design/SKILL.md"]) add(doc, () => fs.readFileSync(path.join(pkg, doc), "utf8"));
+  // Each skill lives in .claude/skills/, and .agents/skills/ links to it for agents other than Claude Code.
+  for (const name of ["sync", "design"]) {
+    const source = `.claude/skills/${name}`;
+    add(`${source}/SKILL.md`, () => fs.readFileSync(path.join(pkg, source, "SKILL.md"), "utf8"));
+    const link = `.agents/skills/${name}`;
+    const target = path.join(root, link);
+    if (fs.lstatSync(target, { throwIfNoEntry: false })) continue;
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.symlinkSync(path.relative(path.dirname(target), path.join(root, source)), target, "dir");
+    done.push(link);
+  }
   const agents = path.join(root, "AGENTS.md");
   const procedure = fs.readFileSync(path.join(pkg, "AGENTS.md"), "utf8").trim();
   const previous = fs.existsSync(agents) ? fs.readFileSync(agents, "utf8") : "";

@@ -77,11 +77,25 @@ blank.
 
 1. Click **[Use this template](https://github.com/lalalune/vibespec-starter/generate)**
    to create your own repository, then clone it.
-2. Install and check the template and examples:
+2. Install, then open the studio:
 
 ```bash
 npm install
 ```
+
+```bash
+npm run dev
+```
+
+`npm run dev` starts the [studio](#the-studio) and opens it in your browser:
+the place to read, write and reorder stories and rules, publish them, have an
+agent sync them, check, and sign off. To work on the larger example instead:
+
+```bash
+npm run dev dashboard
+```
+
+3. Or work from the terminal: check, and run the example.
 
 ```bash
 npm run check
@@ -108,14 +122,58 @@ through a scripted session; every `✗` is a rule refusing an event:
 balance 0
 ```
 
-## Studio
+## The studio
 
-Run `npm run dev` to open the local Studio. Select the order, dashboard,
-assistant or full-stack example, edit its stories and rules, then publish.
-The Studio records the changes, runs checks, and can hand the sync work to
-Claude Code or Codex. Sign-off uses the same `accept` command as the terminal.
+`npm run dev` serves a page at `http://localhost:4321` (the next free port if
+that one is taken) for the project, with the order checkout in `examples/order/` and the dashboard,
+assistant and full-stack apps in `vibespec/examples/` one click away. It works
+on `spec/**/*.md` directly: nothing else holds the stories.
 
-`npx spec watch` reruns checks when a spec, source file or test changes.
+```mermaid
+flowchart LR
+  edit["Edit<br/>stories and rules"] --> publish["Publish<br/>writes spec/**/*.md<br/>and the manifest"]
+  publish --> sync["Sync<br/>Claude Code or Codex,<br/>on the sync prompt"]
+  sync --> check["Check<br/>npm run check"]
+  check --> sign["Sign off<br/>npm run accept"]
+  check -. "✗" .-> sync
+```
+
+| You can | How |
+|---|---|
+| Read every story and rule, its Quint coloured, what it defines as a glyph (`→` transition, `?` guard, `□` always, `Δ` step, `◇` sometimes, `∀` law, `●` initial state, `T` type) | Click a row; `Expand` opens all; `/` searches |
+| See what needs you | A dot on each story, rule and spec: accent unpublished, amber waiting for review (with the status `check` gives it), red named by a failing check. `Needs attention` hides the rest |
+| Edit a story, a rule, its prose and its Quint, or the spec's title | Double-click, the pencil, or `e` on a focused row. `Esc` or `Done` closes it |
+| Add a story, a rule, a spec; delete any of them | `+ Story`, `+` on a story, the field under the specs; the bin. `⌘Z` or `Undo` in the toast brings it back |
+| Reorder and regroup | Drag a story or rule, `Alt ↑`/`Alt ↓` on a focused row, or the `⇅` menu: a rule into another story, a story onto another spec |
+| Publish | `⌘S` or `Publish`: shows the diff of every spec it writes, refuses empty or duplicate headings, and refuses to overwrite a spec that changed on disk unless you say so |
+| Sync | `Run` starts Claude Code or Codex in the project on the sync prompt, its progress in the log, `■` stops it. `Open` starts a new Claude Code or Codex chat in the project with the prompt filled in. The copy button copies it |
+| Check and sign off | `Run check` runs `npm run check`, also after every publish and sync. `Sign off` runs `npm run accept`, once every stage but `review` passes and nothing is unpublished or unsynced |
+
+Unpublished edits are kept in the browser, so a reload loses nothing; a spec
+an agent or an editor changes underneath them is flagged with `Keep mine` and
+`Take disk`. Pages follow every change to `spec/` as it happens.
+
+**Publishing** rewrites only the specs that changed, and leaves everything you
+did not touch byte for byte as it was. It then keeps, in `.studio/` (ignored by
+git), the specs as the agent last synced them and a manifest of what changed
+since, which the sync prompt points to. `.studio/manifest.json` lists each
+story and rule added, deleted, renamed, reworded, re-modelled, reordered or
+moved to another story or spec, with what each asks of the agent in the words
+of the [sync skill](.claude/skills/sync/SKILL.md); the rules whose Quint relied
+on one that changed or went; the generated modules to rebuild and the code in
+`src/` and `test/` that imports them; and the citations that name a heading
+the specs no longer have. A sync that the studio ran and that ended well clears
+it; `Mark synced` clears it by hand.
+
+**Agents.** `Run` needs `claude` or `codex` on the `PATH`, signed in. Claude
+Code runs with edits allowed and only the check, `npx quint` and file tools,
+never `accept`; Codex runs in its `workspace-write` sandbox. `Open` uses the
+`claude-cli://` and `codex://` links, which the apps register when installed
+(Claude Code's after its first interactive session); a link carries at most
+5,000 characters of prompt, so a long manifest is summarized and the rest read
+from the file.
+
+`npx spec watch` reruns the checks whenever a spec, a source file or a test changes.
 
 ## Tutorial
 
@@ -349,7 +407,7 @@ npm run accept
 
 | Command | Does |
 |---|---|
-| `npm run dev` | Opens the local Studio for editing, checking and reviewing specs |
+| `npm run dev` | The [studio](#the-studio), on this project; `npm run dev <example>` opens an example, `-- --port <n>` uses another port |
 | `npm run check` | Every stage below, for the template and example workspaces; ends each project with a `next:` line |
 | `npx spec check --json` | The current project's check as one JSON object ([shape](AGENTS.md#changing-the-tools)) |
 | `npm run gen` | Generates `gen/` only |
@@ -358,7 +416,7 @@ npm run accept
 | `npm run new` / `npm run new -- <path>` | Fills an empty root index or creates a child [starter spec](AGENTS.md#writing-a-spec) |
 | `npx spec migrate` | Consolidates old review ledgers into `spec/lock.json`, preserving their recorded approvals |
 | `npm run demo` | A scripted session against the verified core |
-| `npm run check:dashboard` | `check` on `examples/dashboard` |
+| `npm run check:dashboard` | `check` on `vibespec/examples/dashboard` |
 | `npm run selftest` | Breaks the pipeline one way at a time and checks each break is caught |
 | `npm run build` | Compiles the tools into `dist/`, the packaged `spec` command |
 | `npx spec init` | Sets up another package; see [Using it from another package](AGENTS.md#using-it-from-another-package) |
@@ -387,8 +445,9 @@ Stages run cheapest first. `✓` passed, `✗` failed, `-` skipped: blocked by a
 
 ## What lives where
 
-Keep `spec/`, `src/`, `test/` and `tools/` in git, lock files included.
+Keep `spec/`, `src/`, `test/` and `vibespec/` in git, lock files included.
 `gen/`, `dist/` and `.spec-cache/` are derived and ignored by git; never edit them.
+`.studio/` is the studio's own working state, also ignored.
 
 | Path | Role |
 |---|---|
@@ -398,20 +457,21 @@ Keep `spec/`, `src/`, `test/` and `tools/` in git, lock files included.
 | `.spec-cache/` | Remembered results, and `lock`: one check or accept per project at a time |
 | `.claude/skills/sync/SKILL.md` | How the agent in your session keeps stories, rules and model in step |
 | `.claude/skills/design/SKILL.md` | How the agent designs what a person sees: only what the spec asks, visual first, few words |
-| `tools/spec.ts` | The pipeline and command line |
-| `tools/parse.ts`, `tools/review.ts` | Literate specs and review ledgers |
-| `tools/cache.ts`, `tools/run.ts` | Stage caches and bounded tool execution |
-| `tools/units.ts`, `tools/simulate.ts`, `tools/util.ts` | Generation, proof units, simulation, replay and shell tests |
-| `tools/conformance.ts` | The conformance runtime copied into `gen/`: journeys, walks, shrinking |
-| `tools/prove.ts`, `tools/proof/lib.dfy` | The proof stage for one unit, with the checks on proof files, and the library of general lemmas proof files call |
-| `tools/gen.ts`, `tools/gen/` | Quint → TypeScript and the simulation harness |
-| `tools/selftest.ts`, `tools/fixtures/` | Tests of the pipeline itself, and the small specs they use |
+| `.agents/skills/` | Links to the same skills for Codex; edit the files in `.claude/skills/` |
+| `vibespec/spec.ts` | The pipeline and command line |
+| `vibespec/parse.ts`, `vibespec/review.ts` | Literate specs and review ledgers |
+| `vibespec/cache.ts`, `vibespec/run.ts` | Stage caches and bounded tool execution |
+| `vibespec/units.ts`, `vibespec/simulate.ts`, `vibespec/util.ts` | Generation, proof units, simulation, replay and shell tests |
+| `vibespec/conformance.ts` | The conformance runtime copied into `gen/`: journeys, walks, shrinking |
+| `vibespec/prove.ts`, `vibespec/proof/lib.dfy` | The proof stage for one unit, with the checks on proof files, and the library of general lemmas proof files call |
+| `vibespec/gen.ts`, `vibespec/gen/` | Quint → TypeScript and the simulation harness |
+| `vibespec/studio/` | The studio: `server.ts` serves the page in `public/` and runs the check, agents and sign-off; `doc.ts` reads and writes specs losslessly and writes the manifest |
+| `vibespec/selftest.ts`, `vibespec/fixtures/` | Tests of the pipeline itself and the studio, and the small specs they use |
 | `examples/order/src/ledger.ts` | Hand-written logic, proved against the generated contract |
 | `examples/order/src/app.ts`, `examples/order/src/demo.ts` | Unverified shell: storage, input parsing, error reporting; and the demo |
 | `examples/order/test/app.test.ts` | Tests of the shell, run by the `tests` stage |
 | `examples/order/` | Complete checkout example, with its own spec, shell and tests |
-| `examples/dashboard/` | A larger, synthesized example, as a separate package |
-| `writeup.html` | A narrative explainer of the approach |
+| `vibespec/examples/dashboard/` | A larger, synthesized example, as a separate package |
 | `.github/workflows/check.yml` | Continuous integration: `npm run check` without the cache |
 | **Derived** (not in git) | |
 | `gen/<name>.ts`, `gen/<name>.qnt` | Generated TypeScript, and the tangled Quint model |
@@ -419,10 +479,11 @@ Keep `spec/`, `src/`, `test/` and `tools/` in git, lock files included.
 | `gen/<name>.conformance.ts`, `gen/conformance.ts` | What the check found for testing the application against a state machine, and the runner-agnostic check a driver calls ([AGENTS.md](AGENTS.md#conformance)) |
 | `gen/traces/`, `gen/proof/` | The last simulated traces; the final Dafny and logs of each proof unit |
 | `dist/` | The built `spec` command, from `npm run build` |
+| `.studio/state.json`, `.studio/manifest.json` | The specs as last synced, and what was published since; written by the studio |
 
 ## A larger example
 
-`examples/dashboard` is a synthesized team task dashboard with made-up names
+`vibespec/examples/dashboard` is a synthesized team task dashboard with made-up names
 and data: tasks live in a shared spreadsheet that people also edit by hand, a
 chat app carries commands and notifications, and a web page shows the state.
 
@@ -441,9 +502,9 @@ once" covers it, and `src/notify.ts` sends each person one message.
 
 Two more examples exercise different boundaries:
 
-- [Shared to-do list](examples/fullstack/README.md): an HTTP server, browser
+- [Shared to-do list](vibespec/examples/fullstack/README.md): an HTTP server, browser
   client and a model of two tabs exchanging messages over an unreliable network.
-- [Assistant](examples/assistant/README.md): trusted senders, a bounded agent
+- [Assistant](vibespec/examples/assistant/README.md): trusted senders, a bounded agent
   turn, late replies and a bill payment that requires the person's confirmation.
 
 ## What is and is not guaranteed
@@ -460,7 +521,7 @@ Trusted, not proved:
 
 - **The prose.** Whether the Quint under a rule means what the sentence above
   it says is a judgement. The `review` stage makes sure someone made it.
-- **The generator** (`tools/gen.ts`, `tools/gen/`). Simulation checks the Quint model; the proof checks the
+- **The generator** (`vibespec/gen.ts`, `vibespec/gen/`). Simulation checks the Quint model; the proof checks the
   TypeScript. `replay` ties the two together on sampled traces only.
 - **The shell** (`examples/order/src/app.ts`), LemmaScript, Dafny and Quint.
 - **Built-ins.** The proofs assume that built-ins such as `Math` and
@@ -489,8 +550,13 @@ subset is refused by name ([supported Quint](AGENTS.md#supported-quint)).
 **What about I/O, HTTP and storage?** That is the shell, written by hand
 around the generated core and covered by tests.
 
-**Which agent?** Claude Code loads the skills in `.claude/skills/` directly.
-Any other agent reads [AGENTS.md](AGENTS.md).
+**Which agent?** Claude Code loads `.claude/skills/`; Codex loads the same
+files through the skill-folder links in `.agents/skills/`. Keep skill edits in
+`.claude/skills/` so both agents use one source. `npx spec init` sets up both
+paths in another project without replacing existing skills. Other agents can
+follow [AGENTS.md](AGENTS.md) directly. Codex's
+[skill discovery documentation](https://learn.chatgpt.com/docs/build-skills#where-codex-loads-local-skills)
+describes the supported locations and links.
 
 **Can I check harder than simulation?** Yes: run the Apalache model checker
 on the generated harness, exhaustively up to a depth
@@ -500,7 +566,7 @@ on the generated harness, exhaustively up to a depth
 
 How the repository works, the spec format, proof files and how to change the
 tools are in [AGENTS.md](AGENTS.md); every agent reads it and this README in
-full before doing any work. A change to `tools/` needs
+full before doing any work. A change to `vibespec/` needs
 `npm run selftest` to pass, with a new case for each new kind of mistake it
 catches.
 

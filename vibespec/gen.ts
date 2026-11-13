@@ -160,7 +160,7 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
     return `import { ${[...l.exports.types.map((t) => item(t, true)), ...l.exports.values.map((v) => item(v, false))].join(", ")} } from "./${l.module}.ts";`;
   };
   const header = [
-    `// GENERATED from ${source} by tools/spec.ts. Do not edit: change the spec and run \`npm run gen\`.`,
+    `// GENERATED from ${source} by vibespec/spec.ts. Do not edit: change the spec and run \`npm run gen\`.`,
     `//@ backend dafny`,
     ...links.map(importLine),
     ...typeOnly.map((m) => `import { ${[...new Set(typedefs.filter((d) => d.module === m).map((d) => d.base as string))].map((b) => `type ${b} as ${m}_${b}`).join(", ")} } from "./${m}.ts";`),

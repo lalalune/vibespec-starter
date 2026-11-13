@@ -6,9 +6,10 @@
     "node": ">=24"
   },
   "scripts": {
-    "check": "node ../../tools/spec.ts check",
-    "gen": "node ../../tools/spec.ts gen",
-    "accept": "node ../../tools/spec.ts accept",
+    "dev": "node ../../spec.ts studio",
+    "check": "node ../../spec.ts check",
+    "gen": "node ../../spec.ts gen",
+    "accept": "node ../../spec.ts accept",
     "start": "node src/main.ts"
   },
   "devDependencies": {

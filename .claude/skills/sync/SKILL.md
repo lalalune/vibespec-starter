@@ -9,6 +9,9 @@ Read AGENTS.md and README.md in full first, once per session.
 
 ## The loop
 
+0. If `.studio/manifest.json` exists, the user published changes from the
+   studio (README, "The studio"): read it. Each change says what it asks of
+   you; work through all of them in the loop below. Do not edit `.studio/`.
 1. Run `npm run check`. Each `✗` line is something to resolve; `-` lines are
    stages skipped because of a `✗` above, or `types` in a spec-only package with no tsconfig.json.
    Under `review` it prints a changed rule's prose and Quint, a story's text

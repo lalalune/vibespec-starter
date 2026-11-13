@@ -42,6 +42,7 @@ export interface Oracle<S, E> {
  */
 export interface Found<E> {
   spec: string;
+  source: string;
   events: Sent<E>[];
   journeys: { story: string; rule: string; events: Sent<E>[] }[];
   sets: string[][];
@@ -88,7 +89,7 @@ export async function check<S, E, V>(oracle: Oracle<S, E>, found: Found<E>, driv
       if (await differ(shorter)) trace = shorter;
     }
     const lines = trace.map(([k, e]) => `  ${k} ${show(e)}`).join("\n");
-    throw new Error(`conformance to spec/${found.spec}.md: ${what}, shrunk to ${trace.length} events:\n${lines}\n${await differ(trace)}`);
+    throw new Error(`conformance to ${found.source}: ${what}, shrunk to ${trace.length} events:\n${lines}\n${await differ(trace)}`);
   };
 
   for (const j of found.journeys) {
@@ -113,8 +114,8 @@ export async function check<S, E, V>(oracle: Oracle<S, E>, found: Found<E>, driv
     if (await differ(trace)) await fail(`walk ${w + 1} of seed ${seed}`, trace);
   }
   // A driver that cannot see the application passes everything; one that saw nothing change, or never saw a refusal, is refused.
-  if (seen.size < 2) throw new Error(`conformance to spec/${found.spec}.md: observe returned the same value every time, so the driver cannot see the application`);
-  if (walks && outcomes.size < 2) throw new Error(`conformance to spec/${found.spec}.md: dispatch never reported both outcomes`);
+  if (seen.size < 2) throw new Error(`conformance to ${found.source}: observe returned the same value every time, so the driver cannot see the application`);
+  if (walks && outcomes.size < 2) throw new Error(`conformance to ${found.source}: dispatch never reported both outcomes`);
   return { journeys: found.journeys.length, walks, observed: seen.size };
 }
 

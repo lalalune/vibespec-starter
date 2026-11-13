@@ -1,6 +1,6 @@
 // Does each check catch the kind of mistake it exists for? Every case builds a
 // scratch project, from this project's own spec or from the small specs in
-// tools/fixtures/, breaks one thing, and asserts which stage of `check` fails.
+// vibespec/fixtures/, breaks one thing, and asserts which stage of `check` fails.
 import assert from "node:assert/strict";
 import { execFile, spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -12,7 +12,7 @@ import { LIB_FILE, parseProofFile, readVerdict, splice } from "./prove.ts";
 import { migrateLocks, pendingSpecs, readLedger, writeLedger } from "./review.ts";
 import { danglingCitations } from "./util.ts";
 import { nodesOf } from "./studio/doc.ts";
-import { startStudio } from "./studio/server.ts";
+import { projectsOf, startStudio } from "./studio/server.ts";
 import { acceptContracts, acceptReviews, badSpecName, check, checkVerifiedSource, expandListHelpers, gen, init, parseSpec, pending, pendingContracts, readSpecs, replay, show, type Result } from "./spec.ts";
 
 const project = path.join(import.meta.dirname, "..");
@@ -45,7 +45,7 @@ function scratch(files: Record<string, string>): string {
 }
 /** A scratch project whose specs are the named fixtures, each changed by `edit` if it is given. */
 const fixtures = (names: string[], edit: (files: Record<string, string>) => void = () => {}) => {
-  const files = Object.fromEntries(names.map((n) => [`spec/${n}.md`, read(`tools/fixtures/${n}.md`)]));
+  const files = Object.fromEntries(names.map((n) => [`spec/${n}.md`, read(`vibespec/fixtures/${n}.md`)]));
   edit(files);
   return scratch(files);
 };
@@ -622,10 +622,10 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
   test("nested specs link to children and reuse a machine through its directory index", async () => {
     const root = scratch({
       "spec/index.md": "# Home\n\n[Room](./rooms/)\n[Other lamp](./other/light/index.md)\n",
-      "spec/rooms/index.md": read("tools/fixtures/room.md").replace('import lamp as L from "./lamp"', 'import /* from "wrong" */ lamp\n  as L\n  from\n  "./light"'),
-      "spec/rooms/light/index.md": read("tools/fixtures/lamp.md"),
+      "spec/rooms/index.md": read("vibespec/fixtures/room.md").replace('import lamp as L from "./lamp"', 'import /* from "wrong" */ lamp\n  as L\n  from\n  "./light"'),
+      "spec/rooms/light/index.md": read("vibespec/fixtures/lamp.md"),
       "spec/rooms/light/index.proof.dfy": "",
-      "spec/other/light/index.md": read("tools/fixtures/lamp.md"),
+      "spec/other/light/index.md": read("vibespec/fixtures/lamp.md"),
       "src/app.ts": `// ${"spec/rooms/index.md"}, ${JSON.stringify("Story: Light a room")}\nexport { initial, step } from "../gen/rooms.ts";\n`,
     });
     const specs = readSpecs(root);
@@ -640,6 +640,12 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.equal(room.sometimesFullyLit(lit), true);
     assert.equal(room.inv(lit), true);
     assert.ok(fs.existsSync(path.join(root, "gen/other__light.ts")));
+    const { conformance } = await import(path.join(root, "gen/rooms.conformance.ts"));
+    await assert.rejects(conformance({
+      reset: () => {},
+      dispatch: () => "refused",
+      observe: () => room.initial,
+    }, { walks: 0 }), /conformance to spec\/rooms\/index\.md:/);
     fs.appendFileSync(path.join(root, "spec/rooms/light/index.md"), `\n${F}quint\npure val label = "lamp"\n${F}\n`);
     const changed = readSpecs(root);
     assert.ok(pending(root, changed.find((s) => s.name === "rooms")!, changed).some((p) => p.note?.includes("spec/rooms/light/index.md")));
@@ -708,7 +714,7 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
   });
 
   test("the package's own test script is what runs, never the check itself, and a test citing a heading the spec does not have is caught", async () => {
-    const root = copyOfProject("package.json", () => JSON.stringify({ scripts: { test: `node ${JSON.stringify(path.join(project, "tools/spec.ts"))} check` } }));
+    const root = copyOfProject("package.json", () => JSON.stringify({ scripts: { test: `node ${JSON.stringify(path.join(project, "vibespec/spec.ts"))} check` } }));
     const again = await run(root);
     assert.deepEqual(again.failed, ["tests"], again.text);
     assert.ok(again.said("tests", /runs `spec check`; it must run only the tests/), again.text);
@@ -742,9 +748,15 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.deepEqual(fs.readdirSync(path.join(root, "gen")).filter((f) => f.endsWith(".ts")), ["order.ts"]);
   });
 
-  test("the studio publishes a spec with its origins, checks it, and refuses remote or concurrent writes", async () => {
+  test("the studio publishes a spec with its origins, checks it, refuses remote or concurrent writes, and an agent's sync clears the manifest", async () => {
+    const available = projectsOf(project);
+    for (const name of ["assistant", "dashboard", "fullstack", "order"])
+      assert.ok(available.some((p) => p.id === `examples/${name}` && fs.existsSync(path.join(p.root, "spec"))), name);
+    assert.equal(new Set(available.map((p) => p.id)).size, available.length);
     const root = fixtures(["door"]);
-    const studio = await startStudio({ projects: [{ id: ".", name: "Door", root }], port: 0, agents: {} });
+    // A stand-in for an agent's command line, at its boundary: it keeps the prompt it was given and answers as Claude Code does.
+    const agent = `let p = ""; process.stdin.on("data", (d) => (p += d)).on("end", () => { require("fs").writeFileSync("prompt.txt", p); console.log(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "synced" }] } })); });`;
+    const studio = await startStudio({ projects: [{ id: ".", name: "Door", root }], port: 0, agents: { fake: { label: "Fake", command: () => [process.execPath, ["-e", agent]] } } });
     const url = studio.url.replace("localhost", "127.0.0.1");
     const post = (route: string, body: unknown, headers: Record<string, string> = {}) => fetch(`${url}/api/${route}`, {
       method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body),
@@ -782,13 +794,22 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
       const concurrent = await Promise.all([post("publish", body), post("spec", { name: "parallel" })]);
       for (const response of concurrent) assert.equal(response.status, 400, await response.text());
       assert.ok(!fs.existsSync(path.join(root, "spec/parallel.md")));
-      let current = await (await fetch(`${url}/api/project`)).json();
-      while (current.job?.status === "running") {
-        await new Promise((resolve) => setTimeout(resolve, 50));
-        current = await (await fetch(`${url}/api/project`)).json();
-      }
-      assert.equal(current.job?.status, "failed");
-      assert.equal(current.check?.next.includes("npm run accept"), true);
+      const settled = async (kind: string) => {
+        for (let current = await (await fetch(`${url}/api/project`)).json(); ; current = await (await fetch(`${url}/api/project`)).json()) {
+          if (current.jobs[kind]?.status !== "running") return current;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+      };
+      const checked = await settled("check");
+      assert.equal(checked.jobs.check?.status, "failed");
+      assert.equal(checked.check?.next.includes("npm run accept"), true);
+      // The agent gets the manifest in its prompt; its success clears the manifest, and its report stays beside the check after it.
+      assert.equal((await post("agent", { agent: "fake" })).status, 200);
+      const synced = await settled("agent");
+      assert.deepEqual([synced.jobs.agent.status, synced.jobs.agent.log], ["passed", ["synced"]]);
+      assert.match(fs.readFileSync(path.join(root, "prompt.txt"), "utf8"), /~ rule spec\/door\.md: .*\(prose\)/);
+      assert.ok(!fs.existsSync(path.join(root, ".studio/manifest.json")));
+      await settled("check");
       const created = await post("spec", { name: "nested/child" });
       assert.equal(created.status, 200, await created.clone().text());
       assert.equal((await created.json()).file, "spec/nested/child/index.md");
@@ -804,16 +825,7 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
       fs.rmSync(path.join(root, "spec/escape.md"));
       const linked = await post("publish", { files: [{ file: "spec/index.md", base: null, text: "[Child](./nested/child/)\n" }], origins: [] });
       assert.equal(linked.status, 200, await linked.clone().text());
-      const waitForCheck = async () => {
-        let snap = await (await fetch(`${url}/api/project`)).json();
-        while (snap.job?.status === "running") {
-          await new Promise((resolve) => setTimeout(resolve, 50));
-          snap = await (await fetch(`${url}/api/project`)).json();
-        }
-        assert.notEqual(snap.job?.status, "running");
-        return snap;
-      };
-      const nested = await waitForCheck();
+      const nested = await settled("check");
       assert.deepEqual(nested.specs.map((s: { file: string }) => s.file), ["spec/index.md", "spec/door.md", "spec/nested/child/index.md"]);
       const index = nested.specs.find((s: { file: string }) => s.file === "spec/index.md");
       const childIndex = nested.specs.find((s: { file: string }) => s.file === child.file);
@@ -826,7 +838,7 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
       assert.ok(manifestAfterDelete.changes.some((c: { kind: string; spec: string }) => c.kind === "spec" && c.spec === "spec/index.md"));
       assert.equal(fs.existsSync(path.join(root, child.file)), false);
       assert.equal(fs.readFileSync(path.join(root, "spec/lock.json"), "utf8"), ledger);
-      const final = await waitForCheck();
+      const final = await settled("check");
       assert.ok(final.check.results.some((r: Result) => r.stage === "review" && /removed spec/.test(r.summary)));
     } finally {
       await studio.close();
@@ -864,7 +876,7 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
       f["package.json"] = '{"type":"module"}';
       f["spec/highest.proof.dfy"] = "lemma lawTheHighestIsAtLeastTheStart_ensures(xs: seq<int>, start: int)\n  ensures (lawTheHighestIsAtLeastTheStart(xs, start) == true)\n{\n  ProofLib.FoldLeftMax((top: int, x: int) => (if (x > top) then x else top), start, xs);\n}\n";
     });
-    fs.cpSync(path.join(project, "tools"), path.join(root, "tools"), { recursive: true });
+    fs.cpSync(path.join(project, "vibespec"), path.join(root, "vibespec"), { recursive: true });
     const modules = path.join(root, "node_modules");
     fs.mkdirSync(path.join(modules, ".bin"), { recursive: true });
     for (const entry of fs.readdirSync(nodeModules).filter((f) => f !== ".bin"))
@@ -873,12 +885,12 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
       const executable = process.platform === "win32" ? `${tool}.cmd` : tool;
       fs.symlinkSync(path.join(nodeModules, ".bin", executable), path.join(modules, ".bin", executable), "file");
     }
-    const script = path.join(root, "tools/spec.ts");
+    const script = path.join(root, "vibespec/spec.ts");
     const first = await runCli(script, root, "check", "--json");
     const checked = JSON.parse(first.stdout);
     assert.ok(checked.results.some((r: Result) => r.stage === "proof" && r.ok), first.stdout + first.stderr);
     const marker = "// A distinct proof-library version for this scratch project.";
-    fs.appendFileSync(path.join(root, "tools/proof/lib.dfy"), `\n${marker}\n`);
+    fs.appendFileSync(path.join(root, "vibespec/proof/lib.dfy"), `\n${marker}\n`);
     const second = await runCli(script, root, "check", "--json");
     const again = JSON.parse(second.stdout);
     assert.ok(again.results.some((r: Result) => r.stage === "proof" && r.ok), second.stdout + second.stderr);
@@ -916,7 +928,7 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     // Across specs: a change to a library definition flags the rules that use it.
     const shop = fixtures(["lib", "shop"]);
     for (const spec of readSpecs(shop)) acceptReviews(shop, spec);
-    fs.writeFileSync(path.join(shop, "spec/lib.md"), read("tools/fixtures/lib.md").replace("acc + x)", "x + acc)"));
+    fs.writeFileSync(path.join(shop, "spec/lib.md"), read("vibespec/fixtures/lib.md").replace("acc + x)", "x + acc)"));
     const flagged = pendingItems(shop);
     assert.ok(flagged.includes("Story: Fill a cart / A cart holds lines: model changed through total (spec/lib.md: Sums / The total of a list)"), flagged.join("\n"));
 
@@ -1000,7 +1012,7 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     fs.writeFileSync(lock, `${process.pid}\n`);
     await assert.rejects(check(root), /another check or accept is running in this project \(process \d+\)/);
     fs.writeFileSync(path.join(root, "spec/door.lock.json"), "{}");
-    const migration = await runCli(path.join(project, "tools/spec.ts"), root, "migrate");
+    const migration = await runCli(path.join(project, "vibespec/spec.ts"), root, "migrate");
     assert.equal(migration.status, 1);
     assert.match(migration.stderr, /another check or accept is running/);
     assert.ok(fs.existsSync(path.join(root, "spec/door.lock.json")));
@@ -1016,7 +1028,7 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
   });
 
   test("the command line: spec new, the arguments it accepts, gen --if-valid and check --json", async () => {
-    const cli = (root: string, ...args: string[]) => runCli(path.join(project, "tools/spec.ts"), root, ...args);
+    const cli = (root: string, ...args: string[]) => runCli(path.join(project, "vibespec/spec.ts"), root, ...args);
     const root = scratch({});
     const blank = scratch({ "spec/index.md": "" });
     assert.equal((await cli(blank, "new")).status, 0);
@@ -1143,7 +1155,7 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
   });
 
   test("a law is offered to an importer only if it is proved without resting on one that is not", async () => {
-    const counter = read("tools/fixtures/magic.md").replace("type C = {", 'import forbidden.* from "./forbidden"\ntype C = {').replace(/### Mark by[\s\S]*?(?=### The count is never)/, "").replace(/### The count of bumps[\s\S]*?(?=### Bumped)/, "");
+    const counter = read("vibespec/fixtures/magic.md").replace("type C = {", 'import forbidden.* from "./forbidden"\ntype C = {').replace(/### Mark by[\s\S]*?(?=### The count is never)/, "").replace(/### The count of bumps[\s\S]*?(?=### Bumped)/, "");
     const { said, text } = await run(fixtures(["forbidden"], (f) => Object.assign(f, {
       "spec/magic.md": counter,
       "spec/forbidden.proof.dfy": "lemma lawNotSecond_ensures(n: int)\n  ensures (lawNotSecond(n) == true)\n{\n  lawNotFirst_ensures(987654321);\n}\n",
