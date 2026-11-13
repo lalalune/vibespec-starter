@@ -137,10 +137,16 @@ pure def push(s: State, n: int): Did = { state: s.append(n), out: List(n) }
 pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = out.length() == 1`);
     const model = await gen(lists, parseSpec(lists, "spec/lists.md"));
     assert.equal(model.evals.find((e) => e.name === "stepHasOneEffect")?.params.at(-1)?.from, "emitted");
-    const root = fixtures(["mailer"], (files) => { files["spec/mailer.proof.dfy"] = read("vibespec/fixtures/mailer.proof.dfy"); });
-    const result = await run(root);
+    const mailer = (edit: (s: string) => string = (s) => s) => fixtures(["mailer"], (files) => { files["spec/mailer.md"] = edit(files["spec/mailer.md"]); files["spec/mailer.proof.dfy"] = read("vibespec/fixtures/mailer.proof.dfy"); });
+    const root = mailer();
+    const [result, swapped] = await Promise.all([root, mailer((s) => s.replace("List(Saved({ n: n }), Sent({ n: n }))", "List(Sent({ n: n }), Saved({ n: n }))"))].map((r) => run(r)));
     assert.deepEqual(result.failed, ["review"], result.text);
+    assert.ok(swapped.said("always", /a step breaks .*A message is saved before anything is sent[\s\S]*send\{"n":\d+\}\s+-> sent = 1, out \[\{"tag":"Sent"/), swapped.text);
     const domain = await import(path.join(root, "gen/mailer.ts"));
+    const trace = [{ state: domain.initial, out: [] }, { event: { type: "send", n: 2 }, state: { sent: 1 }, out: [{ tag: "Saved", n: 2 }, { tag: "Sent", n: 2 }] }];
+    const mailerModel = await gen(root, parseSpec(root, "spec/mailer.md"));
+    replay(domain, trace, mailerModel);
+    assert.throws(() => replay({ ...domain, step: (s: any, e: any) => ({ ...domain.step(s, e), out: [] }) }, trace, mailerModel), /disagree on what \{"type":"send","n":2\} outputs/);
     assert.deepEqual(domain.step(domain.initial, { type: "send", n: 4 }), {
       state: { sent: 1 }, out: [{ tag: "Saved", n: 4 }, { tag: "Sent", n: 4 }],
     });
@@ -283,6 +289,8 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       ["a variant field called tag", "type P = A({ tag: int }) | B\npure val initial: int = 0\npure def tick(n: int): int = n", /cannot be called `tag`/],
       ["a match binder used as a whole value", "type N = { n: int }\ntype P = A(N) | B\npure val initial: int = 0\npure def g(r: N): int = r.n\npure def f(p: P): int = match p { | A(x) => g(x) | _ => 0 }\npure def tick(n: int): int = n", /is what a match arm carries/],
       ["state declared by hand", "pure val initial: int = 0\nvar n: int", /only types, imports, `pure val` and `pure def` belong in a spec/],
+      ["a step rule's output where no transition outputs", "pure val initial: int = 0\npure def tick(n: int): int = n\npure def stepQuiet(a: int, b: int, out: List[int]): bool = true", /no transition returns `\{ state, out \}`/],
+      ["a refinement of a machine not imported", "pure val initial: int = 0\npure def tick(n: int): int = n\npure def refinesL(n: int): int = n", /no machine is imported as L/],
     ];
     for (const [what, quint, message] of refused) {
       const { said, text } = await run(oneRule("t", "A rule", quint));
@@ -543,6 +551,21 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const { failed, said, text } = await run(fixtures(["lamp", "room"]));
     assert.deepEqual(failed, ["review"], text);
     assert.ok(said("proof", /^room\.ts: all \d+ obligations proved/), text);
+  });
+
+  test("a spec that refines another is held to it on every step, and proved to be", async () => {
+    const sw = (edit: (s: string) => string = (s) => s) => fixtures(["lamp", "switch"], (f) => { f["spec/switch.md"] = edit(f["spec/switch.md"]); });
+    const [ok, uncounted, lit, started] = await Promise.all([
+      sw(),
+      sw((s) => s.replace("presses: s.presses + 1", "presses: s.presses")),
+      sw((s) => s.replace("{ ...s, held: true }", "{ ...s, held: true, lit: true }")),
+      sw((s) => s.replace("{ lit: false, presses: 0, held: false }", "{ lit: false, presses: 1, held: false }")),
+    ].map((r) => run(r)));
+    assert.deepEqual(ok.failed, ["review"], ok.text);
+    assert.ok(ok.said("proof", /^switch\.ts: all \d+ obligations proved/), ok.text);
+    assert.ok(uncounted.said("always", /\(spec\/switch\.md:\d+\) is not a step of L: it changes refinesL, but not as L::toggle would/), uncounted.text);
+    assert.ok(lit.said("always", /\(spec\/switch\.md:\d+\) changes refinesL, but L has no transition press/), lit.text);
+    assert.ok(started.said("always", /\(spec\/switch\.md:\d+\) does not map the initial state onto L::initial/), started.text);
   });
 
   test("a map is looked up safely, division and remainder agree with Quint for negative numbers, and the parsers admit only what fits", async () => {

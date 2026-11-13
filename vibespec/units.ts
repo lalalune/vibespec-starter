@@ -143,7 +143,9 @@ export async function proofUnits(root: string, models: Model[], srcFiles: SrcFil
     src: false,
     proofFile: m.source.replace(/\.md$/, ".proof.dfy"),
     laws: lawsOf(needs(m), (dep) => `${dep}_`),
-    rests: [], // proved against the definitions of what it imports, never against their obligations
+    // Proved against the definitions of what it imports, never against their obligations; but the abstract rules
+    // carry over to a refining spec only as far as the machine it refines proved them (AGENTS.md, "Refinement").
+    rests: m.refines ? [`${m.refines.of.module}.ts`] : [],
     transitions: m.stateType ? m.transitions.map((t) => ({ name: t.name, params: t.params.map((p) => p.name) })) : undefined,
   }));
 

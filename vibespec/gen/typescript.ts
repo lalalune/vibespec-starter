@@ -25,6 +25,15 @@ export function typescript({ header, typedefs, vals, funs, sig, typeOf, doc, loc
   // Where some transition has output, `step` returns it beside the state, and a transition without output outputs nothing.
   const nothing = output && `([] as ${tsType(output.out)})`;
   const outputs = (s: string) => (output ? `{ state: ${s}, out: ${nothing} }` : s);
+  // A refining spec's step leaves the abstract state as it was, or takes the abstract step of its name (AGENTS.md, "Refinement").
+  const { refines } = roles;
+  const abstract = (n: string) => `${refines!.of.module}_${n}`;
+  const refined = (t: Transition, before: string, after: string) => {
+    const [from, to] = [before, after].map((s) => `${L(refines!.fn)}(${s})`);
+    const u = refines!.of.transitions.find((u) => u.name === t.name);
+    const guard = u?.guard ? `${abstract(u.guard)}(${[from, ...u.guardParams].join(", ")}) && ` : "";
+    return `${to} === ${from}${u ? ` || (${guard}${to} === ${abstract(u.name)}(${[from, ...u.params.map((p) => p.name)].join(", ")})${u.emits ? ".state" : ""})` : ""}`;
+  };
   // Who sent an event is never part of it: the program passes it to `enabled` and `step` from what it trusts.
   const carried = (t: Transition) => t.params.filter((p) => p.name !== SENDER);
   const by = sender ? `, ${SENDER}: ${tsType(sender)}` : "";
@@ -52,6 +61,7 @@ export function typescript({ header, typedefs, vals, funs, sig, typeOf, doc, loc
     const given = t && `(${L("inv")}(${params[0].name})${t.guard ? ` && ${L(t.guard)}(${[params[0].name, ...t.guardParams].join(", ")})` : ""}) ==> `;
     const after = t?.emits ? "\\result.state" : "\\result";
     const contract = t ? [
+      ...(refines ? [`  //@ ensures ${given}(${refined(t, params[0].name, after)})`] : []),
       ...always.map((a) => `  //@ ensures ${given}${L(a)}(${after})`),
       ...steps.map((r) => `  //@ ensures ${given}${L(r.name)}(${[params[0].name, ...(r.via ? [JSON.stringify(t.name)] : []), after, ...(r.out ? [t.emits ? "\\result.out" : "[]"] : [])].join(", ")})`),
     ] : laws.some((l) => l.name === d.name) ? [`  //@ ensures \\result === true`] : [];
@@ -119,6 +129,7 @@ export function typescript({ header, typedefs, vals, funs, sig, typeOf, doc, loc
     `/** Proof obligation: the initial state satisfies every \`always\` rule. */`,
     `export function ${L("initialHolds")}(): ${state} {`,
     `  //@ ensures ${L("inv")}(\\result)`,
+    ...(refines ? [`  //@ ensures ${L(refines.fn)}(\\result) === ${abstract("initial")}`] : []),
     `  return ${L("initial")};`,
     `}`,
   );

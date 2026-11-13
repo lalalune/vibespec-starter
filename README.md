@@ -566,7 +566,8 @@ backend, browser synchronization and their joint model.
 ### Assistant
 
 The [assistant guide](vibespec/examples/assistant/README.md) walks through
-trusted senders, a durable outbox and a bill payment requiring confirmation.
+trusted senders, effects returned beside the state and a bill payment requiring
+confirmation.
 This is a model and trust-boundary test, without live authentication,
 browser control or payment execution.
 
