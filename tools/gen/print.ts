@@ -243,7 +243,9 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
     const lines: string[] = [];
     for (; e.kind === "let"; e = e.expr) {
       if (e.opdef.expr.kind === "lambda") fail(`local def ${e.opdef.name} is not supported`);
-      lines.push(`const ${bind(e.opdef.name)}: ${tsType(typeOf(e.opdef.expr.id))} = ${ex(e.opdef.expr)};`);
+      const t = typeOf(e.opdef.expr.id);
+      const annotation = resolve(t).kind === "sum" ? `: ${tsType(t)}` : "";
+      lines.push(`const ${bind(e.opdef.name)}${annotation} = ${ex(e.opdef.expr)};`);
     }
     return [...lines, `return ${ex(e)};`];
   };

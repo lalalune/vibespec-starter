@@ -97,7 +97,7 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.match(fs.readFileSync(path.join(root, "gen/proof/door.log"), "utf8"), /Dafny auditor completed/);
   });
 
-  test("a local variant keeps its Quint type when passed to another definition", async () => {
+  test("a local variant keeps its Quint type without requiring names for other local values", async () => {
     const root = oneRule("decision", "A local decision agrees with its condition", [
       "type Decision = Accept | Reject",
       "pure def isAccepted(kind: Decision): bool = kind == Accept",
@@ -108,6 +108,9 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     const { failed, text, said } = await run(root);
     assert.deepEqual(failed, ["review"], text);
     assert.ok(said("proof", /^decision\.ts: all 1 obligations proved/), text);
+    const record = oneRule("recordLocal", "A local record keeps its value", "pure def value(n: int): int =\n  val box = { value: n }\n  box.value");
+    await gen(record, parseSpec(record, "spec/recordLocal.md"));
+    assert.equal((await import(path.join(record, "gen/recordLocal.ts"))).value(7), 7);
   });
 
   test("a missing guard is found by simulation, as a trace that the same seed gives again, and the later stages say they were skipped", async () => {
