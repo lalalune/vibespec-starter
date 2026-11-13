@@ -115,7 +115,7 @@ This repository keeps its examples so people can try the template. When you
 use it for a new project, finish this cleanup before feature work:
 
 1. **Remove the examples.** Delete `vibespec/examples/`, including the order
-   example. Remove the example-only npm scripts and CI steps, such
+   example. Remove their workspace entries, npm scripts and CI steps, such
    as `demo` and `check:dashboard`, and replace the package metadata and
    repository links with the new project's.
 2. **Keep the toolchain guide with the toolchain.** Move this README to
@@ -447,7 +447,6 @@ Keep `spec/`, `src/`, `test/` and `vibespec/` in git, lock files included.
 | `vibespec/examples/order/test/app.test.ts` | Tests of the shell, run by the `tests` stage |
 | `vibespec/examples/order/` | Complete checkout example, with its own spec, shell and tests |
 | `vibespec/examples/dashboard/` | A larger, synthesized example, as a separate package |
-| `writeup.html` | A narrative explainer of the approach |
 | `.github/workflows/check.yml` | Continuous integration: `npm run check` without the cache |
 | **Derived** (not in git) | |
 | `gen/<name>.ts`, `gen/<name>.qnt` | Generated TypeScript, and the tangled Quint model |

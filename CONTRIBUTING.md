@@ -7,8 +7,8 @@ tutorial. **Every agent reads both in full before doing any work.**
 ## Starting a project from the template
 
 Follow [project setup](README.md#set-up-a-new-project) before feature work:
-remove the example applications and their scripts and CI steps, move the
-template README to `vibespec/README.md` (formerly `tools/`), keep its license
+remove the example applications and their workspace entries, scripts and CI
+steps, move the template README to `vibespec/README.md` (formerly `tools/`), keep its license
 with the toolchain, and write the new project's root `README.md` and `LICENSE`.
 Update the guide links, add and check the project's initial spec, then commit
 all setup changes so `git status --short` is empty. The linked checklist is
