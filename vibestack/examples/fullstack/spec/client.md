@@ -228,9 +228,9 @@ pure def sometimesRefused(c: Client): bool = c.refusals >= 1
 
 ### Queueing an edit or hearing an answer keeps the client's state invariants
 
-For these laws, the client's rules are its four state invariants: queued
-edits have valid distinct numbers, and the edit count and confirmed version
-are nonnegative. Step and reachability rules are checked separately. What
+For these laws, the client's rules are its four state invariants: every
+queued edit carries a number from 1 to the edit count, no two share one, and
+the edit count and confirmed version are nonnegative. Step and reachability rules are checked separately. What
 is proved about imported transitions can be called when their obligations
 were proved in the same run. These laws also cover helpers such as `queue`,
 which are not transitions.

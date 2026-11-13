@@ -509,8 +509,8 @@ pure def notify(s: Tracker): Notified =
 ### A pass sends exactly the notes it records
 
 The notes a pass of the notifier hands to the shell to post are the ones it
-adds to the record of what was sent, in the same order, and no other change
-sends anything. The record is written before anything is posted, so a note
+adds to the record of what was sent, in the same order. No other change
+sends anything or changes that record. The record is written before anything is posted, so a note
 is recorded as sent whether or not the chat app takes it.
 
 ```quint

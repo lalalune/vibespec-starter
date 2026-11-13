@@ -356,7 +356,9 @@ pure def alwaysARetryIsTheSameEdit(sys: System): bool =
 
 Discovered by the proof: without it, an answer left on the network could
 carry the number the tab gives its next edit, and acknowledge that edit
-before it was sent.
+before it was sent. A tab's request is one the tab sent, not a forged one, and
+an answer is an acknowledgement or a refusal: a push of a change belongs to no
+edit.
 
 ```quint
 pure def numbered(sys: System, who: str, seq: int): bool =
@@ -403,6 +405,9 @@ pure def alwaysALoneUsersEditIsNeverRefused(sys: System): bool =
 ```
 
 ### A lone user can have several edits accepted
+
+The user has made two or more edits and none is left queued; since a lone
+user's edit is never refused, every one was acknowledged.
 
 ```quint
 pure def sometimesALoneUsersEditsWereAccepted(sys: System): bool =
