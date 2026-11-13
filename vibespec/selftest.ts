@@ -19,8 +19,8 @@ const project = path.join(import.meta.dirname, "..");
 const EXAMPLE = path.join(project, "vibespec/examples/order");
 const read = (file: string): string => {
   const example = file === "spec/order.md" ? "spec/index.md" : /^(src|test)\//.test(file) || file === "tsconfig.json" ? file : undefined;
-  return fs.readFileSync(example ? path.join(EXAMPLE, example) : path.join(project, file), "utf8")
-    .replaceAll("gen/index.", "gen/order.").replaceAll("spec/index.md", "spec/order.md");
+  const text = fs.readFileSync(example ? path.join(EXAMPLE, example) : path.join(project, file), "utf8");
+  return example ? text.replaceAll("gen/index.", "gen/order.").replaceAll("spec/index.md", "spec/order.md") : text;
 };
 const F = "`".repeat(3);
 const roots: string[] = [];
@@ -548,7 +548,9 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const { failed, said, text } = await run(root);
     assert.deepEqual(failed, ["proof", "review"], text);
     assert.ok(said("replay", /every law, and \d+ definitions/)?.ok, text);
-    assert.ok(!/lawBoxesAndLooseMakeTheWhole/.test(text), "the division law is proved, so it is not listed as unproved");
+    const proof = said("proof", /^stock\.ts:/);
+    assert.ok(proof, text);
+    assert.doesNotMatch(`${proof.summary}\n${proof.detail}`, /lawBoxesAndLooseMakeTheWhole/, "the division law is proved, so it is not listed as unproved");
     const stock = await import(path.join(root, "gen/stock.ts"));
     // A map key that every object has, a getter on an event, and an extra field are all harmless.
     const received = stock.step(stock.initial, stock.parseEvent({ type: "receive", sku: "constructor", qty: 1 }));
@@ -616,7 +618,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     // So is an import of anything but a generated module, however it is indented, or of a look-alike of one.
     const lying = await run(copyOfProject("src/ledger.ts", (s) => s.replace("\n/** Rebuild", '\n  import { owed } from "/tmp/lies.ts";\n/** Rebuild')));
     assert.ok(lying.said("proof", /may only import generated modules/), lying.text);
-    assert.deepEqual(await failedStages("src/ledger.ts", (s) => s.replace('"../gen/order.ts"', '"./order.ts"')), ["proof"]);
+    assert.deepEqual(await failedStages("src/ledger.ts", (s) => s.replace('"../gen/order.ts"', '"./order.ts"')), ["types", "proof", "tests"]);
   });
 
   test("a law that needs induction is proved by a proof file, and only then offered to the spec that imports it", async () => {
@@ -695,7 +697,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
 
   test("hand-written logic that breaks its contract is caught by the proof", async () => {
     const failed = await failedStages("src/ledger.ts", (s) => s.replace("return order.due - order.paid;", "return order.paid - order.due;"));
-    assert.deepEqual(failed, ["proof"]);
+    assert.deepEqual(failed, ["proof", "tests"]);
   });
 
   test("moving a line break so that a comment swallows half a guard is a change to the model", async () => {
@@ -738,7 +740,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const root = copyOfProject("package.json", () => JSON.stringify({ scripts: { test: `node ${JSON.stringify(path.join(project, "vibespec/spec.ts"))} check` } }));
     const again = await run(root);
     assert.deepEqual(again.failed, ["tests"], again.text);
-    assert.ok(again.said("tests", /runs `spec check`; it must run only the tests/), again.text);
+    assert.ok(again.said("tests", /a test script cannot run spec check or accept: the check already runs the tests/), again.text);
     fs.writeFileSync(path.join(root, "package.json"), "{}");
     const cite = (heading: string) => `// spec/order.md, ${JSON.stringify(heading)}\n`;
     const cites = ["Story: Check out", "Only a non-empty draft can be submitted", "Refunds are instant"].map(cite).join("");
@@ -841,7 +843,9 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       f["package.json"] = '{"type":"module"}';
       f["spec/highest.proof.dfy"] = "lemma lawTheHighestIsAtLeastTheStart_ensures(xs: seq<int>, start: int)\n  ensures (lawTheHighestIsAtLeastTheStart(xs, start) == true)\n{\n  ProofLib.FoldLeftMax((top: int, x: int) => (if (x > top) then x else top), start, xs);\n}\n";
     });
-    fs.cpSync(path.join(project, "tools"), path.join(root, "tools"), { recursive: true });
+    fs.cpSync(path.join(project, "vibespec"), path.join(root, "vibespec"), {
+      recursive: true, filter: (from) => from !== path.join(project, "vibespec/examples"),
+    });
     const modules = path.join(root, "node_modules");
     fs.mkdirSync(path.join(modules, ".bin"), { recursive: true });
     for (const entry of fs.readdirSync(nodeModules).filter((f) => f !== ".bin"))
@@ -990,9 +994,10 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const cli = (root: string, ...args: string[]) => runCli(path.join(project, "vibespec/spec.ts"), root, ...args);
     const root = scratch({});
     assert.equal((await cli(root, "new", "Tally")).status, 1);
-    assert.equal((await cli(root, "new", "src")).status, 1);
+    assert.equal((await cli(root, "new", "src")).status, 0);
+    assert.ok(fs.existsSync(path.join(root, "spec/src/index.md")), "the unified ledger leaves src available as a spec name");
     assert.equal((await cli(root, "new", "tally")).status, 0);
-    assert.match((await cli(root, "new", "tally")).stderr, /spec\/tally\.md already exists/);
+    assert.match((await cli(root, "new", "tally")).stderr, /spec\/tally\/index\.md already exists/);
     assert.equal((await cli(root, "accept", "unprovd")).status, 2);
     assert.equal((await cli(root, "check", "--everything")).status, 2);
     // The starter spec passes every stage but review, and proves without a proof file.
@@ -1000,7 +1005,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.deepEqual([...new Set(checked.results.filter((r: Result) => !r.ok).map((r: Result) => r.stage))], ["review"], JSON.stringify(checked, null, 2));
     for (const stage of ["model", "always", "sometimes", "replay", "proof"]) assert.ok(checked.results.some((r: Result) => r.stage === stage && r.ok), stage);
     assert.match(checked.next, /npm run accept/);
-    fs.appendFileSync(path.join(root, "spec/tally.md"), `\n### Broken\n\n${F}quint\npure def\n${F}\n`);
+    fs.appendFileSync(path.join(root, "spec/tally/index.md"), `\n### Broken\n\n${F}quint\npure def\n${F}\n`);
     const lenient = await cli(root, "gen", "--if-valid");
     assert.equal(lenient.status, 0, lenient.stderr);
     assert.match(lenient.stdout, /^note: gen\/ was not generated/);
