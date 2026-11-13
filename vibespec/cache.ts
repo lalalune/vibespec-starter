@@ -1,8 +1,7 @@
-import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { sha } from "./util.ts";
-import { solver } from "./prove.ts";
+import { dafnyVersion, solver } from "./prove.ts";
 
 /**
  * What a remembered result of one stage was produced by: a different Quint, Node or version of these tools must not
@@ -35,19 +34,6 @@ function toolchainId(stage: "model" | "simulate" | "prove"): Promise<string> {
     return parts.join(" ");
   })()));
   return id;
-}
-
-/** The version of Dafny on the PATH, read once and without blocking, or why it could not be read. */
-let dafny: Promise<{ version?: string; problem?: string }> | undefined;
-export function dafnyVersion(): Promise<{ version?: string; problem?: string }> {
-  return (dafny ??= new Promise((resolve) => {
-    execFile("dafny", ["--version"], { encoding: "utf8", timeout: 60_000 }, (error, stdout, stderr) => {
-      const version = !error ? (stdout ?? "").match(/\d+\.\d+\.\d+/)?.[0] : undefined;
-      const problem = !version ? `Dafny could not be run (${(error && !stdout && !stderr ? error.message : undefined) ?? (`${stdout ?? ""}${stderr ?? ""}`.trim().split("\n")[0] || error?.message || "it printed no version")})`
-        : !version.startsWith("4.11.") ? `this is Dafny ${version}, and LemmaScript targets Dafny 4.11.x` : undefined;
-      resolve({ version, problem: problem && `${problem}: the proof stage needs Dafny 4.11 on the PATH (see README, "Run it")` });
-    });
-  }));
 }
 
 /** The remembered results of one check: whether it may read them, and every entry it read or wrote. */

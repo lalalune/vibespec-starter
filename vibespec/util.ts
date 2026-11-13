@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { exec } from "./prove.ts";
+import { exec } from "./run.ts";
 import type { Spec, Rule } from "./parse.ts";
 import ts from "typescript";
 

@@ -6,16 +6,17 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Model } from "./gen.ts";
 import type { Found } from "./conformance.ts";
 import { conformance, conformanceFound, writeConformance, type Machine } from "./conform.ts";
-import { LIB_FILE, prove, run, type Proof } from "./prove.ts";
-import { readSpecs, badSpecName, specFiles, specName, isStd, located, type Spec } from "./parse.ts";
+import { LIB_FILE, dafnyVersion, proofPaths, prove, type Proof } from "./prove.ts";
+import { run } from "./run.ts";
+import { readSpecs, badSpecName, specFiles, specName, importedMeanings, isStd, located, type Spec } from "./parse.ts";
 import { contracts, pending, pendingContracts, acceptAllReviews, pendingSpecs, migrateLocks, moved, showPending, ledgerFile, readLedger, writeLedger, type Pending, type Accepted } from "./review.ts";
-import { entry, remembered, collectGarbage, dafnyVersion, type Memory } from "./cache.ts";
-import { gen, generated, typecheckAll, proofUnits, strayProofFiles } from "./units.ts";
+import { entry, remembered, collectGarbage, type Memory } from "./cache.ts";
+import { gen, generated, typecheckAll, proofUnits, proofFiles, strayProofFiles } from "./units.ts";
 import { SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, LASSO_TRACES, STEPS, DEPTHS, SEARCHED, simulate, search, firstBreak, lasso, showTrace, replay, type Step } from "./simulate.ts";
 import { sha, indent, tests, readSrc, projectRoot, type SrcFile } from "./util.ts";
 
 export { readSpecs, badSpecName, parseSpec, scanSpec, expandListHelpers, type Spec, type Rule, type Story } from "./parse.ts";
-export { pending, pendingContracts, acceptReviews, acceptContracts, fingerprint, dependencies, type Pending } from "./review.ts";
+export { pending, pendingContracts, acceptReviews, acceptContracts, dependencies, type Pending } from "./review.ts";
 export { gen, checkVerifiedSource } from "./units.ts";
 export { replay, type Step } from "./simulate.ts";
 export { danglingCitations } from "./util.ts";
@@ -105,12 +106,12 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
   const memory: Memory = { root, fresh: !!accept, used: new Set() };
   let specs: Spec[];
   let srcFiles: SrcFile[];
-  const proofInputs = () => strayProofFiles(root, []).sort().map((file) => [file, fs.readFileSync(path.join(root, file), "utf8")]);
-  let proofFiles: string[][];
+  const proofInputs = () => proofFiles(root).map((file) => [file, fs.readFileSync(path.join(root, file), "utf8")]);
+  let proofsRead: string[][];
   let pendingLedger: { ledger: Record<string, Accepted>; accepted: Record<string, Accepted | undefined> } | undefined;
   try {
     srcFiles = readSrc(root);
-    proofFiles = proofInputs();
+    proofsRead = proofInputs();
     specs = readSpecs(root);
     pendingSpecs(root, specs);
   } catch (e) {
@@ -150,8 +151,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
     if (!model.stateType && !model.laws.length && !model.evals.length) continue;
 
     // A spec whose model and harness are unchanged, and that passed, is not simulated again.
-    const closure = (names: string[]): string => names.map((n) => { const dep = specs.find((x) => x.name === n)!; return closure(dep.imports) + dep.meaning; }).join("");
-    const simulated = await remembered<{ said: Result[]; tested?: Found<any> }>(memory, entry(root, "simulate", [closure(spec.imports), spec.meaning, model.harness, String([SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, LASSO_TRACES, STEPS, ...DEPTHS])]), async () => {
+    const simulated = await remembered<{ said: Result[]; tested?: Found<any> }>(memory, entry(root, "simulate", [importedMeanings(spec, specs), spec.meaning, model.harness, String([SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, LASSO_TRACES, STEPS, ...DEPTHS])]), async () => {
       const said: Result[] = [];
       let tested: Found<any> | undefined;
       const say = (ok: boolean, stage: Result["stage"], summary: string, detail = "") => said.push({ ok, stage, summary, detail });
@@ -325,10 +325,9 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
       for (const u of units) {
         const proofText = proofTexts.get(u.unit);
         const proof = proved.get(u.unit)!;
-        const base = u.unit.replace(/\.ts$/, "");
-        const logFile = `gen/proof/${base}.log`;
+        const { log: logFile, dfy } = proofPaths(u.unit);
         // The final Dafny stays on disk even when the result was remembered, so that it can be read.
-        const dfyFile = path.join(root, "gen/proof", base, `${base}.dfy`);
+        const dfyFile = path.join(root, dfy);
         fs.mkdirSync(path.dirname(dfyFile), { recursive: true });
         fs.writeFileSync(path.join(root, logFile), proof.log);
         if (proof.dfy && !fs.existsSync(dfyFile)) fs.writeFileSync(dfyFile, proof.dfy);
@@ -348,12 +347,12 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
           + (u.requires ? `, under ${u.requires} //@ requires that its unverified callers must meet` : "");
         if (proof.errors.length) {
           recordable = false;
-          said(false, "proof", `${u.unit}: Dafny could not check it (full output in ${logFile}, final Dafny in gen/proof/${base}/${base}.dfy)`, indent(proof.errors.join("\n")), u.unit);
+          said(false, "proof", `${u.unit}: Dafny could not check it (full output in ${logFile}, final Dafny in ${dfy})`, indent(proof.errors.join("\n")), u.unit);
         } else if (u.src && proof.unproved.length) {
           recordable = false;
-          said(false, "proof", `${u.unit}: ${proof.unproved.length} of ${proof.total} obligations not proved. Hand-written code is not simulated, so they must be proved in ${u.proofFile}. Full output in ${logFile}, final Dafny in gen/proof/${base}/${base}.dfy`, listed(proof.unproved), u.unit);
+          said(false, "proof", `${u.unit}: ${proof.unproved.length} of ${proof.total} obligations not proved. Hand-written code is not simulated, so they must be proved in ${u.proofFile}. Full output in ${logFile}, final Dafny in ${dfy}`, listed(proof.unproved), u.unit);
         } else if (fresh.length && accept !== "unproved") {
-          said(false, "proof", `${u.unit}: ${fresh.length} of ${proof.total} obligations not proved${outdated}. Prove them in ${u.proofFile}, or add the rule that makes them provable; if simulation is enough for them, that is the user's decision (\`npm run accept -- unproved\`). Full output in ${logFile}, final Dafny in gen/proof/${base}/${base}.dfy`, listed(fresh), u.unit);
+          said(false, "proof", `${u.unit}: ${fresh.length} of ${proof.total} obligations not proved${outdated}. Prove them in ${u.proofFile}, or add the rule that makes them provable; if simulation is enough for them, that is the user's decision (\`npm run accept -- unproved\`). Full output in ${logFile}, final Dafny in ${dfy}`, listed(fresh), u.unit);
         } else {
           said(true, "proof", `${u.unit}: ${proof.unproved.length ? `${proof.total} obligations, of which ${proof.unproved.length} are simulated only (accepted) and the rest proved` : `all ${proof.total} obligations proved`} for all states and inputs${assuming}`
             + (stale.length && accept !== "unproved" ? `; ${stale.length} accepted earlier now prove, run \`npm run accept -- unproved\` to tighten the ledger` : ""), [
@@ -399,7 +398,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
   if (accept) {
     try {
       if (JSON.stringify(readSpecs(root)) !== JSON.stringify(specs) || JSON.stringify(readSrc(root)) !== JSON.stringify(srcFiles)
-        || JSON.stringify(proofInputs()) !== JSON.stringify(proofFiles))
+        || JSON.stringify(proofInputs()) !== JSON.stringify(proofsRead))
         report(false, "review", "sources changed while the check ran; nothing was accepted", "      Run `npm run check` again on the files now on disk.");
     } catch (e) {
       report(false, "review", "sources changed while the check ran; nothing was accepted", indent((e as Error).message));

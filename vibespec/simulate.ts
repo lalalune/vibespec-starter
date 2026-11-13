@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import type { Model } from "./gen.ts";
 import { SENDER } from "./gen/classify.ts";
-import { run } from "./prove.ts";
+import { run } from "./run.ts";
 import { digest } from "./util.ts";
 
 export const SAMPLES = 10000;
