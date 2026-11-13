@@ -1,4 +1,4 @@
-// spec/server.md, "A request is answered only once"
+// spec/server.md, "The log tells which requests were answered, and with which edit each was accepted"
 // The wire format shared by the backend (src/server.ts) and the frontend
 // (src/web/). A request is an event of the generated server machine other
 // than `refuse`, which is the server's own decision; an answer and a push
