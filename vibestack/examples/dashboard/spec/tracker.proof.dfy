@@ -16,6 +16,7 @@ lemma create_ensures(s: Tracker, actor: string)
   ensures (inv(s) ==> canCreate(s, actor) ==> stepANewNumberIsUnreferenced(s, create(s, actor)))
   ensures (inv(s) ==> canCreate(s, actor) ==> stepTheCounterNeverGoesBack(s, create(s, actor)))
   ensures (inv(s) ==> canCreate(s, actor) ==> stepANumberIsNeverReissued(s, create(s, actor)))
+  ensures (inv(s) ==> canCreate(s, actor) ==> stepARenamedPersonSignsTheirEditsUnderTheNewName(s, "create", create(s, actor)))
   ensures (inv(s) ==> canCreate(s, actor) ==> stepAFixRemovesAProblem(s, create(s, actor)))
   ensures (inv(s) ==> canCreate(s, actor) ==> stepAPassSendsWhatItRecords(s, "create", create(s, actor), []))
 {
@@ -70,6 +71,7 @@ lemma setStatus_ensures(s: Tracker, id: int, status: Status, actor: string)
   ensures (inv(s) ==> canSetStatus(s, id, status, actor) ==> stepANewNumberIsUnreferenced(s, setStatus(s, id, status, actor)))
   ensures (inv(s) ==> canSetStatus(s, id, status, actor) ==> stepTheCounterNeverGoesBack(s, setStatus(s, id, status, actor)))
   ensures (inv(s) ==> canSetStatus(s, id, status, actor) ==> stepANumberIsNeverReissued(s, setStatus(s, id, status, actor)))
+  ensures (inv(s) ==> canSetStatus(s, id, status, actor) ==> stepARenamedPersonSignsTheirEditsUnderTheNewName(s, "setStatus", setStatus(s, id, status, actor)))
   ensures (inv(s) ==> canSetStatus(s, id, status, actor) ==> stepAFixRemovesAProblem(s, setStatus(s, id, status, actor)))
   ensures (inv(s) ==> canSetStatus(s, id, status, actor) ==> stepAPassSendsWhatItRecords(s, "setStatus", setStatus(s, id, status, actor), []))
 {
@@ -100,6 +102,7 @@ lemma setDue_ensures(s: Tracker, id: int, due: int, actor: string)
   ensures (inv(s) ==> canSetDue(s, id, due, actor) ==> stepANewNumberIsUnreferenced(s, setDue(s, id, due, actor)))
   ensures (inv(s) ==> canSetDue(s, id, due, actor) ==> stepTheCounterNeverGoesBack(s, setDue(s, id, due, actor)))
   ensures (inv(s) ==> canSetDue(s, id, due, actor) ==> stepANumberIsNeverReissued(s, setDue(s, id, due, actor)))
+  ensures (inv(s) ==> canSetDue(s, id, due, actor) ==> stepARenamedPersonSignsTheirEditsUnderTheNewName(s, "setDue", setDue(s, id, due, actor)))
   ensures (inv(s) ==> canSetDue(s, id, due, actor) ==> stepAFixRemovesAProblem(s, setDue(s, id, due, actor)))
   ensures (inv(s) ==> canSetDue(s, id, due, actor) ==> stepAPassSendsWhatItRecords(s, "setDue", setDue(s, id, due, actor), []))
 {
@@ -130,6 +133,7 @@ lemma addOwner_ensures(s: Tracker, id: int, owner: string, actor: string)
   ensures (inv(s) ==> canAddOwner(s, id, owner, actor) ==> stepANewNumberIsUnreferenced(s, addOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canAddOwner(s, id, owner, actor) ==> stepTheCounterNeverGoesBack(s, addOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canAddOwner(s, id, owner, actor) ==> stepANumberIsNeverReissued(s, addOwner(s, id, owner, actor)))
+  ensures (inv(s) ==> canAddOwner(s, id, owner, actor) ==> stepARenamedPersonSignsTheirEditsUnderTheNewName(s, "addOwner", addOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canAddOwner(s, id, owner, actor) ==> stepAFixRemovesAProblem(s, addOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canAddOwner(s, id, owner, actor) ==> stepAPassSendsWhatItRecords(s, "addOwner", addOwner(s, id, owner, actor), []))
 {
@@ -167,6 +171,7 @@ lemma removeOwner_ensures(s: Tracker, id: int, owner: string, actor: string)
   ensures (inv(s) ==> canRemoveOwner(s, id, owner, actor) ==> stepANewNumberIsUnreferenced(s, removeOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canRemoveOwner(s, id, owner, actor) ==> stepTheCounterNeverGoesBack(s, removeOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canRemoveOwner(s, id, owner, actor) ==> stepANumberIsNeverReissued(s, removeOwner(s, id, owner, actor)))
+  ensures (inv(s) ==> canRemoveOwner(s, id, owner, actor) ==> stepARenamedPersonSignsTheirEditsUnderTheNewName(s, "removeOwner", removeOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canRemoveOwner(s, id, owner, actor) ==> stepAFixRemovesAProblem(s, removeOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canRemoveOwner(s, id, owner, actor) ==> stepAPassSendsWhatItRecords(s, "removeOwner", removeOwner(s, id, owner, actor), []))
 {
@@ -203,6 +208,7 @@ lemma addParent_ensures(s: Tracker, id: int, other: int, actor: string)
   ensures (inv(s) ==> canAddParent(s, id, other, actor) ==> stepANewNumberIsUnreferenced(s, addParent(s, id, other, actor)))
   ensures (inv(s) ==> canAddParent(s, id, other, actor) ==> stepTheCounterNeverGoesBack(s, addParent(s, id, other, actor)))
   ensures (inv(s) ==> canAddParent(s, id, other, actor) ==> stepANumberIsNeverReissued(s, addParent(s, id, other, actor)))
+  ensures (inv(s) ==> canAddParent(s, id, other, actor) ==> stepARenamedPersonSignsTheirEditsUnderTheNewName(s, "addParent", addParent(s, id, other, actor)))
   ensures (inv(s) ==> canAddParent(s, id, other, actor) ==> stepAFixRemovesAProblem(s, addParent(s, id, other, actor)))
   ensures (inv(s) ==> canAddParent(s, id, other, actor) ==> stepAPassSendsWhatItRecords(s, "addParent", addParent(s, id, other, actor), []))
 {
@@ -237,6 +243,7 @@ lemma removeParent_ensures(s: Tracker, id: int, other: int, actor: string)
   ensures (inv(s) ==> canRemoveParent(s, id, other, actor) ==> stepANewNumberIsUnreferenced(s, removeParent(s, id, other, actor)))
   ensures (inv(s) ==> canRemoveParent(s, id, other, actor) ==> stepTheCounterNeverGoesBack(s, removeParent(s, id, other, actor)))
   ensures (inv(s) ==> canRemoveParent(s, id, other, actor) ==> stepANumberIsNeverReissued(s, removeParent(s, id, other, actor)))
+  ensures (inv(s) ==> canRemoveParent(s, id, other, actor) ==> stepARenamedPersonSignsTheirEditsUnderTheNewName(s, "removeParent", removeParent(s, id, other, actor)))
   ensures (inv(s) ==> canRemoveParent(s, id, other, actor) ==> stepAFixRemovesAProblem(s, removeParent(s, id, other, actor)))
   ensures (inv(s) ==> canRemoveParent(s, id, other, actor) ==> stepAPassSendsWhatItRecords(s, "removeParent", removeParent(s, id, other, actor), []))
 {
@@ -271,6 +278,7 @@ lemma relate_ensures(s: Tracker, id: int, other: int, actor: string)
   ensures (inv(s) ==> canRelate(s, id, other, actor) ==> stepANewNumberIsUnreferenced(s, relate(s, id, other, actor)))
   ensures (inv(s) ==> canRelate(s, id, other, actor) ==> stepTheCounterNeverGoesBack(s, relate(s, id, other, actor)))
   ensures (inv(s) ==> canRelate(s, id, other, actor) ==> stepANumberIsNeverReissued(s, relate(s, id, other, actor)))
+  ensures (inv(s) ==> canRelate(s, id, other, actor) ==> stepARenamedPersonSignsTheirEditsUnderTheNewName(s, "relate", relate(s, id, other, actor)))
   ensures (inv(s) ==> canRelate(s, id, other, actor) ==> stepAFixRemovesAProblem(s, relate(s, id, other, actor)))
   ensures (inv(s) ==> canRelate(s, id, other, actor) ==> stepAPassSendsWhatItRecords(s, "relate", relate(s, id, other, actor), []))
 {
@@ -305,12 +313,14 @@ lemma unrelate_ensures(s: Tracker, id: int, other: int, actor: string)
   ensures (inv(s) ==> canUnrelate(s, id, other, actor) ==> stepANewNumberIsUnreferenced(s, unrelate(s, id, other, actor)))
   ensures (inv(s) ==> canUnrelate(s, id, other, actor) ==> stepTheCounterNeverGoesBack(s, unrelate(s, id, other, actor)))
   ensures (inv(s) ==> canUnrelate(s, id, other, actor) ==> stepANumberIsNeverReissued(s, unrelate(s, id, other, actor)))
+  ensures (inv(s) ==> canUnrelate(s, id, other, actor) ==> stepARenamedPersonSignsTheirEditsUnderTheNewName(s, "unrelate", unrelate(s, id, other, actor)))
   ensures (inv(s) ==> canUnrelate(s, id, other, actor) ==> stepAFixRemovesAProblem(s, unrelate(s, id, other, actor)))
   ensures (inv(s) ==> canUnrelate(s, id, other, actor) ==> stepAPassSendsWhatItRecords(s, "unrelate", unrelate(s, id, other, actor), []))
 {
   if inv(s) && canUnrelate(s, id, other, actor) {
     var s2 := unrelate(s, id, other, actor);
     TSigned(s, s2, actor);
+    TUnrelateBookkeeping(s, id, other, actor);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
@@ -339,6 +349,7 @@ lemma deleteTask_ensures(s: Tracker, id: int, actor: string)
   ensures (inv(s) ==> canDeleteTask(s, id, actor) ==> stepANewNumberIsUnreferenced(s, deleteTask(s, id, actor)))
   ensures (inv(s) ==> canDeleteTask(s, id, actor) ==> stepTheCounterNeverGoesBack(s, deleteTask(s, id, actor)))
   ensures (inv(s) ==> canDeleteTask(s, id, actor) ==> stepANumberIsNeverReissued(s, deleteTask(s, id, actor)))
+  ensures (inv(s) ==> canDeleteTask(s, id, actor) ==> stepARenamedPersonSignsTheirEditsUnderTheNewName(s, "deleteTask", deleteTask(s, id, actor)))
   ensures (inv(s) ==> canDeleteTask(s, id, actor) ==> stepAFixRemovesAProblem(s, deleteTask(s, id, actor)))
   ensures (inv(s) ==> canDeleteTask(s, id, actor) ==> stepAPassSendsWhatItRecords(s, "deleteTask", deleteTask(s, id, actor), []))
 {
@@ -394,12 +405,26 @@ lemma renameOwner_ensures(s: Tracker, owner: string, name: string, actor: string
   ensures (inv(s) ==> canRenameOwner(s, owner, name, actor) ==> stepANewNumberIsUnreferenced(s, renameOwner(s, owner, name, actor)))
   ensures (inv(s) ==> canRenameOwner(s, owner, name, actor) ==> stepTheCounterNeverGoesBack(s, renameOwner(s, owner, name, actor)))
   ensures (inv(s) ==> canRenameOwner(s, owner, name, actor) ==> stepANumberIsNeverReissued(s, renameOwner(s, owner, name, actor)))
+  ensures (inv(s) ==> canRenameOwner(s, owner, name, actor) ==> stepARenamedPersonSignsTheirEditsUnderTheNewName(s, "renameOwner", renameOwner(s, owner, name, actor)))
   ensures (inv(s) ==> canRenameOwner(s, owner, name, actor) ==> stepAFixRemovesAProblem(s, renameOwner(s, owner, name, actor)))
   ensures (inv(s) ==> canRenameOwner(s, owner, name, actor) ==> stepAPassSendsWhatItRecords(s, "renameOwner", renameOwner(s, owner, name, actor), []))
 {
   if inv(s) && canRenameOwner(s, owner, name, actor) {
     var s2 := renameOwner(s, owner, name, actor);
-    TSigned(s, s2, actor);
+    var w :| 0 <= w < |s.owners| && s.owners[w] == owner;
+    assert s2.owners[w] == name;
+    TSigned(s, s2, name);
+    assert !(owner in s2.owners);
+    forall i | 0 <= i < |s2.tasks|
+      ensures var b := s.tasks[i]; var t := s2.tasks[i];
+        b in s.tasks && b.id == t.id && (if b.updatedBy in s.owners && !(b.updatedBy in s2.owners) then t.updatedBy in s2.owners && !(t.updatedBy in s.owners) else t.updatedBy == b.updatedBy)
+    {
+      var x := s.tasks[i].updatedBy;
+      if x in s.owners && x != owner {
+        var v :| 0 <= v < |s.owners| && s.owners[v] == x;
+        assert s2.owners[v] == x;
+      }
+    }
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
@@ -412,8 +437,6 @@ lemma renameOwner_ensures(s: Tracker, owner: string, name: string, actor: string
       assert s2.tasks[i].owners == distinctNames(renamed);
       ProofLib.FoldLeftDedupMember((acc: seq<string>, x: string) => (if (x in acc) then acc else (acc + [x])), [], renamed, o);
       var k :| 0 <= k < |renamed| && renamed[k] == o;
-      var w :| 0 <= w < |s.owners| && s.owners[w] == owner;
-      assert s2.owners[w] == name;
       if o in s.owners {
         var v :| 0 <= v < |s.owners| && s.owners[v] == o;
         assert s2.owners[v] == o;
@@ -438,6 +461,7 @@ lemma deleteOwner_ensures(s: Tracker, owner: string, actor: string)
   ensures (inv(s) ==> canDeleteOwner(s, owner, actor) ==> stepANewNumberIsUnreferenced(s, deleteOwner(s, owner, actor)))
   ensures (inv(s) ==> canDeleteOwner(s, owner, actor) ==> stepTheCounterNeverGoesBack(s, deleteOwner(s, owner, actor)))
   ensures (inv(s) ==> canDeleteOwner(s, owner, actor) ==> stepANumberIsNeverReissued(s, deleteOwner(s, owner, actor)))
+  ensures (inv(s) ==> canDeleteOwner(s, owner, actor) ==> stepARenamedPersonSignsTheirEditsUnderTheNewName(s, "deleteOwner", deleteOwner(s, owner, actor)))
   ensures (inv(s) ==> canDeleteOwner(s, owner, actor) ==> stepAFixRemovesAProblem(s, deleteOwner(s, owner, actor)))
   ensures (inv(s) ==> canDeleteOwner(s, owner, actor) ==> stepAPassSendsWhatItRecords(s, "deleteOwner", deleteOwner(s, owner, actor), []))
 {
@@ -473,6 +497,7 @@ lemma handAddOwner_ensures(s: Tracker, id: int, name: string)
   ensures (inv(s) ==> canHandAddOwner(s, id, name) ==> stepANewNumberIsUnreferenced(s, handAddOwner(s, id, name)))
   ensures (inv(s) ==> canHandAddOwner(s, id, name) ==> stepTheCounterNeverGoesBack(s, handAddOwner(s, id, name)))
   ensures (inv(s) ==> canHandAddOwner(s, id, name) ==> stepANumberIsNeverReissued(s, handAddOwner(s, id, name)))
+  ensures (inv(s) ==> canHandAddOwner(s, id, name) ==> stepARenamedPersonSignsTheirEditsUnderTheNewName(s, "handAddOwner", handAddOwner(s, id, name)))
   ensures (inv(s) ==> canHandAddOwner(s, id, name) ==> stepAFixRemovesAProblem(s, handAddOwner(s, id, name)))
   ensures (inv(s) ==> canHandAddOwner(s, id, name) ==> stepAPassSendsWhatItRecords(s, "handAddOwner", handAddOwner(s, id, name), []))
 {
@@ -500,6 +525,7 @@ lemma handAddParent_ensures(s: Tracker, id: int, other: int)
   ensures (inv(s) ==> canHandAddParent(s, id, other) ==> stepANewNumberIsUnreferenced(s, handAddParent(s, id, other)))
   ensures (inv(s) ==> canHandAddParent(s, id, other) ==> stepTheCounterNeverGoesBack(s, handAddParent(s, id, other)))
   ensures (inv(s) ==> canHandAddParent(s, id, other) ==> stepANumberIsNeverReissued(s, handAddParent(s, id, other)))
+  ensures (inv(s) ==> canHandAddParent(s, id, other) ==> stepARenamedPersonSignsTheirEditsUnderTheNewName(s, "handAddParent", handAddParent(s, id, other)))
   ensures (inv(s) ==> canHandAddParent(s, id, other) ==> stepAFixRemovesAProblem(s, handAddParent(s, id, other)))
   ensures (inv(s) ==> canHandAddParent(s, id, other) ==> stepAPassSendsWhatItRecords(s, "handAddParent", handAddParent(s, id, other), []))
 {
@@ -527,6 +553,7 @@ lemma handAddRelated_ensures(s: Tracker, id: int, other: int)
   ensures (inv(s) ==> canHandAddRelated(s, id, other) ==> stepANewNumberIsUnreferenced(s, handAddRelated(s, id, other)))
   ensures (inv(s) ==> canHandAddRelated(s, id, other) ==> stepTheCounterNeverGoesBack(s, handAddRelated(s, id, other)))
   ensures (inv(s) ==> canHandAddRelated(s, id, other) ==> stepANumberIsNeverReissued(s, handAddRelated(s, id, other)))
+  ensures (inv(s) ==> canHandAddRelated(s, id, other) ==> stepARenamedPersonSignsTheirEditsUnderTheNewName(s, "handAddRelated", handAddRelated(s, id, other)))
   ensures (inv(s) ==> canHandAddRelated(s, id, other) ==> stepAFixRemovesAProblem(s, handAddRelated(s, id, other)))
   ensures (inv(s) ==> canHandAddRelated(s, id, other) ==> stepAPassSendsWhatItRecords(s, "handAddRelated", handAddRelated(s, id, other), []))
 {
@@ -554,6 +581,7 @@ lemma handDeleteTask_ensures(s: Tracker, id: int)
   ensures (inv(s) ==> canHandDeleteTask(s, id) ==> stepANewNumberIsUnreferenced(s, handDeleteTask(s, id)))
   ensures (inv(s) ==> canHandDeleteTask(s, id) ==> stepTheCounterNeverGoesBack(s, handDeleteTask(s, id)))
   ensures (inv(s) ==> canHandDeleteTask(s, id) ==> stepANumberIsNeverReissued(s, handDeleteTask(s, id)))
+  ensures (inv(s) ==> canHandDeleteTask(s, id) ==> stepARenamedPersonSignsTheirEditsUnderTheNewName(s, "handDeleteTask", handDeleteTask(s, id)))
   ensures (inv(s) ==> canHandDeleteTask(s, id) ==> stepAFixRemovesAProblem(s, handDeleteTask(s, id)))
   ensures (inv(s) ==> canHandDeleteTask(s, id) ==> stepAPassSendsWhatItRecords(s, "handDeleteTask", handDeleteTask(s, id), []))
 {
@@ -593,6 +621,7 @@ lemma handDeleteOwner_ensures(s: Tracker, owner: string)
   ensures (inv(s) ==> canHandDeleteOwner(s, owner) ==> stepANewNumberIsUnreferenced(s, handDeleteOwner(s, owner)))
   ensures (inv(s) ==> canHandDeleteOwner(s, owner) ==> stepTheCounterNeverGoesBack(s, handDeleteOwner(s, owner)))
   ensures (inv(s) ==> canHandDeleteOwner(s, owner) ==> stepANumberIsNeverReissued(s, handDeleteOwner(s, owner)))
+  ensures (inv(s) ==> canHandDeleteOwner(s, owner) ==> stepARenamedPersonSignsTheirEditsUnderTheNewName(s, "handDeleteOwner", handDeleteOwner(s, owner)))
   ensures (inv(s) ==> canHandDeleteOwner(s, owner) ==> stepAFixRemovesAProblem(s, handDeleteOwner(s, owner)))
   ensures (inv(s) ==> canHandDeleteOwner(s, owner) ==> stepAPassSendsWhatItRecords(s, "handDeleteOwner", handDeleteOwner(s, owner), []))
 {
@@ -617,6 +646,7 @@ lemma fix_ensures(s: Tracker, index: int, actor: string)
   ensures (inv(s) ==> canFix(s, index, actor) ==> stepANewNumberIsUnreferenced(s, fix(s, index, actor)))
   ensures (inv(s) ==> canFix(s, index, actor) ==> stepTheCounterNeverGoesBack(s, fix(s, index, actor)))
   ensures (inv(s) ==> canFix(s, index, actor) ==> stepANumberIsNeverReissued(s, fix(s, index, actor)))
+  ensures (inv(s) ==> canFix(s, index, actor) ==> stepARenamedPersonSignsTheirEditsUnderTheNewName(s, "fix", fix(s, index, actor)))
   ensures (inv(s) ==> canFix(s, index, actor) ==> stepAFixRemovesAProblem(s, fix(s, index, actor)))
   ensures (inv(s) ==> canFix(s, index, actor) ==> stepAPassSendsWhatItRecords(s, "fix", fix(s, index, actor), []))
 {
@@ -651,6 +681,7 @@ lemma tick_ensures(s: Tracker)
   ensures (inv(s) ==> stepANewNumberIsUnreferenced(s, tick(s)))
   ensures (inv(s) ==> stepTheCounterNeverGoesBack(s, tick(s)))
   ensures (inv(s) ==> stepANumberIsNeverReissued(s, tick(s)))
+  ensures (inv(s) ==> stepARenamedPersonSignsTheirEditsUnderTheNewName(s, "tick", tick(s)))
   ensures (inv(s) ==> stepAFixRemovesAProblem(s, tick(s)))
   ensures (inv(s) ==> stepAPassSendsWhatItRecords(s, "tick", tick(s), []))
 {
@@ -677,6 +708,7 @@ lemma notify_ensures(s: Tracker)
   ensures (inv(s) ==> stepANewNumberIsUnreferenced(s, notify(s).state))
   ensures (inv(s) ==> stepTheCounterNeverGoesBack(s, notify(s).state))
   ensures (inv(s) ==> stepANumberIsNeverReissued(s, notify(s).state))
+  ensures (inv(s) ==> stepARenamedPersonSignsTheirEditsUnderTheNewName(s, "notify", notify(s).state))
   ensures (inv(s) ==> stepAFixRemovesAProblem(s, notify(s).state))
   ensures (inv(s) ==> stepAPassSendsWhatItRecords(s, "notify", notify(s).state, notify(s).out))
 {
@@ -696,17 +728,17 @@ lemma notify_ensures(s: Tracker)
 
 // ===== A task edited through the dashboard is signed by a member =====
 
-// A dashboard edit that keeps each task's signature in place, or signs it with a member, satisfies the rule.
+// A dashboard edit that keeps each task's signature in place, or signs it with a member after the edit, satisfies the rule.
 lemma TSigned(s: Tracker, s2: Tracker, actor: string)
-  requires s2.last.App? && actor in s.owners
-  requires forall i :: 0 <= i < |s2.tasks| ==> s2.tasks[i].updatedBy == actor || (i < |s.tasks| && s2.tasks[i].id == s.tasks[i].id && s2.tasks[i].updatedAt == s.tasks[i].updatedAt && s2.tasks[i].updatedBy == s.tasks[i].updatedBy)
+  requires s2.last.App?
+  requires forall i :: 0 <= i < |s2.tasks| ==> (s2.tasks[i].updatedBy == actor && actor in s2.owners) || (i < |s.tasks| && s2.tasks[i].id == s.tasks[i].id && s2.tasks[i].updatedAt == s.tasks[i].updatedAt && s2.tasks[i].updatedBy == s.tasks[i].updatedBy)
   ensures stepADashboardEditIsSignedByAMember(s, s2)
 {
   forall t | t in s2.tasks
-    ensures keepsItsSignature(s, t) || isMember(s, t.updatedBy)
+    ensures keepsItsSignature(s, t) || isMember(s2, t.updatedBy)
   {
     var i :| 0 <= i < |s2.tasks| && s2.tasks[i] == t;
-    if t.updatedBy != actor {
+    if !(t.updatedBy == actor && actor in s2.owners) {
       assert s.tasks[i] in s.tasks;
     }
   }
@@ -1458,6 +1490,26 @@ lemma TRelateTask(s: Tracker, id: int, other: int, actor: string, i: int)
     }
   }
   TProblemsOfSubset(s, s2, t, t2);
+}
+
+// Unrelating keeps every task's bookkeeping, so what was sent stays recorded and the bookkeeping stays sane.
+lemma TUnrelateBookkeeping(s: Tracker, id: int, other: int, actor: string)
+  requires inv(s) && canUnrelate(s, id, other, actor)
+  ensures alwaysWhatWasSentIsRecorded(unrelate(s, id, other, actor)) && alwaysTheBookkeepingIsSane(unrelate(s, id, other, actor))
+{
+  var s2 := unrelate(s, id, other, actor);
+  forall j | 0 <= j < |s2.tasks|
+    ensures s2.tasks[j].id > s.lastId || exists i :: 0 <= i < |s.tasks| && s.tasks[i].id == s2.tasks[j].id && s.tasks[i].notifiedAt <= s2.tasks[j].notifiedAt && (forall v :: v in s.tasks[i].toldSoon ==> v in s2.tasks[j].toldSoon) && (forall v :: v in s.tasks[i].toldDue ==> v in s2.tasks[j].toldDue)
+  {
+    assert s.tasks[j].id == s2.tasks[j].id && s.tasks[j].notifiedAt == s2.tasks[j].notifiedAt && s.tasks[j].toldSoon == s2.tasks[j].toldSoon && s.tasks[j].toldDue == s2.tasks[j].toldDue;
+  }
+  TSentRecordedKept(s, s2);
+  forall t | t in s2.tasks
+    ensures t.notifiedAt <= t.updatedAt && t.updatedAt <= s2.now
+  {
+    var j :| 0 <= j < |s2.tasks| && s2.tasks[j] == t;
+    assert s.tasks[j] in s.tasks;
+  }
 }
 
 lemma TUnrelateTask(s: Tracker, id: int, other: int, actor: string, i: int)
