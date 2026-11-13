@@ -25,8 +25,6 @@ model in step; you sign off.
 [Studio](#studio) ·
 [Build your project](#build-your-project) ·
 [Examples](#examples) ·
-[How it works](#what-npm-run-check-checks) ·
-[Guarantees](#what-is-and-is-not-guaranteed) ·
 [Spec reference](AGENTS.md#spec-reference)
 
 </div>
