@@ -1,0 +1,32 @@
+{
+  "name": "@repo/app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "vibelang --noEmit -p ."
+  },
+  "dependencies": {
+    "@repo/design-system": "workspace:*",
+    "@repo/ui": "workspace:*",
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "catalog:",
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "@vitejs/plugin-react": "catalog:",
+    "happy-dom": "catalog:",
+    "tailwindcss": "catalog:",
+    "typescript": "catalog:",
+    "vibelang": "0.0.12",
+    "vibelang-vite": "0.0.12",
+    "vibestack": "workspace:*",
+    "vite": "catalog:",
+    "vitest": "catalog:"
+  }
+}

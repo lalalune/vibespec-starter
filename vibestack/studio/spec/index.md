@@ -7,8 +7,8 @@ session around that work: what may happen when. Editing one spec is
 [the outline](./outline.md).
 
 The session is shared by the page, which knows whether there are edits not
-yet published, and the server, which runs one job at a time and remembers
-what the last check found.
+yet published, and the server, which runs one job at a time, remembers
+what the last check found, and runs the application beside them.
 
 ## Domain
 
@@ -19,18 +19,19 @@ length of the manifest. The verdict is what the last finished check found.
 It is unknown while a check runs and once the specs change, until a check
 finishes. A check that was already running when they changed reports on what
 it read; a sign-off checks again before it records anything (`pnpm accept`),
-so nothing unchecked is signed off.
+so nothing unchecked is signed off. `previewing` is whether the project's app is
+running beside the studio.
 
 ```quint
-type Job = Idle | Checking | Syncing | SigningOff
+type Job = Idle | Checking | Syncing | SigningOff | Building
 type Verdict = Unknown | Failing | Reviewable | Green
-type Session = { unpublished: bool, waiting: int, job: Job, verdict: Verdict }
+type Session = { unpublished: bool, waiting: int, job: Job, verdict: Verdict, previewing: bool }
 ```
 
 ### A new session has nothing to do
 
 ```quint
-pure val initial: Session = { unpublished: false, waiting: 0, job: Idle, verdict: Unknown }
+pure val initial: Session = { unpublished: false, waiting: 0, job: Idle, verdict: Unknown, previewing: false }
 ```
 
 ### What the simulator tries
@@ -68,6 +69,8 @@ pure def publish(s: Session, changes: int): Session =
 
 ### Publishing always starts a check
 
+It also leaves no edit unpublished.
+
 ```quint
 pure def stepPublishingChecks(before: Session, via: str, after: Session): bool =
   via == "publish" implies (after.job == Checking and not(after.unpublished))
@@ -102,8 +105,8 @@ pure def sync(s: Session): Session = { ...s, job: Syncing }
 
 ### A sync that ends well leaves nothing waiting and checks again
 
-A sync that fails leaves what was waiting, and what the agent did is not
-known to check until it is checked.
+A sync that fails leaves what was waiting and starts no check; what the agent
+did leaves the verdict unknown either way.
 
 ```quint
 pure def canSynced(s: Session): bool = s.job == Syncing
@@ -206,6 +209,8 @@ pure def sometimesGreen(s: Session): bool = s.verdict == Green
 
 ### Sign-off needs a check that left only review, nothing unpublished and nothing waiting
 
+No job may be running either.
+
 ```quint
 pure def canSignOff(s: Session): bool =
   s.job == Idle and s.verdict == Reviewable and not(s.unpublished) and s.waiting == 0
@@ -230,4 +235,74 @@ pure def stepSignOffFollowsReview(before: Session, via: str, after: Session): bo
 
 ```quint
 pure def sometimesSigningOff(s: Session): bool = s.job == SigningOff
+```
+
+## Story: Build the app
+
+> As a spec author, I want to build the application the specs describe from
+> the studio, so that I have what ships, built from what was checked.
+
+### The app is built from published specs, when no job runs
+
+The build is the project's own `build` script.
+
+```quint
+pure def canBuild(s: Session): bool = s.job == Idle and not(s.unpublished)
+pure def build(s: Session): Session = { ...s, job: Building }
+```
+
+### A build ends, and then no job runs
+
+Whether it worked is in its log.
+
+```quint
+pure def canBuilt(s: Session): bool = s.job == Building
+pure def built(s: Session): Session = { ...s, job: Idle }
+```
+
+### Building changes nothing but the job
+
+```quint
+pure def stepBuildChangesOnlyTheJob(before: Session, via: str, after: Session): bool =
+  (via == "build" or via == "built") implies
+    (after.unpublished == before.unpublished and after.waiting == before.waiting
+      and after.verdict == before.verdict and after.previewing == before.previewing)
+```
+
+### A build can be under way
+
+```quint
+pure def sometimesBuilding(s: Session): bool = s.job == Building
+```
+
+## Story: Preview the app
+
+> As a spec author, I want to run the application the specs describe beside
+> the studio, so that I see what I am building while I build it.
+
+### The app can be started and stopped whenever, beside any job
+
+The app is the project's own development server: its `start` script, or its
+`dev` script when that is not the studio.
+
+```quint
+pure def canPreview(s: Session): bool = not(s.previewing)
+pure def preview(s: Session): Session = { ...s, previewing: true }
+pure def canEndPreview(s: Session): bool = s.previewing
+pure def endPreview(s: Session): Session = { ...s, previewing: false }
+```
+
+### Running the app changes nothing else
+
+```quint
+pure def stepPreviewChangesNothingElse(before: Session, via: str, after: Session): bool =
+  (via == "preview" or via == "endPreview") implies
+    (after.unpublished == before.unpublished and after.waiting == before.waiting
+      and after.job == before.job and after.verdict == before.verdict)
+```
+
+### The app can run while an agent syncs
+
+```quint
+pure def sometimesPreviewingWhileSyncing(s: Session): bool = s.previewing and s.job == Syncing
 ```

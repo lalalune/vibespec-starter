@@ -11,7 +11,7 @@ import { Machine, enabled, machine } from "../gen/index.effect.vibe"
 import type { Event, Session } from "../gen/index.ts"
 import { promptFor, type Manifest } from "./doc.ts"
 import {
-  NODE, PUBLIC, SPEC, checkCommand, createServer, finder, interactive, manifestFile, opener, ownedFiles, buildPage, componentsOf,
+  NODE, PUBLIC, SPEC, checkCommand, createServer, finder, interactive, manifestFile, opener, ownedFiles, buildPage, appScript, servedAt, buildable, componentsOf,
   planPublish, projectName, readManifest, skillPath, specsOf, stateFile, studioRoot, verdictOf, type Check, type JobView, type Publish, type Snapshot,
 } from "./project.ts"
 
@@ -31,7 +31,7 @@ const AGENTS: Record<string, Agent> = {
     label: "Claude Code",
     command: ({ check }) => ["claude", ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits",
       "--allowedTools", "Read", "Edit", "Write", "Glob", "Grep", `Bash(${check}:*)`, "Bash(pnpm check:*)", "Bash(pnpm exec quint:*)",
-      "--disallowedTools", "Bash(pnpm accept:*)", "Bash(spec accept:*)"]],
+      "--disallowedTools", "Bash(pnpm accept:*)", "Bash(pnpm run accept:*)", "Bash(npm run accept:*)", "Bash(spec accept:*)"]],
     link: ({ root, prompt }) => `claude-cli://open?cwd=${encodeURIComponent(root)}&q=${encodeURIComponent(prompt)}`,
   },
   codex: {
@@ -41,7 +41,7 @@ const AGENTS: Record<string, Agent> = {
   },
 }
 
-type Kind = "check" | "agent" | "accept"
+type Kind = "check" | "agent" | "accept" | "build"
 /** The process behind the session's job, and what it printed. The last of each kind is kept, for its log. */
 interface Job extends JobView { fiber?: Fiber.Fiber<void> }
 
@@ -145,6 +145,39 @@ effect function studio(project: Project, agents: Record<string, Agent>) {
     try changed
   }
 
+  /**
+   * The project's app, beside whatever job runs (spec/index.md, "Story: Preview the app"): the session says whether it
+   * runs; this holds its process, what it printed, and where it serves.
+   */
+  const app: { url?: string; log: string[]; fiber?: Fiber.Fiber<void> } = { log: [] }
+  effect function startApp() {
+    const script = appScript(root)
+    if (!script) throw new Refused({ status: 404, message: "the project has no app to run: give its package.json a start or dev script" })
+    try act({ type: "preview" })
+    app.url = undefined
+    app.log = []
+    const lines = (stream: Stream.Stream<Uint8Array, unknown>) => Stream.runForEach(Stream.splitLines(Stream.decodeText(stream)), (line) => effect {
+      app.url ??= servedAt(line)
+      if (line.trim()) app.log = [...app.log.slice(-199), line]
+      try changed
+    })
+    app.fiber = try Effect.forkIn(effect {
+      scoped(effect {
+        const child = try spawner.spawn(ChildProcess.make("pnpm", ["run", script], { cwd: root, extendEnv: true, env: { FORCE_COLOR: "0", NO_COLOR: "1", BROWSER: "none" } }))
+        try.all [lines(child.stdout), lines(child.stderr)]
+        try child.exitCode
+      }) catch (e) => { app.log = [...app.log, `✗ ${messageOf(e)}`] }
+      // An app that stops by itself is no longer running.
+      act({ type: "endPreview" }) catch () => undefined
+      try changed
+    }, scope)
+  }
+  effect function stopApp() {
+    try act({ type: "endPreview" })
+    if (app.fiber) try Fiber.interrupt(app.fiber)
+    try changed
+  }
+
   /** The check the session is now waiting on (`job == Checking`). */
   effect function runCheck() {
     try run("check", "check", [NODE, [SPEC, "check", "--json"]], undefined, () => undefined, (job, out) => effect {
@@ -177,7 +210,8 @@ effect function studio(project: Project, agents: Record<string, Agent>) {
       id, label: a.label, available: try onPath(a.command({ root, check: context.check })[0]),
       link: a.link?.({ root, prompt: promptFor(read.manifest, context, DEEPLINK_LIMIT) }),
     })
-    return { project, session: try session.get(), ...read, prompt: promptFor(read.manifest, context), check, jobs: jobsView(), agents: shown }
+    return { project, session: try session.get(), ...read, prompt: promptFor(read.manifest, context), check, jobs: jobsView(), agents: shown,
+      app: { script: appScript(root), url: app.url, log: app.log, buildable: buildable(root) } }
   }
   const jobsView = (): Partial<Record<Kind, JobView>> => Object.fromEntries(Object.entries(jobs).map(([kind, { fiber: _fiber, ...j }]) => [kind, { ...j, log: j.log.slice(-400) }]))
 
@@ -217,8 +251,9 @@ effect function studio(project: Project, agents: Record<string, Agent>) {
     const check = checkCommand(root)
     const prompt = promptFor(readManifest(root), { skill: skillPath(root), check })
     const owned = ownedFiles(root)
+    const command = agent.command({ root, check })
     try act({ type: "sync" })
-    try run("agent", agent.label, agent.command({ root, check }), prompt, readable, (job) => effect {
+    try run("agent", agent.label, command, prompt, readable, (job) => effect {
       // The review ledgers and Studio's state are the tools' to write: a sync that touched them is not trusted.
       // Whatever happens here, the sync ends (spec/index.md, "A sync that ends well leaves nothing waiting and checks again").
       effect {
@@ -240,9 +275,18 @@ effect function studio(project: Project, agents: Record<string, Agent>) {
   effect function post(route: string, body: any) {
     switch (route) {
       case "/api/publish": return try publish(body)
+      // spec/index.md, "Story: Build the app": the project's own build script, as a job.
+      case "/api/build":
+        if (!buildable(root)) throw new Refused({ status: 404, message: "the project has no build script" })
+        try act({ type: "build" })
+        try run("build", "build", ["pnpm", ["run", "build"]], undefined, (l) => l, () => act({ type: "built" }))
+        return {}
       case "/api/check":
         try act({ type: "check" })
         try runCheck()
+        return {}
+      case "/api/app":
+        try (body.start === true ? startApp() : stopApp())
         return {}
       case "/api/agent":
         try sync(body.agent)
@@ -287,7 +331,11 @@ effect function studio(project: Project, agents: Record<string, Agent>) {
   /** What a page hears: its job's progress, a little at a time, and when the specs change. */
   const events = Stream.encodeText(Stream.concat(Stream.make(": studio\n\n"), Stream.merge(
     Stream.mapEffect(Stream.debounce(Stream.merge(Stream.fromPubSub(ticks), Stream.map(session.changes, () => undefined)), "100 millis"),
-      () => effect { return frame("job", { session: try session.get(), jobs: jobsView(), check }) }),
+      () => effect {
+        const script = effect { return appScript(root) } catch () => undefined
+        const canBuild = effect { return buildable(root) } catch () => false
+        return frame("job", { session: try session.get(), jobs: jobsView(), check, app: { script, url: app.url, log: app.log, buildable: canBuild } })
+      }),
     Stream.map(Stream.fromPubSub(touched), () => frame("files", {})))))
 
   return {

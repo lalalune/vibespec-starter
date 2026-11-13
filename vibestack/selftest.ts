@@ -68,6 +68,8 @@ const oneRule = (name: string, heading: string, quint: string) => scratch({ [`sp
 const libAndUse = (lib: string, use: string) => scratch({ "spec/lib.md": lib, "spec/use.md": use });
 /** Hand-written code with a one-line contract. */
 const ONE = "//@ pure\nexport function one(): number {\n  //@ ensures \\result === 1\n  return 1;\n}\n";
+/** A machine that counts to two. */
+const COUNTER = "pure val initial: int = 0\npure def canInc(n: int): bool = n < 2\npure def inc(n: int): int = n + 1\npure def alwaysValid(n: int): bool = 0 <= n and n <= 2";
 /** Generated Dafny: one function and its obligation. */
 const GENERATED_F = "function f(x: int): int\n{\n  x\n}\n\nlemma f_ensures(x: int)\n  ensures (f(x) >= x)\n{\n}\n";
 /** Wait until `ready`, failing with `why` after two minutes. */
@@ -506,7 +508,18 @@ export effect function filled(sku: string, qty: number) {
     assert.deepEqual(await genAll(root), ["_conformance.ts", "package.json", ...names.flatMap((n) => [`${n}.qnt`, `${n}.run.qnt`, `${n}.ts`, `${n}.effect.vibe`, ...(n === "lib" ? [] : [`${n}.conformance.ts`])])].sort());
     // gen/package.json names no package, so the compiler has no key to derive for a service: the adapter states its own (EK0903).
     assert.deepEqual(JSON.parse(read("gen/package.json", root)), { type: "module" });
-    assert.match(read("gen/vault.effect.vibe", root), new RegExp(`^export service Machine \\{\\n  static readonly key = ${JSON.stringify(`${root}/spec/vault.md#Machine`).replace(/[./]/g, "\\$&")}$`, "m"));
+    assert.match(read("gen/vault.effect.vibe", root), new RegExp(`^export service Machine \\{\\n  static readonly key = ${JSON.stringify(`${path.basename(root)}/spec/vault.md#Machine`).replace(/[./]/g, "\\$&")}$`, "m"));
+    // A package without a name is told apart by where it sits in its workspace, or by its directory's name: never by
+    // where the checkout is, so the same package generates the same text anywhere.
+    const unnamed = async (dir: string, files: Record<string, string> = {}) => {
+      const at = path.join(scratch({ ...files, [`${dir}/spec/counter.md`]: ruleSpec(COUNTER) }), dir);
+      await genAll(at);
+      return read("gen/counter.effect.vibe", at);
+    };
+    const [one, two, member] = [await unnamed("pkg"), await unnamed("pkg"), await unnamed("packages/x", { "pnpm-workspace.yaml": "" })];
+    assert.equal(one, two);
+    assert.match(one, /key = "pkg\/spec\/counter\.md#Machine"/);
+    assert.match(member, /key = "packages\/x\/spec\/counter\.md#Machine"/);
     const compiled = await tool("vibelang", ["--noEmit", "-p", "."], root);
     assert.ok(compiled.ok, compiled.out);
     const counter = ruleSpec("pure val initial: int = 0\npure def add(n: int): int = n + 1");
@@ -1034,7 +1047,7 @@ export effect function independent() {
     const fresh = scratch({ "package.json": '{"name":"fresh"}' });
     assert.deepEqual(init(fresh), [".claude/skills/sync/SKILL.md", ".agents/skills/sync", ".claude/skills/design/SKILL.md", ".agents/skills/design", "AGENTS.md (Vibestack instructions)", "CLAUDE.md (imports AGENTS.md)",
       "tsconfig.json", "vitest.config.ts", "spec/index.md", ".gitignore", "package.json scripts: dev, check, gen, accept, build, test",
-      `package.json VibeLang toolchain: ${[...runtime, ...tooling].join(", ")} (run your package manager's install)`, 'package.json "type": "module"']);
+      `package.json VibeLang toolchain: ${[...runtime, ...tooling].join(", ")} (run your package manager's install)`, "package.json packageManager: pnpm@10.24.0", "package.json engines.node: >=26", 'package.json "type": "module"']);
     assert.deepEqual(json(fresh, "tsconfig.json"), {
       compilerOptions: { target: "es2023", module: "nodenext", strict: true, skipLibCheck: true, types: ["node"], rootDir: ".", rootDirs: [".", ".vibe/declarations"], outDir: "dist", noEmitOnError: true, rewriteRelativeImportExtensions: true },
       include: ["src", "test", "gen/*.ts", "gen/*.vibe"], vibe: { sidecarDir: ".vibe/declarations" },
@@ -1042,8 +1055,8 @@ export effect function independent() {
     assert.equal(read("vitest.config.ts", fresh), 'import vibelang from "vibelang-vite";\nimport { defineConfig } from "vitest/config";\n\nexport default defineConfig({ plugins: [vibelang()], test: { include: ["test/**/*.test.vibe"], passWithNoTests: true, testTimeout: 60_000 } });\n');
     assert.equal(read(".gitignore", fresh), "gen/\n.spec-cache/\n.studio/\ndist/\n.vibe/\n");
     assert.deepEqual(json(fresh, "package.json"), {
-      name: "fresh", type: "module", scripts, engines: { node: "^22.22.3 || >=24.11.1" },
-      dependencies: pinned(...runtime), devDependencies: pinned(...tooling), overrides: one, pnpm: { overrides: one },
+      name: "fresh", type: "module", packageManager: "pnpm@10.24.0", scripts, engines: { node: ">=26" },
+      dependencies: pinned(...runtime), devDependencies: pinned(...tooling), pnpm: { overrides: one },
     });
     assert.ok(Object.values({ ...json(fresh, "package.json").dependencies, ...json(fresh, "package.json").devDependencies }).every((version) => typeof version === "string" && !/^(catalog|workspace):/.test(version)));
     assert.deepEqual(init(fresh), []);
@@ -1054,10 +1067,10 @@ export effect function independent() {
     const kept = scratch({ "package.json": JSON.stringify(own), "tsconfig.json": "{}\n", "vitest.config.ts": "export default {};\n", ".gitignore": "dist/\n" });
     const added = init(kept);
     assert.deepEqual(added.filter((a) => /^(package\.json|tsconfig|vitest|\.gitignore)/.test(a)), [".gitignore", "package.json scripts: dev, check, gen, accept, test",
-      `package.json VibeLang toolchain: ${[...runtime, ...tooling].filter((n) => n !== "effect" && n !== "vitest").join(", ")} (run your package manager's install)`]);
+      `package.json VibeLang toolchain: ${[...runtime, ...tooling].filter((n) => n !== "effect" && n !== "vitest").join(", ")} (run your package manager's install)`, "package.json packageManager: pnpm@10.24.0"]);
     assert.deepEqual([read("tsconfig.json", kept), read("vitest.config.ts", kept), read(".gitignore", kept)], ["{}\n", "export default {};\n", "dist/\ngen/\n.spec-cache/\n.studio/\n.vibe/\n"]);
     assert.deepEqual(json(kept, "package.json"), {
-      ...own, scripts: { ...scripts, build: "mine" }, dependencies: { ...pinned(...runtime), effect: "mine" }, devDependencies: { ...pinned(...tooling), vitest: "mine" },
+      ...own, packageManager: "pnpm@10.24.0", scripts: { ...scripts, build: "mine" }, dependencies: { ...pinned(...runtime), effect: "mine" }, devDependencies: { ...pinned(...tooling), vitest: "mine" },
       pnpm: { overrides: { ...one, other: "mine" } },
     });
     assert.deepEqual(init(kept), []);
@@ -1094,6 +1107,73 @@ export effect function independent() {
     fs.appendFileSync(path.join(root, "spec/rooms/light/index.md"), `\n${F}quint\npure val label = "lamp"\n${F}\n`);
     const changed = readSpecs(root);
     assert.ok(pending(root, changed.find((s) => s.name === "rooms")!, changed).some((p) => p.note?.includes("spec/rooms/light/index.md")));
+  });
+
+  test("one spec tree: the package a spec directory names gets its modules and their imports in its own gen/, and the root's check runs its types, tests, traces, proofs and contract review under its path; an area without a package, and a package with a spec/ of its own, get none of it", async () => {
+    const cite = `// ${"spec/app/index.md"}, "Count to the limit"\n`;
+    const root = scratch({
+      "spec/index.md": "# Product\n",
+      "spec/app/index.md": ruleSpec(`import limits.* from "../shared/limits"\n${COUNTER.replaceAll("2", "limit")}`, "Count to the limit"),
+      "spec/shared/limits.md": ruleSpec("pure val limit = 2", "The limit"),
+      "spec/area/index.md": ruleSpec("pure val unowned = 1", "An area"),
+      "spec/own/index.md": ruleSpec("pure val theirs = 1", "Theirs"),
+      "apps/own/package.json": "{}",
+      "apps/own/spec/index.md": "",
+      "apps/app/package.json": JSON.stringify({ name: "@scratch/app", type: "module", scripts: { "driver:app": `${JSON.stringify(process.execPath)} driver.mjs` } }),
+      "apps/app/tsconfig.json": PACKAGE["tsconfig.json"],
+      "apps/app/src/one.ts": ONE,
+      // The application: a counter of its own for each key, which stops at `limit`.
+      "apps/app/src/counter.ts": 'export function counter(limit = 2) {\n  const counts = new Map<string, number>();\n  return {\n    reset: () => counts.clear(),\n    dispatch: (key: string) => { const n = counts.get(key) ?? 0; if (n >= limit) return "refused" as const; counts.set(key, n + 1); return "accepted" as const; },\n    observe: (key: string) => counts.get(key) ?? 0,\n  };\n}\n',
+      "apps/app/test/app.test.ts": `${cite}import { test } from "node:test";\nimport { conformance } from "../gen/app.conformance.ts";\nimport { counter } from "../src/counter.ts";\ntest("Count to the limit", async () => { await conformance(counter()); });\n`,
+      "apps/app/driver.mjs": 'import fs from "node:fs"; import readline from "node:readline"; let n=0; for await (const line of readline.createInterface({input:process.stdin})) { if (!JSON.parse(line).event) n=0; else if (n<2) n++; console.log(JSON.stringify({state:n+(fs.existsSync("offset")?1:0)})); }',
+    });
+    fs.symlinkSync(nodeModules, path.join(root, "node_modules"), "dir");
+    const first = await run(root, "reviews");
+    assert.deepEqual(first.failed, [], first.text);
+    // Beside them, the compiler leaves its declarations of the adapters.
+    assert.deepEqual(fs.readdirSync(path.join(root, "apps/app/gen")).filter((f) => !f.endsWith(".d.ts")).sort(),
+      ["_conformance.ts", "app.conformance.ts", "app.effect.vibe", "app.ts", "package.json", "shared__limits.effect.vibe", "shared__limits.ts"]);
+    // The service runs in the owner, so its key carries the owner's name; the root's copy carries the root's.
+    assert.match(read("apps/app/gen/app.effect.vibe", root), /key = "@scratch\/app\/spec\/app\/index\.md#Machine"/);
+    assert.match(read("gen/app.effect.vibe", root), new RegExp(`key = "${path.basename(root)}/spec/app/index\\.md#Machine"`));
+    assert.ok(["area.ts", "own.ts", "app.ts"].every((f) => fs.existsSync(path.join(root, "gen", f))) && !fs.existsSync(path.join(root, "apps/own/gen")));
+    for (const [stage, said] of [["types", /^apps\/app: application typechecks/], ["tests", /^apps\/app: pass/], ["traces", /^apps\/app: script driver:app: simulated states and refused events agree with spec\/app\/index\.md/],
+      ["proof", /^apps-app-src-one\.ts: all 1 obligations proved/], ["review", /^apps\/app\/src\/: recorded as reconciled: apps\/app\/src\/one\.ts/]] as const)
+      assert.ok(first.said(stage, said), `${stage}\n${first.text}`);
+    assert.deepEqual(Object.keys(JSON.parse(read("spec/lock.json", root)).contracts), ["apps/app/src/one.ts"]);
+    assert.ok(!/apps\/own/.test(first.text), first.text);
+
+    /** What the root's check says of a copy with one file of the tree changed. */
+    const broken = (file: string, text: string) => {
+      const copy = scratch({});
+      fs.cpSync(root, copy, { recursive: true });
+      fs.writeFileSync(path.join(copy, file), text);
+      return run(copy);
+    };
+    const [recursing, mistyped, failing, departing, cited, contract, driven] = await Promise.all([
+      // An owner's test script that checks the root would check itself.
+      broken("apps/app/package.json", JSON.stringify({ name: "@scratch/app", type: "module", packageManager: JSON.parse(PACKAGE["package.json"]).packageManager, scripts: { test: `node ${JSON.stringify(path.join(project, "vibestack/spec.ts"))} check ../..` } })),
+      broken("apps/app/src/wrong.ts", 'export const wrong: number = "x";\n'),
+      broken("apps/app/test/never.test.ts", 'import { test } from "node:test";\ntest("never holds", () => { throw new Error("no"); });\n'),
+      // The owner's journey runs its application against the helper in its own gen/.
+      broken("apps/app/test/app.test.ts", read("apps/app/test/app.test.ts", root).replace("counter()", "counter(3)")),
+      broken("spec/app/index.md", read("spec/app/index.md", root).replace("Count to the limit", "Count up")),
+      broken("apps/app/src/one.ts", ONE.replace("=== 1", ">= 1")),
+      broken("apps/app/offset", ""),
+    ]);
+    const says = (found: Awaited<ReturnType<typeof run>>, stages: Result["stage"][], stage: Result["stage"], pattern: RegExp) => {
+      assert.deepEqual(found.failed, stages, found.text);
+      assert.ok(found.said(stage, pattern), found.text);
+    };
+    says(recursing, ["tests"], "tests", /^apps\/app: fail\n[\s\S]*a test script cannot run spec check or accept: the check already runs the tests/);
+    says(mistyped, ["types"], "types", /^apps\/app: application does not fit the generated contract\n[\s\S]*src\/wrong\.ts\(1,14\): error TS2322/);
+    says(failing, ["tests"], "tests", /^apps\/app: fail\n[\s\S]*never holds/);
+    says(departing, ["tests"], "tests", /^apps\/app: fail\n[\s\S]*conformance to spec\/app\/index\.md/);
+    // A citation is read from the root, and its failure is the owner's alone.
+    says(cited, ["tests", "review"], "tests", /^apps\/app: 1 citations name no story or rule of the spec\n +apps\/app\/test\/app\.test\.ts:1  spec\/app\/index\.md, "Count to the limit"$/);
+    assert.equal(cited.text.match(/^✗ tests/gm)?.length, 1, cited.text);
+    says(contract, ["review"], "review", /^apps\/app\/src\/: 1 contract\(s\) to reconcile[\s\S]*apps\/app\/src\/one\.ts\n +contract changed/);
+    says(driven, ["traces"], "traces", /^apps\/app: script driver:app: the program departs from the spec\n[\s\S]*reset/);
   });
 
   test("nested spec paths refuse missing links, escaped targets, duplicate modules, cycles and symlinks", () => {
@@ -1384,10 +1464,8 @@ export effect function independent() {
     fs.symlinkSync(path.join(nodeModules, ".pnpm"), path.join(consumer, "node_modules/.pnpm"), "dir");
     for (const dependency of ["@informalsystems", "typescript"])
       fs.symlinkSync(path.join(nodeModules, dependency), path.join(consumer, "node_modules", dependency), "dir");
-    for (const command of ["quint", "tsc"]) {
-      const name = process.platform === "win32" ? `${command}.cmd` : command;
-      fs.symlinkSync(path.join(nodeModules, ".bin", name), path.join(binaries, name), "file");
-    }
+    const quint = process.platform === "win32" ? "quint.cmd" : "quint";
+    fs.symlinkSync(path.join(nodeModules, ".bin", quint), path.join(binaries, quint), "file");
     const lsc = path.join(nodeModules, "lemmascript/tools/dist/lsc.js");
     const shim = path.join(binaries, process.platform === "win32" ? "lsc.cmd" : "lsc");
     const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;

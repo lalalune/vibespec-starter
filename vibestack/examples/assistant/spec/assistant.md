@@ -74,8 +74,9 @@ pure val initial: Assistant = {
 
 ### Only the person starts a turn, and not while one is under way
 
-A turn can start before the first one or after the last one is done, not
-while the assistant is planning or asking.
+A turn can start while the assistant is idle (before the first turn, or after
+a restart) or once the last turn is done, not while it is planning or asking.
+It starts with the whole budget of four actions.
 
 ```quint
 pure def canBegin(s: Assistant, by: Actor): bool =
@@ -90,8 +91,9 @@ pure def begin(s: Assistant, by: Actor): Assistant =
 Looking the bill up sends a new request. Reviewing checks an amount that has
 arrived. Filling types the saved card, and only into the biller's own page.
 Paying asks the person, once the bill is reviewed and not yet paid. Speaking
-says how far the turn has got. A choice that cannot be carried out still
-costs one. The turn ends when the model finishes or the budget runs out.
+says whether the bill is paid yet. A choice that cannot be carried out still
+costs one. The turn ends when the model finishes, or when the budget runs out
+while planning; a choice that asks the person waits for their answer first.
 
 ```quint
 pure def canChoose(s: Assistant, choice: Choice, by: Actor): bool =

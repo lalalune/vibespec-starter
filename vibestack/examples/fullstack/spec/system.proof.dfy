@@ -56,6 +56,7 @@ lemma act_ensures(sys: System, who: string, op: todo_Op)
   ensures (inv(sys) ==> canAct(sys, who, op) ==> alwaysWithoutForgeriesOnlyNumberedEditsWereAnswered(act(sys, who, op)))
   ensures (inv(sys) ==> canAct(sys, who, op) ==> alwaysAPushFollowsAnotherEdit(act(sys, who, op)))
   ensures (inv(sys) ==> canAct(sys, who, op) ==> alwaysALoneUsersTabKeepsInStepWithTheServer(act(sys, who, op)))
+  ensures (inv(sys) ==> canAct(sys, who, op) ==> stepTheHistoryOnlyGrows(sys, act(sys, who, op)))
 {
   if inv(sys) && canAct(sys, who, op) {
     UnmadeNotOnWire(sys, who, clientOf(sys, who).made + 1);
@@ -89,6 +90,7 @@ lemma serve_ensures(sys: System, i: int)
   ensures (inv(sys) ==> canServe(sys, i) ==> alwaysWithoutForgeriesOnlyNumberedEditsWereAnswered(serve(sys, i)))
   ensures (inv(sys) ==> canServe(sys, i) ==> alwaysAPushFollowsAnotherEdit(serve(sys, i)))
   ensures (inv(sys) ==> canServe(sys, i) ==> alwaysALoneUsersTabKeepsInStepWithTheServer(serve(sys, i)))
+  ensures (inv(sys) ==> canServe(sys, i) ==> stepTheHistoryOnlyGrows(sys, serve(sys, i)))
 {
   if inv(sys) && canServe(sys, i) {
     ServeWire(sys, i);
@@ -149,6 +151,7 @@ lemma deliver_ensures(sys: System, i: int)
   ensures (inv(sys) ==> canDeliver(sys, i) ==> alwaysWithoutForgeriesOnlyNumberedEditsWereAnswered(deliver(sys, i)))
   ensures (inv(sys) ==> canDeliver(sys, i) ==> alwaysAPushFollowsAnotherEdit(deliver(sys, i)))
   ensures (inv(sys) ==> canDeliver(sys, i) ==> alwaysALoneUsersTabKeepsInStepWithTheServer(deliver(sys, i)))
+  ensures (inv(sys) ==> canDeliver(sys, i) ==> stepTheHistoryOnlyGrows(sys, deliver(sys, i)))
 {
   if inv(sys) && canDeliver(sys, i) {
     DeliverWire(sys, i);
@@ -183,6 +186,7 @@ lemma lose_ensures(sys: System, i: int)
   ensures (inv(sys) ==> canLose(sys, i) ==> alwaysWithoutForgeriesOnlyNumberedEditsWereAnswered(lose(sys, i)))
   ensures (inv(sys) ==> canLose(sys, i) ==> alwaysAPushFollowsAnotherEdit(lose(sys, i)))
   ensures (inv(sys) ==> canLose(sys, i) ==> alwaysALoneUsersTabKeepsInStepWithTheServer(lose(sys, i)))
+  ensures (inv(sys) ==> canLose(sys, i) ==> stepTheHistoryOnlyGrows(sys, lose(sys, i)))
 {
   if inv(sys) && canLose(sys, i) {
     var after := lose(sys, i);
@@ -251,6 +255,7 @@ lemma goOffline_ensures(sys: System, who: string)
   ensures (inv(sys) ==> canGoOffline(sys, who) ==> alwaysWithoutForgeriesOnlyNumberedEditsWereAnswered(goOffline(sys, who)))
   ensures (inv(sys) ==> canGoOffline(sys, who) ==> alwaysAPushFollowsAnotherEdit(goOffline(sys, who)))
   ensures (inv(sys) ==> canGoOffline(sys, who) ==> alwaysALoneUsersTabKeepsInStepWithTheServer(goOffline(sys, who)))
+  ensures (inv(sys) ==> canGoOffline(sys, who) ==> stepTheHistoryOnlyGrows(sys, goOffline(sys, who)))
 {
 }
 
@@ -268,6 +273,7 @@ lemma goOnline_ensures(sys: System, who: string)
   ensures (inv(sys) ==> canGoOnline(sys, who) ==> alwaysWithoutForgeriesOnlyNumberedEditsWereAnswered(goOnline(sys, who)))
   ensures (inv(sys) ==> canGoOnline(sys, who) ==> alwaysAPushFollowsAnotherEdit(goOnline(sys, who)))
   ensures (inv(sys) ==> canGoOnline(sys, who) ==> alwaysALoneUsersTabKeepsInStepWithTheServer(goOnline(sys, who)))
+  ensures (inv(sys) ==> canGoOnline(sys, who) ==> stepTheHistoryOnlyGrows(sys, goOnline(sys, who)))
 {
   if inv(sys) && canGoOnline(sys, who) {
     var c := clientOf(sys, who);
@@ -294,6 +300,7 @@ lemma resend_ensures(sys: System, who: string)
   ensures (inv(sys) ==> canResend(sys, who) ==> alwaysWithoutForgeriesOnlyNumberedEditsWereAnswered(resend(sys, who)))
   ensures (inv(sys) ==> canResend(sys, who) ==> alwaysAPushFollowsAnotherEdit(resend(sys, who)))
   ensures (inv(sys) ==> canResend(sys, who) ==> alwaysALoneUsersTabKeepsInStepWithTheServer(resend(sys, who)))
+  ensures (inv(sys) ==> canResend(sys, who) ==> stepTheHistoryOnlyGrows(sys, resend(sys, who)))
 {
   if inv(sys) && canResend(sys, who) {
     OldestFacts(sys, who);
@@ -315,6 +322,7 @@ lemma duplicate_ensures(sys: System, i: int)
   ensures (inv(sys) ==> canDuplicate(sys, i) ==> alwaysWithoutForgeriesOnlyNumberedEditsWereAnswered(duplicate(sys, i)))
   ensures (inv(sys) ==> canDuplicate(sys, i) ==> alwaysAPushFollowsAnotherEdit(duplicate(sys, i)))
   ensures (inv(sys) ==> canDuplicate(sys, i) ==> alwaysALoneUsersTabKeepsInStepWithTheServer(duplicate(sys, i)))
+  ensures (inv(sys) ==> canDuplicate(sys, i) ==> stepTheHistoryOnlyGrows(sys, duplicate(sys, i)))
 {
   if inv(sys) && canDuplicate(sys, i) {
     var m := msgAt(sys.net, i);
@@ -337,6 +345,7 @@ lemma forge_ensures(sys: System, who: string, seq_: int, op: todo_Op)
   ensures (inv(sys) ==> canForge(sys, who, seq_, op) ==> alwaysWithoutForgeriesOnlyNumberedEditsWereAnswered(forge(sys, who, seq_, op)))
   ensures (inv(sys) ==> canForge(sys, who, seq_, op) ==> alwaysAPushFollowsAnotherEdit(forge(sys, who, seq_, op)))
   ensures (inv(sys) ==> canForge(sys, who, seq_, op) ==> alwaysALoneUsersTabKeepsInStepWithTheServer(forge(sys, who, seq_, op)))
+  ensures (inv(sys) ==> canForge(sys, who, seq_, op) ==> stepTheHistoryOnlyGrows(sys, forge(sys, who, seq_, op)))
 {
   if inv(sys) && canForge(sys, who, seq_, op) {
     var base := sys.(forged := sys.forged + 1);

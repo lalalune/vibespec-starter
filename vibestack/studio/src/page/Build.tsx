@@ -82,8 +82,8 @@ export function Build({ onPublish }: { onPublish: () => void }) {
   const dirty = dirtySpecs();
   const { job: running, verdict, waiting } = snap.session;
   const { jobs, check, manifest } = snap;
-  /** The agent's or the sign-off's log, whichever ran last; the check reports in its own block. */
-  const job = [jobs.agent, jobs.accept].filter((j): j is JobView => !!j).sort((a, b) => b.started - a.started)[0];
+  /** The agent's, the sign-off's or the build's log, whichever ran last; the check reports in its own block. */
+  const job = [jobs.agent, jobs.accept, jobs.build].filter((j): j is JobView => !!j).sort((a, b) => b.started - a.started)[0];
   const blocking = (check?.results ?? []).filter((r) => !r.ok && r.stage !== "review");
   const review = reviewCount();
   const copyPrompt = () => { navigator.clipboard.writeText(snap.prompt).then(() => toast("Sync prompt copied"), () => toast("Could not copy")); };
@@ -130,6 +130,20 @@ export function Build({ onPublish }: { onPublish: () => void }) {
         ))}
         <div><IconButton name="copy" label="Copy the sync prompt" onClick={copyPrompt} /></div>
       </div>
+
+      {(snap.app.script || snap.app.buildable) && (
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center gap-2">
+            <Dot mark={snap.session.previewing ? "ok" : ""} label={snap.session.previewing ? "running" : "stopped"} />
+            <span className="flex-1 font-semibold">App {snap.app.script && <span className="font-mono text-xs font-normal text-muted-foreground">pnpm {snap.app.script}</span>}</span>
+            {snap.session.previewing && snap.app.url && <Button variant="outline" size="sm" asChild><a href={snap.app.url} target="_blank" rel="noreferrer"><Icon name="open" />Open</a></Button>}
+            {snap.app.buildable && <Button variant="outline" size="sm" disabled={!can({ type: "build" })} onClick={() => start("build")}><Icon name="check" />Build</Button>}
+            {snap.app.script && can({ type: "preview" }) && <Button variant="outline" size="sm" onClick={() => start("app", { start: true })}><Icon name="play" />Start</Button>}
+            {can({ type: "endPreview" }) && <Button variant="outline" size="sm" onClick={() => start("app", { start: false })}><Icon name="stop" />Stop</Button>}
+          </div>
+          {snap.app.log.length > 0 && <Code className="max-h-40 whitespace-pre-wrap">{snap.app.log.slice(-40).join("\n")}</Code>}
+        </div>
+      )}
 
       {job && (
         <div className="overflow-hidden rounded-lg border border-border">

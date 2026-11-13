@@ -273,8 +273,8 @@ function contractOf(file: string, code: string): string[] {
   }
   return out;
 }
-/** The contract of every proved src file, under its path. */
-export const contracts = (root: string, src = readSrc(root)) => new Map(src.filter((u) => u.ts).map((u) => [`src/${u.file}`, contractOf(u.file, u.code)]));
+/** The contract of every proved src file, under its path from the root: `src/x.ts`, or `apps/app/src/x.ts` in an owner. */
+export const contracts = (root: string, src = readSrc(root)) => new Map(src.filter((u) => u.ts).map((u) => [u.file, contractOf(u.file, u.code)]));
 /** What the ledger records of every contract: a fingerprint of its lines. */
 const contractLedger = (now: ReturnType<typeof contracts>) =>
   Object.fromEntries([...now].map(([file, lines]) => [file, short(lines.join("\n"))]));

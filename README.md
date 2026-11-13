@@ -92,32 +92,35 @@ applications and packages beside Studio; the examples stand alone.
 
 1. Click **[Use this template](https://github.com/lalalune/vibestack/generate)**
    to create your own repository, then clone it and enter its directory.
-2. Install the toolchain and open your project in Studio:
+2. Install the toolchain and start everything: Studio, and every app's own
+   development server:
 
    ```bash
    pnpm install
    pnpm dev
    ```
 
-3. In `spec/index.md`, give your application a title and add its first story:
+3. In `spec/index.md`, say what the product is for. In `spec/app/index.md`,
+   the requirements of the application in `apps/app`, add its first story:
    who it is for, what they need to do, and why. You can write it in Studio
    or edit the Markdown file directly.
 4. Ask the coding agent to sync. It writes the rules and Quint, runs the
    checks, and reports what needs your review.
-5. Build your application in `src/`: its shell in VibeLang, its interface in
-   React, both on the generated code in `gen/`. Follow
+5. Build your application in `apps/app/src/`: its shell in VibeLang, its
+   interface in React, both on the generated code in `apps/app/gen/`. Follow
    [Build your project](#build-your-project).
 
 ## Studio
 
 ```bash
-pnpm dev                              # this project
-pnpm dev vibestack/examples/order     # an example, or any directory with spec/
+pnpm dev                                # Studio on this project, and every app's dev server
+pnpm studio vibestack/examples/order    # Studio alone, on an example or any directory with spec/
 ```
 
 Studio opens in the browser and is where you build the application: you
-shape the stories, an agent turns them into rules, Quint and code, and the
-checks say where the project stands.
+shape the stories, an agent turns them into rules, Quint and code, the
+checks say where the project stands, and the application runs and builds
+beside it.
 
 | You | Studio |
 |---|---|
@@ -127,14 +130,16 @@ checks say where the project stands.
 | **Run** beside Claude Code or Codex | Starts the agent on the sync prompt in the project and streams its progress; **Open** starts a new chat in the app with the same prompt |
 | **Run check** | Shows each failing stage, and marks the story or rule it names |
 | **Sign off** | Records the same approval as `pnpm accept` |
+| **Build** beside App | Runs the project's `build` script as a job and streams its output |
+| **Start** beside App | Runs the project's own development server (its `start` script, or `dev` when that is not Studio) and links to where it serves; **Stop** ends it |
 
 Studio is itself a Vibestack app in `vibestack/studio/`, built like any
 other: its rules in `spec/`, its server in VibeLang (`src/server.vibe`) and
-its page in React (`src/page/`). `pnpm dev` rebuilds the page when its
+its page in React (`src/page/`). `pnpm studio` rebuilds the page when its
 source changed. To work on Studio:
 
 ```bash
-pnpm dev vibestack/studio                     # open Studio on its own spec
+pnpm studio vibestack/studio                  # open Studio on its own spec
 pnpm --filter vibestack-studio check          # its specs, proofs and journeys
 pnpm --filter vibestack-studio test           # its journeys only, Playwright included
 ```
@@ -145,8 +150,11 @@ pnpm --filter vibestack-studio test           # its journeys only, Playwright in
 
 A `##` heading is a story, a `###` heading is a rule, and a `quint` block
 under a rule states its formal meaning. Write the prose; the agent can write
-the rules and their Quint. `pnpm new` fills an empty `spec/index.md` with
-a small scaffold to replace.
+the rules and their Quint. The repository has one spec tree: `spec/index.md`
+introduces the product and links to each area, and `spec/<name>/` holds the
+requirements of the package `apps/<name>` or `packages/<name>`
+([one spec tree](AGENTS.md#one-spec-tree)). `pnpm new <name>` writes
+`spec/<name>/index.md` with a small scaffold to replace.
 
 ### 2. Sync and check
 
@@ -162,15 +170,19 @@ flowchart LR
 ```
 
 Each report ends with a `next:` line; the agent follows it until only your
-review remains. CI runs the root check only.
+review remains. CI runs build, types, tests, every package's `check` and lint
+on each pull request and push; what is headed for `main`, and every push to
+`develop` or `main`, also gets the standalone examples and `pnpm selftest`
+(see [AGENTS.md](AGENTS.md#the-monorepo)).
 
 ### 3. Build on the generated code
 
-`pnpm check` generates your types, guards and transitions in `gen/`.
-For a state machine, import its Effect adapter into your shell:
+`pnpm check`, at the root, generates your types, guards and transitions in
+`gen/`, and those of `spec/app/` in `apps/app/gen/` as well. For a state
+machine, import its Effect adapter into your shell:
 
 ```vibe
-import { Machine, machine, apply, decodeEvent, decodeState } from "../gen/index.effect.vibe"
+import { Machine, machine, apply, decodeEvent, decodeState } from "../gen/app.effect.vibe"
 ```
 
 `Machine` holds the state and changes it only by an event the rules allow:
@@ -180,7 +192,7 @@ on `apply`, and passes what it loads through `decodeState`. If the spec uses
 a sender parameter named `by`, authenticate that sender in your shell and
 pass it separately ([the VibeLang shell](AGENTS.md#the-vibelang-shell)).
 
-Put HTTP, storage and other I/O in `src/` as VibeLang, the interface as
+Put HTTP, storage and other I/O in the package's `src/` as VibeLang, the interface as
 React components that read the state and send events through hooks over
 `Machine`, and whole-journey tests in `test/`. Keep pure logic in the spec
 wherever Quint can express it. Logic that needs TypeScript, such as a loop,
@@ -210,9 +222,12 @@ pnpm accept
 
 Before committing your application's starting point:
 
-1. **Remove what you do not need.** Delete `vibestack/examples/`, the `demo`
-   and `examples` scripts and the `examples` job in
-   `.github/workflows/ci.yml`; start your application from `apps/web`. Update the package name, description and
+1. **Remove what you do not need.** Delete every directory in
+   `vibestack/examples/` except `order/`: `pnpm selftest` builds its scratch
+   projects from it, so it stays, with the `demo` and `examples` scripts and
+   the `examples` job in `.github/workflows/ci.yml`, which then check only
+   it. Start your application from `apps/app` and its requirements from
+   `spec/app/index.md`. Update the package name, description and
    repository links for your project.
 2. **Keep the toolchain guide with the toolchain.** Move this README to
    `vibestack/README.md`, update its relative links, and keep the template
@@ -231,7 +246,8 @@ current one. Installed as a package, use `pnpm exec spec <command> [<dir>]`.
 
 | Command | Does |
 |---|---|
-| `pnpm dev [<dir>]` | Opens Studio |
+| `pnpm dev` | Starts Studio on this project and every workspace package's `dev` script, together |
+| `pnpm studio [<dir>]` | Opens Studio alone, on one project |
 | `pnpm check [<dir>] [--json]` | Checks spec, source and tests; ends with a `next:` line ([JSON shape](AGENTS.md#changing-the-tools)) |
 | `pnpm quick` | Types, lint and tests of what changed |
 | `pnpm verify` | Everything CI runs for `main`, in every package and example |
@@ -256,10 +272,10 @@ current one. Installed as a package, use `pnpm exec spec <command> [<dir>]`.
 
 | Project | What it covers | Open in Studio |
 |---|---|---|
-| [Order checkout](vibestack/examples/order/README.md) | Guards, payments, cancellation and a proved event ledger | `pnpm dev vibestack/examples/order` |
-| [Team dashboard](vibestack/examples/dashboard/README.md) | Shared spreadsheets, chat notifications and a project registry | `pnpm dev vibestack/examples/dashboard` |
-| [Shared to-do list](vibestack/examples/fullstack/README.md) | HTTP server, browser client and two tabs over an unreliable network | `pnpm dev vibestack/examples/fullstack` |
-| [Assistant](vibestack/examples/assistant/README.md) | Trusted senders, bounded turns, late replies, confirmation before payment and a secret card | `pnpm dev vibestack/examples/assistant` |
+| [Order checkout](vibestack/examples/order/README.md) | Guards, payments, cancellation and a proved event ledger | `pnpm studio vibestack/examples/order` |
+| [Team dashboard](vibestack/examples/dashboard/README.md) | Shared spreadsheets, chat notifications and a project registry | `pnpm studio vibestack/examples/dashboard` |
+| [Shared to-do list](vibestack/examples/fullstack/README.md) | HTTP server, browser client and two tabs over an unreliable network | `pnpm studio vibestack/examples/fullstack` |
+| [Assistant](vibestack/examples/assistant/README.md) | Trusted senders, bounded turns, late replies, confirmation before payment and a secret card | `pnpm studio vibestack/examples/assistant` |
 
 ## Contributing
 

@@ -13,11 +13,13 @@ runs:
         node-version-file: .nvmrc
         cache: pnpm
     # Turborepo skips a task whose inputs it has seen; spec skips a simulation or proof it has seen.
+    # Quint downloads its evaluator to ~/.quint from GitHub's rate-limited API: once per cache, not per run.
     - uses: actions/cache@v6
       with:
         path: |
           .turbo
           **/.spec-cache
+          ~/.quint
           !**/node_modules/**
         key: tasks-${{ runner.os }}-${{ github.job }}-${{ github.sha }}
         restore-keys: |
