@@ -113,19 +113,22 @@ it("leaves a story to the hand-written file that has one of its name", () => {
   expect(read("kit-chip.stories.tsx")).toContain('title: "Kit/Chip"');
 });
 
-it("writes the catalog Studio reads, and a test that mounts every generated story", () => {
+it("writes the catalog Studio reads, and tests that run every generated story in a simulated DOM and in a browser", () => {
   const catalog = JSON.parse(read("catalog.json"));
   expect(catalog).toEqual(JSON.parse(JSON.stringify(first.index)));
   expect(Object.keys(catalog)).toEqual(["version", "storybook", "components"]);
   expect(Object.keys(catalog.components[4])).toEqual(["id", "name", "package", "title", "description", "source", "props", "stories", "model", "design", "diagnostics"]);
-  expect(read("stories.test.tsx").match(/import \* as .*/g)).toEqual(["chip", "kinds", "many", "meter", "receipt", "tag"].map((name, i) => `import * as s${i} from "./kit-${name}.stories.tsx";`));
+  const files = ["chip", "kinds", "many", "meter", "receipt", "tag"].map((name, i) => `import * as s${i} from "./kit-${name}.stories.tsx";`);
+  expect(read("stories.test.tsx").match(/import \* as .*/g)).toEqual(files);
+  expect(read("stories.browser.test.tsx").match(/import \* as .*/g)).toEqual(['import * as a11y from "@storybook/addon-a11y/preview";', ...files]);
+  expect(read("stories.browser.test.tsx")).toContain('if (!Story.tags.includes("snapshot")) return;');
 });
 
 it("writes the same bytes again, and nothing when nothing changed", () => {
   const before = everything();
   expect(run()).toMatchObject({ written: [], removed: [], analyzed: 0 });
   rmSync(out, { recursive: true });
-  expect(generator({ root })().written).toHaveLength(9);
+  expect(generator({ root })().written).toHaveLength(10);
   expect(everything()).toEqual(before);
 });
 
@@ -136,7 +139,7 @@ it("rewrites only what a change touches, and removes what a deleted component le
 
   writeFileSync(join(root, "src/Table.meta.ts"), 'export const meta = { args: { rows: [{ id: 1 }], sort: { by: "id" } } };\n');
   const given = run();
-  expect(given).toMatchObject({ written: ["kit-table.stories.tsx", "catalog.json", "stories.test.tsx", "manifest.json"], analyzed: 1, diagnostics: [] });
+  expect(given).toMatchObject({ written: ["kit-table.stories.tsx", "catalog.json", "stories.test.tsx", "stories.browser.test.tsx", "manifest.json"], analyzed: 1, diagnostics: [] });
   expect(component("Table", given).stories).toEqual([{ id: "kit-table--default", name: "Default", kind: "default", args: { rows: [{ id: 1 }], sort: { by: "id" } } }, { id: "kit-table--empty", name: "Empty", kind: "state", args: { rows: [], sort: { by: "id" } } }]);
 
   rmSync(join(root, "src/Chip.tsx"));

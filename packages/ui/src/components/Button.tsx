@@ -29,7 +29,7 @@ export type ButtonProps = ComponentProps<"button"> &
     asChild?: boolean;
   };
 
-/** An action a person can take. */
+/** An action a person can take. Give one without text, such as an icon, an `aria-label`. */
 export function Button({ variant, size, loading = false, asChild = false, type = "button", disabled, className, children, ...props }: ButtonProps) {
   const Comp = asChild ? Slot : "button";
   return (
