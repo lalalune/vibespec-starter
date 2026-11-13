@@ -20,7 +20,7 @@ const EXAMPLE = path.join(project, "vibespec/examples/order");
 const read = (file: string): string => {
   const example = file === "spec/order.md" ? "spec/index.md" : /^(src|test)\//.test(file) || file === "tsconfig.json" ? file : undefined;
   return fs.readFileSync(example ? path.join(EXAMPLE, example) : path.join(project, file), "utf8")
-    .replaceAll("gen/index.ts", "gen/order.ts").replaceAll("spec/index.md", "spec/order.md");
+    .replaceAll("gen/index.", "gen/order.").replaceAll("spec/index.md", "spec/order.md");
 };
 const F = "`".repeat(3);
 const roots: string[] = [];
