@@ -58,7 +58,19 @@ export const appScript = trusted(function appScript(root: string): string | unde
 /** A terminal colour code, which development servers print around their address. */
 const COLOUR = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
 /** Whether the project can be built: it has a `build` script (spec/index.md, "The app is built from published specs, when no job runs"). A trusted call. */
-export const buildable = trusted((root: string) => !!readJson<{ scripts?: Record<string, string> }>(path.join(root, "package.json"))?.scripts?.build, [Error]);
+export const buildable = trusted((root: string) => buildCommand(root) !== undefined, [Error]);
+
+/**
+ * How the project is built (spec/index.md, "The app is built from published specs, when no job runs"): at a workspace
+ * root, every app under `apps/` that has a `build` script; elsewhere, the project's own `build` script. A trusted call.
+ */
+export const buildCommand = trusted(function buildCommand(root: string): [string, string[]] | undefined {
+  const scripts = (dir: string) => readJson<{ scripts?: Record<string, string> }>(path.join(dir, "package.json"))?.scripts ?? {};
+  const apps = path.join(root, "apps");
+  const workspaceApps = fs.existsSync(path.join(root, "pnpm-workspace.yaml")) && fs.existsSync(apps)
+    && fs.readdirSync(apps).some((name) => scripts(path.join(apps, name)).build);
+  return workspaceApps ? ["pnpm", ["--filter", "./apps/*", "run", "build"]] : scripts(root).build ? ["pnpm", ["run", "build"]] : undefined;
+}, [Error]);
 
 /** The address a development server says it serves at, in a line it printed. @throws {never} */
 export const servedAt = (line: string) => line.replace(COLOUR, "").match(/https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\]):\d+[^\s]*/)?.[0];
