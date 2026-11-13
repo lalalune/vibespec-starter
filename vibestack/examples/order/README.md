@@ -1,7 +1,6 @@
 # Order checkout
 
-A checkout with a draft, instalment payments, hold, cancellation and reopening.
-The complete example lives here; the template's root `spec/index.md` is empty.
+Draft, instalments, take-back, hold, cancel and reopen.
 
 ```sh
 pnpm install   # once at the repository root, for the tools, and once here
@@ -29,10 +28,6 @@ own lock file.
 | `src/app.vibe` | The `OrderBook` service: order storage, input decoding and rejection reporting |
 | `src/demo.vibe` | Scripted checkout session |
 | `test/app.test.vibe` | Checkout journeys through the real shell |
-
-The model has 10 transitions, six `always` rules, one `step` rule and three
-`sometimes` goals. The shell decodes external events, stores allowed events
-and replays them through the generated core.
 
 ## VibeLang and TypeScript
 

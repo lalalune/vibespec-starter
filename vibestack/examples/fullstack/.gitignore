@@ -1,0 +1,2 @@
+# The compiler writes these beside a .vibe file that has a `module node` body.
+*.vibe.node.d.ts

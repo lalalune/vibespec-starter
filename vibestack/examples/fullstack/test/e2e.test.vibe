@@ -1,15 +1,13 @@
 // spec/system.md, "Story: Edit together, online or not"; spec/system.md, "Story: Editing alone is never refused"
-// Two tabs and the real HTTP server: the convergence the system spec says is
-// possible, checked on the running application.
 import { assert, it } from "@effect/vitest"
 import { type Client, view } from "../gen/client.effect.vibe"
 import { Machine } from "../gen/server.effect.vibe"
 import { sameTodos } from "../gen/todo.effect.vibe"
 import { type Tab, newId, open } from "../src/web/sync.vibe"
-import { Served } from "./served.vibe"
+import { Served, dropConnections } from "./served.vibe"
 
 effect function until(tab: Tab.Shape, ok: (c: Client) => boolean) {
-  try timeout(Stream.runHead(Stream.filter(tab.changes, ok)), "2 seconds")
+  try timeout(Stream.runHead(Stream.filter(tab.changes, ok)), "5 seconds")
 }
 
 it.live("two tabs, one of them offline for a while, end up with the server's list", () => effect {
@@ -43,9 +41,15 @@ it.live("two tabs, one of them offline for a while, end up with the server's lis
 
       // Back online: the queue is sent again and the tab catches up.
       try a.goOnline()
+      const caughtUp = (try server.get()).version
+      try until(b, (c) => c.seen === caughtUp)
+      try b.refresh()
+
+      // spec/client.md, "Story: Hear back from the server": b's stream drops, b reconnects
+      try sync(dropConnections)
+      try a.edit({ type: "setDone", id: eggs, done: true })
       const { version, todos } = try server.get()
       try until(b, (c) => c.seen === version)
-      try b.refresh()
 
       const [ours, theirs] = [try a.get(), try b.get()]
       try Effect.try(() => {
@@ -58,7 +62,7 @@ it.live("two tabs, one of them offline for a while, end up with the server's lis
         assert.strictEqual(theirs.seen, version)
         assert.isTrue(sameTodos(view(ours), view(theirs)))
         assert.isTrue(sameTodos(view(ours), todos))
-        assert.deepStrictEqual(view(ours).map((t) => [t.title, t.done]), [["oat milk", true], ["eggs", false]])
+        assert.deepStrictEqual(view(ours).map((t) => [t.title, t.done]), [["oat milk", true], ["eggs", true]])
       })
     })
   }

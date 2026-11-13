@@ -1,16 +1,16 @@
 # Team task dashboard, modelled
 
-A synthesized team task dashboard: tasks live in a shared spreadsheet people
-also edit by hand, a chat app carries commands and notifications, a web
-dashboard shows the state. A separate package that depends on the toolchain
-like any project would.
+Tasks in a shared spreadsheet, edited by hand and through a chat dashboard.
 
 ```sh
-pnpm install   # here, after the install at the repository root
-pnpm check   # model, proofs, types (vibelang --noEmit) and tests
-pnpm test        # the journeys alone: vitest run
-pnpm build   # vibelang: JavaScript in dist/
+pnpm install --ignore-workspace   # here, after `pnpm install` at the repository root for the tools
+pnpm check                        # model, proofs, types (vibelang --noEmit), tests and review
+pnpm test                         # the journeys alone: vitest run
+pnpm build                        # vibelang: JavaScript in dist/
 ```
+
+Run them from this directory: the example is a package of its own, with its
+own lock file, outside the root workspace.
 
 The shell is [VibeLang](https://github.com/smithersai/vibelang): Effect in
 TypeScript syntax, in `.vibe` files. `pnpm gen` writes an adapter
@@ -23,7 +23,6 @@ tracker's types from its adapter, and the test drives that adapter's `Machine`.
 | `spec/tracker.md` | state machine | One project's sheet: guarded dashboard edits, unguarded hand edits, warnings and their fixes, notifications |
 | `spec/projects.md` | state machine | Projects: one sheet each, one per chat channel, never guessed |
 | `spec/*.proof.dfy` | proofs | Obligations Dafny cannot prove alone |
-| `src/columns.ts` | hand-written, proved | Spreadsheet column letters (needs a loop) |
 | `src/notify.vibe` | hand-written, tested | One notifier pass → one chat message per person |
 
 Not modelled: the chat app, HTTP, spreadsheet access, the web dashboard.
@@ -39,8 +38,7 @@ Not modelled: the chat app, HTTP, spreadsheet access, the web dashboard.
 `test/notify.test.vibe` walks the journey through the tracker's `Machine` and
 gives `send` the one fake, a `Chat` that records what is posted to it.
 
-`src/columns.ts` stays TypeScript: LemmaScript proves its `//@` contracts from
-that text. `gen/*.ts` stays TypeScript too; the adapters only wrap it.
+`gen/*.ts` stays TypeScript; the adapters only wrap it.
 
 ## What the checks found
 
@@ -48,10 +46,8 @@ that text. `gen/*.ts` stays TypeScript too; the adapters only wrap it.
   (`ana, ana`), and "Nothing is sent twice" failed in simulation. Fixed by
   the rule "A person named twice in a cell is told once"; `test/notify.test.vibe`
   types a name twice.
-- **A rename left a name in a cell twice.** Fixed: the model removes duplicates
-  whenever the dashboard writes a cell.
-- **A missing precondition.** `columnName` called `columnDigits` without
-  showing the column is not negative; the proof refused it.
+- **A rename left a name in a cell twice.** Fixed: a rename removes duplicate
+  names from every owners cell.
 
-Obligations that hold in simulation only are listed in `spec/lock.json` under
-`unproved`; `pnpm check` shows where each stands.
+Obligations that hold in simulation only are listed under `unproved` in
+`spec/lock.json`.
