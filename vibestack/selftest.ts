@@ -1312,7 +1312,7 @@ export effect function independent() {
     assert.equal((await import(path.join(root, "gen/packaged.ts"))).answer, 42);
 
     // pnpm exposes transitive executables as regular shims while keeping their package beside the tool's dependency.
-    const consumer = oneRule("arithmetic", "One stays one", "pure def lawOne(): bool = 1 == 1");
+    const consumer = oneRule("arithmetic", "A value equals itself", "pure def lawIdentity(n: int): bool = n == n");
     const installed = path.join(consumer, "node_modules/vibestack");
     fs.mkdirSync(path.join(installed, "node_modules"), { recursive: true });
     fs.writeFileSync(path.join(installed, "package.json"), '{"type":"module"}');
@@ -1321,6 +1321,7 @@ export effect function independent() {
       fs.symlinkSync(path.join(nodeModules, entry), path.join(installed, "node_modules", entry), fs.statSync(path.join(nodeModules, entry)).isDirectory() ? "dir" : "file");
     const binaries = path.join(consumer, "node_modules/.bin");
     fs.mkdirSync(binaries, { recursive: true });
+    fs.symlinkSync(path.join(nodeModules, ".pnpm"), path.join(consumer, "node_modules/.pnpm"), "dir");
     for (const command of ["quint", "tsc"]) {
       const name = process.platform === "win32" ? `${command}.cmd` : command;
       fs.symlinkSync(path.join(nodeModules, ".bin", name), path.join(binaries, name), "file");
