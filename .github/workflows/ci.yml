@@ -26,10 +26,11 @@ jobs:
     environment: ${{ github.event_name == 'push' && 'turbo-cache-publish' || 'turbo-cache-read' }}
     env:
       TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+      TURBO_CACHE: ${{ github.event_name == 'push' && 'local:rw,remote:rw' || 'local:rw,remote:r' }}
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
-      - run: pnpm verify --continue --cache=local:rw,remote:${{ github.event_name == 'push' && 'rw' || 'r' }}
+      - run: pnpm verify --continue
       - if: always()
         uses: actions/upload-artifact@v7
         with:

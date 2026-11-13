@@ -157,7 +157,8 @@ const runCli = (script: string, root: string, ...args: string[]) => exec(process
 const unguarded = (s: string) => s.replace("o.status == Draft and o.units > 0", "o.status == Draft");
 const notInductive = (s: string) => s.replace(/### Drafts and cancelled orders hold no money[\s\S]*?```\n\n/, "");
 
-describe("each check catches its own kind of mistake", { concurrency: true }, () => {
+// Each check uses run.ts's tool queue; bound the fixture graphs and independent CLI processes alive beside it.
+describe("each check catches its own kind of mistake", { concurrency: Math.min(4, os.availableParallelism()) }, () => {
   test("collection operations preserve structural equality, total lookups and exact integer results", async () => {
     const forged = oneRule("forged", "Forged builtin", "pure def std_getOr_forged(m: int -> int, key: int, fallback: int): int = 42\npure def readMap(m: int -> int): int = std_getOr_forged(m, 1, 0)");
     await assert.rejects(gen(forged, parseSpec(forged, "spec/forged.md")), /reserved for generated collection operations/);

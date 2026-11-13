@@ -16,13 +16,14 @@ jobs:
       pull-requests: write
     env:
       TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+      TURBO_CACHE: local:rw,remote:r
     steps:
       - uses: actions/checkout@v7
         with:
           ref: develop
       - uses: ./.github/actions/setup
       # --nightly bypasses the inner verification cache and always exercises the real application.
-      - run: pnpm all check --continue --cache=local:rw,remote:r -- --nightly
+      - run: pnpm all check --continue -- --nightly
       - if: failure()
         env:
           GH_TOKEN: ${{ github.token }}
