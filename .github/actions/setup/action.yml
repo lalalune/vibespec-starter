@@ -1,0 +1,32 @@
+name: setup
+description: Node 26, pnpm from packageManager, the dependency store and Turborepo's local cache.
+inputs:
+  dafny:
+    description: Install Dafny, which the proof stage of `check` needs.
+    default: "false"
+  browsers:
+    description: Install the Chromium that Vitest Browser Mode drives.
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - uses: pnpm/action-setup@v6
+    - uses: actions/setup-node@v7
+      with:
+        node-version-file: .nvmrc
+        cache: pnpm
+    - uses: actions/cache@v6
+      with:
+        path: .turbo
+        key: turbo-${{ runner.os }}-${{ github.job }}-${{ github.sha }}
+        restore-keys: |
+          turbo-${{ runner.os }}-${{ github.job }}-
+    - if: inputs.dafny == 'true'
+      uses: dafny-lang/setup-dafny-action@v1
+      with:
+        dafny-version: "4.11.0"
+    - run: pnpm install --frozen-lockfile
+      shell: bash
+    - if: inputs.browsers == 'true'
+      run: pnpm exec playwright install --with-deps chromium
+      shell: bash

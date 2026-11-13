@@ -8,3 +8,5 @@ dist/
 _apalache-out/
 !/vibestack/gen/
 .claude/worktrees/
+.turbo/
+.cache/
