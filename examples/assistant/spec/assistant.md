@@ -200,6 +200,15 @@ pure def stepPaidOnlyOnGenuine(before: Assistant, via: str, after: Assistant): b
 pure def alwaysPaidOnlyReviewed(s: Assistant): bool = s.bill.paid implies s.bill.reviewed
 ```
 
+### A reviewed bill has an amount
+
+Discovered by the proof: without it, reviewing again a paid bill whose
+amount is not positive would undo its review.
+
+```quint
+pure def alwaysReviewedHasAmount(s: Assistant): bool = s.bill.reviewed implies s.bill.amount > 0
+```
+
 ### A bill is charged once, and only when the person confirms
 
 ```quint
