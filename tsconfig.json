@@ -18,6 +18,8 @@
   "exclude": [
     "vibestack/examples",
     "vibestack/studio",
-    "node_modules"
+    "node_modules",
+    "vibestack/design/test",
+    "vibestack/stories/test"
   ]
 }
