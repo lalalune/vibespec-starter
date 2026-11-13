@@ -172,7 +172,7 @@ flowchart LR
 Each report ends with a `next:` line; the agent follows it until only your
 review remains. CI runs build, types, tests, every package's `check` and lint
 on each pull request and push; what is headed for `main`, and every push to
-`develop` or `main`, also gets the standalone examples and `pnpm selftest`
+`develop` or `main`, also gets `pnpm selftest`
 (see [AGENTS.md](AGENTS.md#the-monorepo)).
 
 ### 3. Build on the generated code
@@ -224,9 +224,9 @@ Before committing your application's starting point:
 
 1. **Remove what you do not need.** Delete every directory in
    `vibestack/examples/` except `order/`: `pnpm selftest` builds its scratch
-   projects from it, so it stays, with the `demo` and `examples` scripts and
-   the `examples` job in `.github/workflows/ci.yml`, which then check only
-   it. Start your application from `apps/app` and its requirements from
+   projects from it, so it stays, with the `demo` and `examples` scripts.
+   The examples are checked manually with `pnpm examples`, outside CI.
+   Start your application from `apps/app` and its requirements from
    `spec/app/index.md`. Update the package name, description and
    repository links for your project.
 2. **Keep the toolchain guide with the toolchain.** Move this README to
@@ -250,7 +250,7 @@ current one. Installed as a package, use `pnpm exec spec <command> [<dir>]`.
 | `pnpm studio [<dir>]` | Opens Studio alone, on one project |
 | `pnpm check [<dir>] [--json]` | Checks spec, source and tests; ends with a `next:` line ([JSON shape](AGENTS.md#changing-the-tools)) |
 | `pnpm quick` | Types, lint and tests of what changed |
-| `pnpm verify` | Everything CI runs for `main`, in every package and example |
+| `pnpm verify` | Build, types, tests, checks and lint for every workspace package |
 | `pnpm gen [<dir>]` | Generates `gen/` only |
 | `node vibestack/spec.ts watch [<dir>]` | Rechecks when a spec, source file or test changes |
 | `pnpm accept [<dir>]` | The user's sign-off: checks afresh and records what `review` lists, [all or nothing](AGENTS.md#review) |

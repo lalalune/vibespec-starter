@@ -111,11 +111,12 @@ read. What each excludes, and why, is at the top of `knip.config.js` and in
 | When | Runs |
 |---|---|
 | every pull request and push | build, types, tests, browser tests, every `check`, ESLint, Stylelint, Knip, Madge |
-| pull request into `main`; push to `develop` or `main` | the same with 1000 runs per property, and the examples and `pnpm selftest` |
-| pull request into `develop` that changes `vibestack/`, `.github/`, `.nvmrc`, the root `package.json` or `pnpm-lock.yaml` | also the examples, one job each |
+| pull request into `main`; push to `develop` or `main` | the same with 1000 runs per property, and `pnpm selftest` |
 | nightly | tests and `check`s with 20000 runs and a new seed |
 
 Each run restores pnpm's store, Turborepo's cache and every `.spec-cache/`
 from the last, so a change pays only for what it reaches; superseded runs are
 cancelled. There is no remote cache: the restored local one already covers
 repeat runs of the same inputs.
+
+Standalone examples are checked manually with `pnpm examples`, outside CI.
