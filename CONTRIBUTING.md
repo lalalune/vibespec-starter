@@ -8,7 +8,7 @@ tutorial. **Every agent reads both in full before doing any work.**
 
 Follow [project setup](README.md#set-up-a-new-project) before feature work:
 remove the example applications and their workspace entries, scripts and CI
-steps, move the template README to `vibespec/README.md` (formerly `tools/`),
+steps, move the template README to `vibestack/README.md` (formerly `tools/`),
 keep its license with the toolchain, and write the new project's root `README.md` and `LICENSE`.
 Update the guide links, add and check the project's initial spec, then commit
 all setup changes so `git status --short` is empty. The linked checklist is
@@ -29,5 +29,5 @@ In short:
   for what Quint cannot express or what touches the outside world.
 - Tests cover only what the checks cannot: whole user journeys through the
   real shell, against real services (AGENTS.md, "Tests").
-- A change to `vibespec/` passes `npm run selftest`, with a new case for each new
+- A change to `vibestack/` passes `npm run selftest`, with a new case for each new
   kind of mistake it catches.

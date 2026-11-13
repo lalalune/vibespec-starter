@@ -254,7 +254,7 @@ function checkNames(proof: { file: string; text: string }, gen: string, lib: str
     if (parts[0] === "Std" && !used.has(d.name))
       throw new Error(`${at}: \`${d.name}\` is not allowed: Dafny's standard library holds axioms, so a proof file may use only the names of it that the generated code uses${std.length ? ` (${std.join(", ")})` : ", and it uses none"}`);
     if (parts[0] === LIB_MODULE && !(parts.length === 2 && own.has(parts[1])))
-      throw new Error(`${at}: \`${d.name}\` is not a lemma or function of vibespec/proof/lib.dfy; call those as ${LIB_MODULE}.<Name>`);
+      throw new Error(`${at}: \`${d.name}\` is not a lemma or function of vibestack/proof/lib.dfy; call those as ${LIB_MODULE}.<Name>`);
   }
 }
 
@@ -370,7 +370,7 @@ export function splice(gen: string, { proof, stepBody, axioms, lib }: Additions,
   const tail: [string, Region][] = [
     ...axioms.map((a, i): [string, Region] => [`${i ? "" : "// ---- laws of the units this one imports, each proved in its own unit (added by the tools) ----\n\n"}${a}`, { def: a.match(/^lemma \{:axiom\} (\w+)/)![1], generated: false }]),
     ...helpers.map((h, i): [string, Region] => [`${i ? "" : `// ---- helpers from ${proof!.file} ----\n\n`}${h.text}`, { def: h.name, generated: false }]),
-    ...(usedLibrary ? [[`// ---- vibespec/proof/lib.dfy ----\n\n${usedLibrary.trimEnd()}`, { def: LIB_MODULE, generated: false }] as [string, Region]] : []),
+    ...(usedLibrary ? [[`// ---- vibestack/proof/lib.dfy ----\n\n${usedLibrary.trimEnd()}`, { def: LIB_MODULE, generated: false }] as [string, Region]] : []),
   ];
   if (tail.length) {
     while (lines.length && !lines.at(-1)!.trim()) { lines.pop(); regions.pop(); }

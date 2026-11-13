@@ -1,6 +1,6 @@
 // Does each check catch the kind of mistake it exists for? Every case builds a
 // scratch project, from this project's own spec or from the small specs in
-// vibespec/fixtures/, breaks one thing, and asserts which stage of `check` fails.
+// vibestack/fixtures/, breaks one thing, and asserts which stage of `check` fails.
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -16,7 +16,7 @@ import { conformance as checkTraces, conformanceFound, writeConformance } from "
 import { acceptContracts, acceptReviews, check, checkVerifiedSource, danglingCitations, expandListHelpers, generated, init, parseSpec, pending, pendingContracts, readSpecs, replay, show, typecheckAll, type Result, type Spec } from "./spec.ts";
 
 const project = path.join(import.meta.dirname, "..");
-const EXAMPLE = path.join(project, "vibespec/examples/order");
+const EXAMPLE = path.join(project, "vibestack/examples/order");
 const read = (file: string, from = project): string => fs.readFileSync(path.join(from, file), "utf8");
 const F = "`".repeat(3);
 const roots: string[] = [];
@@ -43,7 +43,7 @@ function scratch(files: Record<string, string>): string {
 /** A scratch project whose specs are the named fixtures, with their proof files, each changed by `edit` if it is given. */
 const fixtures = (names: string[], edit: (files: Record<string, string>) => void = () => {}) => {
   const files = Object.fromEntries(names.flatMap((n) => [`${n}.md`, `${n}.proof.dfy`]
-    .filter((f) => f.endsWith(".md") || fs.existsSync(path.join(project, "vibespec/fixtures", f))).map((f) => [`spec/${f}`, read(`vibespec/fixtures/${f}`)])));
+    .filter((f) => f.endsWith(".md") || fs.existsSync(path.join(project, "vibestack/fixtures", f))).map((f) => [`spec/${f}`, read(`vibestack/fixtures/${f}`)])));
   edit(files);
   return scratch(files);
 };
@@ -760,7 +760,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const root = scratch({ "AGENTS.md": "mine\n", "package.json": `{"scripts":{"check":"mine"}}` });
     const added = init(root);
     const agents = path.join(root, "AGENTS.md");
-    const expected = `mine\n\n<!-- vibespec:start -->\n${read("AGENTS.md").trim()}\n<!-- vibespec:end -->\n`;
+    const expected = `mine\n\n<!-- vibestack:start -->\n${read("AGENTS.md").trim()}\n<!-- vibestack:end -->\n`;
     assert.equal(fs.readFileSync(agents, "utf8"), expected);
     assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).scripts.check, "mine");
     assert.ok(["sync", "design"].every((s) => fs.existsSync(path.join(root, `.claude/skills/${s}/SKILL.md`))) && added.includes("tsconfig.json"), added.join());
@@ -771,16 +771,16 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.equal(fs.readFileSync(path.join(root, "CLAUDE.md"), "utf8"), "My existing instructions.\n\n@AGENTS.md\n");
     assert.equal(fs.readFileSync(agents, "utf8"), expected);
     assert.deepEqual(init(root), []);
-    for (const marker of ["onespec", "vibespec"]) {
+    for (const marker of ["onespec", "vibestack"]) {
       fs.writeFileSync(agents, `before\r\n<!-- ${marker}:start -->\r\nold instructions\r\n<!-- ${marker}:end -->\r\nafter\r\n`);
       init(root);
-      assert.equal(fs.readFileSync(agents, "utf8"), `before\r\n<!-- vibespec:start -->\r\n${read("AGENTS.md").trim().replace(/\r?\n/g, "\r\n")}\r\n<!-- vibespec:end -->\r\nafter\r\n`);
+      assert.equal(fs.readFileSync(agents, "utf8"), `before\r\n<!-- vibestack:start -->\r\n${read("AGENTS.md").trim().replace(/\r?\n/g, "\r\n")}\r\n<!-- vibestack:end -->\r\nafter\r\n`);
       assert.deepEqual(init(root), []);
     }
     for (const invalid of [
-      "<!-- vibespec:start -->\nincomplete\n",
-      "<!-- vibespec:end -->\n<!-- vibespec:start -->\n",
-      "<!-- vibespec:start -->\n<!-- vibespec:end -->\n<!-- vibespec:start -->\n<!-- vibespec:end -->\n",
+      "<!-- vibestack:start -->\nincomplete\n",
+      "<!-- vibestack:end -->\n<!-- vibestack:start -->\n",
+      "<!-- vibestack:start -->\n<!-- vibestack:end -->\n<!-- vibestack:start -->\n<!-- vibestack:end -->\n",
     ]) {
       fs.writeFileSync(agents, invalid);
       assert.throws(() => init(root), /repair.*markers/);
@@ -791,10 +791,10 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
   test("nested specs link to children and reuse a machine through its directory index", async () => {
     const root = scratch({
       "spec/index.md": "# Home\n\n[Room](./rooms/)\n[Other lamp](./other/light/index.md)\n",
-      "spec/rooms/index.md": read("vibespec/fixtures/room.md").replace('import lamp as L from "./lamp"', 'import /* from "wrong" */ lamp\n  from\n  "./light"').replaceAll("L::", "lamp::"),
-      "spec/rooms/light/index.md": read("vibespec/fixtures/lamp.md"),
+      "spec/rooms/index.md": read("vibestack/fixtures/room.md").replace('import lamp as L from "./lamp"', 'import /* from "wrong" */ lamp\n  from\n  "./light"').replaceAll("L::", "lamp::"),
+      "spec/rooms/light/index.md": read("vibestack/fixtures/lamp.md"),
       "spec/rooms/light/index.proof.dfy": "",
-      "spec/other/light/index.md": read("vibespec/fixtures/lamp.md"),
+      "spec/other/light/index.md": read("vibestack/fixtures/lamp.md"),
       "src/app.ts": `// ${"spec/rooms/index.md"}, ${JSON.stringify("Story: Light a room")}\nexport { initial, step } from "../gen/rooms.ts";\n`,
     });
     const specs = readSpecs(root);
@@ -884,13 +884,13 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
   });
 
   test("the package's own test script is what runs, never the check itself, and a test citing a heading the spec does not have is caught", async () => {
-    const root = copyOfProject("package.json", () => JSON.stringify({ scripts: { test: `node ${JSON.stringify(path.join(project, "vibespec/spec.ts"))} check` } }));
+    const root = copyOfProject("package.json", () => JSON.stringify({ scripts: { test: `node ${JSON.stringify(path.join(project, "vibestack/spec.ts"))} check` } }));
     const again = await run(root);
     assert.deepEqual(again.failed, ["tests"], again.text);
     assert.ok(again.said("tests", /a test script cannot run spec check or accept: the check already runs the tests/), again.text);
     // A test script may check another project, as a tool's journey tests do: only its own project's lock is held.
     const other = fixtures(["door"]);
-    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { test: `cd ${JSON.stringify(other)} && node ${JSON.stringify(path.join(project, "vibespec/spec.ts"))} check --json > /dev/null; test -f gen/door.ts` } }));
+    fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { test: `cd ${JSON.stringify(other)} && node ${JSON.stringify(path.join(project, "vibestack/spec.ts"))} check --json > /dev/null; test -f gen/door.ts` } }));
     const elsewhere = await run(root);
     assert.ok(elsewhere.said("tests", /^pass/), elsewhere.text);
     fs.writeFileSync(path.join(root, "package.json"), "{}");
@@ -940,8 +940,8 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
 
   test("proof caching follows library changes and compiler failure waits for proof completion", async () => {
     const root = fixtures(["highest"], (f) => { f["package.json"] = '{"type":"module"}'; });
-    fs.cpSync(path.join(project, "vibespec"), path.join(root, "vibespec"), {
-      recursive: true, filter: (from) => from !== path.join(project, "vibespec/examples"),
+    fs.cpSync(path.join(project, "vibestack"), path.join(root, "vibestack"), {
+      recursive: true, filter: (from) => from !== path.join(project, "vibestack/examples"),
     });
     const modules = path.join(root, "node_modules");
     fs.mkdirSync(path.join(modules, ".bin"), { recursive: true });
@@ -951,12 +951,12 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       const executable = process.platform === "win32" ? `${tool}.cmd` : tool;
       fs.symlinkSync(path.join(nodeModules, ".bin", executable), path.join(modules, ".bin", executable), "file");
     }
-    const script = path.join(root, "vibespec/spec.ts");
+    const script = path.join(root, "vibestack/spec.ts");
     const first = await runCli(script, root, "check", "--json");
     const checked = JSON.parse(first.stdout);
     assert.ok(checked.results.some((r: Result) => r.stage === "proof" && r.ok), first.stdout + first.stderr);
     const marker = "// A distinct proof-library version for this scratch project.";
-    fs.appendFileSync(path.join(root, "vibespec/proof/lib.dfy"), `\n${marker}\n`);
+    fs.appendFileSync(path.join(root, "vibestack/proof/lib.dfy"), `\n${marker}\n`);
     const second = await runCli(script, root, "check", "--json");
     const again = JSON.parse(second.stdout);
     assert.ok(again.results.some((r: Result) => r.stage === "proof" && r.ok), second.stdout + second.stderr);
@@ -993,7 +993,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     // Across specs: a change to a library definition flags the rules that use it.
     const shop = fixtures(["lib", "shop"]);
     for (const spec of readSpecs(shop)) acceptReviews(shop, spec);
-    fs.writeFileSync(path.join(shop, "spec/lib.md"), read("vibespec/fixtures/lib.md").replace("acc + x)", "x + acc)"));
+    fs.writeFileSync(path.join(shop, "spec/lib.md"), read("vibestack/fixtures/lib.md").replace("acc + x)", "x + acc)"));
     const flagged = pendingItems(shop);
     assert.ok(flagged.includes("Story: Fill a cart / A cart holds lines: model changed through total (spec/lib.md: Sums / The total of a list)"), flagged.join("\n"));
 
@@ -1095,7 +1095,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
   });
 
   test("the command line checks, generates and watches a project directory from its parent", async () => {
-    const script = path.join(project, "vibespec/spec.ts");
+    const script = path.join(project, "vibestack/spec.ts");
     const cli = (root: string, ...args: string[]) => runCli(script, root, ...args);
     const parent = scratch({});
     const root = path.join(parent, "a project");
@@ -1191,7 +1191,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const spliced = (body: string) => splice(gen, { proof: { file: "p.dfy", text: `${header}${body}\n}\n` }, axioms: [], lib }).dfy;
     // Std.Ordinal.TimesIncreasingOnLeft is a false {:axiom}; dafny audit reports it only against the library's own file.
     assert.throws(() => spliced("  Std.Ordinal.TimesIncreasingOnLeft(0, 0, 0);"), /p\.dfy:4: `Std\.Ordinal\.TimesIncreasingOnLeft` is not allowed[^\n]*\(Std\.Collections\.Seq\.All\)/);
-    assert.throws(() => spliced("  ProofLib.Seq.LemmaFlattenConcat<int>([], []);"), /`ProofLib\.Seq\.LemmaFlattenConcat` is not a lemma or function of vibespec\/proof\/lib\.dfy/);
+    assert.throws(() => spliced("  ProofLib.Seq.LemmaFlattenConcat<int>([], []);"), /`ProofLib\.Seq\.LemmaFlattenConcat` is not a lemma or function of vibestack\/proof\/lib\.dfy/);
     assert.throws(() => spliced("  assert (xs).Std.Ordinal == 0;"), /`Std` may only begin a name/);
     assert.ok(spliced("  assert Std.Collections.Seq.All(xs, (x: int) => x > 0) == f(xs);\n  ProofLib.FilterNil((x: int) => true, []);").includes("ProofLib.FilterNil"));
   });
@@ -1276,7 +1276,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
   });
 
   test("a law is offered to an importer only if it is proved without resting on one that is not", async () => {
-    const counter = read("vibespec/fixtures/magic.md").replace("type C = {", 'import forbidden.* from "./forbidden"\ntype C = {').replace(/### Mark by[\s\S]*?(?=### The count is never)/, "").replace(/### The count of bumps[\s\S]*?(?=### Bumped)/, "");
+    const counter = read("vibestack/fixtures/magic.md").replace("type C = {", 'import forbidden.* from "./forbidden"\ntype C = {').replace(/### Mark by[\s\S]*?(?=### The count is never)/, "").replace(/### The count of bumps[\s\S]*?(?=### Bumped)/, "");
     const { said, text } = await run(fixtures(["forbidden"], (f) => Object.assign(f, {
       "spec/magic.md": counter,
       "spec/forbidden.proof.dfy": "lemma lawNotSecond_ensures(n: int)\n  ensures (lawNotSecond(n) == true)\n{\n  lawNotFirst_ensures(987654321);\n}\n",
