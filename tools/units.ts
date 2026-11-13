@@ -41,7 +41,7 @@ export function generated(root: string, spec: Spec, ir: any, models: Map<string,
   const top = new Set<string>((ir.modules?.find((m: any) => m.name === spec.name)?.declarations ?? [])
     .filter((d: any) => d.kind === "def" || d.kind === "typedef").map((d: any) => d.name));
   const assigned = new Set(spec.rules.flatMap(defines));
-  const untracked = [...top].find((name) => !assigned.has(name));
+  const untracked = [...top].find((name) => !assigned.has(name) && !spec.builtins?.includes(name));
   if (untracked) {
     const rule = spec.rules.find((r) => r.locals.includes(untracked));
     throw new Error(`${spec.file}:${rule?.line ?? 1}: \`${untracked}\` is a top-level definition with no rule assignment; start it on its own line in the same column as the definition above it`);

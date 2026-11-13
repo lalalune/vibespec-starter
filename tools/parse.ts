@@ -17,7 +17,7 @@ export interface Import { module: string; alias?: string; star: boolean; names: 
  * `meaning` is the Quint as written, with every line of prose blank and every comment in the Quint reduced to a space:
  * what a cache key may depend on. `tangled` is `qnt` before the list helpers were expanded, to map Quint's columns back.
  */
-export interface Spec { name: string; file: string; rules: Rule[]; stories: Story[]; imports: string[]; uses: Import[]; qnt: string; tangled: string; meaning: string }
+export interface Spec { name: string; file: string; rules: Rule[]; stories: Story[]; imports: string[]; uses: Import[]; qnt: string; tangled: string; meaning: string; builtins?: string[] }
 
 /** The specs that ship with the tools (std/net.md); a spec imports one as it would one of its own. */
 const PACKAGE = path.join(import.meta.dirname, "..");
@@ -129,7 +129,8 @@ export function parseSpec(root: string, file: string, text = fs.readFileSync(loc
   }
   const tangled = qnt.join("\n");
   try {
-    return { name, file, rules, stories, imports, uses, qnt: expandBuiltins(expandListHelpers(tangled), name) + "\n}\n", tangled, meaning: codeOnly(meaning.join("\n")) };
+    const expanded = expandBuiltins(expandListHelpers(tangled), name);
+    return { name, file, rules, stories, imports, uses, qnt: expanded.text + "\n}\n", builtins: expanded.names, tangled, meaning: codeOnly(meaning.join("\n")) };
   } catch (e) {
     throw new Error(`${file}:${(e as Error).message}`);
   }
@@ -254,11 +255,11 @@ export function scanSpec(text: string): { text: string; kind: LineKind }[] {
 }
 
 /** Expand total collection operations without moving the source lines. */
-function expandBuiltins(text: string, module: string): string {
+function expandBuiltins(text: string, module: string): { text: string; names: string[] } {
   const { code } = scan(text);
   const used = new Set<string>();
   const renamed = text.replace(/\.(\w+)\s*\(/g, (call, name: string, at: number) => (code[at] && Object.hasOwn(BUILTINS, name) ? (used.add(name), `.std_${name}_${module}(`) : call));
-  return renamed + [...used].map((n) => `\npure def std_${n}_${module}${BUILTINS[n]}`).join("");
+  return { text: renamed + [...used].map((n) => `\npure def std_${n}_${module}${BUILTINS[n]}`).join(""), names: [...used].map((n) => `std_${n}_${module}`) };
 }
 
 /** Every spec, with each one after the specs it imports; an import that names no spec of the project names one in std/. */
