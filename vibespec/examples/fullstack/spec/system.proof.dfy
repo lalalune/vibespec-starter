@@ -154,13 +154,6 @@ lemma serve_ensures(sys: System, i: int)
         ensures (!after.net[j].kind.Push? || clientOf(after, other(after.net[j].client)).made >= 1 || after.forged >= 1)
       {
         var wire := after.net[j];
-        if !server_answered(sys.server, m.client, m.seq_) {
-          var entry := server_Answered(m.client, m.seq_, m.op, server_allows(sys.server, m.client, m.seq_, m.op));
-          LogAppendFacts(sys.server, after.server, entry, wire.client, wire.seq_, wire.op);
-          forall p | p in clientOf(after, wire.client).pending {
-            LogAppendFacts(sys.server, after.server, entry, wire.client, p.seq_, p.op);
-          }
-        }
         if j < |rest| { WireProperties(sys, rest[j]); }
       }
     } else if server_allows(sys.server, m.client, m.seq_, m.op) {
