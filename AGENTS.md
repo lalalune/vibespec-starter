@@ -69,7 +69,7 @@ and nothing else would catch it.
 
 | Earns a test | Never a test |
 |---|---|
-| A whole user journey, or an integration with a real service, through the real shell: input parsing, storage, HTTP, UI wiring | A guard, transition, rule or law the spec already proves, except as a step of a journey |
+| A whole user journey, or an integration with a real service, through the real shell: input parsing, storage, HTTP, UI wiring | A guard, transition, rule or law the spec already proves, by hand: the conformance check covers them through the application |
 | Hand-written code that touches the outside world, through the journey that uses it. Pure logic becomes a `pure def` or gets a `//@` contract instead | Strings, labels, page titles, markup, styles, snapshots |
 | A shell bug that was found: one more step in the journey it broke | That a function was called; what `tsc` already checks |
 
@@ -111,11 +111,65 @@ How `npm run check` runs them:
   separated by `;`. `check` fails on a
   citation whose heading the spec no longer has, so a renamed or removed rule
   brings its tests up for review.
+- **Remembered.** A pass is remembered until something the tests read
+  changes: the package's code, `gen/`, `package.json` or a lock file.
+  `SPEC_NO_CACHE=1` runs them again, as tests of outside services and CI need.
+- **Notes.** It lists, without failing, each state machine no test checks the
+  application against, test files over 15,000 lines, snapshots, and mocks of
+  the package's own modules.
 - **Monorepos.** Each package with a `spec/` runs its own `check` and its own
   tests; run them all from the root with the workspace tool
   (`pnpm -r --if-present check`, `npm run check --workspaces --if-present`).
   A journey that crosses packages is tested in the package that owns it,
   usually the app.
+
+## Conformance
+
+For each state machine, `npm run check` writes `gen/<name>.conformance.ts`:
+the events the simulator took or tried a guard with, a shortest journey to
+each `sometimes` rule, named by its story, and `conformance(driver)`. That
+runs the real application against the spec, with `gen/<name>.ts` as the
+oracle: every journey, then random walks. It throws at the first difference,
+shrunk to the fewest events that show it, in any test runner. It is a
+package's first test, and the one that makes most others unnecessary.
+
+The driver is the only hand-written part (`test/app.test.ts`):
+
+```ts
+test("the order book does what spec/order.md says", async () => {
+  let book = new OrderBook();
+  await conformance({
+    reset: () => { book = new OrderBook(); },  // a fresh application: empty storage, nothing created
+    dispatch: (id, event) => {                 // through the application's own entry point
+      try { book.dispatch(id, event); return "accepted"; } catch (e) { if (e instanceof Rejected) return "refused"; throw e; }
+    },
+    observe: (id) => book.get(id),             // read back through the application
+  });
+});
+```
+
+- **Reach the application, never the spec.** `dispatch` goes through the
+  application's own entry point (a method, an HTTP request, a click);
+  `observe` reads back through its own storage or interface. A test that runs
+  a conformance check may import the spec's types, never its code: `check`
+  fails otherwise.
+- **Say what happened.** `"accepted"` or `"refused"`, from what the
+  application did; a crash, a 500 or a timeout throws. A driver whose
+  `observe` never changes, or that never reports both outcomes, is refused.
+- **What it can see.** Without `view`, `observe` returns the whole state,
+  compared whatever the order of its sets. Through an interface that shows
+  less, pass `view: (state) => …`, what that interface shows of a state.
+- **Several entities.** Walks interleave two keys (`keys`, default
+  `["a", "b"]`), so one leaking into another shows. An application of one
+  entity ignores the key.
+- **Who sent it.** When transitions take `by`, `dispatch` receives it third:
+  sign in or open a session as them.
+- **Speed.** In process, the default 200 walks. Over HTTP, fewer
+  (`walks: 20`). Through a browser, journeys only (`walks: 0`): `dispatch`
+  clicks, reports a control the spec refuses as disabled by returning
+  `"refused"`, and `observe` reads the API.
+- **What it leaves to hand-written tests:** input that is no event at all,
+  effects on outside services, and what the spec does not model.
 
 ## Definition of done
 
@@ -194,11 +248,6 @@ is generated. The role of a definition comes from its name and signature:
 | `pure val idValues = Set(1, 2, 3)` | what the simulator tries for a parameter named `id`. It must be a set whose elements match the parameter type; any supported Quint is allowed in it | nothing: it never reaches TypeScript |
 | any other `pure val` or `pure def` | a constant or helper | the same constant or function |
 
-A transition parameter named `by` identifies its sender. All such parameters
-use the same type. It is supplied separately as `enabled(current, event, by)`
-and `step(current, event, by)`; it never comes from `parseEvent`. The shell
-must validate the authenticated sender before supplying it.
-
 A helper that takes the state first and returns the state would be taken for
 a transition. Give it the state as its second parameter, or return something
 smaller.
@@ -209,6 +258,13 @@ Refused, each with a message saying why: the generated and harness names
 keywords (`Number`, `delete`, …); Quint built-ins (`to`, `next`, `all`,
 `size`, …); a parameter named like a variant; a variant field called `tag`;
 and near-misses of the conventions above such as `alwayspaid` or `CanPay`.
+
+### Who sent an event
+
+A transition parameter named `by` identifies its sender. All such parameters
+use the same type. It is supplied separately as `enabled(current, event, by)`
+and `step(current, event, by)`; it never comes from `parseEvent`. The shell
+must validate the authenticated sender before supplying it.
 
 ### Using one spec from another
 

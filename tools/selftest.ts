@@ -11,7 +11,7 @@ import { after, describe, test } from "node:test";
 import { LIB_FILE, parseProofFile, readVerdict, splice } from "./prove.ts";
 import { nodesOf } from "./studio/doc.ts";
 import { startStudio } from "./studio/server.ts";
-import { acceptContracts, acceptReviews, check, checkVerifiedSource, expandListHelpers, gen, init, parseSpec, pending, pendingContracts, readSpecs, replay, show, type Result } from "./spec.ts";
+import { acceptContracts, acceptReviews, badSpecName, check, checkVerifiedSource, expandListHelpers, gen, init, parseSpec, pending, pendingContracts, readSpecs, replay, show, type Result } from "./spec.ts";
 
 const project = path.join(import.meta.dirname, "..");
 const read = (file: string) => fs.readFileSync(path.join(project, file), "utf8");
@@ -573,6 +573,17 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.deepEqual(failed, ["tests"], text);
     assert.ok(said("tests", /^1 citations[\s\S]*test\/journeys\/checkout\.test\.ts:4 {2}spec\/order\.md, "Refunds are instant"$/), text);
     assert.ok(said("tests", /^pass\n$/), text);
+  });
+
+  test("the application is checked against its spec through a driver: a shell that skips a guard or loses an event is caught and shrunk, and a driver that uses the spec's code is refused", async () => {
+    const skipsGuard = await run(copyOfProject("src/app.ts", (s) => s.replace(/ {4}if \(!enabled\(order, event\)\) throw new Rejected\([^\n]*\n/, "")));
+    assert.deepEqual(skipsGuard.failed, ["tests"], skipsGuard.text);
+    assert.ok(skipsGuard.said("tests", /conformance to spec\/order\.md[\s\S]*the spec refuses it, the application accepted it/), skipsGuard.text);
+    const dedupes = await run(copyOfProject("src/app.ts", (s) => s.replace("[...(this.logs.get(id) ?? []), event]", "[...new Map([...(this.logs.get(id) ?? []), event].map((e) => [JSON.stringify(e), e])).values()]")));
+    assert.ok(dedupes.said("tests", /conformance to spec\/order\.md[\s\S]*shrunk to 2 events/), dedupes.text);
+    const peeks = await run(copyOfProject("test/app.test.ts", (s) => s.replace('from "../src/app.ts";', 'from "../src/app.ts";\nimport { enabled } from "../gen/order.ts";')));
+    assert.ok(peeks.said("tests", /^1 conformance tests import the spec's code[\s\S]*import \{ enabled \} from "\.\.\/gen\/order\.ts"/), peeks.text);
+    assert.match(badSpecName("conformance") ?? "", /gen\/conformance\.ts/);
   });
 
   test("nothing stale survives in gen/", async () => {
