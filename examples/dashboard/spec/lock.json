@@ -2,21 +2,39 @@
   "version": 1,
   "specs": {
     "spec/kernel.md": {
+      "@document": [
+        "e39714f75044"
+      ],
+      "## Story: An ID is never issued twice": [
+        "6fbfab7ab7e3"
+      ],
       "Story: An ID is never issued twice / A new number is above the stored counter and above every number seen": [
-        "e42137e8bc97",
+        "d2a0cf2f449c",
         "e7375e5d575b"
+      ],
+      "## Story: Owners hear about an edit once it has settled": [
+        "0ba80205ce25"
       ],
       "Story: Owners hear about an edit once it has settled / An edit is due when it is unannounced and has been quiet for the whole debounce period": [
         "e3b0c44298fc",
         "90382cf004d9"
       ],
+      "## Story: A due date is reminded about once": [
+        "e80e80e793ec"
+      ],
       "Story: A due date is reminded about once / At most one reminder is due for a task at a time": [
-        "fbb28c7429f4",
+        "5a0e89e79586",
         "2266550f1a7c"
       ],
+      "## Story: A list page never comes up empty": [
+        "b8bbafdafcbd"
+      ],
       "Story: A list page never comes up empty / A page starts inside the list": [
-        "13baa73dcb01",
+        "f4d04ff3c312",
         "424b565d4dd6"
+      ],
+      "## Story: Only recent requests are accepted": [
+        "72ae9e871a78"
       ],
       "Story: Only recent requests are accepted / A request is fresh within the window, either way": [
         "e3b0c44298fc",
@@ -24,151 +42,223 @@
       ]
     },
     "spec/projects.md": {
+      "@document": [
+        "658100d2be6d"
+      ],
+      "## Domain": [
+        "e3b0c44298fc"
+      ],
       "Domain / A project entry": [
         "e3b0c44298fc",
         "3b828fee5632"
       ],
       "Domain / What the simulator tries": [
-        "5f9b034276f5",
+        "43d00c697f57",
         "9ef0b2a4248b"
       ],
+      "## Story: Connect a sheet as a project": [
+        "ce6188697d65"
+      ],
       "Story: Connect a sheet as a project / A sheet is connected as at most one project": [
-        "eb5dd7efb26f",
-        "17aa7f06468d"
+        "aada5d9fe2d9",
+        "17aa7f06468d",
+        "726b5561159e"
       ],
       "Story: Connect a sheet as a project / A project can be disconnected": [
         "e3b0c44298fc",
-        "cb7eeff9534b"
+        "cb7eeff9534b",
+        "f79f19b7c092"
+      ],
+      "## Story: Know which project a channel means": [
+        "e43146cf81e9"
       ],
       "Story: Know which project a channel means / The admin screen never gives two projects the same channel": [
         "e3b0c44298fc",
-        "4cd05c8c1ee2"
+        "4cd05c8c1ee2",
+        "f79f19b7c092"
       ],
       "Story: Know which project a channel means / A channel typed into a sheet by hand is accepted, even if another project has it": [
-        "e4ff15fea71a",
-        "f676e2708b9f"
+        "265ce9b384b8",
+        "f676e2708b9f",
+        "cced184628a8"
       ],
-      "Story: Know which project a channel means / The app never guesses which project a shared channel means": [
-        "d55551b82803",
-        "d6cfce922a34"
+      "Story: Know which project a channel means / The dashboard never guesses which project a shared channel means": [
+        "dbd00862026f",
+        "d6cfce922a34",
+        "726b5561159e"
       ]
     },
     "spec/tracker.md": {
+      "@document": [
+        "12c3c5c9bd46"
+      ],
+      "## Domain": [
+        "e3b0c44298fc"
+      ],
       "Domain / Tasks, owners and notes": [
-        "2cdfdaab7d3d",
-        "7e28ca9a2909"
+        "417729b49b3c",
+        "ad13de58feb4"
       ],
       "Domain / A new project has its people and no tasks": [
         "e3b0c44298fc",
-        "a37ffe9f4ba1"
+        "5ab13ba123ba",
+        "be78bdae112a"
       ],
       "Domain / Timing": [
-        "a4a6c7f160fb",
+        "730abc7ad411",
         "3735f1a0e20d"
       ],
       "Domain / What the simulator tries": [
-        "5c0e3e29c9a5",
-        "b70c262fa79a"
+        "80a564b1a1fa",
+        "8b2c99feabf9"
       ],
       "Domain / Small helpers": [
         "e3b0c44298fc",
-        "aa43c455f3d6"
+        "aa43c455f3d6",
+        "be78bdae112a"
+      ],
+      "## Story: See what is wrong with the data": [
+        "db60b6a3e489"
       ],
       "Story: See what is wrong with the data / Everything a task depends on, however far back": [
-        "edce7f2eaf6a",
-        "5075c488013a"
+        "01602459a9b1",
+        "5075c488013a",
+        "be78bdae112a"
       ],
       "Story: See what is wrong with the data / The problems of one task": [
-        "60fa2e73a217",
-        "85d0322c503a"
+        "023cff620aa7",
+        "85d0322c503a",
+        "b0a6fa1a1a1f"
       ],
       "Story: See what is wrong with the data / The warning list is empty exactly when the data is well formed": [
-        "f9cfa7a82820",
-        "f0578b5577a8"
+        "5b8d55bc44df",
+        "f0578b5577a8",
+        "4e1d5c618a21"
       ],
-      "Story: Edit through the app / Only a hand edit can make the data worse": [
-        "c905b537aec4",
-        "0c5266b98950"
+      "## Story: Edit through the dashboard": [
+        "7b326345d1a3"
       ],
-      "Story: Edit through the app / A new task gets a number that was never issued and that nothing points at": [
-        "9b95ee307367",
-        "2b70e6c84ae1"
+      "Story: Edit through the dashboard / Only a hand edit can make the data worse": [
+        "bb0d225d2ba1",
+        "0c5266b98950",
+        "4e1d5c618a21"
       ],
-      "Story: Edit through the app / Task numbers are unique and never above the counter": [
+      "Story: Edit through the dashboard / A new task gets a number that was never issued and that nothing points at": [
+        "f08fb19e54da",
+        "c0115673f552",
+        "d41b48c42d79"
+      ],
+      "Story: Edit through the dashboard / Task numbers are unique and never above the counter": [
         "e3b0c44298fc",
-        "4daa9d24dab7"
+        "4daa9d24dab7",
+        "be78bdae112a"
       ],
-      "Story: Edit through the app / The counter never goes back, and a number is never reissued": [
+      "Story: Edit through the dashboard / The counter never goes back, and a number is never reissued": [
         "e3b0c44298fc",
-        "3d93ff535c4c"
+        "3d93ff535c4c",
+        "be78bdae112a"
       ],
-      "Story: Edit through the app / Status and due date can be changed on any task that exists": [
+      "Story: Edit through the dashboard / Status and due date can be changed on any task that exists": [
         "e3b0c44298fc",
-        "d889676b8d99"
+        "d889676b8d99",
+        "c3bd827c65cc"
       ],
-      "Story: Edit through the app / An owner added through the app must be a person in the sheet": [
-        "72fab3802390",
-        "507f4ab78107"
+      "Story: Edit through the dashboard / An owner added through the dashboard must be a project member": [
+        "ec1bfc232411",
+        "507f4ab78107",
+        "c3bd827c65cc"
       ],
-      "Story: Edit through the app / A parent must exist and must not already depend on the task": [
+      "Story: Edit through the dashboard / A parent must exist and must not already depend on the task": [
         "e3b0c44298fc",
-        "44dcd512e0a5"
+        "44dcd512e0a5",
+        "b0a6fa1a1a1f"
       ],
-      "Story: Edit through the app / Related is written on both tasks at once": [
+      "Story: Edit through the dashboard / Related is written on both tasks at once": [
         "e3b0c44298fc",
-        "6364c608f6a3"
+        "6364c608f6a3",
+        "c3bd827c65cc"
       ],
-      "Story: Edit through the app / Deleting a task through the app removes every link to it": [
+      "Story: Edit through the dashboard / Deleting a task through the dashboard removes every link to it": [
         "e3b0c44298fc",
-        "dce038fe7926"
+        "dce038fe7926",
+        "c3bd827c65cc"
       ],
-      "Story: Edit through the app / Renaming or removing a person through the app rewrites every cell that names them": [
-        "658598a95d13",
-        "83e1899bf82a"
+      "Story: Edit through the dashboard / Renaming or removing a person through the dashboard rewrites every cell that names them": [
+        "06a9f66d6776",
+        "83e1899bf82a",
+        "c3bd827c65cc"
       ],
-      "Story: Edit the sheet by hand / A hand edit is accepted whatever it says": [
-        "82b455adfa0c",
-        "869911c9b8e7"
+      "## Story: Edit the spreadsheet directly": [
+        "a3982ccab1fd"
       ],
-      "Story: Edit the sheet by hand / A hand edit can leave a problem behind": [
+      "Story: Edit the spreadsheet directly / A hand edit is accepted whatever it says": [
+        "dd734c3dab26",
+        "869911c9b8e7",
+        "c3bd827c65cc"
+      ],
+      "Story: Edit the spreadsheet directly / A hand edit can leave a problem behind": [
         "e3b0c44298fc",
-        "bdb442052062"
+        "bdb442052062",
+        "4e1d5c618a21"
       ],
-      "Story: Edit the sheet by hand / A one-click fix removes its problem and adds none": [
-        "d11c91721cf3",
-        "87433039542a"
+      "Story: Edit the spreadsheet directly / A one-click fix removes its problem and adds none": [
+        "3eb1ec8ec6ac",
+        "87433039542a",
+        "4e1d5c618a21"
+      ],
+      "## Story: Be told what changed and what is due": [
+        "e544ed61e830"
       ],
       "Story: Be told what changed and what is due / Time passes": [
         "e3b0c44298fc",
-        "d3573e0ece53"
+        "d3573e0ece53",
+        "be78bdae112a"
       ],
       "Story: Be told what changed and what is due / One pass of the notifier sends everything that is due and records that it was sent": [
-        "b2988c89ce9f",
-        "2c5037dc5a17"
+        "6feb11100331",
+        "2c5037dc5a17",
+        "9fb81361a9fc"
       ],
       "Story: Be told what changed and what is due / A person named twice in a cell is told once": [
-        "ca21e676838d",
-        "56b2f783ae20"
+        "44d4e973985d",
+        "56b2f783ae20",
+        "c4648ea1d0ea"
       ],
       "Story: Be told what changed and what is due / Owners hear about an edit only after the quiet period": [
         "e3b0c44298fc",
-        "9572e6b963b6"
+        "9572e6b963b6",
+        "00fe69758f03"
       ],
       "Story: Be told what changed and what is due / Nothing is sent twice": [
-        "7c3233612757",
-        "ed1f07301b1d"
+        "94d6d743a0ab",
+        "ed1f07301b1d",
+        "be78bdae112a"
+      ],
+      "Story: Be told what changed and what is due / Every note sent is recorded on its task": [
+        "36ea35f499aa",
+        "645f01b83df9",
+        "be78bdae112a"
       ],
       "Story: Be told what changed and what is due / Reminders go out at the right distance from the due date": [
         "e3b0c44298fc",
-        "e8866fddd3e2"
+        "e8866fddd3e2",
+        "00fe69758f03"
       ],
       "Story: Be told what changed and what is due / The bookkeeping never runs ahead of the clock": [
         "e3b0c44298fc",
-        "df98491dc94d"
+        "df98491dc94d",
+        "be78bdae112a"
+      ],
+      "Story: Be told what changed and what is due / The clock never reads below zero": [
+        "f8166f636808",
+        "28d7484298b6",
+        "be78bdae112a"
       ]
     }
   },
-  "contracts": {},
+  "contracts": {
+    "src/columns.ts": "3e3b23e74041"
+  },
   "unproved": {
     "kernel.ts": {
       "text": "",
