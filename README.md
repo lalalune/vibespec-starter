@@ -1,4 +1,4 @@
-# One spec, proved software
+# Vibespec (Starter Template)
 
 Turn user stories into working, formally verified TypeScript, with one
 hand-written source of truth.
