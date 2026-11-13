@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Model } from "./gen.ts";
-import { LIB_FILE, prove, run, type Proof } from "./prove.ts";
+import { ensuresOf, LIB_FILE, prove, run, type Proof } from "./prove.ts";
 import { readSpecs, badSpecName, type Spec } from "./parse.ts";
 import { contracts, pending, pendingContracts, acceptReviews, acceptContracts, moved, showPending, ledgerFile, readLedger, writeLedger, type Pending, type Accepted } from "./review.ts";
 import { entry, remembered, collectGarbage, dafnyVersion, type Memory } from "./cache.ts";
@@ -270,14 +270,18 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
         const proofText = fs.existsSync(proofPath) ? fs.readFileSync(proofPath, "utf8") : undefined;
         proofTexts.set(u.unit, proofText);
         running.set(u.unit, (async () => {
-          if (proofText !== undefined) await Promise.allSettled(u.laws.map((l) => running.get(l.from)));
-          // A law of an imported module is offered only if its own unit proved it, in this run.
-          const laws = u.laws.filter(({ law, from }) => {
+          if (proofText !== undefined) await Promise.allSettled(u.imports.lemmas.map((l) => running.get(l.from)));
+          // A clause of an imported module's lemma is offered only if its own unit proved it, in this run; all of
+          // them are withheld if one of the lemma's failures is not a clause.
+          const axioms = proofText === undefined ? [] : u.imports.lemmas.flatMap(({ fn, def, from }) => {
             const p = proved.get(from);
-            return p && !p.errors.length && !p.unproved.some((x) => x.startsWith(`${law}: `));
-          }).map((l) => l.fn);
-          const offered = { proof: proofText === undefined ? undefined : { file: u.proofFile, text: proofText }, lib, laws };
-          const proof = await remembered(memory, entry(root, "prove", [u.unit, u.meaning, proofText ?? "", proofText === undefined ? "" : lib, proofText === undefined ? "" : laws.join(" ")]), () => prove(root, u, offered), (p) => !p.errors.length);
+            const clauses = p && !p.errors.length ? ensuresOf(p.dfy, `${def}_ensures`).map((c) => `${def}: ${c}`) : [];
+            const failed = p?.unproved.filter((x) => x.startsWith(`${def}: `)) ?? [];
+            const known = failed.every((x) => clauses.includes(x));
+            return clauses.length ? [{ fn, proved: clauses.map((c) => known && !failed.includes(c)) }] : [];
+          });
+          const offered = { proof: proofText === undefined ? undefined : { file: u.proofFile, text: proofText }, lib, axioms };
+          const proof = await remembered(memory, entry(root, "prove", [u.unit, u.meaning, proofText ?? "", proofText === undefined ? "" : lib, JSON.stringify(axioms)]), () => prove(root, u, offered), (p) => !p.errors.length);
           proved.set(u.unit, proof);
           return proof;
         })());

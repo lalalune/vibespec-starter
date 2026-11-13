@@ -230,7 +230,7 @@ interface Additions {
   proof?: { file: string; text: string };
   /** The body the tools give `step_ensures` when the proof file does not. */
   stepBody?: string;
-  /** Lemmas the tools add: laws of dependencies proved in their own units. */
+  /** Lemmas the tools add: what the units this one imports proved, each in its own unit (importedAxioms). */
   axioms: string[];
   /** The library, added when there is a proof file. */
   lib?: string;
@@ -288,7 +288,7 @@ export function splice(gen: string, { proof, stepBody, axioms, lib }: Additions,
     if (body) add(body, region);
   });
   const tail: [string, Region][] = [
-    ...axioms.map((a, i): [string, Region] => [`${i ? "" : "// ---- laws of the units this one imports, each proved in its own unit (added by the tools) ----\n\n"}${a}`, { def: a.match(/^lemma \{:axiom\} (\w+)/)![1], generated: false }]),
+    ...axioms.map((a, i): [string, Region] => [`${i ? "" : "// ---- what the units this one imports proved, each in its own unit (added by the tools) ----\n\n"}${a}`, { def: a.match(/^lemma \{:axiom\} (\w+)/)![1], generated: false }]),
     ...helpers.map((h, i): [string, Region] => [`${i ? "" : `// ---- helpers from ${proof!.file} ----\n\n`}${h.text}`, { def: h.name, generated: false }]),
     ...(lib ? [[`// ---- tools/proof/lib.dfy ----\n\n${lib.trimEnd()}`, { def: LIB_MODULE, generated: false }] as [string, Region]] : []),
   ];
@@ -301,12 +301,31 @@ export function splice(gen: string, { proof, stepBody, axioms, lib }: Additions,
   return { dfy: lines.join("\n"), regions };
 }
 
-/** The lemma that makes a dependency's law usable here: `<fn>` is how this unit spells the law. */
-function lawAxiom(gen: string, fn: string): string | undefined {
-  const m = gen.match(new RegExp(`^function ${fn}\\(([^\\n]*)\\): bool\\n\\{`, "m"));
-  if (!m) return undefined;
-  const args = [...m[1].matchAll(/(?:^|,\s*)(\w+)\s*:/g)].map((a) => a[1]);
-  return `lemma {:axiom} ${fn}_ensures(${m[1]})\n  ensures ${fn}(${args.join(", ")}) == true`;
+/** The header of a generated lemma, from `lemma <name>(` to before its body; empty if there is none. */
+function header(dfy: string, name: string): string[] {
+  const lines = dfy.split("\n");
+  const start = lines.findIndex((l) => l.startsWith(`lemma ${name}(`));
+  return start < 0 ? [] : lines.slice(start, lines.findIndex((l, i) => i > start && l === "{"));
+}
+const ENSURES = /^\s*ensures\s+/;
+/** The clauses of a generated lemma, as an obligation not proved names them after `<definition>: ` (readVerdict). */
+export const ensuresOf = (dfy: string, name: string) => header(dfy, name).filter((l) => ENSURES.test(l)).map((l) => l.replace(ENSURES, "").trim());
+
+/** An `_ensures` lemma of an imported module, `<fn>_ensures` as this unit spells it, and which of its clauses its own unit proved. */
+export interface Offered { fn: string; proved: boolean[] }
+
+/**
+ * The lemmas that make what imported units proved usable here. `gen` is the imported modules with their obligations,
+ * as this unit spells them, so each lemma is the one LemmaScript generated there, with its `requires` and only the
+ * clauses proved. They must be as many as in the module's own unit, or the lemma is not offered.
+ */
+function importedAxioms(gen: string, offered: Offered[]): string[] {
+  return offered.flatMap(({ fn, proved }) => {
+    const [first, ...rest] = header(gen, `${fn}_ensures`);
+    if (rest.filter((l) => ENSURES.test(l)).length !== proved.length || !proved.some(Boolean)) return [];
+    let i = 0;
+    return [[first.replace(/^lemma /, "lemma {:axiom} "), ...rest.filter((l) => !ENSURES.test(l) || proved[i++])].join("\n")];
+  });
 }
 
 // --- reading what Dafny said -----------------------------------------------------
@@ -490,8 +509,11 @@ export interface Unit {
   src: boolean;
   /** spec/<name>.proof.dfy or src/<path>.proof.dfy, relative to the project. */
   proofFile: string;
-  /** Laws of the units this one imports, as this unit spells them, and the unit that proves each. */
-  laws: { fn: string; law: string; from: string }[];
+  /**
+   * The modules this unit imports, as it spells them: their text with their obligations, and each definition with an
+   * `_ensures` lemma: `<fn>_ensures` here, `<def>_ensures` in `from`, the unit that proves it.
+   */
+  imports: { text: string; lemmas: { fn: string; def: string; from: string }[] };
   /** The units whose assurance this one's rests on. */
   rests: string[];
   /** The generated code without comments naming the source rules. */
@@ -526,7 +548,7 @@ function stepBody(gen: string, transitions: { name: string; params: string[] }[]
 }
 
 /** Prove one unit in a directory of its own, so that nothing left over from another run or project can vouch for it. */
-export async function prove(root: string, u: Unit, offered: { proof?: { file: string; text: string }; lib?: string; laws: string[] }): Promise<Proof> {
+export async function prove(root: string, u: Unit, offered: { proof?: { file: string; text: string }; lib?: string; axioms: Offered[] }): Promise<Proof> {
   const dir = path.join(root, "gen/proof", u.unit.replace(/\.ts$/, ""));
   const base = u.unit.replace(/\.ts$/, "");
   const file = `${base}.dfy`;
@@ -542,14 +564,24 @@ export async function prove(root: string, u: Unit, offered: { proof?: { file: st
   }));
   let total = 0;
   const result = (errors: string[], log: string, dfy = ""): Proof => ({ total, unproved: [], exhausted: [], resting: {}, errors, log, dfy });
-  const generated = await run("lsc", ["gen", "--backend=dafny", u.unit], dir);
-  const genFile = path.join(dir, `${file}.gen`);
-  if (!generated.ok || !fs.existsSync(genFile)) return result([lastLines(generated.out) || "lsc generated nothing"], generated.out);
-  const gen = fs.readFileSync(genFile, "utf8");
+  // What imported units proved, and the library, are only of use to a proof file. The imported modules are generated
+  // again beside the unit, with their obligations, for the lemmas that state them.
+  const importing = offered.proof && offered.axioms.length ? path.join(dir, "imported") : undefined;
+  if (importing) {
+    fs.mkdirSync(importing);
+    fs.writeFileSync(path.join(importing, u.unit), u.imports.text);
+  }
+  const lsc = async (at: string) => {
+    const { ok, out } = await run("lsc", ["gen", "--backend=dafny", u.unit], at);
+    const genFile = path.join(at, `${file}.gen`);
+    return { out, gen: ok && fs.existsSync(genFile) ? fs.readFileSync(genFile, "utf8") : undefined };
+  };
+  const [generated, imported] = await Promise.all([lsc(dir), importing && lsc(importing)]);
+  for (const g of [generated, imported]) if (g && !g.gen) return result([lastLines(g.out) || "lsc generated nothing"], g.out);
+  const gen = generated.gen!;
   // Every obligation is an `ensures` of what LemmaScript generated; the imported modules come without theirs.
   total = (gen.match(/^\s*ensures\b/gm) ?? []).length;
-  // Laws proved elsewhere, and the library, are only of use to a proof file.
-  const axioms = offered.proof ? offered.laws.flatMap((fn) => lawAxiom(gen, fn) ?? []) : [];
+  const axioms = imported ? importedAxioms(imported.gen!, offered.axioms) : [];
   const axiomNames = new Set(axioms.map((a) => a.match(/^lemma \{:axiom\} (\w+)/)![1]));
   let spliced: Spliced;
   try {

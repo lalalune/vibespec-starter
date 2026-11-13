@@ -418,10 +418,15 @@ a body.
   Read the file for what each states. A lemma general enough for any project
   belongs there, with its proof; one about your spec belongs in your proof
   file.
-- A law of an imported module, if its own unit proved it in the same run,
-  neither simulated only nor resting on an obligation that is:
-  `<module>_<law>_ensures(args)` gives `<module>_<law>(args) == true`. (In a
-  `src` unit, the laws of the module it imports are `<law>_ensures`.)
+- What an imported module's own unit proved in the same run, neither
+  simulated only nor resting on an obligation that is: its lemmas
+  `<module>_<fn>_ensures(args)` for each law, transition, `step` and
+  `initialHolds`, with the clauses proved. `<module>_<law>_ensures(args)`
+  gives `<module>_<law>(args) == true`, and `<module>_<transition>_ensures(s, …)`
+  gives each rule of that module for `<module>_<transition>(s, …)`, under its
+  `inv` and guard, so a machine that holds another need not prove its rules
+  again (`tools/fixtures/office.md` in the vibespec-starter repository). (In a
+  `src` unit, those of the module it imports are `<fn>_ensures`.)
 - The generated `_ensures` lemmas, and Dafny's standard library by the names
   the generated code uses.
 
@@ -563,7 +568,7 @@ with `tsc`; it has no dependencies.
   that import machines where rules span them. `check` runs them in dependency
   order and proves each against the *definitions* of what it imports, not
   their proofs, so the cost of a proof grows with the spec, not with
-  everything beneath it.
+  everything beneath it. Its proof file may call what their units proved.
 - **Only what changed is checked again.** Each passing simulation and proof
   result is kept in `.spec-cache/` under a fingerprint of the spec, everything it
   imports and the versions of the tools.

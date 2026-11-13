@@ -88,6 +88,8 @@ const runCli = (script: string, root: string, ...args: string[]) => new Promise<
   execFile(process.execPath, [script, ...args], { cwd: root, maxBuffer: 1 << 26 }, (e, stdout, stderr) => done({ status: e ? Number(e.code) : 0, stdout, stderr })));
 const unguarded = (s: string) => s.replace("o.status == Draft and o.units > 0", "o.status == Draft");
 const notInductive = (s: string) => s.replace(/### Drafts and cancelled orders hold no money[\s\S]*?```\n\n/, "");
+const highestProof = "// The fold keeps the larger of the two.\nlemma lawTheHighestIsAtLeastTheStart_ensures(xs: seq<int>, start: int)\n  ensures (lawTheHighestIsAtLeastTheStart(xs, start) == true)\n{\n  ProofLib.FoldLeftMax((top: int, x: int) => (if (x > top) then x else top), start, xs);\n}\n";
+const ticketProof = "lemma issue_ensures(d: Desk)\n  ensures (inv(d) ==> alwaysTheLastNumberIsNotNegative(issue(d)))\n{\n  highest_lawTheHighestIsAtLeastTheStart_ensures(d.issued, d.last);\n}\n";
 
 describe("each check catches its own kind of mistake", { concurrency: true }, () => {
   test("a fresh spec with enum and bool parameters and an unguarded transition passes everything but review", async () => {
@@ -459,8 +461,6 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
   });
 
   test("a law that needs induction is proved by a proof file, and only then offered to the spec that imports it", async () => {
-    const highestProof = "// The fold keeps the larger of the two.\nlemma lawTheHighestIsAtLeastTheStart_ensures(xs: seq<int>, start: int)\n  ensures (lawTheHighestIsAtLeastTheStart(xs, start) == true)\n{\n  ProofLib.FoldLeftMax((top: int, x: int) => (if (x > top) then x else top), start, xs);\n}\n";
-    const ticketProof = "lemma issue_ensures(d: Desk)\n  ensures (inv(d) ==> alwaysTheLastNumberIsNotNegative(issue(d)))\n{\n  highest_lawTheHighestIsAtLeastTheStart_ensures(d.issued, d.last);\n}\n";
     const project = (files: Record<string, string>) => fixtures(["highest", "ticket"], (f) => Object.assign(f, files));
     // Without a proof file the law is not proved, and a proof file that belongs to nothing is pointed out.
     const bare = await run(project({ "spec/typo.proof.dfy": "" }));
@@ -478,6 +478,16 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     // A proof file that asks for trust is refused, with its file and line.
     const trusting = await run(project({ "spec/highest.proof.dfy": highestProof.replace("ProofLib.FoldLeftMax", "assume false;\n  ProofLib.FoldLeftMax") }));
     assert.equal(trusting.said("proof", /spec\/highest\.proof\.dfy:5: `assume` is not allowed/)?.ok, false, trusting.text);
+  });
+
+  test("what an imported machine's unit proved is offered to the importer's proof file, and only once it is proved", async () => {
+    const officeProof = "lemma serve_ensures(o: Office)\n  ensures (inv(o) ==> alwaysTheDeskKeepsItsRule(serve(o)))\n{\n  ticket_issue_ensures(o.desk);\n}\n";
+    const project = (files: Record<string, string>) => fixtures(["highest", "ticket", "office"], (f) => Object.assign(f, { "spec/highest.proof.dfy": highestProof, "spec/office.proof.dfy": officeProof }, files));
+    const [proved, unoffered] = await Promise.all([run(project({ "spec/ticket.proof.dfy": ticketProof })), run(project({}))]);
+    assert.deepEqual(proved.failed, ["review"], proved.text);
+    assert.ok(proved.said("proof", /^office\.ts: all \d+ obligations proved/), proved.text);
+    // Without the ticket's proof file its transition is not proved, so it is not offered.
+    assert.equal(unoffered.said("proof", /^office\.ts: Dafny could not check it[\s\S]*unresolved identifier: ticket_issue_ensures/)?.ok, false, unoffered.text);
   });
 
   test("a proof file may only add lemmas, and only bodies to the generated ones", () => {
