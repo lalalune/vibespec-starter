@@ -46,11 +46,13 @@ export function writeConformance(root: string, model: Model, found?: Found<any>)
   fs.writeFileSync(path.join(dir, `${model.name}.conformance.ts`), [
     `// Generated from ${model.source}; do not edit.`,
     `import * as oracle from "./${model.name}.ts";`,
-    `import { check, type Driver, type Found, type Options } from "./_conformance.ts";`,
+    `import { check, replay as replayTrace, type Driver, type Found, type Options, type Trace } from "./_conformance.ts";`,
+    `export { ConformanceError } from "./_conformance.ts";`,
     `type State = typeof oracle.initial;`,
     `type Event = Parameters<typeof oracle.step>[1];`,
     `export const found: Found<Event> = ${JSON.stringify(publicData)};`,
     `export const conformance = <V = State>(driver: Driver<Event, V>, options?: Options<State, V>) => check(oracle, found, driver, options);`,
+    `export const replay = <V = State>(driver: Driver<Event, V>, trace: Trace<Event>, options?: Options<State, V>) => replayTrace(oracle, found, driver, trace, options);`,
     "",
   ].join("\n"));
 }

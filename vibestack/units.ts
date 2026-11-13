@@ -10,7 +10,8 @@ import { run } from "./run.ts";
 import { importedMeanings, originalColumn, type Spec } from "./parse.ts";
 import { defines } from "./review.ts";
 import { entry, recall, store, type Memory } from "./cache.ts";
-import { filesUnder, plainText, readSrc, type SrcFile } from "./util.ts";
+import { plainText } from "./scan.ts";
+import { filesUnder, readSrc, type SrcFile } from "./util.ts";
 import { effectAdapter } from "./gen/vibe.ts";
 
 const ANNOTATIONS = ["backend", "pure", "requires", "ensures", "invariant", "decreases", "type", "ghost", "assert"];

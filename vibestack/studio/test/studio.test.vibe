@@ -1,0 +1,296 @@
+// Journeys through the studio's real server, filesystem and checks. The session's and the outline's rules are proved
+// by `pnpm check`; these cover what the proofs cannot see: HTTP, the files written, the jobs run, and the page's
+// modules as the browser loads them.
+import { assert, it } from "@effect/vitest"
+import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient"
+import * as NodeServices from "@effect/platform-node/NodeServices"
+import * as HttpClient from "effect/http/HttpClient"
+import * as HttpClientRequest from "effect/http/HttpClientRequest"
+import { chromium } from "playwright"
+import { ChildProcess } from "effect/process"
+import { ChildProcessSpawner } from "effect/process/ChildProcessSpawner"
+import { acceptReviews, readSpecs, type Result } from "../../spec.ts"
+import { nodesOf } from "../src/doc.ts"
+import { NODE, TOOLS, type Snapshot } from "../src/project.ts"
+import { serve, startStudio, type Agent } from "../src/server.vibe"
+
+const services = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)
+const check = (f: () => void) => Effect.try(f)
+
+/** A stand-in for an agent's command line, at its boundary: it runs `script` in the project with the prompt on standard input. */
+const agent = (label: string, script: string): Agent => ({ label, command: () => [NODE, ["-e", script]] })
+const agents = {
+  // It keeps the prompt it was given and answers as Claude Code does.
+  fake: agent("Fake", `let p = ""; process.stdin.on("data", (d) => (p += d)).on("end", () => { require("fs").writeFileSync("prompt.txt", p); console.log(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "synced" }] } })); });`),
+  // Agents that write what only the tools may: the review ledger, and Studio's own state.
+  ledgerEdit: agent("Ledger writer", "require('node:fs').appendFileSync('spec/lock.json', '\\n')"),
+  invalidState: agent("State writer", "const fs = require('node:fs'); fs.rmSync('.studio', { recursive: true }); fs.writeFileSync('.studio', 'invalid')"),
+}
+
+/** A scratch project holding the given files, removed with the scope. */
+effect function scratch(files: Record<string, string>) {
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  const root = try fs.realPath(try fs.makeTempDirectoryScoped({ prefix: "studio-test-" }))
+  for (const [file, text] of Object.entries(files)) {
+    try fs.makeDirectory(path.dirname(path.join(root, file)), { recursive: true })
+    try fs.writeFileString(path.join(root, file), text)
+  }
+  return root
+}
+
+/** How a page talks to a studio at `url`: an answer's status and body. */
+effect function client(url: string) {
+  const http = try HttpClient.HttpClient
+  effect function send(request: HttpClientRequest.HttpClientRequest) {
+    const response = try http.execute(request)
+    const text = try response.text
+    return { status: response.status, text, body: (text.startsWith("{") ? try Effect.try(() => JSON.parse(text)) : undefined) as any }
+  }
+  return {
+    send,
+    get: (route: string, headers: Record<string, string> = {}) => send(HttpClientRequest.get(url + route, { headers })),
+    post: (route: string, body: unknown, headers: Record<string, string> = {}) =>
+      send(HttpClientRequest.post(`${url}/api/${route}`, { headers: { "content-type": "application/json", ...headers }, body: HttpBody.text(JSON.stringify(body), headers["content-type"] ?? "application/json") })),
+    project: effect () => (try send(HttpClientRequest.get(`${url}/api/project`))).body as Snapshot,
+  }
+}
+
+/** The studio on one project, and how to talk to it as its page does. */
+effect function studioOn(root: string) {
+  const { url } = try startStudio({ projects: [{ id: ".", name: "Door", root }], port: 0, agents })
+  const page = try client(url.replace("localhost", "127.0.0.1"))
+  /** The project once no job runs. */
+  effect function settled() {
+    for (;;) {
+      const p = try page.project()
+      if (p.session.job === "Idle") return p
+      try sleep("50 millis")
+    }
+  }
+  return { ...page, url, settled }
+}
+
+// spec/index.md, "Story: Edit, then publish"; spec/index.md, "Story: Sync with an agent"; spec/index.md, "Story: Check"
+it.live("a spec is published with its origins, checked, synced by an agent, and refused while a job runs", effect () => { provide services { try scoped(effect {
+  const fs = try FileSystem.FileSystem
+  const root = try scratch({ "spec/door.md": try fs.readFileString(`${TOOLS}/fixtures/door.md`) })
+  const { get, post, project, settled } = try studioOn(root)
+
+  // The page and what its HTML loads are served; nothing else under the tools is.
+  const html = (try get("/")).text
+  const assets = [...html.matchAll(/(?:src|href)="\.\/([^"]+)"/g)].map((m) => m[1])
+  const loaded: number[] = []
+  for (const asset of assets) loaded.push((try get(`/${asset}`)).status)
+  const hidden: number[] = []
+  for (const file of ["/spec.ts", "/../spec.ts", "/src/server.vibe", "/vibestack/spec.js", "/studio/src/project.ts"]) hidden.push((try get(file)).status)
+  // Only this machine's pages may act.
+  const refused = [
+    (try post("check", {}, { origin: "https://untrusted.example" })).status,
+    (try get("/api/project", { host: "untrusted.example" })).status,
+    (try post("check", {}, { "content-type": "text/plain" })).status,
+  ]
+  try check(() => {
+    assert.deepStrictEqual([assets.some((a) => a.endsWith(".js")), assets.some((a) => a.endsWith(".css")), loaded.every((s) => s === 200)], [true, true, true])
+    assert.deepStrictEqual(hidden, [404, 404, 404, 404, 404])
+    assert.deepStrictEqual(refused, [403, 403, 415])
+  })
+
+  // spec/index.md, "A new session has nothing to do"; spec/outline.md, "A story and its rules"
+  const first = try project()
+  try check(() => {
+    assert.deepStrictEqual(first.session, { unpublished: false, waiting: 0, job: "Idle", verdict: "Unknown" })
+    assert.deepStrictEqual(first.specs[0].outline.stories.map((s) => s.title), ["Domain", "Story: Use the door"])
+  })
+
+  // spec/index.md, "Only edits can be published, and not while a job runs"; spec/index.md, "Publishing always starts a check"
+  const door = first.specs[0]
+  const text = door.text + "\nThe door remains available.\n"
+  const origins = (try Effect.try(() => nodesOf(door.file, text))).map((n) => [n.id, n.id])
+  const body = { files: [{ file: door.file, base: door.hash, text }], origins }
+  const published = try post("publish", body)
+  const written = try fs.readFileString(`${root}/${door.file}`)
+  const checking = try project()
+  const whileChecking: number[] = []
+  for (const route of ["publish", "agent", "accept", "check"]) whileChecking.push((try post(route, route === "publish" ? body : { agent: "fake" })).status)
+  try check(() => {
+    assert.equal(published.status, 200, published.text)
+    assert.ok(published.body.manifest.changes.some((c: { kind: string; what: string[] }) => c.kind === "rule" && c.what.includes("prose")))
+    assert.equal(written, text)
+    assert.deepStrictEqual([checking.session.job, checking.session.waiting], ["Checking", 1])
+    assert.deepStrictEqual(whileChecking, [409, 409, 409, 409])
+  })
+
+  // spec/index.md, "A finished check gives its verdict": the door's rules are new, so only review is left.
+  const checked = try settled()
+  // spec/index.md, "Sign-off needs a check that left only review, nothing unpublished and nothing waiting"
+  const signOff = try post("accept", {})
+  try check(() => {
+    assert.equal(checked.session.verdict, "Reviewable")
+    assert.match(checked.check!.next, /npm run accept/)
+    assert.equal(signOff.status, 409)
+  })
+
+  // spec/index.md, "A sync that ends well leaves nothing waiting and checks again"
+  const started = try post("agent", { agent: "fake" })
+  const synced = try settled()
+  const prompt = try fs.readFileString(`${root}/prompt.txt`)
+  const manifestLeft = try fs.exists(`${root}/.studio/manifest.json`)
+  try check(() => {
+    assert.equal(started.status, 200)
+    assert.deepStrictEqual([synced.jobs.agent!.status, synced.jobs.agent!.log, synced.session.waiting], ["passed", ["synced"], 0])
+    assert.match(prompt, /~ rule spec\/door\.md: .*\(prose\)/)
+    assert.ok(!manifestLeft)
+    assert.equal(synced.session.verdict, "Reviewable")
+  })
+}) } })
+
+// spec/index.md, "Story: Edit, then publish"; spec/outline.md, "Story: Group rules under stories"
+it.live("a rule is edited, a story added and both published from the page", () => effect { provide services { try scoped(effect {
+  const fs = try FileSystem.FileSystem
+  const root = try scratch({ "spec/door.md": try fs.readFileString(`${TOOLS}/fixtures/door.md`) })
+  const { url, project, settled } = try studioOn(root)
+  const browser = try acquireRelease(tryPromise(() => chromium.launch()), (b) => promise(() => b.close()))
+  const page = try tryPromise(() => browser.newPage())
+  const on = <A>(f: () => Promise<A>) => tryPromise(f)
+  try on(() => page.goto(`${url}/?project=.`))
+  // A story opens to its rules; a rule opens for editing, and its heading changes as it is typed.
+  try on(() => page.getByText("Story: Use the door", { exact: true }).click())
+  try on(() => page.getByRole("button", { name: "Edit rule" }).first().click())
+  try on(() => page.getByLabel("One checkable sentence").fill("Anyone can switch the alarm whenever they like"))
+  try on(() => page.keyboard.press("Escape"))
+  // A new story, at the end of the spec.
+  try on(() => page.getByRole("button", { name: "Story", exact: true }).click())
+  try on(() => page.getByLabel("Story: As a … I want …").fill("Story: Ring the bell"))
+  try on(() => page.getByRole("button", { name: "Done" }).click())
+  // spec/index.md, "Only edits can be published, and not while a job runs": publishing shows the diff first.
+  try on(() => page.keyboard.press("ControlOrMeta+s"))
+  try on(() => page.getByRole("dialog").getByRole("button", { name: "Publish" }).click())
+  try on(() => page.getByText("Published").waitFor())
+  const written = try fs.readFileString(`${root}/spec/door.md`)
+  const published = try settled()
+  try check(() => {
+    assert.match(written, /### Anyone can switch the alarm whenever they like\n/)
+    assert.match(written, /## Story: Ring the bell\n[^]*$/)
+    assert.deepStrictEqual(published.specs[0].outline.stories.map((s) => s.title), ["Domain", "Story: Use the door", "Story: Ring the bell"])
+    assert.equal(published.session.waiting, 2)
+  })
+}) } })
+
+// spec/index.md, "Story: Edit, then publish"
+it.live("new and nested specs are published, deleted specs leave their ledger for review, and paths stay inside spec/", effect () => { provide services { try scoped(effect {
+  const fs = try FileSystem.FileSystem
+  const root = try scratch({ "spec/index.md": "# Home\n", "outside.md": "" })
+  const { post, project, settled } = try studioOn(root)
+
+  // A new spec is a file published with no base; its parent links to it.
+  const linked = try post("publish", { files: [
+    { file: "spec/index.md", base: (try project()).specs[0].hash, text: "# Home\n\n[Child](./nested/child/)\n" },
+    { file: "spec/nested/child/index.md", base: null, text: "# Child\n" },
+  ], origins: [] })
+  const nested = try settled()
+  // spec/index.md, "What is waiting can be marked as synced by hand"
+  const marked = [(try post("synced", {})).status, (try project()).session.waiting, (try post("synced", {})).status]
+  try check(() => {
+    assert.equal(linked.status, 200, linked.text)
+    assert.ok(linked.body.manifest.changes.some((c: { action: string; spec: string }) => c.action === "added" && c.spec === "spec/nested/child/index.md"))
+    assert.deepStrictEqual(nested.specs.map((s) => s.file), ["spec/index.md", "spec/nested/child/index.md"])
+    assert.equal(nested.session.waiting, 2)
+    assert.deepStrictEqual(marked, [200, 0, 409])
+  })
+
+  // Paths that would leave spec/, or follow a link out of it, are refused.
+  const escaped = try post("publish", { files: [{ file: "spec/../outside.md", base: null, text: "x" }], origins: [] })
+  try fs.symlink(`${root}/outside.md`, `${root}/spec/escape.md`)
+  const linkedOut = try post("publish", { files: [{ file: "spec/escape.md", base: null, text: "x" }], origins: [], force: true })
+  const outside = try fs.readFileString(`${root}/outside.md`)
+  // The page still loads, and says what is wrong.
+  const problem = (try project()).problem
+  try fs.remove(`${root}/spec/escape.md`)
+  // A prose line that would become a heading is refused.
+  const index = (try project()).specs[0]
+  const stray = try post("publish", { files: [{ file: index.file, base: index.hash, text: `${index.text}\n## Not meant as a heading\n` }], origins: [] })
+  try check(() => {
+    assert.deepStrictEqual([escaped.status, linkedOut.status, outside], [400, 400, ""])
+    assert.match(problem ?? "", /symbolic links/)
+    assert.match(stray.body.error, /"Not meant as a heading" would be a heading/)
+  })
+
+  // A deleted spec takes its proof file with it and leaves the review ledger, so its removal is reviewed.
+  const child = (try Effect.try(() => readSpecs(root))).find((s) => s.file === "spec/nested/child/index.md")!
+  try Effect.try(() => acceptReviews(root, child))
+  const ledger = try fs.readFileString(`${root}/spec/lock.json`)
+  const before = try settled()
+  const deleted = try post("publish", { files: [
+    { file: "spec/index.md", base: before.specs[0].hash, text: "# Home\n" },
+    { file: child.file, base: before.specs[1].hash, text: null },
+  ], origins: [] })
+  const childLeft = try fs.exists(`${root}/${child.file}`)
+  const ledgerAfter = try fs.readFileString(`${root}/spec/lock.json`)
+  const final = try settled()
+  try check(() => {
+    assert.equal(deleted.status, 200, deleted.text)
+    assert.ok(!childLeft)
+    assert.equal(ledgerAfter, ledger)
+    assert.ok(final.check!.results.some((r: Result) => r.stage === "review" && /removed spec/.test(r.summary)))
+    assert.equal(final.session.waiting, 2)
+  })
+
+  // spec/index.md, "A sync that ends well leaves nothing waiting and checks again": a sync that wrote the review
+  // ledger, or broke Studio's state, does not end well, and what was waiting still waits.
+  const ledgerSync = (try post("agent", { agent: "ledgerEdit" })).status
+  const ledgerEdited = try settled()
+  const manifestKept = try fs.exists(`${root}/.studio/manifest.json`)
+  const stateSync = (try post("agent", { agent: "invalidState" })).status
+  const broken = try settled()
+  try check(() => {
+    assert.deepStrictEqual([ledgerSync, stateSync], [200, 200])
+    assert.equal(ledgerEdited.jobs.agent!.status, "failed")
+    assert.match(ledgerEdited.jobs.agent!.log.join("\n"), /spec\/lock.json: not marked synced/)
+    assert.ok(manifestKept)
+    assert.deepStrictEqual([ledgerEdited.session.waiting, ledgerEdited.session.verdict], [2, "Unknown"])
+    assert.equal(broken.jobs.agent!.status, "failed")
+    assert.match(broken.jobs.agent!.log.join("\n"), /ENOTDIR/)
+  })
+}) } })
+
+it.live("the studio opens only the current project or the requested project path", effect () => { provide services { try scoped(effect {
+  const fs = try FileSystem.FileSystem
+  const path = try Path.Path
+  const spawner = try ChildProcessSpawner
+  const repo = try scratch({ "spec/index.md": "", "vibestack/examples/order/spec/index.md": "# Order\n" })
+  const outside = try scratch({ "a project/spec/index.md": "# Outside\n", "a project/package.json": '{"name":"order"}' })
+  const example = path.join(repo, "vibestack/examples/order")
+  const external = path.join(outside, "a project")
+  const cases: [string, string | undefined, string][] = [
+    [repo, undefined, repo], [repo, ".", repo], [repo, "vibestack/examples/order", example], [repo, example, example],
+    [repo, external, external], [repo, path.relative(repo, external), external], [path.join(TOOLS, ".."), "vibestack/studio", path.join(TOOLS, "studio")],
+  ]
+  for (const [cwd, target, expected] of cases) try scoped(effect {
+    // `spec studio`, as a person starts it: the tools' command, which starts Studio's own program.
+    const child = try spawner.spawn(ChildProcess.make(NODE, [`${TOOLS}/spec.ts`, "studio", ...(target === undefined ? [] : [target]), "--port", "0"], { cwd }))
+    const line = try Stream.runHead(Stream.filter(Stream.splitLines(Stream.decodeText(child.stdout)), (l) => l.startsWith("studio: ")))
+    const url = Option.getOrThrow(line).match(/studio: (http:\/\/localhost:\d+)/)![1].replace("localhost", "127.0.0.1")
+    const page = try client(url)
+    const root = try fs.realPath(expected)
+    const pkg = (try fs.exists(path.join(root, "package.json"))) ? try fs.readFileString(path.join(root, "package.json")) : ""
+    const name = pkg ? (try Effect.try(() => JSON.parse(pkg))).name : path.basename(root)
+    const projects = (try page.get("/api/projects")).body
+    const current = try page.project()
+    const specs: string[][] = []
+    for (const s of try Effect.try(() => readSpecs(root))) if (s.file.startsWith("spec/")) specs.push([s.file, try fs.readFileString(path.join(root, s.file))])
+    const other = (try page.get("/api/project?project=vibestack/examples/order")).status
+    try check(() => {
+      assert.deepStrictEqual(projects, { projects: [{ id: ".", name }], open: "." })
+      assert.deepStrictEqual(current.project, { id: ".", name, root })
+      assert.deepStrictEqual(current.specs.map((s) => [s.file, s.text]).sort(), specs.sort())
+      assert.equal(other, 404)
+    })
+  })
+  const failures: unknown[] = []
+  for (const args of [["missing"], ["spec/index.md"]]) failures.push(try Effect.flip(serve(repo, [...args, "--port", "0"])))
+  const invalid = try scratch({ "plain.txt": "not a project", "file-spec/spec": "not a directory" })
+  for (const target of [invalid, path.join(invalid, "file-spec")]) failures.push(try Effect.flip(serve(repo, [target, "--port", "0"])))
+  try check(() => assert.deepStrictEqual(failures.map((e) => (e as Error).message.replace(/^.*: /, "")),
+    ["not an existing project directory", "not an existing project directory", "no spec/ directory; run `spec init` in the project first", "no spec/ directory; run `spec init` in the project first"]))
+}) } })

@@ -8,5 +8,9 @@ dist/
 _apalache-out/
 !/vibestack/gen/
 .claude/worktrees/
+.turbo/
+.cache/
+generated/
+storybook-static/
 .vibe/
 build/

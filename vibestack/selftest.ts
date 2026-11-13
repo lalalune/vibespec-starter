@@ -187,17 +187,19 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     writeConformance(root, model, found);
     const helper = await import(path.join(root, "gen/counter.conformance.ts"));
     const states = new Map<string, number>();
-    await helper.conformance({
+    const counting = {
       reset: () => states.clear(),
       dispatch: (key: string) => { const n = states.get(key) ?? 0; if (n === 2) return "refused"; states.set(key, n + 1); return "accepted"; },
       observe: (key: string) => states.get(key) ?? 0,
-    }, { walks: 3, steps: 6 });
+    };
+    await helper.conformance(counting, { walks: 3, steps: 6 });
+    // One counter shared by every key: the failure carries its shrunk trace as data, which replays the same way.
     let shared = 0;
-    await assert.rejects(helper.conformance({
-      reset: () => { shared = 0; },
-      dispatch: () => { shared++; return "accepted"; },
-      observe: () => shared,
-    }, { walks: 1, steps: 1 }), /should be 0, but the application has 1/);
+    const leaky = { reset: () => { shared = 0; }, dispatch: () => { shared++; return "accepted"; }, observe: () => shared };
+    const failure = await helper.conformance(leaky, { walks: 1, steps: 1 }).catch((e: unknown) => e);
+    assert.ok(failure instanceof helper.ConformanceError && failure.trace.length === 1 && /should be 0, but the application has 1/.test(failure.message), String(failure));
+    await assert.rejects(helper.replay(leaky, failure.trace), helper.ConformanceError);
+    await helper.replay(counting, failure.trace);
     assert.equal(departure(domain, found, [{ state: 0 }, { event: { type: "inc" }, state: 1 }]), undefined);
     assert.match(departure(domain, found, [{ event: { type: "inc" } }])?.why ?? "", /no observed state/);
     fs.mkdirSync(path.join(root, "test/traces"), { recursive: true });
@@ -220,7 +222,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
 
     const quiet = oneRule("quiet", "Wait", "pure val initial: int = 0\npure def stay(n: int): int = n\npure def alwaysZero(n: int): bool = n == 0");
     const quietSpec = parseSpec(quiet, "spec/quiet.md"), quietModel = await gen(quiet, quietSpec);
-    const quietDomain = await import(path.join(quiet, "gen/quiet.ts"));
+    await import(path.join(quiet, "gen/quiet.ts"));
     writeConformance(quiet, quietModel, conformanceFound(quietModel, quietSpec, [[{ state: 0 }, { event: { type: "stay" }, state: 0 }]], []));
     const quietHelper = await import(path.join(quiet, "gen/quiet.conformance.ts"));
     await quietHelper.conformance({ reset() {}, dispatch: () => "accepted", observe: () => 0 }, { walks: 1, steps: 2 });

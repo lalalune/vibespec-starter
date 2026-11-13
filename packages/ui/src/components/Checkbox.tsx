@@ -2,7 +2,7 @@ import type { ComponentProps } from "react";
 import * as CheckboxPrimitive from "@radix-ui/react-checkbox";
 import { cn } from "../lib/cn.ts";
 
-export type CheckboxProps = ComponentProps<typeof CheckboxPrimitive.Root> & {
+export type CheckboxProps = Omit<ComponentProps<typeof CheckboxPrimitive.Root>, "children"> & {
   /** Marks the choice as refused, visibly and through `aria-invalid`. */
   invalid?: boolean;
 };

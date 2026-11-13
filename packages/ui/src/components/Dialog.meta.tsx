@@ -1,4 +1,4 @@
-import type { ComponentMeta } from "@repo/storybook";
+import type { ComponentMeta } from "vibestack/stories";
 import { Button } from "./Button.tsx";
 import { DialogClose, DialogContent, type DialogProps, DialogTitle, DialogTrigger } from "./Dialog.tsx";
 import { CardFooter } from "./Card.tsx";

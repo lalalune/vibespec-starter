@@ -18,9 +18,9 @@ These settle questions the text below leaves open; where they differ, they win.
 * **Every interface is React**: the examples' and Studio's (today
   `vibespec/studio/src/page.ts`, hand-built DOM) are rebuilt as React
   components on Vite, Tailwind CSS v4 and shadcn/ui.
-* **pnpm workspaces, without Turborepo.** Use `pnpm -r`, `--filter` and the
-  tools' own result cache. Add Turborepo only if a measured need remains that
-  pnpm cannot meet, and say what it was.
+* **pnpm workspaces with Turborepo.** pnpm installs and links; Turborepo
+  orders tasks and caches lint, typecheck, test and build results, which pnpm
+  alone does not, and runs only what a change affects (`--affected`).
 * **Node 26 is required** (`engines`, `.nvmrc`, CI).
 
 ## Mission
@@ -72,7 +72,7 @@ Do not introduce unnecessary duplicate frameworks or workflows.
 
 ## 2. Standard monorepo architecture
 
-Use a pnpm workspace monorepo. Turborepo only if pnpm alone cannot do the job ("Decided", above).
+Use a pnpm workspace monorepo with Turborepo.
 
 Require:
 
@@ -538,7 +538,7 @@ Eliminate real dead code and dependency cycles identified during integration.
 
 ## 15. Fast builds and caching
 
-Use pnpm (`-r`, `--filter`, `--filter "...[origin/develop]"` for affected packages) for task orchestration, with the tools' content-hashed result cache; Turborepo only if that proves insufficient.
+Use Turborepo for task orchestration, beside the tools' content-hashed result cache.
 
 Define task dependencies correctly.
 

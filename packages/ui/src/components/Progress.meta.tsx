@@ -1,4 +1,4 @@
-import type { ComponentMeta } from "@repo/storybook";
+import type { ComponentMeta } from "vibestack/stories";
 import type { ProgressProps } from "./Progress.tsx";
 
 export const meta: ComponentMeta<ProgressProps> = {

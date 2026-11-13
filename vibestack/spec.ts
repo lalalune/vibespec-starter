@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // The spec pipeline and command line. Parsing, review, generation, simulation and proof each have one implementation.
+import { spawn } from "node:child_process";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Model } from "./gen.ts";
@@ -11,7 +13,7 @@ import { readSpecs, badSpecName, specFiles, specName, importedMeanings, isStd, l
 import { contracts, pending, pendingKey, pendingContracts, acceptAllReviews, pendingSpecs, migrateLocks, moved, showPending, ledgerFile, readLedger, writeLedger, type Pending, type Accepted, type Lock } from "./review.ts";
 import { entry, remembered, collectGarbage, type Memory } from "./cache.ts";
 import { generated, typecheckAll, proofUnits, proofFiles, strayProofFiles } from "./units.ts";
-import { SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, LASSO_TRACES, STEPS, DEPTHS, SEARCHED, simulate, search, firstBreak, lasso, showTrace, replay, type Step } from "./simulate.ts";
+import { SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, LASSO_TRACES, STEPS, DEPTHS, SEARCHED, simulate, search, firstBreak, lasso, showTrace, replay } from "./simulate.ts";
 import { sha, indent, packageScripts, tests, readSrc, projectRoot, nodeRunsVibelang, type SrcFile } from "./util.ts";
 
 export { readSpecs, badSpecName, parseSpec, expandListHelpers, type Spec, type Rule, type Story } from "./parse.ts";
@@ -311,7 +313,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
           const proofText = fs.existsSync(proofPath) ? fs.readFileSync(proofPath, "utf8") : undefined;
           proofTexts.set(u.unit, proofText);
           running.set(u.unit, (async () => {
-            if (proofText !== undefined) await Promise.allSettled(u.laws.map((l) => running.get(l.from)));
+            if (proofText !== undefined) await Promise.allSettled(u.laws.flatMap((l) => running.get(l.from) ?? []));
             // A law of an imported module is offered only if its own unit proved it, in this run.
             const laws = u.laws.filter(({ law, from }) => {
               const p = proved.get(from);
@@ -715,11 +717,12 @@ if (isMain()) {
     } else if (command === "watch" && takes([])) {
       await watch(root);
     } else if (command === "studio" && takes([], ["*"], ["--port", "*"], ["*", "--port", "*"])) {
-      // The studio imports this module; defer loading it until the command module has finished evaluating.
-      import("./studio/src/server.ts").then(({ serve }) => serve(root, args)).catch((e: Error) => {
-        console.error(e.message);
-        process.exitCode = 1;
-      });
+      // Studio is VibeLang: built, its entry is JavaScript; from source, Node loads it through VibeLang's loader.
+      const built = import.meta.filename.endsWith(".js");
+      const entry = path.join(import.meta.dirname, "studio/src", built ? "main.js" : "main.vibe");
+      const loader = built ? [] : ["--import", pathToFileURL(createRequire(path.join(import.meta.dirname, "studio/package.json")).resolve("vibelang/register")).href];
+      const child = spawn(process.execPath, [...loader, entry, ...args], { cwd: root, stdio: "inherit" });
+      child.on("exit", (code, signal) => { process.exitCode = code ?? (signal ? 1 : 0); });
     } else if (command === "migrate" && takes([])) {
       const release = lockProject(root);
       try {

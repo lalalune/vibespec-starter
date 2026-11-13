@@ -86,8 +86,8 @@ flowchart LR
 **Built with** [VibeLang](https://github.com/smithersai/vibelang) on Effect
 for everything that touches the outside world, and React with Vite, Tailwind
 CSS v4 and shadcn/ui for everything a person sees
-([the stack](AGENTS.md#the-stack)). pnpm workspaces hold the examples and
-Studio beside your project.
+([the stack](AGENTS.md#the-stack)). A pnpm workspace with Turborepo holds your
+applications and packages beside Studio; the examples stand alone.
 
 1. Click **[Use this template](https://github.com/lalalune/vibestack/generate)**
    to create your own repository, then clone it and enter its directory.
@@ -110,18 +110,33 @@ Studio beside your project.
 ## Studio
 
 ```bash
-pnpm dev
+pnpm dev                              # this project
+pnpm dev vibestack/examples/order     # an example, or any directory with spec/
 ```
 
-| Button | Does |
+Studio opens in the browser and is where you build the application: you
+shape the stories, an agent turns them into rules, Quint and code, and the
+checks say where the project stands.
+
+| You | Studio |
 |---|---|
-| **Story** | Adds a user need to the spec |
-| **Publish** | Saves your edits to disk and runs the checks |
+| Add, edit, delete or drag a story or rule; group rules under a heading without `Story:`; move one to another spec | Applies it to its outline, with undo (⌘Z). Reorder with Alt+↑/↓, or **Move to…** |
+| Add a spec by its path, such as `billing/payments` | Creates `spec/billing/payments/index.md` and links it from its parent |
+| **Publish** (⌘S) | Shows the diff, writes the Markdown, and records in `.studio/manifest.json` what was added, changed, moved or deleted and what to regenerate. Then runs the checks |
+| **Run** beside Claude Code or Codex | Starts the agent on the sync prompt in the project and streams its progress; **Open** starts a new chat in the app with the same prompt |
+| **Run check** | Shows each failing stage, and marks the story or rule it names |
 | **Sign off** | Records the same approval as `pnpm accept` |
 
-`pnpm dev <project-path>` opens another project. Studio is itself a
-Vibestack app (`vibestack/studio/`); `pnpm dev vibestack/studio` opens it
-on itself.
+Studio is itself a Vibestack app in `vibestack/studio/`, built like any
+other: its rules in `spec/`, its server in VibeLang (`src/server.vibe`) and
+its page in React (`src/page/`). `pnpm dev` rebuilds the page when its
+source changed. To work on Studio:
+
+```bash
+pnpm dev vibestack/studio                     # open Studio on its own spec
+pnpm --filter vibestack-studio check          # its specs, proofs and journeys
+pnpm --filter vibestack-studio test           # its journeys only, Playwright included
+```
 
 ## Build your project
 
@@ -217,7 +232,8 @@ current one. Installed as a package, use `pnpm exec spec <command> [<dir>]`.
 |---|---|
 | `pnpm dev [<dir>]` | Opens Studio |
 | `pnpm check [<dir>] [--json]` | Checks spec, source and tests; ends with a `next:` line ([JSON shape](AGENTS.md#changing-the-tools)) |
-| `pnpm -r --if-present check` | Checks every workspace: the examples and Studio |
+| `pnpm quick` | Types, lint and tests of what changed |
+| `pnpm verify` | Everything CI runs for `main`, in every package and example |
 | `pnpm gen [<dir>]` | Generates `gen/` only |
 | `node vibestack/spec.ts watch [<dir>]` | Rechecks when a spec, source file or test changes |
 | `pnpm accept [<dir>]` | The user's sign-off: checks afresh and records what `review` lists, [all or nothing](AGENTS.md#review) |

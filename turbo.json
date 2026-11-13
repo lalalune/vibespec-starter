@@ -1,0 +1,169 @@
+{
+  "$schema": "https://turborepo.dev/schema.json",
+  "globalDependencies": [
+    ".nvmrc",
+    "pnpm-workspace.yaml",
+    "tsconfig.json"
+  ],
+  "globalEnv": [
+    "CI",
+    "FUZZ_RUNS",
+    "FUZZ_SEED"
+  ],
+  "tasks": {
+    "build": {
+      "dependsOn": [
+        "^build"
+      ],
+      "outputs": [
+        "dist/**",
+        "generated/**",
+        "storybook-static/**"
+      ],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/vibestack/**",
+        "!$TURBO_ROOT$/vibestack/examples/**"
+      ]
+    },
+    "typecheck": {
+      "dependsOn": [
+        "^build"
+      ],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/vibestack/**",
+        "!$TURBO_ROOT$/vibestack/examples/**"
+      ],
+      "outputs": []
+    },
+    "test": {
+      "dependsOn": [
+        "^build"
+      ],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/vibestack/**",
+        "!$TURBO_ROOT$/vibestack/examples/**"
+      ],
+      "outputs": []
+    },
+    "test:browser": {
+      "dependsOn": [
+        "^build"
+      ],
+      "outputs": [],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/vibestack/**",
+        "!$TURBO_ROOT$/vibestack/examples/**"
+      ]
+    },
+    "check": {
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/vibestack/**",
+        "!$TURBO_ROOT$/vibestack/examples/**",
+        "!$TURBO_ROOT$/vibestack/studio/**"
+      ],
+      "outputs": [
+        "gen/**"
+      ]
+    },
+    "//#check": {
+      "inputs": [
+        "spec/**",
+        "src/**",
+        "test/**",
+        "vibestack/**",
+        "!vibestack/examples/**",
+        "!vibestack/studio/**",
+        "package.json",
+        "tsconfig.json"
+      ],
+      "outputs": [
+        "gen/**"
+      ]
+    },
+    "//#typecheck:tool": {
+      "inputs": [
+        "vibestack/**",
+        "!vibestack/examples/**",
+        "gen/*.ts",
+        "tsconfig.json",
+        "package.json"
+      ],
+      "outputs": []
+    },
+    "//#test:tool": {
+      "inputs": [
+        "vibestack/**",
+        "!vibestack/examples/**",
+        "!vibestack/studio/**",
+        "vitest.config.ts",
+        "package.json"
+      ],
+      "outputs": []
+    },
+    "//#build:tool": {
+      "inputs": [
+        "vibestack/**",
+        "!vibestack/examples/**",
+        "tsconfig.build.json",
+        "package.json"
+      ],
+      "outputs": [
+        "dist/**"
+      ]
+    },
+    "//#lint:js": {
+      "inputs": [
+        "**/*.{ts,tsx,js,mjs,vibe}",
+        "eslint.config.js",
+        "package.json",
+        "!vibestack/examples/**",
+        "!**/gen/**",
+        "!**/dist/**",
+        "**/tsconfig.json"
+      ],
+      "outputs": [],
+      "dependsOn": [
+        "@repo/design-system#build",
+        "@repo/web#typecheck"
+      ]
+    },
+    "//#lint:css": {
+      "inputs": [
+        "**/*.css",
+        "stylelint.config.js",
+        "package.json",
+        "!**/gen/**",
+        "!**/dist/**"
+      ],
+      "outputs": []
+    },
+    "//#analyze": {
+      "inputs": [
+        "**/*.{ts,tsx,js,mjs,json}",
+        "knip.config.js",
+        "!vibestack/examples/**",
+        "!**/gen/**",
+        "!**/dist/**",
+        "**/*.vibe",
+        ".madgerc"
+      ],
+      "outputs": []
+    },
+    "//#examples": {
+      "inputs": [
+        "vibestack/**",
+        "package.json"
+      ],
+      "outputs": []
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    }
+  }
+}
