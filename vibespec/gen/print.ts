@@ -40,7 +40,7 @@ export interface Scope {
   sampleSets: Set<string>;
 }
 
-/** Native array methods for the list helpers the tangler marks (LIST_HELPERS in tools/gen.ts). */
+/** Native array methods for the list helpers the tangler marks (LIST_HELPERS in vibespec/gen.ts). */
 const LIST_METHODS: Record<string, string> = { every: "every", some: "some", listMap: "map" };
 
 /** The set and the value of a membership test, whichever way round it is written. */

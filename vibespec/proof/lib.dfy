@@ -7,14 +7,15 @@
 //   lambda (such as the body of an All in a generated rule) it is evaluated in
 //   a different heap than in a lemma, so a fact proved about it in a lemma never
 //   meets the term in the rule. ProofLib.Filter has no reads clause: state facts
-//   about it, and bridge to the generated term with an `assert` that unfolds
-//   the generated function (see AGENTS.md, "Proof files").
+//   about it, and bridge to the generated term with a helper whose `ensures`
+//   is the rule's body with ProofLib.Filter in its place; it proves with an
+//   empty body (see AGENTS.md, "Proof files").
 // - Dafny has no function extensionality. A lambda copied verbatim from
 //   gen/proof/<unit>/<unit>.dfy is the same term as the generated one; a lambda
 //   that says the same thing in other words, or captures other variables, is not.
 //
 // Dafny makes the module's import visible as ProofLib.Seq; proof files may not
-// use it (tools/prove.ts refuses any ProofLib.<name> this file does not declare),
+// use it (vibespec/prove.ts refuses any ProofLib.<name> this file does not declare),
 // since the standard library holds axioms.
 module ProofLib {
   import Std.Collections.Seq
@@ -81,14 +82,8 @@ module ProofLib {
   /** Every element of a filter came from the list. */
   lemma FilterSubset<T>(p: T -> bool, xs: seq<T>)
     ensures forall i :: 0 <= i < |Filter(p, xs)| ==> Filter(p, xs)[i] in xs
-    decreases |xs|
   {
-    if |xs| == 0 {
-      FilterNil(p, xs);
-    } else {
-      FilterCons(p, xs);
-      FilterSubset(p, xs[1..]);
-    }
+    forall i | 0 <= i < |Filter(p, xs)| { FilterMember(p, xs, Filter(p, xs)[i]); }
   }
 
   /** A filter is empty exactly when nothing passes. */
@@ -157,16 +152,9 @@ module ProofLib {
     requires forall x :: p(x) == (x == o)
     requires Distinct(xs) && o in xs
     ensures |Filter(p, xs)| == 1
-    decreases |xs|
   {
-    FilterCons(p, xs);
-    if xs[0] == o {
-      assert forall i :: 0 <= i < |xs[1..]| ==> xs[1..][i] != o;
-      FilterNone(p, xs[1..]);
-    } else {
-      assert Distinct(xs[1..]);
-      FilterDistinctCountOne(p, xs[1..], o);
-    }
+    var i :| 0 <= i < |xs| && xs[i] == o;
+    FilterOne(p, xs, i);
   }
 
   /** Filtering keeps keys distinct. */
@@ -199,17 +187,8 @@ module ProofLib {
     requires |xs| == |ys|
     requires forall i :: 0 <= i < |xs| ==> p(xs[i]) == q(ys[i])
     ensures |Filter(p, xs)| == |Filter(q, ys)|
-    decreases |xs|
   {
-    if |xs| == 0 {
-      FilterNil(p, xs);
-      FilterNil(q, ys);
-    } else {
-      FilterCons(p, xs);
-      FilterCons(q, ys);
-      assert forall i :: 0 <= i < |xs[1..]| ==> xs[1..][i] == xs[i + 1] && ys[1..][i] == ys[i + 1];
-      FilterLengthPointwise(p, q, xs[1..], ys[1..]);
-    }
+    FilterPointwise(p, q, (x: T, y: U) => true, xs, ys);
   }
 
   /** As FilterLengthPointwise, and what is kept stays related by r, position by position. */

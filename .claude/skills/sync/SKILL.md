@@ -9,6 +9,9 @@ Read AGENTS.md and README.md in full first, once per session.
 
 ## The loop
 
+0. If `.studio/manifest.json` exists, the user published changes from the
+   studio (README, "The studio"): read it. Each change says what it asks of
+   you; work through all of them in the loop below. Do not edit `.studio/`.
 1. Run `npm run check`. Each `✗` line is something to resolve; `-` lines are
    stages skipped because of a `✗` above, or `types` in a spec-only package with no tsconfig.json.
    Under `review` it prints a changed rule's prose and Quint, a story's text
@@ -57,6 +60,9 @@ Give up and report after five rounds on the same failure.
 | `proof`, a `src-…` unit | Fix the hand-written code, its `//@` annotation, or its proof file. The full output is in `gen/proof/<unit>.log`. |
 | `tests` … citations name no story or rule | Cite the story or rule by its heading as the spec now has it. If it was removed, the test that cites it is yours to review: does any rule still ask for what it checks? |
 | `tests` … fail | Fix the application in `src/`. Change an assertion only where the spec now asks for something else, and name the assertion and its rule in your report. A test that only restates what the spec proves, or breaks AGENTS.md "Tests", you propose for deletion in your report; never delete one to make it pass. |
+| `tests` … conformance to spec/… | The application did something the spec does not allow, shown in the fewest events. Fix the application in `src/`; the driver only if it does not reach the application as AGENTS.md "Conformance" says. Never weaken the spec or narrow the walks to pass. |
+| `tests` … import the spec's code | A conformance driver imports a value from `gen/<name>.ts`. Reach the application instead; import types only. |
+| `tests` … note: no test checks the application against | Write the driver for that spec in the package's test file, as AGENTS.md "Conformance" shows, when the spec has a shell; otherwise say so in your report. |
 | "another check or accept is running" | Wait for that process and run again. If it no longer exists, delete the lock file the message names. |
 
 ## Rules for what you write

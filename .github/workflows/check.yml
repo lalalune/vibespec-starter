@@ -35,19 +35,24 @@ jobs:
         id: changed
         with:
           filters: |
-            tools:
-              - "tools/**"
+            vibespec:
+              - "vibespec/**"
+              - ".claude/skills/**"
+              - ".agents/skills/**"
+              - "AGENTS.md"
+              - "CONTRIBUTING.md"
               - "package*.json"
-      - if: steps.changed.outputs.tools == 'true'
+              - "tsconfig*.json"
+      - if: steps.changed.outputs.vibespec == 'true'
         uses: dafny-lang/setup-dafny-action@v1
         with:
           dafny-version: "4.11.0"
-      - if: steps.changed.outputs.tools == 'true'
+      - if: steps.changed.outputs.vibespec == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: npm
-      - if: steps.changed.outputs.tools == 'true'
+      - if: steps.changed.outputs.vibespec == 'true'
         run: npm ci
-      - if: steps.changed.outputs.tools == 'true'
+      - if: steps.changed.outputs.vibespec == 'true'
         run: npm run selftest

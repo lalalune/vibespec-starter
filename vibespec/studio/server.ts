@@ -43,7 +43,8 @@ interface Job { kind: "check" | "agent" | "accept"; label: string; status: "runn
 interface State { baseline: Record<string, string>; ids: Ids }
 interface Live {
   project: Project;
-  job?: Job;
+  /** The last job of each kind, so that an agent's report stays in view while the check after it runs. */
+  jobs: Partial<Record<Job["kind"], Job>>;
   check?: { ok: boolean; results: Result[]; next: string; finished: number };
   clients: Set<http.ServerResponse>;
   watcher?: fs.FSWatcher;
@@ -67,12 +68,15 @@ function specTexts(root: string): Record<string, string> {
   return Object.fromEntries(files.map((f) => [`spec/${f}`, fs.readFileSync(path.join(dir, f), "utf8")]));
 }
 
-/** The projects under `repo`: the repository itself if it has specs, and each package in examples/ that does. */
+/** The repository's examples, from either the source or the built command; a published package has none. */
+const EXAMPLES = path.join(import.meta.dirname, "..", "..", "vibespec", "examples");
+
+/** The project at `repo`, then each example that has specs. */
 export function projectsOf(repo: string): Project[] {
-  const examples = path.join(repo, "examples");
-  const found = fs.existsSync(examples) ? fs.readdirSync(examples).sort().filter((d) => fs.existsSync(path.join(examples, d, "spec"))) : [];
+  const found = fs.existsSync(EXAMPLES) ? fs.readdirSync(EXAMPLES).sort().filter((d) => fs.existsSync(path.join(EXAMPLES, d, "spec"))) : [];
   const name = (dir: string) => readJson<{ name?: string }>(path.join(dir, "package.json"))?.name ?? path.basename(dir);
-  return [{ id: ".", name: name(repo), root: repo }, ...found.map((d) => ({ id: `examples/${d}`, name: d, root: path.join(examples, d) }))];
+  const examples = found.map((d) => path.join(EXAMPLES, d)).filter((root) => root !== path.resolve(repo));
+  return [{ id: ".", name: name(repo), root: repo }, ...examples.map((root) => ({ id: `examples/${path.basename(root)}`, name: path.basename(root), root }))];
 }
 
 /** The command a person or agent runs in a project to check it: its own script if it can, else the tools of this repository. */
@@ -122,11 +126,14 @@ function snapshot(live: Live, agents: Record<string, Agent>) {
     manifest,
     prompt,
     check: live.check,
-    job: jobView(live.job),
+    jobs: jobsView(live),
     agents: Object.entries(agents).map(([id, a]) => ({ id, label: a.label, available: onPath(a.command({ root, check: context.check })[0]), link: a.link?.({ root, prompt: short }) })),
   };
 }
-const jobView = (job?: Job) => job && { kind: job.kind, label: job.label, status: job.status, started: job.started, finished: job.finished, log: job.log.slice(-400) };
+const jobsView = (live: Live) => Object.fromEntries(Object.values(live.jobs).map((j) => [j.kind, { label: j.label, status: j.status, started: j.started, finished: j.finished, log: j.log.slice(-400) }]));
+const running = (live: Live) => Object.values(live.jobs).find((j) => j.child);
+/** One job at a time: every job takes the spec lock or writes specs, and so does publishing. */
+const idle = (live: Live) => { const busy = running(live); if (busy) throw new Error(`${busy.label} is still running`); };
 
 /** A line of an agent's JSON output, as a person would want to read it; undefined for bookkeeping. */
 function readable(line: string): string | undefined {
@@ -136,7 +143,8 @@ function readable(line: string): string | undefined {
   // Claude Code's stream-json
   if (e.type === "assistant") return (e.message?.content ?? []).map((c: any) =>
     c.type === "text" ? clip(c.text) : c.type === "tool_use" ? `▸ ${c.name} ${clip(String(c.input?.command ?? c.input?.file_path ?? c.input?.pattern ?? ""), 200)}` : "").filter(Boolean).join("\n") || undefined;
-  if (e.type === "result") return `${e.is_error ? "✗" : "✓"} ${clip(String(e.result ?? e.subtype ?? ""), 2000)}`;
+  // The final message was already shown; the result says only how the run ended, and what it cost.
+  if (e.type === "result") return `${e.is_error ? "✗ failed" : "✓ done"}${e.total_cost_usd ? ` · $${Number(e.total_cost_usd).toFixed(2)}` : ""}`;
   // Codex's --json events
   const item = e.item ?? e.msg;
   if (e.type === "item.completed" && item?.type === "agent_message") return clip(item.text ?? "");
@@ -148,7 +156,7 @@ function readable(line: string): string | undefined {
 
 /** The studio's HTTP server. `open` is the project shown first. */
 export async function startStudio({ projects, open = projects[0].id, port = 4321, agents = AGENTS }: { projects: Project[]; open?: string; port?: number; agents?: Record<string, Agent> }) {
-  const lives = new Map<string, Live>(projects.map((p) => [p.id, { project: p, clients: new Set() }]));
+  const lives = new Map<string, Live>(projects.map((p) => [p.id, { project: p, jobs: {}, clients: new Set() }]));
 
   const broadcast = (live: Live, event: string, data: unknown) => {
     for (const res of live.clients) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
@@ -164,14 +172,14 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
   };
   const jobChanged = (live: Live) => {
     clearTimeout(live.jobTimer);
-    live.jobTimer = setTimeout(() => broadcast(live, "job", { job: jobView(live.job), check: live.check }), 100);
+    live.jobTimer = setTimeout(() => broadcast(live, "job", { jobs: jobsView(live), check: live.check }), 100);
   };
 
   /** Start a program in the project as its one job; `done` hears how it ended. */
   const startJob = (live: Live, kind: Job["kind"], label: string, [program, args]: [string, string[]], input: string | undefined, read: (line: string) => string | undefined, done: (job: Job, out: string) => void) => {
-    if (live.job?.child) throw new Error(`${live.job.label} is still running`);
+    idle(live);
     const job: Job = { kind, label, status: "running", started: Date.now(), log: [] };
-    live.job = job;
+    live.jobs[kind] = job;
     let out = "";
     const child = spawn(program, args, { cwd: live.project.root, env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1" }, stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"] });
     job.child = child;
@@ -219,7 +227,6 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
     fs.rmSync(manifestFile(root), { force: true });
   };
 
-  const idle = (live: Live) => { if (live.job?.child) throw new Error(`${live.job.label} is still running`); };
 
   const publish = (live: Live, body: { files: { file: string; base: string | null; text: string | null }[]; origins: [string, string | null][]; force?: boolean }) => {
     idle(live);
@@ -341,7 +348,8 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
           startJob(live, "accept", "sign-off", [process.execPath, [SPEC, "accept"]], undefined, (l) => l, () => setImmediate(() => { try { runCheck(live); } catch { /* another job started */ } }));
           return send(res, 200, {});
         case "/api/stop":
-          if (live.job?.child) { live.job.status = "stopped"; live.job.child.kill("SIGTERM"); }
+          const job = running(live);
+          if (job) { job.status = "stopped"; job.child!.kill("SIGTERM"); }
           return send(res, 200, {});
         case "/api/synced":
           markSynced(root);
@@ -368,7 +376,7 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
       for (const live of lives.values()) {
         live.watcher?.close();
         clearTimeout(live.jobTimer);
-        live.job?.child?.kill("SIGTERM");
+        for (const job of Object.values(live.jobs)) job.child?.kill("SIGTERM");
         for (const c of live.clients) c.end();
       }
       server.close(() => resolve());
@@ -385,7 +393,7 @@ export async function serve(repo: string, args: string[]) {
   const at = args.indexOf("--port");
   const port = at < 0 ? undefined : Number(args[at + 1]);
   if (port !== undefined && !(Number.isInteger(port) && port >= 0 && port < 65536)) throw new Error(`--port ${args[at + 1]}: not a port`);
-  const open = example === undefined ? "." : projects.find((p) => p.id === `examples/${example}`)?.id;
+  const open = example === undefined ? "." : projects.find((p, i) => i > 0 && p.name === example)?.id;
   if (!open) throw new Error(`no example ${example}; there are: ${projects.slice(1).map((p) => p.name).join(", ") || "none"}`);
   const studio = await startStudio({ projects, open, port });
   const url = `${studio.url}/?project=${encodeURIComponent(open)}`;

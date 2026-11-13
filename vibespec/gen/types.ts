@@ -168,6 +168,17 @@ export function typeWalks(typedefs: Json[], module: string, prefix = "") {
     return v;
   };
 
-  return { fields, typedef, resolve, shape, payload, tagged, isScalar, setElem, named, ownerOf, typeName, tsType, declaration, qType, wellFormed, copy, decode, canon };
+  /** Where a value of this type holds sets, as paths (`*`: any element or key), for comparing values outside the tools whatever the order of their sets. */
+  const sets = (t0: Json, at: string[] = []): string[][] => {
+    const t = resolve(t0);
+    if (t.kind === "set") return [at];
+    if (t.kind === "list") return sets(t.elem, [...at, "*"]);
+    if (t.kind === "fun") return sets(t.res, [...at, "*"]);
+    if (t.kind === "rec") return fields(t).flatMap((f) => sets(f.fieldType, [...at, f.fieldName]));
+    if (tagged(t)) return fields(t).flatMap((f) => (payload(f) ? sets(payload(f)!, at) : []));
+    return [];
+  };
+
+  return { fields, typedef, resolve, shape, payload, tagged, isScalar, setElem, named, ownerOf, typeName, tsType, declaration, qType, wellFormed, copy, decode, canon, sets };
 }
 export type Types = ReturnType<typeof typeWalks>;
