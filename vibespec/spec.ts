@@ -5,10 +5,9 @@
 //   spec gen [--if-valid]   generate gen/ only
 //   spec accept [unproved]  check afresh, then record the reviews (or the obligations simulated only)
 //   spec new <name>         write a starter spec/<name>.md
-//   spec init               add the sync skill, AGENTS.md, CONTRIBUTING.md and scripts to a project
+//   spec init               add shared agent skills, AGENTS.md, CONTRIBUTING.md and scripts to a project
 //   spec studio [<example>] [--port <n>]   the studio: edit stories and rules, publish, sync, sign off
 
-import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -350,9 +349,9 @@ const toolchainId = () => (toolchain ??= (async () => {
     }
     return dep;
   };
-  // Every file of the tools themselves, as source or as built, and the proof library; the self-test, its fixtures and the studio are not part of them.
-  // The studio only edits specs and starts checks, so changing it changes no result.
-  const own = (f: string) => f.endsWith(path.extname(import.meta.filename)) && !/^(selftest|fixtures|studio)/.test(f);
+  // Every file of the tools themselves, as source or as built, and the proof library; the self-test, its fixtures, the
+  // examples (packages of their own) and the studio, which only edits specs and starts checks, are not part of them.
+  const own = (f: string) => f.endsWith(path.extname(import.meta.filename)) && !/^(selftest|fixtures|examples|studio)/.test(f);
   const tools = [...(fs.readdirSync(import.meta.dirname, { recursive: true }) as string[]).filter(own).sort().map((f) => fs.readFileSync(path.join(import.meta.dirname, f), "utf8")), fs.readFileSync(LIB_FILE, "utf8")];
   return [version("@informalsystems/quint"), version("lemmascript"), `dafny@${(await dafnyVersion()).version ?? "none"}`, sha(...tools).slice(0, 12)].join(" ");
 })());
@@ -847,7 +846,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
       } catch (e) {
         const message = (e as Error).message;
         const mismatch = message.startsWith("TypeScript and Quint disagree");
-        say(false, mismatch ? "replay" : "always", mismatch ? "generated TypeScript disagrees with Quint: a bug in tools/gen.ts or tools/gen/" : "the simulator could not run", indent(message));
+        say(false, mismatch ? "replay" : "always", mismatch ? "generated TypeScript disagrees with Quint: a bug in vibespec/gen.ts or vibespec/gen/" : "the simulator could not run", indent(message));
       }
       return said;
     }, (said) => said.every((r) => r.ok));
@@ -1076,22 +1075,32 @@ export function init(root: string): string[] {
   const pkg = path.join(import.meta.dirname, "..");
   const done: string[] = [];
   const add = (file: string, content: () => string) => {
-    if (fs.existsSync(path.join(root, file))) return;
+    if (fs.lstatSync(path.join(root, file), { throwIfNoEntry: false })) return;
     fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
     fs.writeFileSync(path.join(root, file), content());
     done.push(file);
   };
-  for (const doc of [".claude/skills/sync/SKILL.md", ".claude/skills/design/SKILL.md", "AGENTS.md", "CONTRIBUTING.md"]) add(doc, () => fs.readFileSync(path.join(pkg, doc), "utf8"));
+  for (const name of ["sync", "design"]) {
+    const source = `.claude/skills/${name}`;
+    add(`${source}/SKILL.md`, () => fs.readFileSync(path.join(pkg, source, "SKILL.md"), "utf8"));
+    const link = `.agents/skills/${name}`;
+    const target = path.join(root, link);
+    if (fs.lstatSync(target, { throwIfNoEntry: false })) continue;
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.symlinkSync(path.relative(path.dirname(target), path.join(root, source)), target, "dir");
+    done.push(link);
+  }
+  for (const doc of ["AGENTS.md", "CONTRIBUTING.md"]) add(doc, () => fs.readFileSync(path.join(pkg, doc), "utf8"));
   add("tsconfig.json", () => JSON.stringify({ compilerOptions: { target: "es2023", module: "nodenext", strict: true, noEmit: true, allowImportingTsExtensions: true, erasableSyntaxOnly: true, skipLibCheck: true, types: ["node"] }, include: ["src", "test", "gen/*.ts"] }, null, 2) + "\n");
   if (!fs.existsSync(path.join(root, "spec"))) { fs.mkdirSync(path.join(root, "spec")); done.push("spec/"); }
   const ignore = path.join(root, ".gitignore");
   const ignored = fs.existsSync(ignore) ? fs.readFileSync(ignore, "utf8") : "";
-  const missing = ["gen/", ".spec-cache/"].filter((l) => !ignored.split("\n").includes(l));
+  const missing = ["gen/", ".spec-cache/", ".studio/"].filter((l) => !ignored.split("\n").includes(l));
   if (missing.length) { fs.writeFileSync(ignore, ignored + (ignored && !ignored.endsWith("\n") ? "\n" : "") + missing.join("\n") + "\n"); done.push(".gitignore"); }
   const manifest = path.join(root, "package.json");
   if (fs.existsSync(manifest)) {
     const json = JSON.parse(fs.readFileSync(manifest, "utf8"));
-    const scripts = { check: "spec check", gen: "spec gen", accept: "spec accept" };
+    const scripts = { dev: "spec studio", check: "spec check", gen: "spec gen", accept: "spec accept" };
     const added = Object.entries(scripts).filter(([name]) => !json.scripts?.[name]);
     if (added.length) {
       json.scripts = { ...json.scripts, ...Object.fromEntries(added) };
@@ -1182,17 +1191,11 @@ if (isMain) {
       const done = init(root);
       console.log(done.length ? `added ${done.join(", ")}` : "nothing to add");
     } else if (command === "studio" && takes([], ["*"], ["--port", "*"], ["*", "--port", "*"])) {
-      const { projectsOf, startStudio } = await import("./studio/server.ts");
-      const projects = projectsOf(root);
-      const example = args[0] === "--port" ? undefined : args[0];
-      const port = args.includes("--port") ? Number(args[args.indexOf("--port") + 1]) : undefined;
-      const open = example === undefined ? "." : projects.find((p) => p.id === `examples/${example}`)?.id;
-      if (!open) throw new Error(`no example ${example}; there are: ${projects.slice(1).map((p) => p.name).join(", ") || "none"}`);
-      if (port !== undefined && !(Number.isInteger(port) && port >= 0 && port < 65536)) throw new Error(`--port ${args[args.indexOf("--port") + 1]} is not a port`);
-      const studio = await startStudio({ projects, open, port });
-      const url = `${studio.url}/?project=${encodeURIComponent(open)}`;
-      console.log(`studio: ${url}`);
-      if (process.stdout.isTTY) spawn(process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer" : "xdg-open", [url], { stdio: "ignore", detached: true }).on("error", () => {}).unref();
+      // Not awaited: the studio imports this module, which must finish loading before that import can.
+      import("./studio/server.ts").then(({ serve }) => serve(root, args)).catch((e: Error) => {
+        console.error(e.message);
+        process.exitCode = 1;
+      });
     } else if (command === "new" && takes(["*"])) {
       console.log(`wrote ${newSpec(root, args[0])}`);
     } else {

@@ -40,7 +40,7 @@ export interface Scope {
   sampleSets: Set<string>;
 }
 
-/** Native array methods for the list helpers the tangler marks (LIST_HELPERS in tools/gen.ts). */
+/** Native array methods for the list helpers the tangler marks (LIST_HELPERS in vibespec/gen.ts). */
 const LIST_METHODS: Record<string, string> = { every: "every", some: "some", listMap: "map" };
 
 /** The set and the value of a membership test, whichever way round it is written. */
@@ -224,7 +224,7 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
     }
     if (definitions.has(op)) return [`${ref(op)}(${a.map((x) => ex(x, TERNARY)).join(", ")})`, ATOM];
     if (sampleSets.has(op)) return fail(`${op} is a sample set for the simulator and cannot be used in a definition`);
-    return fail(`unsupported Quint operator \`${op}\`: extend print() in tools/gen/print.ts`);
+    return fail(`unsupported Quint operator \`${op}\`: extend print() in vibespec/gen/print.ts`);
   };
 
   /** A definition body: leading `val`s become `const`s, the rest is returned. */

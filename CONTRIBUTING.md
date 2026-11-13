@@ -17,5 +17,5 @@ In short:
   for what Quint cannot express or what touches the outside world.
 - Tests cover only what the checks cannot: whole user journeys through the
   real shell, against real services (AGENTS.md, "Tests").
-- A change to `tools/` passes `npm run selftest`, with a new case for each new
+- A change to `vibespec/` passes `npm run selftest`, with a new case for each new
   kind of mistake it catches.

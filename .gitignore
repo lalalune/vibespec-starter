@@ -2,8 +2,9 @@ node_modules/
 gen/
 dist/
 .spec-cache/
+.studio/
 *.tgz
 .lemmascript/
 _apalache-out/
-!/tools/gen/
+!/vibespec/gen/
 .claude/worktrees/
