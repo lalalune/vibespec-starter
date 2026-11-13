@@ -1070,7 +1070,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     edit("spec/index.md", () => original.replace("pure val unitPrice = 5", "pure val unitPrice = 7"));
     const moved = pendingItems(root);
     assert.ok(moved.includes("Domain / Unit price and order size: model changed"), moved.join("\n"));
-    assert.ok(moved.includes("Story: Fill a draft / Items can only be added to a draft: model changed through unitPrice, maxUnits (Domain / Unit price and order size)"), moved.join("\n"));
+    assert.ok(moved.includes("Story: Fill a draft / Items can only be added to a draft: model changed through maxUnits, unitPrice (Domain / Unit price and order size)"), moved.join("\n"));
     assert.ok(moved.includes("Story: Fill a draft / The amount due is always the price of the units: model changed through unitPrice (Domain / Unit price and order size)"), moved.join("\n"));
     assert.ok(!moved.some((m) => m.startsWith("Story: Check out / A payment never exceeds the balance")), "a rule that does not use the price is not flagged");
 

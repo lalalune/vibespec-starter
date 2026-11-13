@@ -268,7 +268,9 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
     report(true, "model", `${spec.file}: ${parts.filter(([n]) => n).map((p) => p.join(" ")).join(", ") || "definitions only"}`, "", spec.file);
     if (!model.stateType && !model.laws.length && !model.evals.length) continue;
     const key = [...importedMeanings(spec, specs), spec.meaning, model.harness, String([SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, LASSO_TRACES, STEPS, ...DEPTHS])];
-    simulations.push({ spec, model, domain, done: remembered(memory, entry(root, "simulate", key), () => simulateSpec(root, spec, model, domain, cite), ({ said }) => said.every((r) => r.ok)) });
+    const done = remembered(memory, entry(root, "simulate", key), () => simulateSpec(root, spec, model, domain, cite), ({ said }) => said.every((r) => r.ok));
+    done.catch(() => {}); // units.ts, typecheckAll
+    simulations.push({ spec, model, domain, done });
   }
   const done = await allOf(simulations.map((s) => s.done));
   for (const [i, { spec, model, domain }] of simulations.entries()) {

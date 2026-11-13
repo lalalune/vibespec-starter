@@ -102,6 +102,11 @@ const TODO = {
 /** The ids of `after` that are out of their order in `before`. */
 const moved = (before: string[], after: string[]) => new Set(diffOps(before, after).filter(([op]) => op === "+").map(([, id]) => id));
 
+/** Every file under a directory of the project, by its path from the root with forward slashes; none if it is missing. */
+export const filesUnder = (root: string, dir: string) => !fs.existsSync(path.join(root, dir)) ? []
+  : fs.readdirSync(path.join(root, dir), { recursive: true, withFileTypes: true }).filter((e) => e.isFile())
+    .map((e) => path.relative(root, path.join(e.parentPath, e.name)).split(path.sep).join("/"));
+
 const specsOf = (root: string, texts: Record<string, string>): Spec[] => {
   try { return readSpecs(root, texts); } catch {
     return Object.entries(texts).flatMap(([file, text]) => { try { return [parseSpec(root, file, text)]; } catch { return []; } });
@@ -194,12 +199,11 @@ export function manifestOf(root: string, baseline: Record<string, string>, curre
   };
   for (const s of specs) if (edited.includes(s.file)) visit(s, "edited");
   const modules = new Set(regenerate.map((r) => r.gen.slice(4)).concat(Object.keys(baseline).filter((f) => !(f in current)).map((f) => `${specName(f)}.ts`)));
-  const code = ["src", "test"].flatMap((dir) => fs.existsSync(path.join(root, dir)) ? (fs.readdirSync(path.join(root, dir), { recursive: true }) as string[]).map((f) => path.join(dir, f)) : [])
-    .filter((f) => {
-      if (!/\.[cm]?tsx?$/.test(f)) return false;
-      const text = fs.readFileSync(path.join(root, f), "utf8");
-      return [...modules].some((m) => text.includes(`gen/${m}`));
-    }).map((f) => f.split(path.sep).join("/")).sort();
+  const code = ["src", "test"].flatMap((dir) => filesUnder(root, dir)).filter((f) => {
+    if (!/\.[cm]?tsx?$/.test(f)) return false;
+    const text = fs.readFileSync(path.join(root, f), "utf8");
+    return [...modules].some((m) => text.includes(`gen/${m}`));
+  }).sort();
   return { published: new Date().toISOString(), changes, regenerate, code, citations: danglingCitations(root, specs) };
 }
 

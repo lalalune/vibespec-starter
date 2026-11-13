@@ -652,9 +652,12 @@ function moveMenu(uidWanted, kind) {
       else move(uidWanted, { uid: value, where: "after" });
     } },
   h("option", { value: "", selected: true, disabled: true }, "⇅"));
-  const fill = () => select.options.length > 1 || select.append(...(kind === "rule"
-    ? S.specs.filter((s) => !s.deleted).map((spec) => h("optgroup", { label: spec.name }, spec.doc.sections.map((s) => h("option", { value: `section:${s.uid}` }, s.title?.trim() || "(top)"))))
-    : S.specs.filter((s) => !s.deleted && s.file !== find(uidWanted)?.spec.file).map((spec) => h("option", { value: `spec:${spec.file}` }, `to ${spec.name}`))));
+  const fill = () => {
+    if (select.options.length > 1) return;
+    select.append(...(kind === "rule"
+      ? S.specs.filter((s) => !s.deleted).map((spec) => h("optgroup", { label: spec.name }, spec.doc.sections.map((s) => h("option", { value: `section:${s.uid}` }, s.title?.trim() || "(top)"))))
+      : S.specs.filter((s) => !s.deleted && s.file !== find(uidWanted)?.spec.file).map((spec) => h("option", { value: `spec:${spec.file}` }, `to ${spec.name}`))));
+  };
   select.addEventListener("focus", fill);
   select.addEventListener("mousedown", fill);
   return select;

@@ -9,7 +9,7 @@ import { newSpec, parseSpec, pending, pendingContracts, readSpecs, type Pending,
 import { pendingSpecs, reviews } from "../review.ts";
 import { specFiles, specName } from "../parse.ts";
 import { digest, projectRoot } from "../util.ts";
-import { manifestOf, nodesOf, parseDoc, promptFor, type Ids, type Manifest } from "./doc.ts";
+import { filesUnder, manifestOf, nodesOf, parseDoc, promptFor, type Ids, type Manifest } from "./doc.ts";
 import { specOrder } from "./public/doc.js";
 
 /** The `spec` command beside this file, as source or as built. */
@@ -86,9 +86,8 @@ function skillPath(root: string): string {
 
 /** The review ledgers and the studio's own files, by their hash: what an agent may not write. */
 function ownedFiles(root: string): Record<string, string> {
-  const files = (dir: string) => fs.existsSync(path.join(root, dir)) ? (fs.readdirSync(path.join(root, dir), { recursive: true }) as string[]).map((f) => path.join(dir, f)) : [];
-  return Object.fromEntries([...files("spec").filter((f) => f.endsWith("lock.json")), ...files(".studio")]
-    .filter((f) => fs.statSync(path.join(root, f)).isFile()).map((f) => [f, hash(fs.readFileSync(path.join(root, f), "utf8"))]));
+  return Object.fromEntries([...filesUnder(root, "spec").filter((f) => f.endsWith("lock.json")), ...filesUnder(root, ".studio")]
+    .map((f) => [f, hash(fs.readFileSync(path.join(root, f), "utf8"))]));
 }
 
 const installed = new Map<string, boolean>();
@@ -352,7 +351,8 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
             const now = ownedFiles(root);
             const touched = [...new Set([...Object.keys(owned), ...Object.keys(now)])].filter((f) => owned[f] !== now[f]);
             if (touched.length) { job.status = "failed"; job.log.push(`✗ the agent changed ${touched.join(", ")}: not marked synced`); }
-            if (job.status === "passed") markSynced(root);
+            if (job.status !== "passed") return;
+            markSynced(root);
             checkAfter(live);
           });
           return send(res, 200, {});
