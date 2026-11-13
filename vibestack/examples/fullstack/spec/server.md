@@ -12,8 +12,9 @@ clients use the version to tell an old copy of the list from a newer one.
 
 ### The server holds the list, its version and a log of every request it answered
 
-Each entry of the log records the edit the request carried, so that a later
-request with the same number can be told apart from a retry.
+Each entry of the log records the client, the number, the edit the request
+carried and whether it was accepted, so that a later request with the same
+number can be told apart from a retry.
 
 ```quint
 import todo.* from "./todo"
@@ -63,6 +64,9 @@ pure def acceptedAs(s: Server, client: str, seq: int, op: Op): bool =
 ```
 
 ### A new request whose edit makes sense is applied, raising the version by one
+
+New means the log holds no request with its client and number. The request is
+logged as accepted, with its edit.
 
 ```quint
 pure def allows(s: Server, client: str, seq: int, op: Op): bool =

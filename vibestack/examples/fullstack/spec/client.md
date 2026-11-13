@@ -13,6 +13,8 @@ from the server is an event.
 
 Each queued edit carries the number the client gave it, which the server
 uses to recognise a retry. `made` counts the edits the client has numbered.
+The client also holds whether it is online, and `refusals` counts the
+refusals it was told of.
 
 ```quint
 import todo.* from "./todo"
@@ -25,6 +27,9 @@ type Client = {
 ```
 
 ### A new client is online, has seen version 0 and has nothing queued
+
+Its confirmed copy is empty, and it has numbered no edits and been told of no
+refusals.
 
 ```quint
 pure val initial: Client =

@@ -103,7 +103,8 @@ pure def disconnect(r: Registry, key: str): Registry =
 
 A project whose channel the admin screen sets, or that it connects, does not
 share that channel with any other project. A channel shared by hand edits may
-stay shared.
+stay shared. An empty channel is no channel, and any number of projects may
+have one.
 
 ```quint
 pure def canSetChannel(r: Registry, key: str, channel: str): bool =

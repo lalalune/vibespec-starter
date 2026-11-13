@@ -63,6 +63,8 @@ pure def publish(s: Session, changes: int): Session =
 
 ### Publishing always starts a check
 
+It also leaves no edit unpublished.
+
 ```quint
 pure def stepPublishingChecks(before: Session, via: str, after: Session): bool =
   via == "publish" implies (after.job == Checking and not(after.unpublished))
@@ -91,8 +93,8 @@ pure def sync(s: Session): Session = { ...s, job: Syncing }
 
 ### A sync that ends well leaves nothing waiting and checks again
 
-A sync that fails leaves what was waiting, and what the agent did is not
-known to check until it is checked.
+A sync that fails leaves what was waiting and starts no check; what the
+agent did leaves the verdict unknown either way.
 
 ```quint
 pure def canSynced(s: Session): bool = s.job == Syncing
@@ -103,7 +105,7 @@ pure def synced(s: Session, ok: bool): Session =
 
 ### What is waiting can be marked as synced by hand
 
-For a sync done outside the studio.
+For a sync done outside the studio, when something waits and no job runs.
 
 ```quint
 pure def canMarkSynced(s: Session): bool = s.job == Idle and s.waiting > 0
@@ -113,7 +115,8 @@ pure def markSynced(s: Session): Session = { ...s, waiting: 0 }
 ### What is waiting outlives the studio
 
 The manifest is kept on disk, so a studio started again begins its session
-with as many changes waiting as the manifest lists.
+with as many changes waiting as the manifest lists. It is read only while no
+job runs and nothing is counted as waiting yet.
 
 ```quint
 pure def canResume(s: Session, changes: int): bool = s.job == Idle and s.waiting == 0 and changes >= 0
@@ -131,6 +134,8 @@ pure def stepWaitingGoesDownOnlyBySyncOrUndo(before: Session, via: str, after: S
 ```
 
 ### A sync can be under way
+
+It runs with changes waiting for it.
 
 ```quint
 pure def sometimesSyncing(s: Session): bool = s.job == Syncing and s.waiting > 0
@@ -173,6 +178,9 @@ pure def alwaysNoVerdictWhileChecking(s: Session): bool = s.job == Checking impl
 
 ### A job starts only when none is running
 
+One job may hand straight on to the next only where a sync ends well or a
+sign-off ends: each then starts its check.
+
 ```quint
 pure def stepOneJobAtATime(before: Session, via: str, after: Session): bool =
   (before.job != Idle and after.job != Idle and after.job != before.job)
@@ -192,6 +200,8 @@ pure def sometimesGreen(s: Session): bool = s.verdict == Green
 
 ### Sign-off needs a check that left only review, nothing unpublished and nothing waiting
 
+No job may be running either.
+
 ```quint
 pure def canSignOff(s: Session): bool =
   s.job == Idle and s.verdict == Reviewable and not(s.unpublished) and s.waiting == 0
@@ -206,6 +216,8 @@ pure def signedOff(s: Session): Session = { ...s, job: Checking, verdict: Unknow
 ```
 
 ### A sign-off starts only from a reviewable check
+
+It also needs nothing unpublished and nothing waiting.
 
 ```quint
 pure def stepSignOffFollowsReview(before: Session, via: str, after: Session): bool =

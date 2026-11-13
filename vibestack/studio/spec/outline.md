@@ -193,6 +193,9 @@ pure def stepCounterNeverGoesBack(before: Outline, after: Outline): bool = after
 
 ### A move neither loses nor copies a story or a rule
 
+Checked by count: after a move there are as many stories, and as many rules
+in all, as before.
+
 ```quint
 pure def ruleCount(o: Outline): int = o.stories.foldl(0, (n, x) => n + x.rules.length())
 pure def stepMovesKeepEverything(before: Outline, via: str, after: Outline): bool =
@@ -209,7 +212,8 @@ pure def stepMovesKeepEverything(before: Outline, via: str, after: Outline): boo
 ### Every story and rule needs a heading, unique where it is
 
 A story's heading is its key in the spec, and a rule's is its key within its
-story, so two that share one would be read as one.
+story, so two that share one would be read as one. The page publishes no
+spec whose outline breaks this.
 
 ```quint
 pure def headingsAreSound(o: Outline): bool =
