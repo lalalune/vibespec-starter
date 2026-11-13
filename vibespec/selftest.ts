@@ -4,18 +4,23 @@
 import assert from "node:assert/strict";
 import { execFile, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { after, describe, test } from "node:test";
 import { LIB_FILE, parseProofFile, readVerdict, splice } from "./prove.ts";
 import { nodesOf } from "./studio/doc.ts";
-import { projectsOf, startStudio } from "./studio/server.ts";
-import { acceptContracts, acceptReviews, check, checkVerifiedSource, expandListHelpers, gen, init, parseSpec, pending, pendingContracts, readSpecs, replay, show, type Result } from "./spec.ts";
+import { startStudio } from "./studio/server.ts";
+import { acceptContracts, acceptReviews, badSpecName, check, checkVerifiedSource, expandListHelpers, gen, init, parseSpec, pending, pendingContracts, readSpecs, replay, show, type Result } from "./spec.ts";
 
 const project = path.join(import.meta.dirname, "..");
 const read = (file: string) => fs.readFileSync(path.join(project, file), "utf8");
 const F = "`".repeat(3);
 const roots: string[] = [];
+const nodeModules = (function find(dir: string): string {
+  const here = path.join(dir, "node_modules");
+  return fs.existsSync(here) ? here : dir === path.dirname(dir) ? assert.fail("no node_modules: run npm install") : find(path.dirname(dir));
+})(project);
 after(() => roots.forEach((root) => fs.rmSync(root, { recursive: true, force: true })));
 
 /** A scratch project holding the given files. */
@@ -25,6 +30,10 @@ function scratch(files: Record<string, string>): string {
   for (const [file, text] of Object.entries(files)) {
     fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
     fs.writeFileSync(path.join(root, file), text);
+  }
+  if (Object.keys(files).some((f) => /^(src|test)\//.test(f)) && !files["tsconfig.json"]) {
+    fs.writeFileSync(path.join(root, "tsconfig.json"), read("tsconfig.json"));
+    fs.symlinkSync(nodeModules, path.join(root, "node_modules"), "dir");
   }
   return root;
 }
@@ -40,10 +49,12 @@ const oneRule = (name: string, heading: string, quint: string) => scratch({ [`sp
 // This project's spec and src with whatever awaits sign-off here accepted, checked once
 // so that every copy starts with its cache: an edit then re-runs only what it changes.
 const pristine = scratch({});
-for (const dir of ["spec", "src"]) fs.cpSync(path.join(project, dir), path.join(pristine, dir), { recursive: true });
+for (const dir of ["spec", "src", "test", "tsconfig.json"]) fs.cpSync(path.join(project, dir), path.join(pristine, dir), { recursive: true });
+fs.symlinkSync(nodeModules, path.join(pristine, "node_modules"), "dir");
 for (const spec of readSpecs(pristine)) acceptReviews(pristine, spec);
 acceptContracts(pristine);
-await check(pristine);
+const pristineCheck = await check(pristine);
+assert.equal(pristineCheck.ok, true, pristineCheck.results.map(show).join("\n"));
 
 /** A copy of the pristine project with `edit` applied to one file. */
 function copyOfProject(file?: string, edit: (text: string) => string = (s) => s): string {
@@ -72,13 +83,34 @@ async function run(root: string, accept: false | "reviews" | "unproved" = false)
 }
 const failedStages = async (file: string, edit: (text: string) => string) => (await run(copyOfProject(file, edit))).failed;
 const pendingItems = (root: string) => readSpecs(root).flatMap((spec) => pending(root, spec).map((p) => `${p.where.split("  ")[1]}: ${p.status}${p.note ?? ""}`));
+/** Run a fresh CLI process so toolchain fingerprints cannot carry over from another invocation. */
+const runCli = (script: string, root: string, ...args: string[]) => new Promise<{ status: number; stdout: string; stderr: string }>((done) =>
+  execFile(process.execPath, [script, ...args], { cwd: root, maxBuffer: 1 << 26 }, (e, stdout, stderr) => done({ status: e ? Number(e.code) : 0, stdout, stderr })));
 const unguarded = (s: string) => s.replace("o.status == Draft and o.units > 0", "o.status == Draft");
 const notInductive = (s: string) => s.replace(/### Drafts and cancelled orders hold no money[\s\S]*?```\n\n/, "");
 
 describe("each check catches its own kind of mistake", { concurrency: true }, () => {
   test("a fresh spec with enum and bool parameters and an unguarded transition passes everything but review", async () => {
-    const { failed, text } = await run(fixtures(["door"]));
+    const root = fixtures(["door"]);
+    const { failed, text } = await run(root);
     assert.deepEqual(failed, ["review"], text);
+    assert.match(fs.readFileSync(path.join(root, "gen/proof/door.log"), "utf8"), /Dafny auditor completed/);
+  });
+
+  test("a local variant keeps its Quint type without requiring names for other local values", async () => {
+    const root = oneRule("decision", "A local decision agrees with its condition", [
+      "type Decision = Accept | Reject",
+      "pure def isAccepted(kind: Decision): bool = kind == Accept",
+      "pure def lawLocalDecision(flag: bool): bool =",
+      "  val kind = if (flag) Accept else Reject",
+      "  isAccepted(kind) == flag",
+    ].join("\n"));
+    const { failed, text, said } = await run(root);
+    assert.deepEqual(failed, ["review"], text);
+    assert.ok(said("proof", /^decision\.ts: all 1 obligations proved/), text);
+    const record = oneRule("recordLocal", "A local record keeps its value", "pure def value(n: int): int =\n  val box = { value: n }\n  box.value");
+    await gen(record, parseSpec(record, "spec/recordLocal.md"));
+    assert.equal((await import(path.join(record, "gen/recordLocal.ts"))).value(7), 7);
   });
 
   test("a missing guard is found by simulation, as a trace that the same seed gives again, and the later stages say they were skipped", async () => {
@@ -156,14 +188,149 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
       ["a type named like a generated one", "type Event = { n: int }\npure val initial: Event = { n: 0 }", /cannot be used as a name/],
       ["a definition named like a JavaScript global", "pure val initial: int = 0\npure def Number(n: int): int = n", /cannot be used as a name/],
       ["a set of two computed members", "pure val initial: int = 0\npure def pair(a: int, b: int): int = Set(a, b).size()", /could hold the same value twice/],
-      ["a variant field called tag", "type P = A({ tag: int }) | B\npure val initial: int = 0", /cannot be called `tag`/],
-      ["a match binder used as a whole value", "type N = { n: int }\ntype P = A(N) | B\npure val initial: int = 0\npure def g(r: N): int = r.n\npure def f(p: P): int = match p { | A(x) => g(x) | _ => 0 }", /is what a match arm carries/],
+      ["a variant field called tag", "type P = A({ tag: int }) | B\npure val initial: int = 0\npure def tick(n: int): int = n", /cannot be called `tag`/],
+      ["a match binder used as a whole value", "type N = { n: int }\ntype P = A(N) | B\npure val initial: int = 0\npure def g(r: N): int = r.n\npure def f(p: P): int = match p { | A(x) => g(x) | _ => 0 }\npure def tick(n: int): int = n", /is what a match arm carries/],
       ["state declared by hand", "pure val initial: int = 0\nvar n: int", /only types, imports, `pure val` and `pure def` belong in a spec/],
     ];
     for (const [what, quint, message] of refused) {
       const { said, text } = await run(oneRule("t", "A rule", quint));
       assert.equal(said("model", message)?.ok, false, `${what}\n${text}`);
     }
+  });
+
+  test("a rule written as a `pure val` is refused rather than generated as a constant, and a constant named alike is not", async () => {
+    const { said, text } = await run(oneRule("t", "A rule", "pure val initial: int = 0\npure val alwaysNever = false"));
+    assert.equal(said("model", /is a `pure def` with parameters/)?.ok, false, text);
+    const constant = await run(oneRule("t", "A rule", "pure val stepLimit = 3\npure def lawPositive(k: int): bool = stepLimit > 0"));
+    assert.ok(!constant.failed.includes("model"), constant.text);
+  });
+
+  test("a comment or string left open at the end of a quint block is refused, so prose can never become model", async () => {
+    // Prose is tangled as `// …`; inside an open block comment, `// */ code` would be code that no review or cache key sees as such.
+    const { said, text } = await run(copyOfProject("spec/order.md", (s) => s.replace("pure val unitPrice = 5", "pure val unitPrice = 5\n/*")));
+    assert.equal(said("model", /a comment is still open at the end of this quint block/)?.ok, false, text);
+  });
+
+  test("who sent an event travels beside it, a guard takes only what it uses, a step rule sees the event, and deep goals are found", async () => {
+    const vault = (edit: (s: string) => string = (s) => s) => fixtures(["vault"], (f) => { f["spec/vault.md"] = edit(f["spec/vault.md"]); });
+    const root = vault();
+    const ok = await run(root);
+    assert.deepEqual(ok.failed, ["review"], ok.text);
+    assert.ok(ok.said("sometimes", /sometimesLate is reachable/), ok.text); // thirty ticks: beyond a trace of 20 events
+    const gen = await import(path.join(root, "gen/vault.ts"));
+    assert.deepEqual(gen.parseEvent({ type: "open", by: "Owner" }), { type: "open" });
+    assert.equal(gen.enabled(gen.initial, { type: "open" }, "Guest"), false);
+    assert.equal(gen.step(gen.initial, { type: "relabel", label: "a" }, "Owner").label, "a");
+    // A counterexample shows each event with only what it changed.
+    const broken = await run(vault((s) => s.replace("{ ...v, open: false }", "{ ...v, open: true }")));
+    assert.ok(broken.said("always", /a step breaks[\s\S]*\n\s+close\s+-> open = true\n/), broken.text);
+    const stray = await run(vault((s) => s.replace("canRelabel(v: Vault, by: Actor): bool = by", "canRelabel(v: Vault, who: Actor): bool = who")));
+    assert.ok(stray.said("model", /canRelabel: `who` must be a parameter of relabel/), stray.text);
+  });
+
+  test("a rule broken only on the way to a `sometimes` goal is still reported", async () => {
+    // Only the witness search goes deep enough: the goal is three steps away and the break is on the way.
+    const quint = "pure val initial: int = 0\npure def up(n: int): int = n + 1\npure def canUp(n: int): bool = n < 5\npure def alwaysBelowThree(n: int): bool = n < 3\npure def sometimesFour(n: int): bool = n == 4";
+    const { failed, text } = await run(oneRule("t", "Counting", quint));
+    assert.ok(failed.includes("always"), text);
+    assert.ok(!failed.includes("sometimes") || failed.includes("always"), text);
+  });
+
+  test("hand-written code that changes what it is checked against is refused or flagged", async () => {
+    const reexport = await failedStages("src/ledger.ts", (s) => s + '\nexport * from "./app.ts";\n');
+    assert.ok(reexport.includes("proof"), reexport.join());
+    const { said, text } = await run(copyOfProject("src/ledger.ts", (s) => s.replace(/(\/\/@ ensures)/, "//@ requires true\n$1")));
+    assert.ok(said("proof", /^src-ledger\.ts: .*under 2 \/\/@ requires/), text);
+  });
+
+  test("the application's types and tests are checked", async () => {
+    assert.ok((await failedStages("src/app.ts", (s) => s + "\nconst wrong: number = \"x\";\n")).includes("types"));
+    const failing = await run(copyOfProject("test/app.test.ts", (s) => s + '\ntest("fails", () => { throw new Error("no"); });\n'));
+    assert.ok(failing.failed.includes("tests"), failing.text);
+    const untyped = copyOfProject();
+    fs.rmSync(path.join(untyped, "tsconfig.json"));
+    assert.ok((await run(untyped)).failed.includes("types"));
+  });
+
+  test("Markdown the tools would read differently from a viewer is refused or read as a viewer does", async () => {
+    const cr = await failedStages("spec/order.md", (s) => s.replace("Every unit costs the same", "Every unit costs the same\rpure val sneaky = 1"));
+    assert.deepEqual(cr, ["model"]);
+    // A fence with an info string does not close a quint block, so what follows is still Quint (and here not valid Quint).
+    const fence = await failedStages("spec/order.md", (s) => s.replace("pure val unitPrice = 5", "pure val unitPrice = 5\n```text\nnot quint"));
+    assert.ok(fence.includes("model"), fence.join());
+  });
+
+  test("duplicate story headings are rejected instead of sharing review state", async () => {
+    const text = `# Duplicate\n\n## Story\n\n### First\n\n${F}quint\npure val first = 1\n${F}\n\n## Story\n\n### Second\n\n${F}quint\npure val second = 2\n${F}\n`;
+    const { said, text: result } = await run(scratch({ "spec/duplicate.md": text }));
+    assert.equal(said("model", /duplicate story/)?.ok, false, result);
+  });
+
+  test("a story whose title starts another story's title still needs rules of its own", async () => {
+    const story = "\n## Story: Wrap\n\n> As a shopper, I want my order wrapped.\n\n## Story: Wrap / gifts\n\n### Gifts are wrapped\n\n```quint\npure def lawWrapped(n: int): bool = true\n```\n";
+    const { said, text } = await run(copyOfProject("spec/order.md", (s) => s + story));
+    assert.ok(said("review", /  Story: Wrap\n\s+story has no rules/), text);
+  });
+
+  test("a machine whose state holds a library's type can be imported under a name", async () => {
+    const spec = (title: string, quint: string) => `# ${title}\n\n## Story\n\n### ${title}\n\n${F}quint\n${quint}\n${F}\n`;
+    const root = scratch({
+      "spec/lib.md": spec("Library", "type T = { n: int }\npure def lawZeroIsZero(k: int): bool = k * 0 == 0"),
+      "spec/mach.md": spec("Machine", 'import lib.* from "./lib"\ntype St = { t: T }\npure val initial: St = { t: { n: 0 } }\npure def bump(s: St): St = { t: { n: s.t.n + 1 } }'),
+      "spec/sys.md": spec("System", 'import mach as M from "./mach"\ntype Sys = { a: M::St }\npure val initial: Sys = { a: M::initial }\npure def go(s: Sys): Sys = { a: M::bump(s.a) }'),
+    });
+    const { failed, said, text } = await run(root);
+    assert.deepEqual(failed, ["review"], text);
+    assert.ok(said("proof", /^sys\.ts: all \d+ obligations proved/), text);
+  });
+
+  test("simulator sample sets match real parameters and stay outside generated code", async () => {
+    const base = "type S = { n: int }\npure val initial: S = { n: 0 }\npure def canAdd(s: S, amount: int): bool = amount > 0\npure def add(s: S, amount: int): S = { n: s.n + amount }";
+    const cases: [string, string, RegExp][] = [
+      ["a sample of the wrong type", 'pure val amountValues = Set("bad")\n' + base, /amountValues.*holds.*parameter amount/],
+      ["an unused sample set", "pure val typoValues = Set(1)\n" + base, /no parameter is named typo/],
+      ["a sample set used at runtime", "pure val amountValues = Set(1)\n" + base + "\npure def total(k: int): int = amountValues.size()", /amountValues.*(simulat|runtime|sample)/],
+    ];
+    const results = await Promise.all(cases.map(([, quint]) => run(oneRule("sample", "Samples", quint))));
+    cases.forEach(([what, , message], i) => assert.equal(results[i].said("model", message)?.ok, false, `${what}\n${results[i].text}`));
+  });
+
+  test("unsupported or ambiguous shapes are refused before TypeScript chooses a different meaning", async () => {
+    const cases: [string, string, RegExp][] = [
+      ["identical record shapes", "type A = { n: int }\ntype B = { n: int }\npure def convert(a: A): B = { n: a.n }", /have the same fields/],
+      ["a definition with no parameters", "pure def one(): int = 1", /parameter/],
+      ["two declarations on one line", "pure val first = 1 pure val second = 2", /declaration|own line|rule/],
+      ["an initial state without a transition", "pure val initial: int = 0", /transition/],
+      ["a set of records", "type A = { n: int }\npure def count(xs: Set[A]): int = xs.size()", /set|Set/],
+      ["a map into records", "pure def records(xs: Set[int]): Set[{ n: int }] = xs.map(x => { n: x })", /set|Set|record/],
+    ];
+    const results = await Promise.all(cases.map(([, quint]) => run(oneRule("shape", "Shapes", quint))));
+    cases.forEach(([what, , message], i) => assert.equal(results[i].said("model", message)?.ok, false, `${what}\n${results[i].text}`));
+  });
+
+  test("nested set samples stay bounded and an inner lambda may shadow a match binder", async () => {
+    const root = oneRule("nested", "Nested values", "type P = A({ xs: List[int] }) | B\npure def sum(p: P): int = match p { | A(x) => x.xs.foldl(0, (n, x) => n + x) | _ => 0 }\npure def lawSum(k: int): bool = sum(A({ xs: List(1, 2) })) == 3\npure def lawCount(xs: List[Set[int]]): bool = xs.length() >= 0\npure def zeros(n: int): Set[int] = Set(n * 0)\npure def lawZeros(n: int): bool = zeros(n).contains(0)");
+    const { failed, text } = await run(root);
+    assert.deepEqual(failed, ["review"], text);
+  });
+
+  test("a locally chosen enum keeps its Quint type in the generated proof", async () => {
+    const root = oneRule("choice", "Choose", "type Choice = Left | Right\npure def use(c: Choice): int = if (c == Left) 1 else 2\npure def chosen(b: bool): int =\n  val c = if (b) Left else Right\n  use(c)\npure def lawChosen(b: bool): bool = chosen(b) == (if (b) 1 else 2)");
+    const { failed, text } = await run(root);
+    assert.deepEqual(failed, ["review"], text);
+  });
+
+  test("a transition and its guard bind a second state-shaped parameter identically during replay", async () => {
+    const root = oneRule("copy", "Copy", "pure val initial: int = 0\npure def canCopy(n: int, source: int): bool = n <= source\npure def copy(n: int, source: int): int = source\npure def alwaysNonnegative(n: int): bool = n >= 0");
+    const { failed, text } = await run(root);
+    assert.deepEqual(failed, ["review"], text);
+  });
+
+  test("a law over a reachable state is checked beyond the initial state", async () => {
+    const root = fixtures(["lamp"], (f) => { f["spec/lamp.md"] += `\n### No flips\n\n${F}quint\npure def lawZero(l: Lamp): bool = l.flips == 0\n${F}\n`; });
+    const { said, text } = await run(root);
+    assert.equal(said("always", /^the law .* is false/)?.ok, false, text);
+    assert.ok(!text.includes("the simulator could not run"), text);
   });
 
   test("a quint block indented inside a list is still part of the model", async () => {
@@ -406,28 +573,34 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.ok(failed.includes("review"), failed.join());
   });
 
-  test("init adds what a project lacks and replaces nothing", () => {
+  test("init preserves local instructions and refreshes its marked procedure", () => {
     const root = scratch({ "AGENTS.md": "mine\n", "package.json": `{"scripts":{"check":"mine"}}` });
     const added = init(root);
-    assert.equal(fs.readFileSync(path.join(root, "AGENTS.md"), "utf8"), "mine\n");
+    const agents = path.join(root, "AGENTS.md");
+    const expected = `mine\n\n<!-- vibespec:start -->\n${read("AGENTS.md").trim()}\n<!-- vibespec:end -->\n`;
+    assert.equal(fs.readFileSync(agents, "utf8"), expected);
     assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).scripts.check, "mine");
     assert.ok(["sync", "design"].every((s) => fs.existsSync(path.join(root, `.claude/skills/${s}/SKILL.md`))) && added.includes("tsconfig.json"), added.join());
-    for (const name of ["sync", "design"]) {
-      const source = path.join(root, ".claude/skills", name);
-      const link = path.join(root, ".agents/skills", name);
-      assert.ok(fs.lstatSync(link).isSymbolicLink());
-      assert.equal(fs.realpathSync(link), fs.realpathSync(source));
-      fs.appendFileSync(path.join(source, "SKILL.md"), "\nShared edit\n");
-      assert.equal(fs.readFileSync(path.join(link, "SKILL.md"), "utf8"), fs.readFileSync(path.join(source, "SKILL.md"), "utf8"));
-    }
+    assert.match(fs.readFileSync(path.join(root, "CLAUDE.md"), "utf8"), /^@AGENTS\.md$/m);
     assert.deepEqual(init(root), []);
-    const existing = scratch({ ".claude/skills/sync/SKILL.md": "my sync\n", ".agents/skills/sync/SKILL.md": "my Codex sync\n" });
-    const broken = path.join(existing, ".agents/skills/design");
-    fs.symlinkSync("missing-design", broken, "dir");
-    init(existing);
-    assert.deepEqual([".claude/skills/sync/SKILL.md", ".agents/skills/sync/SKILL.md"].map((file) => fs.readFileSync(path.join(existing, file), "utf8")), ["my sync\n", "my Codex sync\n"]);
-    assert.equal(fs.readlinkSync(broken), "missing-design");
-    assert.deepEqual(init(existing), []);
+    fs.writeFileSync(path.join(root, "CLAUDE.md"), "My existing instructions.\n");
+    init(root);
+    assert.equal(fs.readFileSync(path.join(root, "CLAUDE.md"), "utf8"), "My existing instructions.\n\n@AGENTS.md\n");
+    assert.equal(fs.readFileSync(agents, "utf8"), expected);
+    assert.deepEqual(init(root), []);
+    fs.writeFileSync(agents, "before\r\n<!-- onespec:start -->\r\nold instructions\r\n<!-- onespec:end -->\r\nafter\r\n");
+    init(root);
+    assert.equal(fs.readFileSync(agents, "utf8"), `before\r\n<!-- vibespec:start -->\r\n${read("AGENTS.md").trim().replace(/\r?\n/g, "\r\n")}\r\n<!-- vibespec:end -->\r\nafter\r\n`);
+    assert.deepEqual(init(root), []);
+    for (const invalid of [
+      "<!-- vibespec:start -->\nincomplete\n",
+      "<!-- vibespec:start -->\n<!-- onespec:end -->\n",
+      "<!-- vibespec:start -->\n<!-- vibespec:end -->\n<!-- vibespec:start -->\n<!-- vibespec:end -->\n",
+    ]) {
+      fs.writeFileSync(agents, invalid);
+      assert.throws(() => init(root), /repair.*markers/);
+      assert.equal(fs.readFileSync(agents, "utf8"), invalid);
+    }
   });
 
   test("the package's own test script is what runs, never the check itself, and a test citing a heading the spec does not have is caught", async () => {
@@ -446,12 +619,151 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.ok(said("tests", /^pass\n$/), text);
   });
 
+  test("the application is checked against its spec through a driver: a shell that skips a guard or loses an event is caught and shrunk, and a driver that uses the spec's code is refused", async () => {
+    const skipsGuard = await run(copyOfProject("src/app.ts", (s) => s.replace(/ {4}if \(!enabled\(order, event\)\) throw new Rejected\([^\n]*\n/, "")));
+    assert.deepEqual(skipsGuard.failed, ["tests"], skipsGuard.text);
+    assert.ok(skipsGuard.said("tests", /conformance to spec\/order\.md[\s\S]*the spec refuses it, the application accepted it/), skipsGuard.text);
+    const dedupes = await run(copyOfProject("src/app.ts", (s) => s.replace("[...(this.logs.get(id) ?? []), event]", "[...new Map([...(this.logs.get(id) ?? []), event].map((e) => [JSON.stringify(e), e])).values()]")));
+    assert.ok(dedupes.said("tests", /conformance to spec\/order\.md[\s\S]*shrunk to 2 events/), dedupes.text);
+    const peeks = await run(copyOfProject("test/app.test.ts", (s) => s.replace('from "../src/app.ts";', 'from "../src/app.ts";\nimport { enabled } from "../gen/order.ts";')));
+    assert.ok(peeks.said("tests", /^1 conformance tests import the spec's code[\s\S]*import \{ enabled \} from "\.\.\/gen\/order\.ts"/), peeks.text);
+    assert.match(badSpecName("conformance") ?? "", /gen\/conformance\.ts/);
+  });
+
   test("nothing stale survives in gen/", async () => {
     const root = copyOfProject();
     fs.mkdirSync(path.join(root, "gen"), { recursive: true });
     fs.writeFileSync(path.join(root, "gen/renamed.ts"), "export const stale = true;\n");
     await check(root);
     assert.deepEqual(fs.readdirSync(path.join(root, "gen")).filter((f) => f.endsWith(".ts")), ["order.ts"]);
+  });
+
+  test("the studio publishes a spec with its origins, checks it, refuses remote or concurrent writes, and an agent's sync clears the manifest", async () => {
+    const root = fixtures(["door"]);
+    // A stand-in for an agent's command line, at its boundary: it keeps the prompt it was given and answers as Claude Code does.
+    const agent = `let p = ""; process.stdin.on("data", (d) => (p += d)).on("end", () => { require("fs").writeFileSync("prompt.txt", p); console.log(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "synced" }] } })); });`;
+    const studio = await startStudio({ projects: [{ id: ".", name: "Door", root }], port: 0, agents: { fake: { label: "Fake", command: () => [process.execPath, ["-e", agent]] } } });
+    const url = studio.url.replace("localhost", "127.0.0.1");
+    const post = (route: string, body: unknown, headers: Record<string, string> = {}) => fetch(`${url}/api/${route}`, {
+      method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body),
+    });
+    try {
+      for (const file of ["/", "/app.js", "/style.css"]) {
+        const asset = await fetch(url + file);
+        assert.equal(asset.status, 200, file);
+        assert.ok((await asset.arrayBuffer()).byteLength > 0, file);
+      }
+      const first = await (await fetch(`${url}/api/project`)).json();
+      assert.deepEqual(first.specs.map((spec: { file: string }) => spec.file), ["spec/door.md"]);
+      for (const route of ["spec", "accept"]) {
+        const remote = await post(route, { name: "remote" }, { origin: "https://untrusted.example" });
+        assert.equal(remote.status, 403, route);
+      }
+      const hostile = await new Promise<number>((resolve, reject) => {
+        http.get(`${url}/api/project`, { headers: { host: "untrusted.example" } }, (response) => {
+          response.resume();
+          resolve(response.statusCode!);
+        }).on("error", reject);
+      });
+      assert.equal(hostile, 403);
+      assert.equal((await post("spec", { name: "plain" }, { "content-type": "text/plain" })).status, 415);
+      const original = first.specs[0];
+      const text = original.text + "\nThe door remains available.\n";
+      const origins = nodesOf(original.file, text).map((n) => [n.id, n.id]);
+      const body = { files: [{ file: original.file, base: original.hash, text }], origins };
+      const published = await post("publish", body);
+      assert.equal(published.status, 200, await published.clone().text());
+      const manifest = (await published.json()).manifest;
+      assert.ok(manifest.changes.some((c: { kind: string; what: string[] }) => c.kind === "rule" && c.what.includes("prose")));
+      assert.equal(fs.readFileSync(path.join(root, original.file), "utf8"), text);
+      assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, ".studio/state.json"), "utf8")).ids, Object.fromEntries(origins));
+      const concurrent = await Promise.all([post("publish", body), post("spec", { name: "parallel" })]);
+      for (const response of concurrent) assert.equal(response.status, 400, await response.text());
+      assert.ok(!fs.existsSync(path.join(root, "spec/parallel.md")));
+      const settled = async (kind: string) => {
+        for (let current = await (await fetch(`${url}/api/project`)).json(); ; current = await (await fetch(`${url}/api/project`)).json()) {
+          if (current.jobs[kind]?.status !== "running") return current;
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+      };
+      const checked = await settled("check");
+      assert.equal(checked.jobs.check?.status, "failed");
+      assert.equal(checked.check?.next.includes("npm run accept"), true);
+      // The agent gets the manifest in its prompt; its success clears the manifest, and its report stays beside the check after it.
+      assert.equal((await post("agent", { agent: "fake" })).status, 200);
+      const synced = await settled("agent");
+      assert.deepEqual([synced.jobs.agent.status, synced.jobs.agent.log], ["passed", ["synced"]]);
+      assert.match(fs.readFileSync(path.join(root, "prompt.txt"), "utf8"), /~ rule spec\/door\.md: .*\(prose\)/);
+      assert.ok(!fs.existsSync(path.join(root, ".studio/manifest.json")));
+      await settled("check");
+    } finally {
+      await studio.close();
+    }
+  });
+
+  test("a truncated cache entry is recomputed and generated modules run in a CommonJS project", async () => {
+    const root = fixtures(["door"], (f) => { f["package.json"] = '{"type":"commonjs"}'; });
+    const before = await run(root);
+    assert.deepEqual(before.failed, ["review"], before.text);
+    const cache = path.join(root, ".spec-cache");
+    const entries = fs.readdirSync(cache).filter((f) => f.endsWith(".json"));
+    assert.ok(entries.length > 0);
+    for (const entry of entries) fs.writeFileSync(path.join(cache, entry), "{");
+    const after = await run(root);
+    assert.deepEqual(after.failed, ["review"], after.text);
+    for (const entry of fs.readdirSync(cache).filter((f) => f.endsWith(".json"))) assert.doesNotThrow(() => JSON.parse(fs.readFileSync(path.join(cache, entry), "utf8")));
+  });
+
+  test("changing an imported definition invalidates model and simulation results", async () => {
+    const wrap = (text: string) => `# Library\n\n## Values\n\n### Price\n\n${F}quint\n${text}\n${F}\n`;
+    const root = scratch({
+      "spec/lib.md": wrap("pure val price = 1"),
+      "spec/use.md": wrap('import lib.* from "./lib"\npure def lawPrice(k: int): bool = price == 1'),
+    });
+    const first = await run(root);
+    assert.deepEqual(first.failed, ["review"], first.text);
+    fs.writeFileSync(path.join(root, "spec/lib.md"), wrap("pure val price = 2"));
+    const after = await run(root);
+    assert.equal(after.said("always", /the law .* is false/)?.ok, false, after.text);
+  });
+
+  test("proof caching follows library changes and compiler failure waits for proof completion", async () => {
+    const root = fixtures(["highest"], (f) => {
+      f["package.json"] = '{"type":"module"}';
+      f["spec/highest.proof.dfy"] = "lemma lawTheHighestIsAtLeastTheStart_ensures(xs: seq<int>, start: int)\n  ensures (lawTheHighestIsAtLeastTheStart(xs, start) == true)\n{\n  ProofLib.FoldLeftMax((top: int, x: int) => (if (x > top) then x else top), start, xs);\n}\n";
+    });
+    fs.cpSync(path.join(project, "vibespec"), path.join(root, "vibespec"), { recursive: true });
+    const modules = path.join(root, "node_modules");
+    fs.mkdirSync(path.join(modules, ".bin"), { recursive: true });
+    for (const entry of fs.readdirSync(nodeModules).filter((f) => f !== ".bin"))
+      fs.symlinkSync(path.join(nodeModules, entry), path.join(modules, entry), fs.statSync(path.join(nodeModules, entry)).isDirectory() ? "dir" : "file");
+    for (const tool of ["quint", "lsc"]) {
+      const executable = process.platform === "win32" ? `${tool}.cmd` : tool;
+      fs.symlinkSync(path.join(nodeModules, ".bin", executable), path.join(modules, ".bin", executable), "file");
+    }
+    const script = path.join(root, "vibespec/spec.ts");
+    const first = await runCli(script, root, "check", "--json");
+    const checked = JSON.parse(first.stdout);
+    assert.ok(checked.results.some((r: Result) => r.stage === "proof" && r.ok), first.stdout + first.stderr);
+    const marker = "// A distinct proof-library version for this scratch project.";
+    fs.appendFileSync(path.join(root, "vibespec/proof/lib.dfy"), `\n${marker}\n`);
+    const second = await runCli(script, root, "check", "--json");
+    const again = JSON.parse(second.stdout);
+    assert.ok(again.results.some((r: Result) => r.stage === "proof" && r.ok), second.stdout + second.stderr);
+    assert.ok(fs.readFileSync(path.join(root, "gen/proof/highest/highest.dfy"), "utf8").includes(marker));
+    fs.writeFileSync(path.join(root, "tsconfig.json"), '{"compilerOptions":{"noEmit":true},"include":["gen/*.ts"]}');
+    if (process.platform !== "win32") {
+      const compiler = path.join(modules, ".bin/tsc");
+      fs.writeFileSync(compiler, "#!/bin/sh\nexit 1\n");
+      fs.chmodSync(compiler, 0o644);
+    }
+    fs.appendFileSync(path.join(root, "spec/highest.proof.dfy"), "// Recheck the proof beside the failed compiler.\n");
+    const failed = await runCli(script, root, "check", "--json");
+    const result = JSON.parse(failed.stdout);
+    assert.equal(failed.status, 1, failed.stdout + failed.stderr);
+    assert.ok(result.results.some((r: Result) => r.stage === "types" && !r.ok), failed.stdout);
+    assert.ok(result.results.some((r: Result) => r.stage === "proof" && r.ok), failed.stdout);
+    assert.ok(!fs.existsSync(path.join(root, ".spec-cache/lock")));
   });
 
   test("a story's text, a definition a rule relies on, here or in an imported spec, and a src contract are each reviewed", () => {
@@ -488,6 +800,52 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.deepEqual(contract(), ["src/extra.ts: contract removed", "src/ledger.ts: contract removed"]);
   });
 
+  test("a namespaced dependency remains reviewed when a local definition has the same name", () => {
+    const wrap = (text: string) => `# Names\n\n## Rules\n\n### Identity\n\n${F}quint\n${text}\n${F}\n`;
+    const root = scratch({
+      "spec/lib.md": wrap("pure def identity(n: int): int = n"),
+      "spec/use.md": wrap('import lib as L from "./lib"\npure def identity(n: int): int = 0\npure def lawIdentity(n: int): bool = L::identity(n) == n'),
+    });
+    for (const spec of readSpecs(root)) acceptReviews(root, spec);
+    fs.writeFileSync(path.join(root, "spec/lib.md"), wrap("pure def identity(n: int): int = n + 0"));
+    assert.ok(pendingItems(root).some((item) => item.includes("model changed through") && item.includes("identity")), pendingItems(root).join("\n"));
+  });
+
+  test("a comment cannot hide an imported rule's dependency from review", () => {
+    const wrap = (text: string) => `# Names\n\n## Rules\n\n### Imported\n\n${F}quint\n${text}\n${F}\n`;
+    const lib = wrap("pure def value(n: int): int = n + 1");
+    const use = `# Use\n\n## Rules\n\n### Local\n\n${F}quint\nimport lib.* from "./lib"\n/*\npure def value(n: int): int = 0\n*/\npure def other(n: int): int = n\n${F}\n\n### Uses imported value\n\n${F}quint\npure def lawValue(n: int): bool = value(n) > n\n${F}\n`;
+    const root = scratch({ "spec/lib.md": lib, "spec/use.md": use });
+    for (const spec of readSpecs(root)) acceptReviews(root, spec);
+    fs.writeFileSync(path.join(root, "spec/lib.md"), lib.replace("n + 1", "n + 2"));
+    assert.ok(pendingItems(root).some((item) => item.startsWith("Rules / Uses imported value: model changed through") && item.includes("value")), pendingItems(root).join("\n"));
+  });
+
+  test("source edited by a test cannot be accepted with a proof of its earlier contents", async () => {
+    const source = "//@ pure\nexport function one(): number {\n  //@ ensures \\result === 1\n  return 1;\n}\n";
+    const changed = source.replace("return 1", "return 2");
+    const root = fixtures(["door"], (f) => {
+      f["src/count.ts"] = source;
+      f["test/change.test.ts"] = `import fs from "node:fs";\nimport { test } from "node:test";\ntest("an editor changes source", () => fs.writeFileSync("src/count.ts", ${JSON.stringify(changed)}));\n`;
+    });
+    for (const spec of readSpecs(root)) acceptReviews(root, spec);
+    acceptContracts(root);
+    const ledger = fs.readFileSync(path.join(root, "spec/src.lock.json"), "utf8");
+    const result = await run(root, "reviews");
+    assert.ok(result.failed.length > 0, result.text);
+    assert.match(result.text, /source.*changed|changed.*source|changed during|changed while/i);
+    assert.equal(fs.readFileSync(path.join(root, "spec/src.lock.json"), "utf8"), ledger);
+  });
+
+  test("moving an unchanged contract to another function requires review", () => {
+    const text = "//@ pure\nexport function one(): number {\n  //@ ensures \\result === 1\n  return 1;\n}\n//@ pure\nexport function two(): number {\n  return 2;\n}\n";
+    const root = scratch({ "src/count.ts": text });
+    fs.mkdirSync(path.join(root, "spec"));
+    acceptContracts(root);
+    fs.writeFileSync(path.join(root, "src/count.ts"), text.replace("  //@ ensures \\result === 1\n", "").replace("  return 2;", "  //@ ensures \\result === 1\n  return 2;"));
+    assert.deepEqual(pendingContracts(root).map((p) => p.status), ["contract changed"]);
+  });
+
   test("accept records a changed story and a changed contract, after which nothing is left to reconcile", async () => {
     const root = copyOfProject("src/ledger.ts", (s) => s.replace("  //@ ensures order.status === \"Paid\" ==> \\result === 0\n", ""));
     fs.writeFileSync(path.join(root, "spec/order.md"), read("spec/order.md").replace("> get my money back.", "> get all my money back."));
@@ -520,8 +878,7 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
   });
 
   test("the command line: spec new, the arguments it accepts, gen --if-valid and check --json", async () => {
-    const cli = (root: string, ...args: string[]) => new Promise<{ status: number; stdout: string; stderr: string }>((done) =>
-      execFile(process.execPath, [path.join(project, "vibespec/spec.ts"), ...args], { cwd: root, maxBuffer: 1 << 26 }, (e, stdout, stderr) => done({ status: e ? Number(e.code) : 0, stdout, stderr })));
+    const cli = (root: string, ...args: string[]) => runCli(path.join(project, "vibespec/spec.ts"), root, ...args);
     const root = scratch({});
     assert.equal((await cli(root, "new", "Tally")).status, 1);
     assert.equal((await cli(root, "new", "src")).status, 1);
@@ -549,59 +906,6 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.deepEqual(spec.rules.flatMap((r) => r.defs), ["a", "c"]);
     assert.match(spec.rules[0].prose, /### Not a rule[\s\S]*### Nor this/);
   });
-  test("the studio publishes edits with a manifest, refuses stale or misread ones, and an agent's sync clears the manifest", async () => {
-    const root = copyOfProject();
-    const projects = projectsOf(root);
-    const example = projects.find((p) => p.name === "dashboard")!;
-    assert.equal(example.root, path.join(project, "vibespec/examples/dashboard"));
-    // A stand-in for an agent's command line, at its boundary: it keeps the prompt it was given and answers as Claude Code does.
-    const agent = `let p = ""; process.stdin.on("data", (d) => (p += d)).on("end", () => { require("fs").writeFileSync("prompt.txt", p); console.log(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "synced" }] } })); });`;
-    const studio = await startStudio({ projects, port: 0, agents: { fake: { label: "Fake", command: () => [process.execPath, ["-e", agent]] } } });
-    try {
-      const get = async () => (await fetch(`${studio.url}/api/project?project=.`)).json();
-      const post = async (what: string, body: object) => { const r = await fetch(`${studio.url}/api/${what}?project=.`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }); return { status: r.status, body: await r.json() }; };
-      const settled = async (kind?: string) => {
-        for (let s = await get(); ; s = await get()) {
-          if (kind ? s.jobs[kind]?.status !== "running" : !Object.values(s.jobs).some((j: any) => j.status === "running")) return s;
-          await new Promise((r) => setTimeout(r, 50));
-        }
-      };
-      const exampleState = await (await fetch(`${studio.url}/api/project?project=${encodeURIComponent(example.id)}`)).json();
-      assert.equal(exampleState.project.root, example.root);
-      assert.ok(exampleState.specs.some((s: { file: string }) => s.file === "spec/tracker.md"));
-      const before = (await get()).specs.find((s: { file: string }) => s.file === "spec/order.md");
-      const id = (key: string) => `spec/order.md\0${key}`;
-      // Rename a rule, delete one, and add a story, as the page sends them: every heading with what it was on disk.
-      const text = before.text.replace("### A payment never exceeds the balance", "### A payment never goes past the balance")
-        .replace(/### An order can be cancelled\n\n```quint\n.*\n```\n\n/, "") + "\n## Story: Start again\n\n> As a shopper, I want to start again.\n";
-      const origins = nodesOf("spec/order.md", text).map((n) => [n.id, n.key.includes("goes past") ? id("Story: Check out / A payment never exceeds the balance") : n.key.includes("Start again") ? null : n.id]);
-      const files = [{ file: "spec/order.md", base: before.hash, text }];
-      assert.equal((await post("publish", { files: [{ ...files[0], base: "stale" }], origins })).status, 409);
-      const misread = await post("publish", { files: [{ ...files[0], text: text + "\n## Not meant as a heading\n" }], origins });
-      assert.match(misread.body.error, /"Not meant as a heading" would be a heading/);
-      assert.equal((await post("publish", { files, origins })).status, 200);
-      assert.equal(fs.readFileSync(path.join(root, "spec/order.md"), "utf8"), text);
-      const { changes } = JSON.parse(fs.readFileSync(path.join(root, ".studio/manifest.json"), "utf8"));
-      assert.deepEqual(changes.map((c: { action: string; key: string; what: string[] }) => [c.action, c.key, c.what]), [
-        ["changed", "Story: Check out / A payment never goes past the balance", ['renamed from "A payment never exceeds the balance"']],
-        ["added", "## Story: Start again", []],
-        ["deleted", "Story: Cancel / An order can be cancelled", []],
-      ]);
-      // Publishing starts a check; the agent waits for it, gets the manifest in its prompt, and its success clears the manifest.
-      const checked = await settled();
-      assert.ok(checked.jobs.check, "publishing starts a check");
-      assert.ok(checked.specs[0].review["## Story: Start again"]?.startsWith("story has no rules"), JSON.stringify(checked.specs[0].review));
-      assert.equal((await post("agent", { agent: "fake" })).status, 200);
-      const synced = await settled("agent");
-      assert.deepEqual([synced.jobs.agent.status, synced.jobs.agent.log], ["passed", ["synced"]]);
-      assert.match(fs.readFileSync(path.join(root, "prompt.txt"), "utf8"), /\+ story spec\/order\.md: ## Story: Start again/);
-      assert.ok(!fs.existsSync(path.join(root, ".studio/manifest.json")));
-      await settled();
-    } finally {
-      await studio.close();
-    }
-  });
-
   // Each of these is a way a false obligation could be reported as proved.
   const bumpHeader = "lemma bump_ensures(c: C, k: int)\n  ensures (inv(c) ==> canBump(c, k) ==> alwaysNonNegative(bump(c, k)))\n  ensures (inv(c) ==> canBump(c, k) ==> alwaysBumpsNonNegative(bump(c, k)))\n{\n";
   const magic = (proof?: string) => fixtures(["magic"], (f) => { if (proof !== undefined) f["spec/magic.proof.dfy"] = proof; });
@@ -613,7 +917,7 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     const spliced = (body: string) => splice(gen, { proof: { file: "p.dfy", text: `${header}${body}\n}\n` }, axioms: [], lib }).dfy;
     // Std.Ordinal.TimesIncreasingOnLeft is a false {:axiom}; dafny audit reports it only against the library's own file.
     assert.throws(() => spliced("  Std.Ordinal.TimesIncreasingOnLeft(0, 0, 0);"), /p\.dfy:4: `Std\.Ordinal\.TimesIncreasingOnLeft` is not allowed[^\n]*\(Std\.Collections\.Seq\.All\)/);
-    assert.throws(() => spliced("  ProofLib.Seq.LemmaFlattenConcat<int>([], []);"), /`ProofLib\.Seq\.LemmaFlattenConcat` is not a lemma or function of vibespec\/proof\/lib\.dfy/);
+    assert.throws(() => spliced("  ProofLib.Seq.LemmaFlattenConcat<int>([], []);"), /`ProofLib\.Seq\.LemmaFlattenConcat` is not a lemma or function of tools\/proof\/lib\.dfy/);
     assert.throws(() => spliced("  assert (xs).Std.Ordinal == 0;"), /`Std` may only begin a name/);
     assert.ok(spliced("  assert Std.Collections.Seq.All(xs, (x: int) => x > 0) == f(xs);\n  ProofLib.FilterNil((x: int) => true, []);").includes("ProofLib.FilterNil"));
   });
@@ -721,6 +1025,8 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
       ["an annotation in a string", 'export const note = "//@ ensures false";', /`\/\/@` here is not in a `\/\/` comment/],
       ["an annotation in a template", "export const note = `${1} //@ ensures false`;", /`\/\/@` here is not in a `\/\/` comment/],
       ["a NUL character", "export const x = 1; // \0", /NUL characters are not allowed/],
+      ["a carriage return in a comment", "export const x = 1; // \r hidden", /line break/],
+      ["a Unicode line break in a comment", "export const x = 1; // \u2028 hidden", /line break/],
     ];
     for (const [what, code, message] of refused) assert.throws(() => checkVerifiedSource("src/x.ts", `//@ backend dafny\n${code}\n`), message, what);
     checkVerifiedSource("src/ledger.ts", read("src/ledger.ts"));

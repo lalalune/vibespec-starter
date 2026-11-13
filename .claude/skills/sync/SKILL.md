@@ -13,7 +13,7 @@ Read AGENTS.md and README.md in full first, once per session.
    studio (README, "The studio"): read it. Each change says what it asks of
    you; work through all of them in the loop below. Do not edit `.studio/`.
 1. Run `npm run check`. Each `✗` line is something to resolve; `-` lines are
-   stages skipped because of a `✗` above, or `types` with no tsconfig.json.
+   stages skipped because of a `✗` above, or `types` in a spec-only package with no tsconfig.json.
    Under `review` it prints a changed rule's prose and Quint, a story's text
    and rules, and a contract's `//@` lines; for a **new** rule, read it in the
    spec. The last line, `next:`, names what to do first.
@@ -48,11 +48,11 @@ Give up and report after five rounds on the same failure.
 | `always` … "the law … is false for" | The law or the function is wrong for those arguments. Fix whichever does not say what the prose says. |
 | `always` … "the simulator could not run" | A definition failed while being evaluated: usually a list index out of range, a missing map key or a division by zero. Guard it in the definition that uses it. |
 | `sometimes` not reached | A guard is too strict, a transition is missing, or the goal needs values the simulator does not try (define `<param>Values`). |
-| `sometimes` … **never happened** | The guard refused its event in every state reached, so every rule holds of it trivially and the story behind it may be impossible. Find which clause never holds: loosen the guard, add the transition that leads to the states it needs, or define `<param>Values` that it allows. If the event can only happen after more than 20 events, say so in your report; do not remove the event or weaken the guard to make the check pass. |
+| `sometimes` … **never happened** | The guard refused its event in every state reached, so every rule holds of it trivially and the story behind it may be impossible. Find which clause never holds: loosen the guard, add the transition that leads to the states it needs, or define `<param>Values` that it allows. If the event can only happen after more than 100 events, say so in your report; do not remove the event or weaken the guard to make the check pass. |
 | `sometimes` ✓ … **never seen to refuse** | Not a failure. For each guard listed, check that it refuses what its rule says. If it only restates an `always` rule, keep it when it protects `enabled` from outside input; if it was meant to refuse something, write what, or define `<param>Values` that it refuses. List these guards in your report. |
 | `replay` | Generated TypeScript and Quint disagree. That is a bug in the tools, not in the spec. Stop and report it. |
 | `types` | Update `src/` and the tests to the new generated contract. |
-| `- skipped types: no tsconfig.json` | Not a failure: the package has no TypeScript to check against `gen/`. |
+| `- skipped types: no tsconfig.json` | Not a failure only for a spec-only package without `src/` or `test/`; otherwise add a tsconfig.json with `spec init`. |
 | `proof` … "not proved" | It holds in simulation; it is yours to prove. First decide whether it is true for every state that satisfies all the rules. If it is not (you can name such a state), no proof can help: the missing fact about reachable states becomes a new `always` rule, a discovered rule. If it is, prove it in the unit's proof file, `spec/<name>.proof.dfy` or `src/<path>.proof.dfy`: copy the obligation's `lemma …_ensures` header from `gen/proof/<unit>/<unit>.dfy` and write its body, calling `ProofLib` lemmas and your own helper lemmas (AGENTS.md, "Proof files"). Only what you cannot prove goes in your report, with what you tried; recording it as simulated only is the user's last resort, not yours. |
 | `proof` … "Dafny could not check it" | The generated or hand-written code is not something Dafny accepts (an unguarded lookup, index or division, or a wrong annotation), or the proof file is refused or does not verify: a stale header, a forbidden construct, a helper lemma that fails. The lines under it say which, with the file and line. |
 | `proof` … "belongs to no proof unit" | A stray proof file. Rename it to `spec/<name>.proof.dfy` for `spec/<name>.md`, or `src/<path>.proof.dfy` for a `src/<path>.ts` that contains `//@`; or delete it. |
@@ -60,6 +60,9 @@ Give up and report after five rounds on the same failure.
 | `proof`, a `src-…` unit | Fix the hand-written code, its `//@` annotation, or its proof file. The full output is in `gen/proof/<unit>.log`. |
 | `tests` … citations name no story or rule | Cite the story or rule by its heading as the spec now has it. If it was removed, the test that cites it is yours to review: does any rule still ask for what it checks? |
 | `tests` … fail | Fix the application in `src/`. Change an assertion only where the spec now asks for something else, and name the assertion and its rule in your report. A test that only restates what the spec proves, or breaks AGENTS.md "Tests", you propose for deletion in your report; never delete one to make it pass. |
+| `tests` … conformance to spec/… | The application did something the spec does not allow, shown in the fewest events. Fix the application in `src/`; the driver only if it does not reach the application as AGENTS.md "Conformance" says. Never weaken the spec or narrow the walks to pass. |
+| `tests` … import the spec's code | A conformance driver imports a value from `gen/<name>.ts`. Reach the application instead; import types only. |
+| `tests` … note: no test checks the application against | Write the driver for that spec in the package's test file, as AGENTS.md "Conformance" shows, when the spec has a shell; otherwise say so in your report. |
 | "another check or accept is running" | Wait for that process and run again. If it no longer exists, delete the lock file the message names. |
 
 ## Rules for what you write

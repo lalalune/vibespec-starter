@@ -104,6 +104,7 @@ function merge(snap, mine) {
   }
   for (const f of fresh) if (!out.some((o) => o.file === f.file)) out.push(f);
   out.sort((a, b) => a.file.localeCompare(b.file));
+  for (const s of out) for (const sec of s.doc.sections) { sec.uid ??= uid(); for (const r of sec.rules) r.uid ??= uid(); }
   uidCount = Math.max(uidCount, ...out.flatMap((s) => s.doc.sections.flatMap((x) => [x.uid, ...x.rules.map((r) => r.uid)])).map((u) => Number(u.slice(1)) || 0));
   return out;
 }
@@ -117,19 +118,20 @@ async function api(path, body) {
   return json;
 }
 
-async function refresh() {
+async function refresh(force = false) {
   if (S.publishing) return; // publishing refreshes once it is done
   const snap = await api("project");
   if (S.publishing) return;
+  // Keep the working objects that the active editor's handlers close over until typing stops.
+  const typing = document.getElementById("doc").contains(document.activeElement) && /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName);
   const first = !S.snap;
   S.snap = snap;
+  if (typing && !force && !first) { renderRail(); renderBuild(); return; }
   const draft = first ? loadDraft() : null;
   S.specs = merge(snap, first ? draft?.specs ?? [] : S.specs);
   if (first && draft?.specs?.some(isDirty)) toast("Unpublished changes restored");
   if (!S.specs.some((s) => s.file === S.sel)) S.sel = draft?.sel && S.specs.some((s) => s.file === draft.sel) ? draft.sel : S.specs[0]?.file ?? null;
-  // Never redraw the document under someone typing in it; its marks catch up on the next redraw.
-  const typing = document.getElementById("doc").contains(document.activeElement) && /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName);
-  if (typing) { renderRail(); renderBuild(); } else render();
+  render();
 }
 
 // --- small helpers -----------------------------------------------------------------------------------
@@ -159,7 +161,9 @@ const ICONS = {
   stop: "M4.5 4.5h7v7h-7z",
   open: "M9 3h4v4M13 3L7.5 8.5M11 9.5V13H3V5h3.5",
   copy: "M5.5 5.5h7v7h-7zM3.5 10.5v-7h7",
+  move: "M8 2.5v11M5 5.5l3-3 3 3M5 10.5l3 3 3-3",
   up: "M8 12.5v-9M4.5 7L8 3.5 11.5 7",
+  down: "M8 3.5v9M4.5 9L8 12.5 11.5 9",
   undo: "M5.5 4L3 6.5 5.5 9M3 6.5h6.5a3 3 0 010 6H7",
 };
 const icon = (name) => {
@@ -200,14 +204,18 @@ function markdown(text) {
 const KEYWORDS = /^(pure|def|val|type|import|from|if|else|match|and|or|not|implies|iff|all|any|Set|List|Map|int|bool|str|true|false|module|as)$/;
 /** Quint, coloured: keywords, the names a block defines, strings, numbers and comments. */
 function highlight(code) {
-  return code.replace(/(\/\/.*)|("(?:[^"\\\n]|\\.)*")|\b(\d+)\b|\b([A-Za-z_]\w*)\b/g, (m, com, str, num, word, at, all) => {
-    if (com) return `<span class="com">${esc(com)}</span>`;
-    if (str) return `<span class="str">${esc(str)}</span>`;
-    if (num) return `<span class="num">${num}</span>`;
-    if (KEYWORDS.test(word)) return `<span class="kw">${word}</span>`;
-    if (/\b(def|val|type)\s+$/.test(all.slice(Math.max(0, at - 6), at))) return `<span class="def">${word}</span>`;
-    return esc(word);
-  }).replace(/&(?![a-z]+;)/g, "&amp;");
+  const tokens = /(\/\/.*)|("(?:[^"\\\n]|\\.)*")|\b(\d+)\b|\b([A-Za-z_]\w*)\b/g;
+  const out = [];
+  let end = 0;
+  for (const match of code.matchAll(tokens)) {
+    const [text, com, str, num, word] = match;
+    out.push(esc(code.slice(end, match.index)));
+    const kind = com ? "com" : str ? "str" : num ? "num" : KEYWORDS.test(word) ? "kw"
+      : /\b(def|val|type)\s+$/.test(code.slice(Math.max(0, match.index - 6), match.index)) ? "def" : null;
+    out.push(kind ? `<span class="${kind}">${esc(text)}</span>` : esc(text));
+    end = match.index + text.length;
+  }
+  return out.join("") + esc(code.slice(end));
 }
 
 /** What a rule's Quint defines, read off the names (AGENTS.md, "What goes in the Quint blocks"). */
@@ -288,9 +296,9 @@ function edited() {
   });
 }
 
-function addStory(spec) {
+function addStory(spec, at = spec.doc.sections.length) {
   const s = { uid: uid(), origin: null, title: "Story: ", body: "\n", rules: [] };
-  change(() => { spec.doc.sections.push(s); S.open.add(s.uid); S.editing.add(s.uid); });
+  change(() => { spec.doc.sections.splice(at, 0, s); S.open.add(s.uid); S.editing.add(s.uid); });
   focusLater(`[data-uid="${s.uid}"] input.heading`);
 }
 function addRule(section) {
@@ -355,6 +363,7 @@ function renderRail() {
   const create = async () => {
     const name = newName.value.trim();
     if (!name) return newName.focus();
+    if (dirtySpecs().length) return toast("Publish or discard your changes first");
     try { const { file } = await api("spec", { name }); S.sel = file; await refresh(); toast(`Wrote ${file}`); } catch (e) { toast(e.message); }
   };
   rail.replaceChildren(
@@ -665,7 +674,7 @@ function renderBuild() {
 
   const publishBlock = h("div", { class: "block" },
     h("div", { class: "buttons" },
-      h("button", { class: "btn primary", type: "button", disabled: !dirty.length, onclick: openPublish, title: "⌘S" }, icon("check"), dirty.length ? `Publish ${dirty.length}` : "Publish"),
+      h("button", { class: "btn primary", type: "button", disabled: running || !dirty.length, onclick: openPublish, title: "⌘S" }, icon("check"), dirty.length ? `Publish ${dirty.length}` : "Publish"),
       dirty.length ? h("button", { class: "btn", type: "button", onclick: discard }, "Discard") : ""));
 
   const sign = { added: "+", deleted: "−", changed: "~" };
@@ -783,7 +792,7 @@ function problems(spec) {
 
 function openPublish() {
   const dirty = dirtySpecs();
-  if (!dirty.length) return;
+  if (S.publishing || !dirty.length || Object.values(S.snap?.jobs ?? {}).some((j) => j.status === "running")) return;
   const bad = dirty.flatMap(problems);
   const dialog = document.getElementById("dialog");
   dialog.replaceChildren(h("form", { method: "dialog" },
@@ -799,6 +808,7 @@ function openPublish() {
 }
 
 async function publish(force = false) {
+  if (S.publishing) return;
   const dirty = dirtySpecs();
   const origins = [];
   for (const spec of dirty) if (!spec.deleted) for (const s of spec.doc.sections) {
@@ -820,8 +830,7 @@ async function publish(force = false) {
   S.history = [];
   S.publishing = false;
   try { localStorage.removeItem(draftKey()); } catch { /* nothing saved */ }
-  document.activeElement?.blur();
-  await refresh();
+  await refresh(true);
   toast("Published");
 }
 
@@ -836,6 +845,10 @@ document.addEventListener("keydown", (e) => {
     const id = document.activeElement.closest("[data-uid]")?.dataset.uid;
     if (id && S.editing.delete(id)) { renderDoc(); focusLater(`[data-uid="${id}"] > .row`); }
   }
+});
+document.addEventListener("focusout", (e) => {
+  if (document.getElementById("doc").contains(e.target) && /^(INPUT|TEXTAREA)$/.test(e.target.tagName))
+    setTimeout(() => refresh().catch((error) => toast(error.message)), 0);
 });
 window.addEventListener("beforeunload", (e) => { if (dirtySpecs().length) saveDraft(); });
 

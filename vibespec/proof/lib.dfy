@@ -252,6 +252,30 @@ module ProofLib {
 
   // --- FoldLeft -------------------------------------------------------------
 
+  /** A fold whose step never lowers the accumulator ends at or above where it started. */
+  lemma FoldLeftInflationary<T>(f: (int, T) -> int, init: int, xs: seq<T>)
+    requires forall a, x :: f(a, x) >= a
+    ensures Seq.FoldLeft(f, init, xs) >= init
+    decreases |xs|
+  {
+    if |xs| > 0 {
+      FoldLeftInflationary(f, f(init, xs[0]), xs[1..]);
+    }
+  }
+
+  /** A fold whose step never lowers the accumulator and never ends below key(x) ends at or above every key. */
+  lemma FoldLeftAboveEach<T>(f: (int, T) -> int, key: T -> int, init: int, xs: seq<T>)
+    requires forall a, x :: f(a, x) >= a && f(a, x) >= key(x)
+    ensures forall i :: 0 <= i < |xs| ==> Seq.FoldLeft(f, init, xs) >= key(xs[i])
+    decreases |xs|
+  {
+    if |xs| > 0 {
+      FoldLeftAboveEach(f, key, f(init, xs[0]), xs[1..]);
+      FoldLeftInflationary(f, f(init, xs[0]), xs[1..]);
+      assert forall i :: 1 <= i < |xs| ==> xs[i] == xs[1..][i - 1];
+    }
+  }
+
   /** A running maximum is at least its start and every element. */
   lemma FoldLeftMax(f: (int, int) -> int, init: int, xs: seq<int>)
     requires forall a, x :: f(a, x) == (if x > a then x else a)

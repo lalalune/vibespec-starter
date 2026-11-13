@@ -3,6 +3,7 @@
 
 export type Json = any;
 export const fail = (msg: string): never => { throw new Error(msg); };
+
 /** Reads the type the checker inferred for an expression, failing where it recorded none. */
 export const typeOfIn = (inferred: (id: number) => Json | undefined) => (id: number): Json => inferred(id) ?? fail(`no inferred type for expression ${id}`);
 
@@ -35,16 +36,25 @@ export function typeWalks(typedefs: Json[], module: string, prefix = "") {
     if (fields(carried).some((f) => f.fieldName === "tag")) fail(`variant ${variant.fieldName}: a field cannot be called \`tag\`, which is how the variant itself is recorded`);
     return carried;
   }
+  const carriedBy = (t: Json, tag: string) => payload(fields(t).find((f) => f.fieldName === tag)!);
   /** A sum type is a plain string union unless some variant carries data; then it is a tagged union. */
   const tagged = (t: Json) => t.kind === "sum" && fields(t).some((f) => payload(f));
-  const isScalar = (t0: Json) => {
-    const t = resolve(t0);
-    return ["int", "bool", "str"].includes(t.kind) || (t.kind === "sum" && !tagged(t));
+  const isScalar = (t: Json) => ["int", "bool", "str"].includes(resolve(t).kind) || (resolve(t).kind === "sum" && !tagged(resolve(t)));
+  /**
+   * The declared type with this structure, if there is one. TypeScript would accept either of two types with the same
+   * fields, but Dafny would not, so a structure that two distinct types share is refused rather than guessed at. The same
+   * type reached by two routes (imported directly and through another spec), or an alias of it, is not two types.
+   */
+  const named = (t: Json, kind?: string): Json | undefined => {
+    const want = shape(t);
+    const found = typedefs.filter((d) => (!kind || d.type.kind === kind) && shape(d.type) === want);
+    const real = found.filter((d) => d.type.kind !== "const");
+    const distinct = [...new Map(real.map((d) => [`${d.module}.${d.base ?? d.name}`, d])).values()];
+    if (distinct.length > 1) fail(`types ${distinct.map((d) => d.name).join(" and ")} have the same fields, so a value of either cannot be told apart from the other; give one of them a field of its own`);
+    return distinct[0] ?? found[0];
   };
-  /** The declared type with this structure, if there is one. */
-  const named = (t: Json, kind?: string): Json | undefined => typedefs.find((d) => (!kind || d.type.kind === kind) && shape(d.type) === shape(t));
-  /** The record carried by the variant of a tagged union that a value has, if that variant carries one. */
-  const carriedBy = (t: Json, tag: string) => payload(fields(t).find((f) => f.fieldName === tag)!);
+  /** A set's element type, refused unless it is a simple value: a set is an array that never holds the same value twice, which is only checkable for those. */
+  const setElem = (t: Json): Json => (isScalar(t.elem) ? t.elem : fail("sets of records or lists are not supported; use a list"));
   /** The type a variant belongs to. */
   const ownerOf = (variant: string): Json => {
     const [base, alias] = variant.split("::").reverse();
@@ -56,10 +66,11 @@ export function typeWalks(typedefs: Json[], module: string, prefix = "") {
   const tsType = (t: Json): string => {
     if (t.kind === "const") return typeName(typedef(t.name));
     if (PRIMITIVE[t.kind]) return PRIMITIVE[t.kind];
-    if (t.kind === "list" || t.kind === "set") return `${tsType(t.elem)}[]`;
+    if (t.kind === "list") return `${tsType(t.elem)}[]`;
+    if (t.kind === "set") return `${tsType(setElem(t))}[]`;
     if (t.kind === "fun") return resolve(t.arg).kind === "str" ? `Record<string, ${tsType(t.res)}>` : fail("a map's keys must be strings");
     const d = named(t);
-    return d ? typeName(d) : fail(`unsupported type ${t.kind}: name it with \`type\`, or extend tsType in vibespec/gen/types.ts`);
+    return d ? typeName(d) : fail(`a ${t.kind} type is not in the Quint a spec may use (AGENTS.md, "Supported Quint"); name it with \`type\` or use a supported one`);
   };
   /** The TypeScript declaration of one of the module's own types. */
   const declaration = (d: Json): string => {
@@ -126,25 +137,48 @@ export function typeWalks(typedefs: Json[], module: string, prefix = "") {
   /** A value from a Quint trace (ITF) as the generated TypeScript represents it. */
   const decode = (t0: Json, v: any): any => {
     const t = resolve(t0);
-    if (t.kind === "int") return Number(v["#bigint"] ?? v);
+    if (t.kind === "int") {
+      // A trace writes every integer as {"#bigint": "<digits>"}. One beyond 2^53 would be silently rounded by Number.
+      const n = typeof v?.["#bigint"] === "string" ? BigInt(v["#bigint"]) : typeof v === "number" ? v : fail(`a trace holds ${JSON.stringify(v)} where an integer belongs`);
+      return Number.isSafeInteger(Number(n)) ? Number(n)
+        : fail(`a simulated trace reached the integer ${n}, which is beyond 2^53 and so cannot be represented exactly in TypeScript; bound it with a guard`);
+    }
     if (t.kind === "list") return v.map((x: any) => decode(t.elem, x));
     if (t.kind === "set") return v["#set"].map((x: any) => decode(t.elem, x));
     if (t.kind === "rec") return Object.fromEntries(fields(t).map((f) => [f.fieldName, decode(f.fieldType, v[f.fieldName])]));
     if (t.kind === "fun") return Object.fromEntries(v["#map"].map(([k, x]: [any, any]) => ["$" + decode(t.arg, k), decode(t.res, x)]));
-    if (tagged(t)) return { tag: v.tag, ...(carriedBy(t, v.tag) ? decode(carriedBy(t, v.tag), v.value) : {}) };
+    if (tagged(t)) {
+      const carried = carriedBy(t, v.tag);
+      return { tag: v.tag, ...(carried ? decode(carried, v.value) : {}) };
+    }
     return t.kind === "sum" ? v.tag : v;
   };
   /** The same value with every set in a fixed order, so that two sets compare equal however they were built. */
   const canon = (t0: Json, v: any): any => {
     const t = resolve(t0);
+    if (t.kind === "int") return v + 0; // -0 (from 0 * -1, say) prints as 0 and is the same integer, but would compare unequal
     if (t.kind === "list") return v.map((x: any) => canon(t.elem, x));
-    if (t.kind === "set") return [...v].sort((x, y) => (JSON.stringify(x) < JSON.stringify(y) ? -1 : 1));
+    if (t.kind === "set") return v.map((x: any) => canon(t.elem, x)).sort((x: any, y: any) => (JSON.stringify(x) < JSON.stringify(y) ? -1 : 1));
     if (t.kind === "rec") return Object.fromEntries(fields(t).map((f) => [f.fieldName, canon(f.fieldType, v[f.fieldName])]));
     if (t.kind === "fun") return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, canon(t.res, x)]));
-    if (tagged(t)) return carriedBy(t, v.tag) ? { tag: v.tag, ...canon(carriedBy(t, v.tag), v) } : v;
+    if (tagged(t)) {
+      const carried = carriedBy(t, v.tag);
+      return carried ? { tag: v.tag, ...canon(carried, v) } : v;
+    }
     return v;
   };
 
-  return { fields, resolve, shape, tagged, isScalar, named, ownerOf, typeName, tsType, declaration, qType, wellFormed, copy, decode, canon };
+  /** Where a value of this type holds sets, as paths (`*`: any element or key), for comparing values outside the tools whatever the order of their sets. */
+  const sets = (t0: Json, at: string[] = []): string[][] => {
+    const t = resolve(t0);
+    if (t.kind === "set") return [at];
+    if (t.kind === "list") return sets(t.elem, [...at, "*"]);
+    if (t.kind === "fun") return sets(t.res, [...at, "*"]);
+    if (t.kind === "rec") return fields(t).flatMap((f) => sets(f.fieldType, [...at, f.fieldName]));
+    if (tagged(t)) return fields(t).flatMap((f) => (payload(f) ? sets(payload(f)!, at) : []));
+    return [];
+  };
+
+  return { fields, typedef, resolve, shape, payload, tagged, isScalar, setElem, named, ownerOf, typeName, tsType, declaration, qType, wellFormed, copy, decode, canon, sets };
 }
 export type Types = ReturnType<typeof typeWalks>;

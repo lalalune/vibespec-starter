@@ -68,7 +68,7 @@ function specTexts(root: string): Record<string, string> {
   return Object.fromEntries(files.map((f) => [`spec/${f}`, fs.readFileSync(path.join(dir, f), "utf8")]));
 }
 
-/** The repository's examples, from either the source or built command; published packages have none. */
+/** The repository's examples, from either the source or the built command; a published package has none. */
 const EXAMPLES = path.join(import.meta.dirname, "..", "..", "vibespec", "examples");
 
 /** The project at `repo`, then each example that has specs. */
@@ -131,7 +131,9 @@ function snapshot(live: Live, agents: Record<string, Agent>) {
   };
 }
 const jobsView = (live: Live) => Object.fromEntries(Object.values(live.jobs).map((j) => [j.kind, { label: j.label, status: j.status, started: j.started, finished: j.finished, log: j.log.slice(-400) }]));
-const running = (live: Live) => Object.values(live.jobs).find((j) => j.status === "running");
+const running = (live: Live) => Object.values(live.jobs).find((j) => j.child);
+/** One job at a time: every job takes the spec lock or writes specs, and so does publishing. */
+const idle = (live: Live) => { const busy = running(live); if (busy) throw new Error(`${busy.label} is still running`); };
 
 /** A line of an agent's JSON output, as a person would want to read it; undefined for bookkeeping. */
 function readable(line: string): string | undefined {
@@ -175,8 +177,7 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
 
   /** Start a program in the project as its one job; `done` hears how it ended. */
   const startJob = (live: Live, kind: Job["kind"], label: string, [program, args]: [string, string[]], input: string | undefined, read: (line: string) => string | undefined, done: (job: Job, out: string) => void) => {
-    const busy = running(live);
-    if (busy) throw new Error(`${busy.label} is still running`);
+    idle(live);
     const job: Job = { kind, label, status: "running", started: Date.now(), log: [] };
     live.jobs[kind] = job;
     let out = "";
@@ -226,7 +227,9 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
     fs.rmSync(manifestFile(root), { force: true });
   };
 
+
   const publish = (live: Live, body: { files: { file: string; base: string | null; text: string | null }[]; origins: [string, string | null][]; force?: boolean }) => {
+    idle(live);
     const { root } = live.project;
     const disk = specTexts(root);
     const conflicts = body.force ? [] : body.files.filter((f) => (f.file in disk ? hash(disk[f.file]) : null) !== f.base).map((f) => f.file);
@@ -267,7 +270,8 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
       writeJson(stateFile(root), { baseline: state.baseline, ids });
       writeJson(manifestFile(root), manifest);
     }
-    if (!running(live)) runCheck(live);
+    live.check = undefined;
+    runCheck(live);
     return { status: 200, body: { manifest: manifest.changes.length ? manifest : undefined } };
   };
 
@@ -278,11 +282,17 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
   const TYPES: Record<string, string> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml" };
 
   const server = http.createServer(async (req, res) => {
-    const url = new URL(req.url ?? "/", "http://localhost");
-    // Only this machine's pages: another site cannot reach it by a rebound name, nor post to it without a preflight it would fail.
-    if (!/^(localhost|127\.0\.0\.1)(:\d+)?$/.test(req.headers.host ?? "")) return send(res, 403, { error: "forbidden" });
-    if (req.method === "POST" && !req.headers["content-type"]?.startsWith("application/json")) return send(res, 415, { error: "send JSON" });
+    res.setHeader("content-security-policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; object-src 'none'; frame-ancestors 'none'");
+    res.setHeader("x-content-type-options", "nosniff");
     try {
+      const port = (server.address() as { port: number }).port;
+      const hosts = [`localhost:${port}`, `127.0.0.1:${port}`];
+      const host = req.headers.host?.toLowerCase();
+      if (!host || !hosts.includes(host)) return send(res, 403, { error: "use the local studio address" });
+      const origin = req.headers.origin;
+      if (origin !== undefined && origin !== `http://${host}`) return send(res, 403, { error: "cross-origin requests are not allowed" });
+      if (req.headers["sec-fetch-site"] === "cross-site") return send(res, 403, { error: "cross-site requests are not allowed" });
+      const url = new URL(req.url ?? "/", `http://${host}`);
       if (req.method === "GET" && !url.pathname.startsWith("/api/")) {
         const file = path.join(PUBLIC, url.pathname === "/" ? "index.html" : path.normalize(url.pathname).replace(/^([/\\])+/, ""));
         if (!file.startsWith(PUBLIC) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) return send(res, 404, { error: "not found" });
@@ -303,6 +313,7 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
       }
       if (req.method === "GET" && url.pathname === "/api/project") return send(res, 200, snapshot(live, agents));
       if (req.method !== "POST") return send(res, 405, { error: "method not allowed" });
+      if (req.headers["content-type"]?.split(";")[0].trim().toLowerCase() !== "application/json") return send(res, 415, { error: "send application/json" });
       let raw = "";
       for await (const chunk of req) raw += chunk;
       const body = raw ? JSON.parse(raw) : {};
@@ -311,8 +322,13 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
           const r = publish(live, body);
           return send(res, r.status, r.body);
         }
-        case "/api/spec":
-          return send(res, 200, { file: newSpec(root, String(body.name ?? "")) });
+        case "/api/spec": {
+          idle(live);
+          const file = newSpec(root, String(body.name ?? ""));
+          live.check = undefined;
+          broadcast(live, "files", {});
+          return send(res, 200, { file });
+        }
         case "/api/check":
           runCheck(live);
           return send(res, 200, {});
@@ -333,7 +349,7 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
           return send(res, 200, {});
         case "/api/stop":
           const job = running(live);
-          if (job?.child) { job.status = "stopped"; job.child.kill("SIGTERM"); }
+          if (job) { job.status = "stopped"; job.child!.kill("SIGTERM"); }
           return send(res, 200, {});
         case "/api/synced":
           markSynced(root);
@@ -359,6 +375,7 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
     close: () => new Promise<void>((resolve) => {
       for (const live of lives.values()) {
         live.watcher?.close();
+        clearTimeout(live.jobTimer);
         for (const job of Object.values(live.jobs)) job.child?.kill("SIGTERM");
         for (const c of live.clients) c.end();
       }

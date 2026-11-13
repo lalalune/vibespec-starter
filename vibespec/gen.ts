@@ -9,23 +9,25 @@
 // name is spelled. The rest is in gen/: types.ts (everything decided by a type),
 // print.ts (expressions), classify.ts (which definition is a transition, a guard
 // or a rule), typescript.ts and harness.ts (the two outputs).
-import { classify, type Law, type Param, type Transition } from "./gen/classify.ts";
+import { classify, type Law, type Param, type StepRule, type Transition } from "./gen/classify.ts";
 import { harness, type Eval } from "./gen/harness.ts";
 import { printer } from "./gen/print.ts";
 import { typescript } from "./gen/typescript.ts";
-import { fail, typeWalks, type Json } from "./gen/types.ts";
+import { fail, typeOfIn, typeWalks, type Json } from "./gen/types.ts";
 
 export interface Model {
   name: string;
   imports: string[]; // other specs this one imports, in order
-  /** The TypeScript with every top-level name prefixed, for placing beside another module in one proof. */
-  render: (prefix: string) => string;
+  /** The module under a prefix for proof bundles; `docs = false` omits spec comments for cache keys. */
+  render: (prefix: string, docs?: boolean) => string;
   stateType: Json | undefined; // undefined for a library: definitions and laws, no state machine
   transitions: Transition[];
   always: string[];
   sometimes: string[];
-  steps: string[];
+  steps: StepRule[];
   laws: Law[];
+  /** The type of who sends events (the transitions' `by`), if they say. */
+  sender: Json | undefined;
   evals: Eval[];
   /** Definitions the simulator cannot evaluate on their own, because it has no values for a parameter. */
   uncompared: string[];
@@ -33,8 +35,10 @@ export interface Model {
   decode: (type: Json, itf: any) => any;
   /** The same value with every set in a fixed order, so that two sets compare equal however they were built. */
   canon: (type: Json, value: any) => any;
-  /** What importers may refer to. */
-  exports: { types: string[]; values: string[]; variants: string[]; typedefs: Json[] };
+  /** Where the state holds sets (types.ts, `sets`); empty for a library. */
+  sets: string[][];
+  /** What importers may refer to: `typedefs` are owned here; `visible` includes imported types. */
+  exports: { types: string[]; values: string[]; variants: string[]; typedefs: Json[]; visible: Json[] };
   ts: string;
   harness: string;
 }
@@ -59,12 +63,12 @@ export const LIST_HELPERS: Record<string, { init: string; step: (acc: string, bo
 
 /** Names a spec may not bind: the generated code, the harness or the proof library (ProofLib) use them, or TypeScript reserves them. */
 const TAKEN = new Set(`
-  init step probe inv enabled parseEvent parseState initialHolds Event current event raw state prev moved out lawsHold Out Nothing ProofLib
+  init step probe inv enabled parseEvent parseState initialHolds Event current event raw state prev moved last out lawsHold Out Nothing ProofLib
   Number Math Object Array JSON Record Set Map String Boolean Symbol Error undefined NaN Infinity globalThis
   break case catch class const continue debugger default delete do else enum export extends false finally for function
   if import in instanceof new null return super switch this throw true try typeof var void while with yield let static await
 `.split(/\s+/).filter(Boolean));
-const GENERATED = /^(eval|quotient|remainder|lookup\d+|std|set|Out)_|^x\d+$/;
+const GENERATED = /^(eval|quotient|remainder|lookup\d+|std|set|Out)_|^x\d+$|__\d+$/;
 
 export function generate(ir: Json, name: string, source: string, origin: (def: string) => Origin | undefined, deps: Map<string, Model>): Model {
   const decls: Json[] = (ir.modules.find((m: Json) => m.name === name) ?? fail(`module ${name} not found`)).declarations;
@@ -96,10 +100,12 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
   for (const d of [...decls.filter((d) => !["def", "typedef", "import"].includes(d.kind)), ...defs.filter((d) => d.qualifier !== "puredef" && d.qualifier !== "pureval")])
     fail(`${d.name ?? d.kind}: only types, imports, \`pure val\` and \`pure def\` belong in a spec (state and actions are generated)`);
   const inferred = (id: number): Json | undefined => ir.types[id]?.type;
-  const typeOf = (id: number): Json => inferred(id) ?? fail(`no inferred type for expression ${id}`);
+  const typeOf = typeOfIn(inferred);
   // A set named `<param>Values` tells the simulator what to try for a parameter. It never reaches TypeScript, so any Quint is allowed in it.
   const isSampleSet = (d: Json) => d.qualifier === "pureval" && d.name.endsWith("Values") && inferred(d.id)?.kind === "set";
   const sampleSets = new Set(defs.filter(isSampleSet).map((d) => d.name as string));
+  /** What each sample set holds, and where the spec defines it, so that the harness can hold it to the parameter it is for. */
+  const samples = new Map(defs.filter(isSampleSet).map((d) => [d.name as string, { elem: inferred(d.id)!.elem as Json, line: origin(d.name)?.line }]));
   const code = defs.filter((d) => !isSampleSet(d));
   const localNames = new Set(code.map((d) => d.name as string));
   /** A name the spec binds (a type, definition, parameter or local `val`) must survive translation unchanged. */
@@ -119,10 +125,15 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
     : Array.isArray(t) ? t.map((x) => requalify(x, alias))
     : t.kind === "const" ? { ...t, name: qualify(alias, t.name) }
     : Object.fromEntries(Object.entries(t).map(([k, v]) => [k, requalify(v, alias)]));
+  // Every type a module can name comes along with it, including what it imported itself: a machine whose state holds a
+  // library's type is imported under a name together with that type (as M::T), however deep the import.
+  const seen = new Set<string>();
   const typedefs = [
-    ...links.flatMap((l) => l.exports.typedefs.map((d) => ({ ...d, type: requalify(d.type, l.alias), name: qualify(l.alias, d.name), alias: l.alias, base: d.name }))),
+    ...links.flatMap((l) => l.exports.visible.map((d) => ({ ...d, type: requalify(d.type, l.alias), name: qualify(l.alias, d.name), alias: l.alias ?? d.alias, base: d.base ?? d.name }))),
     ...localTypedefs,
-  ];
+  ].filter((d) => !seen.has(d.name) && !!seen.add(d.name));
+  /** Modules whose types this one names without importing them itself; the harness and the TypeScript import them too. */
+  const typeOnly = [...new Set(typedefs.map((d) => d.module as string))].filter((m) => m !== name && !imports.includes(m)).sort();
   const types = typeWalks(typedefs, name);
 
   // --- definitions, by the naming convention ----------------------------------------
@@ -134,6 +145,9 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
   const bySpecOrder = (x: Json, y: Json) => (origin(x.name)?.line ?? 0) - (origin(y.name)?.line ?? 0);
   const vals = code.filter((d) => d.qualifier === "pureval");
   const funs = code.filter((d) => d.qualifier === "puredef").sort(bySpecOrder);
+  for (const d of funs) if (d.expr.kind !== "lambda") fail(`${d.name}: a \`pure def\` takes parameters; for a constant write \`pure val ${d.name} = …\``);
+  // A rule must be a definition: as a `pure val` it would be generated as a constant and never checked.
+  for (const v of vals) if (/^(always|sometimes|step|law|can)[A-Z]/.test(v.name) && typeOf(v.id).kind === "bool") fail(`${v.name}: a rule or guard is a \`pure def\` with parameters (AGENTS.md, "What goes in the Quint blocks"), not a \`pure val\`; if it is a constant, name it otherwise`);
   const initial = vals.find((d) => d.name === "initial");
   const roles = classify(funs, initial && typeOf(initial.id), sig, types);
 
@@ -148,24 +162,25 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
     `// GENERATED from ${source} by vibespec/spec.ts. Do not edit: change the spec and run \`npm run gen\`.`,
     `//@ backend dafny`,
     ...links.map(importLine),
+    ...typeOnly.map((m) => `import { ${[...new Set(typedefs.filter((d) => d.module === m).map((d) => d.base as string))].map((b) => `type ${b} as ${m}_${b}`).join(", ")} } from "./${m}.ts";`),
   ];
   /** The module's TypeScript with its own top-level names under a prefix, and the helper functions it turned out to need. */
-  const render = (prefix: string): { text: string; helpers: string[] } => {
+  const render = (prefix: string, docs = true): { text: string; helpers: string[] } => {
     const local = (n: string) => prefix + n;
     const helper = (which: string) => local(`${which}_${name}`);
     // A definition from another module is spelled <module>_<name>, however it was imported.
     const ref = (n: string) => (localNames.has(n) ? local(n) : cameFrom.has(n) ? `${cameFrom.get(n)}_${n.split("::").pop()}` : n);
     const scoped = typeWalks(typedefs, name, prefix);
     const print = printer({ types: scoped, inferred, ref, helper, bind, variants, definitions: new Set([...localNames, ...cameFrom.keys()]), sampleSets });
-    const text = typescript({ header, typedefs: [...localTypedefs].sort(bySpecOrder), vals, funs, sig, typeOf, doc, local }, roles, scoped, print, helper);
+    const text = typescript({ header, typedefs: [...localTypedefs].sort(bySpecOrder), vals, funs, sig, typeOf, doc: docs ? doc : () => "", local }, roles, scoped, print, helper);
     return { text, helpers: [...[...print.arithmetic].map(helper), ...print.lookups.map((_, i) => helper(`lookup${i}`))] };
   };
   const own = render("");
 
-  const run = harness(name, source, imports, funs, sig, sampleSets, roles, types);
+  const run = harness(name, source, [...imports, ...typeOnly], funs, sig, samples, roles, types);
   return {
     name, imports, ...roles, evals: run.evals, uncompared: run.uncompared, harness: run.text,
-    ts: own.text, render: (prefix) => render(prefix).text, decode: types.decode, canon: types.canon,
-    exports: { types: localTypedefs.map((d) => d.name as string), values: [...localNames, ...own.helpers], variants: localVariants, typedefs: localTypedefs },
+    ts: own.text, render: (prefix, docs) => render(prefix, docs).text, decode: types.decode, canon: types.canon, sets: roles.stateType ? types.sets(roles.stateType) : [],
+    exports: { types: localTypedefs.map((d) => d.name as string), values: [...localNames, ...own.helpers], variants: localVariants, typedefs: localTypedefs, visible: typedefs },
   };
 }

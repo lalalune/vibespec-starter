@@ -69,7 +69,8 @@ draft, submit, pay in instalments, hold, cancel, reopen.
 ## Quick start
 
 **Needs** Node 24+ and [Dafny](https://github.com/dafny-lang/dafny/releases)
-4.11 on the `PATH`.
+4.11 on the `PATH`. Packages with `src/` or `test/` also need a
+`tsconfig.json` so the generated contract is checked against the application.
 
 1. Click **[Use this template](https://github.com/lalalune/vibespec-starter/generate)**
    to create your own repository, then clone it.
@@ -120,8 +121,8 @@ balance 0
 ## The studio
 
 `npm run dev` serves a page at `http://localhost:4321` (the next free port if
-that one is taken) for the project, with every package in `vibespec/examples/` one
-click away. It works on `spec/*.md` directly: nothing else holds the stories.
+that one is taken) for the project, with every example in `vibespec/examples/` (order
+checkout, dashboard, assistant, full-stack) one click away. It works on `spec/*.md` directly: nothing else holds the stories.
 
 ```mermaid
 flowchart LR
@@ -166,6 +167,8 @@ never `accept`; Codex runs in its `workspace-write` sandbox. `Open` uses the
 (Claude Code's after its first interactive session); a link carries at most
 5,000 characters of prompt, so a long manifest is summarized and the rest read
 from the file.
+
+`npx spec watch` reruns the checks whenever a spec, a source file or a test changes.
 
 ## Tutorial
 
@@ -403,17 +406,17 @@ npm run accept
 ## What `npm run check` checks
 
 Stages run cheapest first. `✓` passed, `✗` failed, `-` skipped: blocked by a
-`✗` above, or (`types`) there is no `tsconfig.json`.
+`✗` above, or (`types`) there is no `tsconfig.json` and no source or tests to typecheck.
 
 | Stage | Question | Strength |
 |---|---|---|
 | `model` | Is the spec well-typed and inside the supported subset? | exact; anything unsupported is refused by name |
 | `always` | Does a reachable state break an `always` rule, a step break a `step` rule, or a sampled argument break a law? | 10,000 random traces; a failure comes with the shortest trace and its seed |
-| `sometimes` | Can each `sometimes` goal be reached? Does each guard allow its event in some reachable state? | a witness trace is a proof; a failure means 200,000 traces found none. [Guards never seen to refuse](AGENTS.md#writing-good-rules) are listed, not failed |
+| `sometimes` | Can each `sometimes` goal be reached? Does each guard allow its event in some reachable state? | a witness trace is a proof; a failure means searches of 20, 40 and 100 events found none (200,000 traces at depth 20, with proportionally fewer at larger depths). [Guards never seen to refuse](AGENTS.md#writing-good-rules) are listed, not failed |
 | `replay` | Does the generated TypeScript mean what the Quint means? | 400 sampled traces and every witness: every state, every law, and every definition the simulator can evaluate. The rest are listed |
 | `types` | Does the application fit the generated contract? | exact |
 | `proof` | Does every transition preserve every `always` and `step` rule, does every law hold, and does hand-written logic meet its `//@` contract? | all states, all inputs, counted per obligation under a fixed resource limit. What Dafny cannot prove alone is proved in a proof file (`spec/<name>.proof.dfy`: lemmas only, checked to add nothing but proof), or listed; a listed obligation passes only once the user records it in `spec/unproved.lock.json`, for that text of the unit |
-| `tests` | Does the shell work with the real services around it? | whole user journeys, where the checks above cannot see ([AGENTS.md](AGENTS.md#tests)) |
+| `tests` | Does the application do what the spec says, with the real services around it? | the generated conformance check through a driver: a shortest journey per `sometimes` rule, then random walks, shrunk on failure ([AGENTS.md](AGENTS.md#conformance)); hand-written journeys for what the spec does not model |
 | `review` | Does every story have rules and every rule Quint? Has every new or changed story, rule and `//@` contract been reconciled? | exact |
 
 ## What lives where
@@ -433,7 +436,11 @@ Keep `spec/`, `src/`, `test/` and `vibespec/` in git, lock files included.
 | `.claude/skills/sync/SKILL.md` | How the agent in your session keeps stories, rules and model in step |
 | `.claude/skills/design/SKILL.md` | How the agent designs what a person sees: only what the spec asks, visual first, few words |
 | `.agents/skills/` | Links to the same skills for Codex; edit the files in `.claude/skills/` |
-| `vibespec/spec.ts` | The pipeline: tangle, simulate, compare, prove, review |
+| `vibespec/spec.ts` | The pipeline and command line |
+| `vibespec/parse.ts`, `vibespec/review.ts` | Literate specs and review ledgers |
+| `vibespec/cache.ts`, `vibespec/run.ts` | Stage caches and bounded tool execution |
+| `vibespec/units.ts`, `vibespec/simulate.ts`, `vibespec/util.ts` | Generation, proof units, simulation, replay and shell tests |
+| `vibespec/conformance.ts` | The conformance runtime copied into `gen/`: journeys, walks, shrinking |
 | `vibespec/prove.ts`, `vibespec/proof/lib.dfy` | The proof stage for one unit, with the checks on proof files, and the library of general lemmas proof files call |
 | `vibespec/gen.ts`, `vibespec/gen/` | Quint → TypeScript and the simulation harness |
 | `vibespec/studio/` | The studio: `server.ts` serves the page in `public/` and runs the check, agents and sign-off; `doc.ts` reads and writes specs losslessly and writes the manifest |
@@ -446,6 +453,7 @@ Keep `spec/`, `src/`, `test/` and `vibespec/` in git, lock files included.
 | **Derived** (not in git) | |
 | `gen/<name>.ts`, `gen/<name>.qnt` | Generated TypeScript, and the tangled Quint model |
 | `gen/<name>.run.qnt` | The simulation harness that `npx quint run` and `quint verify` take |
+| `gen/<name>.conformance.ts`, `gen/conformance.ts` | What the check found for testing the application against a state machine, and the runner-agnostic check a driver calls ([AGENTS.md](AGENTS.md#conformance)) |
 | `gen/traces/`, `gen/proof/` | The last simulated traces; the final Dafny and logs of each proof unit |
 | `dist/` | The built `spec` command, from `npm run build` |
 | `.studio/state.json`, `.studio/manifest.json` | The specs as last synced, and what was published since; written by the studio |
@@ -468,6 +476,13 @@ Every obligation is proved for all states and inputs.
 Modelling an owners cell as a list, not a set, exposed a case a set cannot
 express: a name typed twice. The rule "A person named twice in a cell is told
 once" covers it, and `src/notify.ts` sends each person one message.
+
+Two more examples exercise different boundaries:
+
+- [Shared to-do list](vibespec/examples/fullstack/README.md): an HTTP server, browser
+  client and a model of two tabs exchanging messages over an unreliable network.
+- [Assistant](vibespec/examples/assistant/README.md): trusted senders, a bounded agent
+  turn, late replies and a bill payment that requires the person's confirmation.
 
 ## What is and is not guaranteed
 
