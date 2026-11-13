@@ -40,6 +40,7 @@ jobs:
             tools:
               - "vibespec/**"
               - "package*.json"
+              - ".github/workflows/check.yml"
       - if: steps.changed.outputs.tools == 'true'
         uses: dafny-lang/setup-dafny-action@v1
         with:

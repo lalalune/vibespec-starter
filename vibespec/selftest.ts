@@ -14,7 +14,7 @@ import { danglingCitations } from "./util.ts";
 import { nodesOf } from "./studio/doc.ts";
 import { canonical, departure } from "./conformance.ts";
 import { conformance as checkTraces, conformanceFound, writeConformance } from "./conform.ts";
-import { projectsOf, serve, startStudio } from "./studio/server.ts";
+import { serve, startStudio } from "./studio/server.ts";
 import { acceptContracts, acceptReviews, check, checkVerifiedSource, expandListHelpers, gen, init, parseSpec, pending, pendingContracts, readSpecs, replay, show, type Result } from "./spec.ts";
 
 const project = path.join(import.meta.dirname, "..");
@@ -546,7 +546,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
   });
 
   test("a map is looked up safely, division and remainder agree with Quint for negative numbers, and the parsers admit only what fits", async () => {
-    const root = fixtures(["stock"]);
+    const root = fixtures(["stock"], (f) => { f["spec/stock.proof.dfy"] = read("vibespec/fixtures/stock.proof.dfy"); });
     const { failed, said, text } = await run(root);
     assert.deepEqual(failed, ["proof", "review"], text);
     assert.ok(said("replay", /every law, and \d+ definitions/)?.ok, text);
@@ -620,7 +620,11 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     // So is an import of anything but a generated module, however it is indented, or of a look-alike of one.
     const lying = await run(copyOfProject("src/ledger.ts", (s) => s.replace("\n/** Rebuild", '\n  import { owed } from "/tmp/lies.ts";\n/** Rebuild')));
     assert.ok(lying.said("proof", /may only import generated modules/), lying.text);
-    assert.deepEqual(await failedStages("src/ledger.ts", (s) => s.replace('"../gen/order.ts"', '"./order.ts"')), ["types", "proof", "tests"]);
+    const lookalike = copyOfProject("src/ledger.ts", (s) => s.replace('"../gen/order.ts"', '"./order.ts"'));
+    fs.writeFileSync(path.join(lookalike, "src/order.ts"), 'export * from "../gen/order.ts";\n');
+    const disguised = await run(lookalike);
+    assert.deepEqual(disguised.failed, ["proof"], disguised.text);
+    assert.ok(disguised.said("proof", /may only import generated modules/), disguised.text);
   });
 
   test("a law that needs induction is proved by a proof file, and only then offered to the spec that imports it", async () => {
@@ -858,10 +862,6 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
   });
 
   test("the studio publishes a spec with its origins, checks it, and refuses remote or concurrent writes", async () => {
-    const available = projectsOf(project);
-    for (const name of ["assistant", "dashboard", "fullstack", "order"])
-      assert.ok(available.some((p) => p.id === `vibespec/examples/${name}` && fs.existsSync(path.join(p.root, "spec"))), name);
-    assert.equal(new Set(available.map((p) => p.id)).size, available.length);
     const root = fixtures(["door"]);
     const studio = await startStudio({ projects: [{ id: ".", name: "Door", root }], port: 0, agents: {} });
     const url = studio.url.replace("localhost", "127.0.0.1");
@@ -920,7 +920,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       fs.symlinkSync(path.join(root, "outside.md"), path.join(root, "spec/escape.md"));
       assert.equal((await post("publish", { files: [{ file: "spec/escape.md", base: null, text: "" }], origins: [] })).status, 400);
       assert.equal(fs.existsSync(path.join(root, "outside.md")), false);
-      fs.rmSync(path.join(root, "spec/escape.md"));
+      fs.unlinkSync(path.join(root, "spec/escape.md"));
       const linked = await post("publish", { files: [{ file: "spec/index.md", base: null, text: "[Child](./nested/child/)\n" }], origins: [] });
       assert.equal(linked.status, 200, await linked.clone().text());
       const waitForCheck = async () => {
@@ -951,43 +951,70 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     }
   });
 
-  test("the studio opens the requested example or project folder", async () => {
+  test("the studio opens only the current project or the requested project path", async () => {
+    const script = path.join(project, "vibespec/spec.ts");
     const repo = scratch({ "spec/index.md": "", "vibespec/examples/order/spec/index.md": "# Order\n" });
     const outside = scratch({ "a project/spec/index.md": "# Outside\n", "a project/package.json": '{"name":"order"}' });
     const example = path.join(repo, "vibespec/examples/order");
     const external = path.join(outside, "a project");
-    const cases: [string | undefined, string, number][] = [
-      [undefined, repo, 2], [".", repo, 2], ["order", example, 2],
-      ["vibespec/examples/order", example, 2], [example, example, 2],
-      [external, external, 3], [path.relative(repo, external), external, 3],
+    const cases: [string, string | undefined, string][] = [
+      [repo, undefined, repo], [repo, ".", repo],
+      [repo, "vibespec/examples/order", example], [repo, example, example],
+      [repo, external, external], [repo, path.relative(repo, external), external],
+      ...["assistant", "dashboard", "fullstack", "order"].map((name): [string, string, string] =>
+        [project, `vibespec/examples/${name}`, path.join(project, "vibespec/examples", name)]),
     ];
-    for (const [target, expected, count] of cases) {
-      const studio = await serve(repo, [...(target === undefined ? [] : [target]), "--port", "0"]);
+    for (const [cwd, target, expected] of cases) {
+      const child = spawn(process.execPath, [script, "studio", ...(target === undefined ? [] : [target]), "--port", "0"], { cwd, stdio: ["ignore", "pipe", "pipe"] });
+      const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
+      let output = "";
+      let error = "";
+      child.stderr.on("data", (chunk) => { error += chunk; });
       try {
-        const projects = await (await fetch(`${studio.url}/api/projects`)).json();
-        const current = await (await fetch(`${studio.url}/api/project`)).json();
-        assert.equal(projects.projects.length, count);
-        assert.equal(projects.open, current.project.id);
-        assert.equal(current.project.root, fs.realpathSync(expected));
-        assert.equal(current.specs[0].text, fs.readFileSync(path.join(expected, "spec/index.md"), "utf8"));
+        const url = await new Promise<string>((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error(`studio did not start: ${output}${error}`)), 30_000);
+          child.once("error", (e) => { clearTimeout(timer); reject(e); });
+          child.once("exit", (code) => { clearTimeout(timer); reject(new Error(`studio exited ${code}: ${error}`)); });
+          child.stdout.on("data", (chunk) => {
+            output += chunk;
+            const address = output.match(/studio: (http:\/\/localhost:\d+)/)?.[1];
+            if (address) { clearTimeout(timer); resolve(address.replace("localhost", "127.0.0.1")); }
+          });
+        });
+        const current = await (await fetch(`${url}/api/project`)).json();
+        const root = fs.realpathSync(expected);
+        const name = fs.existsSync(path.join(root, "package.json")) ? JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).name : path.basename(root);
+        assert.deepEqual(await (await fetch(`${url}/api/projects`)).json(), { projects: [{ id: ".", name }], open: "." });
+        assert.deepEqual(current.project, { id: ".", name, root });
+        assert.deepEqual(current.specs.map((s: { file: string; text: string }) => [s.file, s.text]).sort(),
+          readSpecs(root).filter((s) => s.file.startsWith("spec/")).map((s) => [s.file, fs.readFileSync(path.join(root, s.file), "utf8")]).sort());
+        assert.equal((await fetch(`${url}/api/project?project=vibespec/examples/order`)).status, 404);
         if (target === external) {
-          const checked = await fetch(`${studio.url}/api/check`, {
+          const checked = await fetch(`${url}/api/check`, {
             method: "POST", headers: { "content-type": "application/json" }, body: "{}",
           });
           assert.equal(checked.status, 200);
-          let state = await (await fetch(`${studio.url}/api/project`)).json();
+          let state = await (await fetch(`${url}/api/project`)).json();
           while (state.jobs.check.status === "running") {
             await new Promise((resolve) => setTimeout(resolve, 50));
-            state = await (await fetch(`${studio.url}/api/project`)).json();
+            state = await (await fetch(`${url}/api/project`)).json();
           }
           assert.ok(state.check.results.every((r: Result) => r.ok || r.stage === "review"));
           assert.ok(fs.existsSync(path.join(external, "gen/index.ts")));
           assert.ok(!fs.existsSync(path.join(repo, "gen")));
         }
-      } finally { await studio.close(); }
+      } finally {
+        child.kill("SIGTERM");
+        await closed;
+      }
     }
     await assert.rejects(serve(repo, ["missing", "--port", "0"]), /not an existing project directory/);
     await assert.rejects(serve(repo, ["spec/index.md", "--port", "0"]), /not an existing project directory/);
+    await assert.rejects(serve(repo, ["order", "--port", "0"]), /not an existing project directory/);
+    const invalid = scratch({ "plain.txt": "not a project", "file-spec/spec": "not a directory" });
+    for (const target of [invalid, path.join(invalid, "file-spec")])
+      await assert.rejects(serve(repo, [target, "--port", "0"]), /no spec\/ directory/);
+    assert.deepEqual(fs.readdirSync(invalid).sort(), ["file-spec", "plain.txt"]);
   });
 
   test("a truncated cache entry is recomputed and generated modules run in a CommonJS project", async () => {
