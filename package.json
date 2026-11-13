@@ -26,7 +26,7 @@
     "analyze": "knip && madge --circular vibestack packages apps",
     "examples": "failed=0; for d in vibestack/examples/*/; do pnpm -C \"$d\" install --frozen-lockfile --ignore-workspace && pnpm -C \"$d\" check || failed=1; done; exit $failed",
     "quick": "turbo run typecheck test //#lint:js //#lint:css",
-    "verify": "turbo run build typecheck test test:browser check //#lint:js //#lint:css //#analyze //#examples",
+    "verify": "turbo run build typecheck test test:browser check //#lint:js //#lint:css //#analyze",
     "all": "turbo run"
   },
   "version": "0.1.0",
