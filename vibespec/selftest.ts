@@ -97,6 +97,8 @@ async function run(root: string, accept: false | "reviews" | "unproved" = false)
     said: (stage: Result["stage"], pattern: RegExp) => results.find((r) => r.stage === stage && pattern.test(`${r.summary}\n${r.detail}`)),
   };
 }
+const highestProof = "// The fold keeps the larger of the two.\nlemma lawTheHighestIsAtLeastTheStart_ensures(xs: seq<int>, start: int)\n  ensures (lawTheHighestIsAtLeastTheStart(xs, start) == true)\n{\n  ProofLib.FoldLeftMax((top: int, x: int) => (if (x > top) then x else top), start, xs);\n}\n";
+const ticketProof = "lemma issue_ensures(d: Desk)\n  ensures (inv(d) ==> alwaysTheLastNumberIsNotNegative(issue(d)))\n{\n  highest_lawTheHighestIsAtLeastTheStart_ensures(d.issued, d.last);\n}\n";
 const failedStages = async (file: string, edit: (text: string) => string) => (await run(copyOfProject(file, edit))).failed;
 const pendingItems = (root: string) => readSpecs(root).flatMap((spec) => pending(root, spec).map((p) => `${p.where.split("  ")[1]}: ${p.status}${p.note ?? ""}`));
 /** Run a fresh CLI process so toolchain fingerprints cannot carry over from another invocation. */
@@ -634,8 +636,6 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
   });
 
   test("a law that needs induction is proved by a proof file, and only then offered to the spec that imports it", async () => {
-    const highestProof = "// The fold keeps the larger of the two.\nlemma lawTheHighestIsAtLeastTheStart_ensures(xs: seq<int>, start: int)\n  ensures (lawTheHighestIsAtLeastTheStart(xs, start) == true)\n{\n  ProofLib.FoldLeftMax((top: int, x: int) => (if (x > top) then x else top), start, xs);\n}\n";
-    const ticketProof = "lemma issue_ensures(d: Desk)\n  ensures (inv(d) ==> alwaysTheLastNumberIsNotNegative(issue(d)))\n{\n  highest_lawTheHighestIsAtLeastTheStart_ensures(d.issued, d.last);\n}\n";
     const project = (files: Record<string, string>) => fixtures(["highest", "ticket"], (f) => Object.assign(f, files));
     // Without a proof file the law is not proved, and a proof file that belongs to nothing is pointed out.
     const bare = await run(project({ "spec/typo.proof.dfy": "" }));
@@ -653,6 +653,16 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     // A proof file that asks for trust is refused, with its file and line.
     const trusting = await run(project({ "spec/highest.proof.dfy": highestProof.replace("ProofLib.FoldLeftMax", "assume false;\n  ProofLib.FoldLeftMax") }));
     assert.equal(trusting.said("proof", /spec\/highest\.proof\.dfy:5: `assume` is not allowed/)?.ok, false, trusting.text);
+  });
+
+  test("what an imported machine's unit proved is offered to the importer's proof file, and only once it is proved", async () => {
+    const officeProof = "lemma serve_ensures(o: Office)\n  ensures (inv(o) ==> alwaysTheDeskKeepsItsRule(serve(o)))\n{\n  ticket_issue_ensures(o.desk);\n}\n";
+    const project = (files: Record<string, string>) => fixtures(["highest", "ticket", "office"], (f) => Object.assign(f, { "spec/highest.proof.dfy": highestProof, "spec/office.proof.dfy": officeProof }, files));
+    const [proved, unoffered] = await Promise.all([run(project({ "spec/ticket.proof.dfy": ticketProof })), run(project({}))]);
+    assert.deepEqual(proved.failed, ["review"], proved.text);
+    assert.ok(proved.said("proof", /^office\.ts: all \d+ obligations proved/), proved.text);
+    // Without the ticket's proof file its transition is not proved, so it is not offered.
+    assert.equal(unoffered.said("proof", /^office\.ts: Dafny could not check it[\s\S]*unresolved identifier: ticket_issue_ensures/)?.ok, false, unoffered.text);
   });
 
   test("a proof file may only add lemmas, and only bodies to the generated ones", () => {

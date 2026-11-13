@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Model } from "./gen.ts";
 import type { Found } from "./conformance.ts";
 import { conformance, conformanceFound, writeConformance, type Machine } from "./conform.ts";
-import { LIB_FILE, prove, run, type Proof } from "./prove.ts";
+import { ensuresOf, LIB_FILE, type Offered, prove, run, type Proof } from "./prove.ts";
 import { readSpecs, badSpecName, specFiles, specName, isStd, located, type Spec } from "./parse.ts";
 import { contracts, pending, pendingContracts, acceptAllReviews, pendingSpecs, migrateLocks, moved, showPending, ledgerFile, readLedger, writeLedger, type Pending, type Accepted } from "./review.ts";
 import { entry, remembered, collectGarbage, dafnyVersion, type Memory } from "./cache.ts";
@@ -306,26 +306,33 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
         said(false, "proof", `${f} belongs to no proof unit: spec/<name>.proof.dfy belongs to spec/<name>.md, and src/<path>.proof.dfy to src/<path>.ts if that file contains //@`, "", f);
       const lib = fs.readFileSync(LIB_FILE, "utf8");
       const proved = new Map<string, Proof>();
-      // Units are proved at the same time and reported in order. One with a proof file is offered every law of the
-      // units it imports, and keeps that result only if each of those units proved them all in this run; otherwise
-      // it is proved again with the laws they did prove.
+      // Units are proved at the same time and reported in order. One with a proof file is offered every `_ensures`
+      // lemma of the units it imports, and keeps that result only if each of those units proved them all in this run;
+      // otherwise it is proved again with the clauses they did prove.
       const running = new Map<string, Promise<Proof>>();
       const proofTexts = new Map<string, string | undefined>();
       for (const u of units) {
         const proofPath = located(root, u.proofFile);
         const proofText = fs.existsSync(proofPath) ? fs.readFileSync(proofPath, "utf8") : undefined;
         proofTexts.set(u.unit, proofText);
-        const proving = (laws: string[]) => remembered(memory, entry(root, "prove", [u.unit, u.meaning, proofText ?? "", proofText === undefined ? "" : lib, laws.join(" ")]),
-          () => prove(root, u, { proof: proofText === undefined ? undefined : { file: u.proofFile, text: proofText }, lib, laws }), (p) => !p.errors.length);
+        const proving = (axioms: Offered[]) => remembered(memory, entry(root, "prove", [u.unit, u.meaning, proofText ?? "", proofText === undefined ? "" : lib, JSON.stringify(axioms)]),
+          () => prove(root, u, { proof: proofText === undefined ? undefined : { file: u.proofFile, text: proofText }, lib, axioms }), (p) => !p.errors.length);
         running.set(u.unit, (async () => {
-          const offered = proofText === undefined ? [] : u.laws.map((l) => l.fn);
+          const offered = proofText === undefined ? [] : u.imports.lemmas.map(({ fn }) => ({ fn }));
           const first = proving(offered);
-          await Promise.allSettled([first, ...(offered.length ? u.laws.map((l) => running.get(l.from)) : [])]);
-          const laws = u.laws.filter(({ law, from }) => {
+          await Promise.allSettled([first, ...(offered.length ? u.imports.lemmas.map((l) => running.get(l.from)) : [])]);
+          // A clause of an imported lemma is offered only if its own unit proved it, in this run; none of them is if
+          // one of the lemma's failures is not one of its clauses. A lemma its unit does not generate has none.
+          const resolved = offered.length ? u.imports.lemmas.map(({ fn, def, from }) => {
             const p = proved.get(from);
-            return p && !p.errors.length && !p.unproved.some((x) => x.startsWith(`${law}: `));
-          }).map((l) => l.fn);
-          const proof = offered.every((fn) => laws.includes(fn)) ? await first : await proving(laws);
+            if (!p || p.errors.length) return undefined;
+            const clauses = ensuresOf(p.dfy, `${def}_ensures`).map((c) => `${def}: ${c}`);
+            const failed = p.unproved.filter((x) => x.startsWith(`${def}: `));
+            const known = failed.every((x) => clauses.includes(x));
+            return { fn, proved: clauses.map((c) => known && !failed.includes(c)) };
+          }) : [];
+          const proof = resolved.every((r) => r?.proved.every(Boolean)) ? await first
+            : await proving(resolved.filter((r): r is Required<Offered> => !!r?.proved.length));
           proved.set(u.unit, proof);
           return proof;
         })());
