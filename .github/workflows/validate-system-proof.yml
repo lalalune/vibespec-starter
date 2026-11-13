@@ -9,6 +9,8 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: 4d9651a9f9a9cda2afeb8b6c6181c8e0f07129ec
       - uses: dafny-lang/setup-dafny-action@v1
         with:
           dafny-version: '4.11.0'
