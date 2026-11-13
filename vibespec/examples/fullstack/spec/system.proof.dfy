@@ -93,6 +93,7 @@ lemma serve_ensures(sys: System, i: int)
   if inv(sys) && canServe(sys, i) {
     ServeInStep(sys, i, "a");
     ServeInStep(sys, i, "b");
+    ServeWireRules(sys, i);
     var m := msgAt(sys.net, i);
     var rest := dropAt(sys.net, i);
     WireProperties(sys, m);
@@ -152,6 +153,7 @@ lemma deliver_ensures(sys: System, i: int)
   if inv(sys) && canDeliver(sys, i) {
     DeliverInStep(sys, i, "a");
     DeliverInStep(sys, i, "b");
+    DeliverWireRules(sys, i);
     var m := msgAt(sys.net, i);
     var c := clientOf(sys, m.client);
     var after := deliver(sys, i);
@@ -762,6 +764,154 @@ lemma DeliverInStep(sys: System, i: int, owner: string)
       }
     } else {
       assert clientOf(after, owner) == c;
+    }
+  }
+}
+
+// Serving retains old messages and appends only the answer to this request and its push.
+lemma ServeWireRules(sys: System, i: int)
+  requires inv(sys) && canServe(sys, i)
+  ensures alwaysOnlyTheOldestQueuedEditIsOnItsWay(serve(sys, i))
+  ensures alwaysAnAcknowledgedEditWasApplied(serve(sys, i))
+  ensures alwaysARetryIsTheSameEdit(serve(sys, i))
+  ensures alwaysEveryMessageBelongsToANumberedEdit(serve(sys, i))
+  ensures alwaysWithoutForgeriesOnlyNumberedEditsWereAnswered(serve(sys, i))
+  ensures alwaysAPushFollowsAnotherEdit(serve(sys, i))
+{
+  var m := msgAt(sys.net, i);
+  var rest := dropAt(sys.net, i);
+  var after := serve(sys, i);
+  DropAtSubset(sys.net, i);
+  WireProperties(sys, m);
+  assert forall h :: h in sys.server.log ==> h in after.server.log;
+  forall j | 0 <= j < |after.net|
+    ensures !after.net[j].kind.Request? || server_answered(after.server, after.net[j].client, after.net[j].seq_) || (|clientOf(after, after.net[j].client).pending| > 0 && after.net[j].seq_ == oldest(clientOf(after, after.net[j].client)).seq_)
+    ensures !after.net[j].kind.Ack? || forall p :: p in clientOf(after, after.net[j].client).pending ==> p.seq_ != after.net[j].seq_ || server_acceptedAs(after.server, after.net[j].client, p.seq_, p.op)
+    ensures !after.net[j].kind.Request? || forall p :: p in clientOf(after, after.net[j].client).pending ==> p.seq_ != after.net[j].seq_ || todo_sameOp(p.op, after.net[j].op)
+    ensures after.net[j].kind.Forged? || after.net[j].kind.Push? || (numbered(after, after.net[j].client, after.net[j].seq_) && (after.net[j].kind.Request? || server_answered(after.server, after.net[j].client, after.net[j].seq_)))
+    ensures sys.forged != 0 || !after.net[j].kind.Forged?
+    ensures !after.net[j].kind.Push? || clientOf(after, other(after.net[j].client)).made >= 1 || after.forged >= 1
+  {
+    var n := after.net[j];
+    if j < |rest| {
+      assert n == rest[j];
+      WireProperties(sys, n);
+      forall p | p in clientOf(after, n.client).pending && p.seq_ == n.seq_
+        ensures !n.kind.Ack? || server_acceptedAs(after.server, n.client, p.seq_, p.op)
+      {
+        if n.kind.Ack? {
+          var h :| h in sys.server.log && h.client == n.client && h.seq_ == p.seq_ && h.ok && todo_sameOp(h.op, p.op);
+          assert h in after.server.log;
+        }
+      }
+    } else if n.kind.Ack? {
+      assert m.kind.Request?;
+      assert server_acceptedAs(after.server, m.client, m.seq_, m.op);
+      forall p | p in clientOf(after, n.client).pending && p.seq_ == n.seq_
+        ensures server_acceptedAs(after.server, n.client, p.seq_, p.op)
+      {
+        assert todo_sameOp(p.op, m.op);
+        assert p.op == m.op;
+      }
+    }
+  }
+  if sys.forged == 0 {
+    forall h | h in after.server.log ensures numbered(after, h.client, h.seq_) {
+      if h in sys.server.log {
+        var j :| 0 <= j < |sys.server.log| && sys.server.log[j] == h;
+      }
+    }
+    forall who | who in {"a", "b"} ensures onlyTheOldestAnswered(after, who) {
+      var c := clientOf(sys, who);
+      forall p | p in c.pending && p.seq_ != oldest(c).seq_
+        ensures !server_answered(after.server, who, p.seq_)
+      {
+        assert !server_answered(sys.server, who, p.seq_);
+        if server_answered(after.server, who, p.seq_) {
+          var h :| h in after.server.log && h.client == who && h.seq_ == p.seq_;
+          assert h !in sys.server.log;
+          assert who == m.client && p.seq_ == m.seq_;
+        }
+      }
+    }
+  }
+}
+
+lemma WithoutOtherHead(ps: seq<client_Pending>, n: int)
+  requires |ps| > 0 && ps[0].seq_ != n
+  ensures |client_without(ps, n)| > 0
+  ensures client_without(ps, n)[0] == ps[0]
+{
+  WithoutBridge(ps, n);
+  ProofLib.FilterCons((p: client_Pending) => (p.seq_ != n), ps);
+}
+
+// Receiving removes only the answered number, so every remaining queued edit keeps its wire facts.
+lemma DeliverWireRules(sys: System, i: int)
+  requires inv(sys) && canDeliver(sys, i)
+  ensures alwaysOnlyTheOldestQueuedEditIsOnItsWay(deliver(sys, i))
+  ensures alwaysAnAcknowledgedEditWasApplied(deliver(sys, i))
+  ensures alwaysARetryIsTheSameEdit(deliver(sys, i))
+  ensures alwaysEveryMessageBelongsToANumberedEdit(deliver(sys, i))
+  ensures alwaysWithoutForgeriesOnlyNumberedEditsWereAnswered(deliver(sys, i))
+  ensures alwaysAPushFollowsAnotherEdit(deliver(sys, i))
+{
+  var m := msgAt(sys.net, i);
+  var c := clientOf(sys, m.client);
+  var after := deliver(sys, i);
+  DropAtSubset(sys.net, i);
+  WireProperties(sys, m);
+  if m.kind.Ack? || m.kind.Refusal? {
+    WithoutBridge(c.pending, m.seq_);
+    ProofLib.FilterSubset((p: client_Pending) => (p.seq_ != m.seq_), c.pending);
+  }
+  forall who | who in {"a", "b"}
+    ensures forall p :: p in clientOf(after, who).pending ==> p in clientOf(sys, who).pending
+    ensures onlyTheOldestAnswered(sys, who) ==> onlyTheOldestAnswered(after, who)
+  {
+    var priorClient := clientOf(sys, who);
+    var d := clientOf(after, who);
+    if d.pending != priorClient.pending {
+      assert who == m.client;
+      assert d.pending == client_without(priorClient.pending, m.seq_);
+      if |priorClient.pending| > 0 && oldest(priorClient).seq_ != m.seq_ { WithoutOtherHead(priorClient.pending, m.seq_); }
+      if onlyTheOldestAnswered(sys, who) {
+        forall p | p in d.pending && p.seq_ != oldest(d).seq_
+          ensures !server_answered(after.server, who, p.seq_)
+        {
+          WithoutBridge(priorClient.pending, m.seq_);
+          ProofLib.FilterMember((q: client_Pending) => (q.seq_ != m.seq_), priorClient.pending, p);
+          assert p.seq_ != m.seq_;
+          assert p.seq_ != oldest(priorClient).seq_;
+        }
+      }
+    }
+  }
+  forall j | 0 <= j < |after.net|
+    ensures !after.net[j].kind.Request? || server_answered(after.server, after.net[j].client, after.net[j].seq_) || (|clientOf(after, after.net[j].client).pending| > 0 && after.net[j].seq_ == oldest(clientOf(after, after.net[j].client)).seq_)
+    ensures !after.net[j].kind.Ack? || forall p :: p in clientOf(after, after.net[j].client).pending ==> p.seq_ != after.net[j].seq_ || server_acceptedAs(after.server, after.net[j].client, p.seq_, p.op)
+    ensures !after.net[j].kind.Request? || forall p :: p in clientOf(after, after.net[j].client).pending ==> p.seq_ != after.net[j].seq_ || todo_sameOp(p.op, after.net[j].op)
+    ensures after.net[j].kind.Forged? || after.net[j].kind.Push? || (numbered(after, after.net[j].client, after.net[j].seq_) && (after.net[j].kind.Request? || server_answered(after.server, after.net[j].client, after.net[j].seq_)))
+    ensures sys.forged != 0 || !after.net[j].kind.Forged?
+    ensures !after.net[j].kind.Push? || clientOf(after, other(after.net[j].client)).made >= 1 || after.forged >= 1
+  {
+    var n := after.net[j];
+    WireProperties(sys, n);
+    if n.kind.Request? && !server_answered(sys.server, n.client, n.seq_) {
+      var priorClient := clientOf(sys, n.client);
+      var d := clientOf(after, n.client);
+      if d.pending != priorClient.pending {
+        assert m.client == n.client;
+        assert server_answered(sys.server, m.client, m.seq_);
+        assert n.seq_ != m.seq_;
+        WithoutOtherHead(priorClient.pending, m.seq_);
+      }
+    }
+    forall p | p in clientOf(after, n.client).pending && p.seq_ == n.seq_
+      ensures !n.kind.Ack? || server_acceptedAs(after.server, n.client, p.seq_, p.op)
+      ensures !n.kind.Request? || todo_sameOp(p.op, n.op)
+    {
+      assert p in clientOf(sys, n.client).pending;
     }
   }
 }
