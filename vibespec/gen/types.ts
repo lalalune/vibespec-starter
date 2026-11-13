@@ -205,6 +205,6 @@ export function typeWalks(typedefs: Json[], module: string, prefix = "") {
     return fail(`a comparison of type ${t.kind} is not supported`);
   };
 
-  return { fields, typedef, resolve, shape, payload, tagged, isScalar, setElem, keyOf, storedKey, holdsSet, named, ownerOf, typeName, tsType, declaration, qType, wellFormed, copy, decode, canon, comparison };
+  return { fields, typedef, resolve, shape, tagged, isScalar, setElem, keyOf, storedKey, holdsSet, named, ownerOf, typeName, tsType, declaration, qType, wellFormed, copy, decode, canon, comparison };
 }
 export type Types = ReturnType<typeof typeWalks>;

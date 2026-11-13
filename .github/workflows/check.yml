@@ -3,7 +3,11 @@ name: check
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "vibespec/examples/**"
   pull_request:
+    paths-ignore:
+      - "vibespec/examples/**"
 
 jobs:
   check:
@@ -18,44 +22,11 @@ jobs:
         with:
           node-version: 26
           cache: npm
-      - run: npm ci
-      - run: node vibespec/spec.ts check
+      - run: npm ci --workspaces=false
+      - run: npm run check
       - if: always()
         uses: actions/upload-artifact@v7
         with:
           name: proof
-          path: |
-            gen/proof/
-            vibespec/examples/*/gen/proof/
+          path: gen/proof/
           if-no-files-found: ignore
-
-  selftest:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dorny/paths-filter@v4
-        id: changed
-        with:
-          filters: |
-            tools:
-              - "vibespec/*.ts"
-              - "vibespec/gen/**"
-              - "vibespec/proof/**"
-              - "vibespec/fixtures/**"
-              - "vibespec/std/**"
-              - "vibespec/studio/**"
-              - "package*.json"
-              - ".github/workflows/check.yml"
-      - if: steps.changed.outputs.tools == 'true'
-        uses: dafny-lang/setup-dafny-action@v1
-        with:
-          dafny-version: "4.11.0"
-      - if: steps.changed.outputs.tools == 'true'
-        uses: actions/setup-node@v7
-        with:
-          node-version: 26
-          cache: npm
-      - if: steps.changed.outputs.tools == 'true'
-        run: npm ci
-      - if: steps.changed.outputs.tools == 'true'
-        run: npm run selftest

@@ -193,14 +193,17 @@ You can run the same checks from the terminal:
 npm run check
 ```
 
-In this starter repository, that command checks the root project and then
-every example workspace. To check just your project, or a project in another
-directory, use the CLI directly:
+That command checks the root project: `spec/index.md`, its child specs and
+the related source and tests. To check a project in another directory, use
+the CLI directly:
 
 ```bash
 node vibespec/spec.ts check .
 node vibespec/spec.ts check ../my-project
 ```
+
+CI runs this root check only. Examples and tool selftests run locally;
+changes confined to the examples do not trigger CI.
 
 Each report ends with a `next:` line. The agent follows it until only your
 review remains:
@@ -273,10 +276,9 @@ npm run accept
 Before committing your application's starting point:
 
 1. **Remove the example projects.** Delete `vibespec/examples/` and remove
-   its workspace entries, npm scripts and CI steps such as `demo` and
+   its workspace entries and npm scripts such as `demo` and
    `check:dashboard`. Update the package name, description and repository
-   links for your project. Set `check` to
-   `node vibespec/spec.ts check` after removing the workspaces.
+   links for your project.
 2. **Keep the toolchain guide with the toolchain.** Move this README to
    `vibespec/README.md`, update its relative links and the guide references
    in `AGENTS.md` and the skills, and keep the template license in
@@ -294,7 +296,7 @@ Before committing your application's starting point:
 |---|---|
 | `npm run dev` / `npm run dev -- <project-path>` | Opens Studio for the current project or the supplied project directory |
 | `npx spec studio <project-path>` | Opens another project with the packaged CLI |
-| `npm run check` | Checks the root project, then all example workspaces; ends each project with a `next:` line |
+| `npm run check` | Checks the root project’s spec, source and tests; ends with a `next:` line |
 | `npm run check --workspaces --if-present` | Checks all bundled example workspaces |
 | `node vibespec/spec.ts check <directory>` | Checks only the selected project |
 | `node vibespec/spec.ts check <directory> --json` | The selected project's check as one JSON object ([shape](AGENTS.md#changing-the-tools)) |

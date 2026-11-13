@@ -4,6 +4,11 @@ import { SENDER, type Param, type Roles, type Transition } from "./classify.ts";
 import type { Printer } from "./print.ts";
 import type { Json, Types } from "./types.ts";
 
+/** The names a module defines beside the spec's, and the locals of what it defines (TAKEN in gen.ts). */
+export const EMITTED = ["Event", "inv", "enabled", "step", "parseEvent", "parseState", "parseSender", "initialHolds", "current", "event", "raw"];
+/** Patterns for the helpers a module may carry for itself, each named `<helper>_<module>`. */
+export const HELPERS = ["quotient", "remainder", "exact", "equal", "lookup\\d+"];
+
 export interface Source {
   /** The line that opens the file, and one import line per spec this one imports. */
   header: string[];
