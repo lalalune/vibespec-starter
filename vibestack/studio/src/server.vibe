@@ -179,7 +179,7 @@ effect function studio(project: Project, agents: Record<string, Agent>) {
     })
     return { project, session: try session.get(), ...read, prompt: promptFor(read.manifest, context), check, jobs: jobsView(), agents: shown }
   }
-  const jobsView = (): Partial<Record<Kind, JobView>> => Object.fromEntries(Object.entries(jobs).map(([kind, { fiber, ...j }]) => [kind, { ...j, log: j.log.slice(-400) }]))
+  const jobsView = (): Partial<Record<Kind, JobView>> => Object.fromEntries(Object.entries(jobs).map(([kind, { fiber: _fiber, ...j }]) => [kind, { ...j, log: j.log.slice(-400) }]))
 
   effect function publish(body: Publish) {
     // The request carries edits, so the session as the page sees it has some (spec/index.md, "Only edits can be published, and not while a job runs").

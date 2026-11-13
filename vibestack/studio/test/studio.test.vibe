@@ -149,7 +149,7 @@ it.live("a spec is published with its origins, checked, synced by an agent, and 
 it.live("a rule is edited, a story added and both published from the page", () => effect { provide services { try scoped(effect {
   const fs = try FileSystem.FileSystem
   const root = try scratch({ "spec/door.md": try fs.readFileString(`${TOOLS}/fixtures/door.md`) })
-  const { url, project, settled } = try studioOn(root)
+  const { url, settled } = try studioOn(root)
   const browser = try acquireRelease(tryPromise(() => chromium.launch()), (b) => promise(() => b.close()))
   const page = try tryPromise(() => browser.newPage())
   const on = <A>(f: () => Promise<A>) => tryPromise(f)

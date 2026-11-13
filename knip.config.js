@@ -1,21 +1,25 @@
-// Knip reads .vibe files through VibeLang's own compiler. Each ignore below names something Knip cannot follow:
-// standalone examples and fixtures, disposable generated directories, and dependencies resolved at run time
-// (Tailwind and the design-system theme by CSS and the lint plugin, Quint and LemmaScript as executables).
+// Knip reads .vibe files through VibeLang's own compiler, which gives it a module's imports and exports without bodies.
+// Each exception below names something Knip cannot follow:
+//   ignore vibestack/examples/**            standalone projects with their own install, outside the workspace
+//   ignore **/test/fixtures/**              inputs the tools' tests read as text, never imported
+//   ignoreIssues server.vibe exports        AGENTS is used in its own file, in a body ignoreExportsUsedInFile cannot see
+//   root @informalsystems/quint, lemmascript  run as executables by vibestack/units.ts and vibestack/prove.ts
+//   root @vitest/browser                    loaded by Vitest's browser mode, beside @vitest/browser-playwright
+//   root @effect/platform-node, vibelang-runtime  imported by compiled .vibe output; `spec init` reads their pins here
+//   tailwindcss (ui, design-system, studio, apps)  resolved by @tailwindcss/vite and the lint plugin from CSS
+//   design-system eslint, eslint-plugin-better-tailwindcss, typescript-eslint  loaded by name in vibestack/design/test/design.test.ts
 import vibelang from "vibelang/knip"
 
 export default {
   compilers: { vibe: vibelang, vibex: vibelang },
   "ignore": [
     "vibestack/examples/**",
-    "vibestack/fixtures/**",
-    "**/gen/**",
-    "**/dist/**",
-    "**/generated/**",
-    "**/test/fixtures/**",
-    "**/*.d.vibe.ts",
-    "**/.vibe/**"
+    "**/test/fixtures/**"
   ],
   "ignoreExportsUsedInFile": true,
+  "ignoreIssues": {
+    "vibestack/studio/src/server.vibe": ["exports"]
+  },
   "workspaces": {
     ".": {
       "entry": [
@@ -24,7 +28,7 @@ export default {
         "vibestack/*/test/*.test.ts"
       ],
       "project": [
-        "vibestack/**/*.{ts,tsx}",
+        "vibestack/**/*.{ts,tsx,vibe,vibex}",
         "!vibestack/studio/**"
       ],
       "ignoreDependencies": [
@@ -41,7 +45,7 @@ export default {
         "test/**/*.test.{ts,tsx}"
       ],
       "project": [
-        "**/*.{ts,tsx}"
+        "**/*.{ts,tsx,vibe,vibex,css}"
       ],
       "ignoreDependencies": [
         "tailwindcss"
@@ -57,33 +61,30 @@ export default {
     },
     "vibestack/studio": {
       "entry": [
+        "src/main.vibe",
         "src/project.ts",
         "src/doc.ts"
       ],
       "project": [
-        "src/**/*.{ts,tsx}"
+        "src/**/*.{ts,tsx,vibe,vibex,css}",
+        "test/**/*.{ts,tsx,vibe,vibex}"
       ],
       "ignoreDependencies": [
-        "@effect/vitest",
-        "playwright",
         "tailwindcss"
       ]
     },
     "apps/*": {
       "entry": [
-        "src/main.tsx",
         "test/**/*.test.{ts,tsx,vibe}",
         "test/drivers/*.ts",
-        "src/**/*.schema.ts",
-        "src/**/*.contract.ts"
+        "src/**/*.schema.ts"
       ],
       "project": [
-        "src/**/*.{ts,tsx,vibe}",
-        "test/**/*.{ts,tsx,vibe}"
+        "src/**/*.{ts,tsx,vibe,vibex,css}",
+        "test/**/*.{ts,tsx,vibe,vibex}"
       ],
       "ignoreDependencies": [
-        "tailwindcss",
-        "@repo/design-system"
+        "tailwindcss"
       ]
     }
   }
