@@ -57,7 +57,9 @@ Whoever the greeter greeted before, a greeting holds the name given to it.
 pure def lawGreetsTheNameGiven(g: Greeter, name: str): bool = greet(g, name).name == name
 ```
 
-### Someone can be greeted twice
+### The greeter can give a second greeting
+
+Two greetings in all, to the same name or to different ones.
 
 ```quint
 pure def sometimesGreetedTwice(g: Greeter): bool = g.count >= 2

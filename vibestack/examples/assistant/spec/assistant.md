@@ -53,7 +53,7 @@ type Effect = Said({ text: str }) | Filled({ page: Page, card: SecretCard }) | S
 
 What is saved survives a restart: the card, the bill, what was charged, the
 last request and the one last answered, queued effects and the last delivery
-number. The turn and the browser page are in memory.
+number. The turn, the browser page and whether a reply is awaited are in memory.
 
 ```quint
 type Assistant = {
@@ -229,8 +229,8 @@ pure def confirm(s: Assistant, by: Actor): Chosen =
 
 ### Only the person declines a payment
 
-Declining leaves the bill unpaid. The turn goes back to planning, or ends if
-no budget is left.
+The person can decline only while asked. Declining leaves the bill unpaid.
+The turn goes back to planning, or ends if no budget is left.
 
 ```quint
 pure def canDecline(s: Assistant, by: Actor): bool = by == Person and s.phase == Asking
@@ -425,7 +425,8 @@ pure def alwaysDeliveryCountIsNotNegative(s: Assistant): bool = s.delivered >= 0
 
 A queued message says only "paid" or "working". A queued card fill names the
 biller's own page. A queued payment names that page and the paid bill's
-positive amount, and at most one payment can be waiting for delivery.
+positive amount. No more payments wait for delivery than were charged, so at
+most one does.
 
 ```quint
 pure def alwaysQueuedEffectsValid(s: Assistant): bool =
