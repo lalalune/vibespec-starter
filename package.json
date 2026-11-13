@@ -15,7 +15,7 @@
     "test": "vitest run",
     "demo": "pnpm --filter order-example demo",
     "selftest": "node --test vibestack/selftest.ts",
-    "build": "node vibestack/spec.ts gen vibestack/studio && node -e \"fs.rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json && node -e \"fs.chmodSync('dist/spec.js', 0o755); fs.mkdirSync('dist/proof', { recursive: true }); fs.copyFileSync('vibestack/proof/lib.dfy', 'dist/proof/lib.dfy'); fs.cpSync('vibestack/studio/src/public', 'dist/studio/src/public', { recursive: true }); fs.cpSync('vibestack/std', 'dist/std', { recursive: true }); fs.copyFileSync('vibestack/conformance.ts', 'dist/conformance.ts')\"",
+    "build": "pnpm --filter @repo/design-system build && node vibestack/spec.ts gen vibestack/studio && node -e \"fs.rmSync('dist', { recursive: true, force: true })\" && tsc -p tsconfig.build.json && node -e \"fs.chmodSync('dist/spec.js', 0o755); fs.mkdirSync('dist/proof', { recursive: true }); fs.copyFileSync('vibestack/proof/lib.dfy', 'dist/proof/lib.dfy'); fs.cpSync('vibestack/studio/src/public', 'dist/studio/src/public', { recursive: true }); fs.cpSync('vibestack/std', 'dist/std', { recursive: true }); fs.copyFileSync('vibestack/conformance.ts', 'dist/conformance.ts')\"",
     "prepare": "pnpm build && node vibestack/spec.ts gen --if-valid"
   },
   "version": "0.1.0",
@@ -52,7 +52,7 @@
     "typescript": "^6.0.3"
   },
   "devDependencies": {
-    "@types/node": "^24.0.0",
+    "@types/node": "catalog:",
     "@effect/platform-node": "4.1.1",
     "@effect/vitest": "4.1.1",
     "effect": "4.1.1",
@@ -62,14 +62,5 @@
     "vite": "8.3.5",
     "vitest": "5.1.0"
   },
-  "workspaces": [
-    "vibestack/examples/*",
-    "vibestack/studio"
-  ],
-  "packageManager": "pnpm@10.24.0",
-  "pnpm": {
-    "overrides": {
-      "@effect/platform-node-shared": "4.1.1"
-    }
-  }
+  "packageManager": "pnpm@10.24.0"
 }

@@ -19,7 +19,8 @@
     ]
   },
   "include": [
-    "vibestack",
+    "vibestack/*.ts",
+    "vibestack/gen/**/*.ts",
     "src",
     "test",
     "gen/*.ts",
