@@ -1,4 +1,4 @@
-// AGENTS.md, "Conformance": spec/app/index.md against the shell of src/greeter.vibe, observed as what its store holds.
+// SPEC.md, "Conformance": spec/app/index.md against the shell of src/greeter.vibe, observed as what its store holds.
 import { Effect, Layer } from "effect";
 import * as KeyValueStore from "effect/persistence/KeyValueStore";
 import { effectDriver } from "vibestack/testing";

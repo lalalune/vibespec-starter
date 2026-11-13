@@ -1,4 +1,4 @@
-// The traces stage (AGENTS.md, "Conformance"): each package's drivers, `driver:` programs and recorded traces, run
+// The traces stage (SPEC.md, "Conformance"): each package's drivers, `driver:` programs and recorded traces, run
 // against its specs with the events the simulator found. conformance.ts does the comparing for all three.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -142,7 +142,7 @@ function shelled(root: string): Set<string> {
 
 /** What `check` writes where a shell has no driver yet: a driver that fails until a person fills it in. */
 const stub = (name: string, model: Model) => `// The driver of ${model.source}: how \`pnpm check\` reaches the application to compare it with the spec
-// (AGENTS.md, "Conformance"). Written by \`spec check\` because src/ keeps the machine's state; fill it in. It imports
+// (SPEC.md, "Conformance"). Written by \`spec check\` because src/ keeps the machine's state; fill it in. It imports
 // gen/ as types only: the spec is the oracle it is compared with.
 import type { Driver } from "../../gen/${name}.conformance.ts";
 

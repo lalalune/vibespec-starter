@@ -13,7 +13,7 @@ Everything is built on [the stack](AGENTS.md#the-stack): Node 26, pnpm, VibeLang
 | `vibestack/` | the tools: the `spec` command, Studio, and what any project uses but does not own (`vibestack/testing`, `vibestack/design`, `vibestack/stories`) |
 | `vibestack/examples/` | standalone projects, each with its own install; never part of the workspace |
 
-The specs of every package are in the one tree at the root ([AGENTS.md, "One spec tree"](AGENTS.md#one-spec-tree));
+The specs of every package are in the one tree at the root ([SPEC.md, "One spec tree"](SPEC.md#one-spec-tree));
 [docs/architecture.md](docs/architecture.md) maps what is generated from what, which test is for what, and the
 budgets and CI.
 

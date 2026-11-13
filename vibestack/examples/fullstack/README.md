@@ -92,7 +92,7 @@ work around their absence. Each is a good first exercise:
 - **Imported proofs.** The server and client restate "a commit / refusal /
   queued edit / answer keeps the rules" as laws for the system proof file.
   It can call `server_<transition>_ensures` and `client_<transition>_ensures`
-  instead (AGENTS.md, "Proof files").
+  instead (.claude/skills/prove/SKILL.md, "Proof files").
 - **Equality.** `sameTodos` and its reflexivity law can become `==`, which
   compares lists and records by structure.
 - **List operations.** `dropAt`, and its induction, can become `removeAt`.

@@ -78,7 +78,7 @@ it.effect("Check out", effect () => {
 
 - **`machine()` forgets when the process ends.** A shell that stores state
   writes its own service on `apply` and the decoders, and a driver that
-  `check` compares with the spec ([AGENTS.md, "Conformance"](../../../AGENTS.md#conformance)):
+  `check` compares with the spec ([SPEC.md, "Conformance"](../../../SPEC.md#conformance)):
   `check` writes one to fill in when `src/` imports `apply`.
 - **Match an event by its `type`**: `match (event.type) { when "pay": …; }`.
   The compiler does not yet check that a `match` on the event itself, or on

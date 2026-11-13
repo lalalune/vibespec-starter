@@ -1,4 +1,4 @@
-// How `pnpm check` reaches a browser tab to compare it with spec/client.md (AGENTS.md, "Conformance"): every journey
+// How `pnpm check` reaches a browser tab to compare it with spec/client.md (SPEC.md, "Conformance"): every journey
 // and random walks through the tab's own `dispatch`, each trace with a fresh tab. Nothing here reaches the server.
 import { Effect, Layer, ManagedRuntime } from "effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";

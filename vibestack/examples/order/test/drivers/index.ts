@@ -1,4 +1,4 @@
-// How `pnpm check` reaches the order book to compare it with spec/index.md (AGENTS.md, "Conformance"): every
+// How `pnpm check` reaches the order book to compare it with spec/index.md (SPEC.md, "Conformance"): every
 // journey, malformed inputs and random walks over two orders at once, each trace with a fresh book.
 import { Effect, ManagedRuntime } from "effect";
 import type { Driver } from "../../gen/index.conformance.ts";

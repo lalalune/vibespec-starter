@@ -1,4 +1,4 @@
-// AGENTS.md, "The React interface": the greeter `Greetings` holds, and the events `enabled` allows, for a component.
+// .claude/skills/shell/SKILL.md, "The React interface": the greeter `Greetings` holds, and the events `enabled` allows, for a component.
 import { Effect, type ManagedRuntime, Stream } from "effect";
 import { useMemo, useSyncExternalStore } from "react";
 import { type Event, type Greeter, enabled } from "../gen/app.ts";
