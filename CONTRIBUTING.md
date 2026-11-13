@@ -6,7 +6,7 @@ tutorial. **Every agent reads both in full before doing any work.**
 
 In short:
 
-- Each application has one source of truth, `spec/<name>.md`: user stories,
+- Each application starts at `spec/index.md`, with linked child specs: user stories,
   the rules each implies, and under every rule the Quint that says it exactly.
   `gen/` is derived from it and never edited by hand.
 - `npm run check` simulates the model, compares the generated TypeScript with
@@ -17,5 +17,5 @@ In short:
   for what Quint cannot express or what touches the outside world.
 - Tests cover only what the checks cannot: whole user journeys through the
   real shell, against real services (AGENTS.md, "Tests").
-- A change to `tools/` passes `npm run selftest`, with a new case for each new
+- A change to `vibespec/` passes `npm run selftest`, with a new case for each new
   kind of mistake it catches.

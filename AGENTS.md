@@ -1,8 +1,9 @@
 # Operating procedure for agents
 
-Each application has one source of truth, `spec/<name>.md`: its stories, rules
-and Quint model. `gen/` is derived from it. Keep the spec true to what the user
-wants and `npm run check` green.
+Each application starts at `spec/index.md`: its stories, rules and Quint
+model, with links to child specs wherever an area needs its own directory.
+`gen/` is derived from it. Keep the spec true to what the user wants and
+`npm run check` green.
 
 **Read this file and [README.md](README.md) in full before doing any work.**
 The spec format, naming rules and everything the tools accept are in
@@ -23,7 +24,7 @@ The user signs off with `npm run accept`.
 
 ## Hard rules
 
-- Never edit `gen/`, `.spec-cache/` or `spec/*.lock.json`, and never add a
+- Never edit `gen/`, `.spec-cache/`, `.studio/` or `spec/lock.json`, and never add a
   `lemmascript.json`. The tools own them; a change there could make a check
   pass that should not.
 - Never run `npm run accept -- unproved` unless the user asks. It lowers the
@@ -32,7 +33,7 @@ The user signs off with `npm run accept`.
   rule `review` lists and finding that its prose and Quint say the same thing.
 - Never weaken or delete a rule (`always`, `step`, `sometimes` or `law`) to
   make a check pass without telling the user which rule and why.
-- Proving obligations is your work, in `spec/<name>.proof.dfy` or
+- Proving obligations is your work, in `spec/<path>.proof.dfy` or
   `src/<path>.proof.dfy` ("Proof files", below). Satisfy a check;
   never get past it: no trust or skip annotations, no edits to the tools or
   what they generate, no workaround for what a proof file may not contain.
@@ -74,7 +75,7 @@ and nothing else would catch it.
 | A shell bug that was found: one more step in the journey it broke | That a function was called; what `tsc` already checks |
 
 - **Journeys.** A test walks a story end to end, is named after it, and cites
-  the rule each assertion serves (`// spec/order.md, "…"`). A story whose
+  the rule each assertion serves (`// spec/index.md, "…"`). A story whose
   path never leaves the verified core needs none.
 - **Real services.** Run the real database, server, queue and filesystem,
   started and reset by the `test` script or the runner's setup: an in-process
@@ -106,8 +107,8 @@ How `npm run check` runs them:
   the runner's summary of failures, or its last 80 lines.
 - **Citations.** A test, or a shell file in `src/`, names the story or rule it
   serves by its heading, on one line:
-  `// spec/order.md, "A payment never exceeds the balance"`, or
-  `// spec/order.md, "Story: Check out"` for a story; several may share a line,
+  `// spec/index.md, "A payment never exceeds the balance"`, or
+  `// spec/index.md, "Story: Check out"` for a story; several may share a line,
   separated by `;`. `check` fails on a
   citation whose heading the spec no longer has, so a renamed or removed rule
   brings its tests up for review.
@@ -121,7 +122,7 @@ How `npm run check` runs them:
 
 - `npm run check` is where step 3 of the sync skill's loop stops: what is
   left waits on the user.
-- In the vibespec-starter repository, if you changed `tools/`, `npm run selftest`
+- In the vibespec-starter repository, if you changed `vibespec/`, `npm run selftest`
   passes, with a new case for each new kind of mistake the change catches.
 - What you wrote has had its passes under "Writing code".
 - Your summary follows "When you stop" in the sync skill.
@@ -132,15 +133,32 @@ The spec format, the generated code and the code built on it. The agent's
 loop is the [`sync` skill](.claude/skills/sync/SKILL.md); setup and the stages
 of `npm run check` are in [README.md](README.md).
 
-In the vibespec-starter repository, "the order example" is `spec/order.md` and "the
-tracker example" is `examples/dashboard/spec/tracker.md`.
+In the vibespec-starter repository, "the order example" is
+`vibespec/examples/order/spec/index.md` and "the tracker example" is
+`vibespec/examples/dashboard/spec/tracker.md`. The root `spec/index.md` is blank, ready
+for a new application.
 
 ## Writing a spec
 
-`npx spec new <name>` writes a starter `spec/<name>.md` that passes every
-stage but `review`. The file name is the module name: `[a-z][A-Za-z0-9]*`,
-not `src` or `unproved` (their lock files are the tools' ledgers).
-`spec/order.md` becomes `gen/order.ts`; `check` reads every `spec/*.md`.
+`npx spec new` fills an empty `spec/index.md` with a starter that passes every
+stage but `review`. `npx spec new <name>` writes `spec/<name>/index.md`;
+nested names such as `billing/payments` are allowed. A non-empty spec is
+never replaced.
+
+`check` reads every `spec/**/*.md`, including child directories. A spec may
+link to another with `[Payments](./payments/)` or
+`[Currency](../shared/currency.md)`. Directory links resolve to `index.md`;
+references stay inside `spec/`. Links organize the spec; Quint imports bring
+in definitions. An empty index or one containing only navigation links is
+valid. A `##` story still needs rules.
+
+Each path component uses `[a-z][A-Za-z0-9]*`. The generated module name is
+the path relative to `spec/`, without `.md` or a trailing `/index`, with
+slashes replaced by `__`: `spec/index.md` becomes `gen/index.ts`,
+`spec/billing/index.md` becomes `gen/billing.ts`, and
+`spec/billing/payments.md` becomes `gen/billing__payments.ts`. Flat files
+remain supported. Two paths cannot name the same module, so use either
+`spec/billing.md` or `spec/billing/index.md`.
 
 ````markdown
 # Order checkout                         <- title, free text
@@ -172,7 +190,7 @@ the same character, at least as long, with nothing after it, so a fence of
 four backticks can hold a ```` ```quint ```` example. A fence is Quint when
 the first word of its info string is `quint`.
 
-Quint errors are reported at `spec/<name>.md:line:col`.
+Quint errors are reported at the source file's path and `line:col`.
 
 ### What goes in the Quint blocks
 
@@ -190,8 +208,12 @@ is generated. The role of a definition comes from its name and signature:
 | `pure def stepNeverGoesBack(before: Order, after: Order): bool` | a rule about every single step | a postcondition on every transition; simulated and proved |
 | `pure def stepAuthorized(before: Order, via: str, after: Order): bool` | a step rule that also sees the transition name | a postcondition on every transition |
 | `pure def sometimesPaid(o: Order): bool` | a state that must be reachable | a reachability check with a witness trace |
+| `pure def leadsToPaid(o: Order, later: Order): bool` | a liveness rule: from every reachable state `o`, every fair run reaches a state `later` that it relates to `o` (`o` itself counts) | a search of simulated traces for a fair run that breaks it ("Liveness", below) |
 | `pure def lawTotalIsNotNegative(xs: List[int]): bool` | a law: true for every value of its parameters | a function proved to return `true`, and sampled by the simulator |
 | `pure val idValues = Set(1, 2, 3)` | what the simulator tries for a parameter named `id`. It must be a set whose elements match the parameter type; any supported Quint is allowed in it | nothing: it never reaches TypeScript |
+
+| `pure val weight_pay = 5` | how often the simulator tries `pay`: a whole number from 1 to 100, times as often as an event of weight 1 (the default). For deep interleavings, such as a message lost, repeated and reordered | nothing |
+| `pure val fair_pay = "weak"` or `"strong"` | an assumption for `leadsTo` rules: a fair run does not put `pay` off for ever while its guard keeps allowing it (`"weak"`), or while it allows it again and again (`"strong"`) | nothing |
 | any other `pure val` or `pure def` | a constant or helper | the same constant or function |
 
 A transition parameter named `by` identifies its sender. All such parameters
@@ -202,6 +224,13 @@ must validate the authenticated sender before supplying it.
 A helper that takes the state first and returns the state would be taken for
 a transition. Give it the state as its second parameter, or return something
 smaller.
+
+A transition may return a named record `{ state: State, out: List[Effect] }`.
+All transitions that return effects use the same record type. In that module,
+`step` returns that record; state-only transitions and rejected events return
+an empty `out`. A step rule may take a final parameter named `out` to inspect
+the effects, after the resulting state. The simulator compares those effects
+with the generated TypeScript, and the proof checks each such step rule.
 
 Refused, each with a message saying why: the generated and harness names
 (`init`, `step`, `inv`, `enabled`, `parseEvent`, `parseState`, `Event`,
@@ -215,17 +244,30 @@ and near-misses of the conventions above such as `alwayspaid` or `CanPay`.
 - **`import kernel.* from "./kernel"`** takes a library's names as they are.
   A library is a spec with no `initial`: definitions and laws, or a
   *component* such as an account with `canWithdraw` and `withdraw` and no
-  state of its own (`tools/fixtures/account.md` in the vibespec-starter repository,
+  state of its own (`vibespec/fixtures/account.md` in the vibespec-starter repository,
   used by `bank.md`).
 - **`import lamp as L from "./lamp"`** takes any spec under a name, a state
   machine included. A room can then hold two `L::Lamp`s in its state, start
   them from `L::initial`, move them with `L::toggle`, require
   `L::alwaysFlipsAreCounted` of each, and add rules about the pair that
-  neither lamp could state (`tools/fixtures/room.md` in the vibespec-starter
+  neither lamp could state (`vibespec/fixtures/room.md` in the vibespec-starter
   repository).
 
+Import paths resolve relative to the spec that contains them. For example,
+`import currency.* from "../shared/currency"` uses a sibling area's library,
+and `import payments as P from "./payments"` uses `payments/index.md`.
+Generated code uses the imported spec's full module path.
+- **`import net as N from "./net"`** takes a spec that ships with the tools,
+  from their `std/` directory, when `spec/` has none of that name. It is
+  simulated and proved with the specs that import it, never reviewed.
+  [`vibespec/std/net.md`](vibespec/std/net.md) is a network that loses, repeats and reorders:
+  the numbers of the messages in flight, with `N::send`, `N::take` (to
+  deliver or lose one), `N::repeat`, and laws for an `always` rule that only
+  messages sent are in flight. `vibespec/fixtures/ping.md` uses it.
+
 A spec is imported once, one way or the other, and imports cannot form a
-circle. In the generated TypeScript a name from another module is spelled
+circle. Navigation links may point back to a parent. In the generated
+TypeScript a name from another module is spelled
 `<module>_<name>`, for example `lamp_toggle`.
 
 ### Supported Quint
@@ -238,15 +280,21 @@ circle. In the generated TypeScript a name from another module is spelled
 | `type Parcel = Packed({ weight: int }) \| Lost` | `{ tag: "Packed"; weight: number } \| { tag: "Lost" }` | Read with `match p { \| Packed(x) => … \| _ => … }` |
 | `List[T]` | `T[]` | `List(…)`, `append`, `concat`, `length`, `nth`, `head`, `tail`, `select`, `foldl`, and `every`, `some`, `includes`, `listMap` |
 | `Set[T]` of simple values | `T[]` that never holds a value twice | `Set(…)`, `union`, `intersect`, `exclude`, `filter`, `map`, `forall`, `exists`, `contains`, `in`, `subseteq`, `size` |
-| `str -> T` | `Record<string, T>` | `Map()`, `put`, `get`, `m.keys().contains(k)` |
+| `K -> T` | `Record<K, T>` | Keys are integers, strings or plain variants; `Map()`, `put`, `get`, `getOr`, `m.keys().contains(k)` |
 
 Also: `+ - * / %`, comparisons, `and or not implies iff`, `if … else`, record
 construction, spread update and field access, calls to your own definitions,
 and `val` bindings at the top of a definition. Anything else stops the `model`
 stage with the name of the construct.
 
-- **`==` compares numbers, strings, booleans and plain variants only.** Compare
-  records field by field, and lists with `every`.
+- **`==` and `includes` compare records, lists, maps and variants by structure.**
+  A value holding a set cannot use structural equality; compare sets with
+  `subseteq` in both directions.
+- **Generated arithmetic refuses an integer result outside the safe range.**
+  It throws `RangeError` rather than returning a rounded JavaScript number.
+- **`xs.nthOr(i, fallback)` and `m.getOr(k, fallback)` are total lookups.**
+  `xs.removeAt(i)` removes one position, or leaves the list unchanged when
+  the position is outside it.
 - **Guard every partial operation in the definition that uses it.** An index
   outside a list, a missing map key and a zero divisor stop the simulator and
   cannot be proved safe. Test first and give a default, as `problemAt` does
@@ -299,6 +347,29 @@ stage with the name of the construct.
 - Compute something once with a `val` when a rule uses it several times;
   repeated folds are what make simulation slow.
 
+### Liveness
+
+A `leadsTo` rule says something happens, not only that nothing bad does:
+`leadsToPaid(o, later) = o.status == Pending implies later.status == Paid`.
+Its runs are the simulated traces of the `always` stage, each continued for
+ever in one of two ways: it stops at a state, or it returns to a state it
+had reached before and repeats the loop. Either is *fair* unless it puts off
+a fair event: one declared `fair_<event>`, `"weak"` if the event's guard
+allows it in every state of the loop (or in the state it stops at),
+`"strong"` if in any. A fair run breaks the rule when some state on it is
+followed by none the rule relates it to, and `always` fails with that run,
+the state marked.
+
+- Without a `fair_` declaration nothing has to happen, so a run may stop
+  anywhere: declare fair the events the property waits on, the system's own
+  steps and the deliveries the environment promises, and no others.
+- An event lost and sent again forever loops; only `"strong"` fairness of
+  the delivery rules that out (`vibespec/fixtures/ping.md`).
+- "Allows" is for the values the simulator tries (`<param>Values`).
+- A loop needs a state reached twice. A counter that only grows rules loops
+  out, and then only runs that stop are checked: the stage says how many
+  loops it found. Nothing proves a `leadsTo` rule.
+
 ### Review
 
 `npm run accept` records a fingerprint of everything a person has
@@ -307,9 +378,10 @@ is in the [`sync` skill](.claude/skills/sync/SKILL.md).
 
 | What | Recorded in, under | Fingerprint of | Statuses |
 |---|---|---|---|
-| story | `spec/<name>.lock.json`, `## <title>` | its text, whitespace collapsed | `story has no rules`, `new story`, `story changed`, `removed or renamed` |
-| rule | `spec/<name>.lock.json`, `<story> / <heading>` | 1. its prose, whitespace collapsed<br>2. its Quint<br>3. the Quint of every rule it relies on | `not formalized` (no Quint), `new`, `prose changed`, `model changed`, `model changed through <names> (<rule>)`, `prose and model both changed`, `removed or renamed` |
-| contract | `spec/src.lock.json`, `src/<path>.ts` | its `//@` lines and the declarations they belong to | `new contract`, `contract changed`, `contract removed` |
+| document | `spec/lock.json`, `specs[<path>]["@document"]` | title, introduction and links before the first story, whitespace collapsed | `document changed` |
+| story | `spec/lock.json`, `specs[<path>]["## <title>"]` | its text, whitespace collapsed | `story has no rules`, `new story`, `story changed`, `removed or renamed` |
+| rule | `spec/lock.json`, `specs[<path>][<story> / <heading>]` | 1. its prose, whitespace collapsed<br>2. its Quint<br>3. the Quint of every rule it relies on | `not formalized` (no Quint), `new`, `prose changed`, `model changed`, `model changed through <names> (<rule>)`, `prose and model both changed`, `removed or renamed` |
+| contract | `spec/lock.json`, `contracts["src/<path>.ts"]` | its `//@` lines and the declarations they belong to | `new contract`, `contract changed`, `contract removed` |
 
 ```mermaid
 flowchart LR
@@ -322,6 +394,13 @@ variant) that its own Quint mentions, transitively and across imports. Above,
 editing C's Quint makes A and B `model changed through Status (…C)`; a rule in
 another spec is named `spec/<file>: <rule>`. A renamed heading is one rule
 removed and one new.
+
+The versioned `spec/lock.json` holds `specs` keyed by source path, `contracts`
+keyed by source file, and `unproved` keyed by proof unit. `npx spec migrate`
+consolidates older per-spec ledgers without accepting new reviews or proof
+exceptions. Commit the resulting lock with the specs.
+
+Removed spec paths stay in review until their removal is accepted.
 
 Accept records everything or nothing: only when every other stage passes,
 every story has a rule and every rule has Quint.
@@ -344,8 +423,8 @@ for each one, in this order:
    only for a spec unit: nothing simulates hand-written code, so a `src`
    unit's obligations must be proved.
    `npm run accept -- unproved` records the obligations in
-   `spec/unproved.lock.json`, per unit, with a fingerprint of the unit's text
-   and proof file. The check then passes and says how many obligations are
+   `spec/lock.json` under `unproved`, per unit, with a fingerprint of the
+   unit's text and proof file. The check then passes and says how many obligations are
    simulated only. It fails again if a *new* one appears, or if the unit or
    its proof file changes: what was accepted for one text does not carry over
    to another. Read the list before recording it: an obligation that is false
@@ -353,7 +432,7 @@ for each one, in this order:
 
 Counting is per obligation. Dafny checks every `ensures` on its own, a
 failing one is never assumed while another is checked, and the prover works
-to a fixed resource limit (`RESOURCE_LIMIT` in `tools/prove.ts`) rather than a
+to a fixed resource limit (`RESOURCE_LIMIT` in `vibespec/prove.ts`) rather than a
 time limit, so the answer does not depend on the machine. An obligation it
 could not finish is marked `[the prover ran out of resources]`. A lemma
 assumes what every lemma it calls ensures, so an obligation whose proof calls,
@@ -365,7 +444,8 @@ obligations simulated only lists them.
 
 ### Proof files
 
-`spec/<name>.proof.dfy` proves obligations of `gen/<name>.ts`;
+A spec's adjacent `.proof.dfy` proves its generated module: for example,
+`spec/billing/index.proof.dfy` proves `gen/billing.ts`;
 `src/<path>.proof.dfy` proves those of `src/<path>.ts`. A proof file that
 belongs to no unit is reported.
 
@@ -396,13 +476,13 @@ a body.
 - Names from Dafny's standard library (`Std.…`) only as the generated code
   writes them, such as `Std.Collections.Seq.All`: the library holds axioms,
   and `dafny audit` does not report them in the unit. `ProofLib.<Name>` only
-  for what `tools/proof/lib.dfy` declares.
+  for what `vibespec/proof/lib.dfy` declares.
 - Refused: block comments, `@`, any other attribute, character literals, NUL,
   anything but ASCII outside comments and strings, and the words that
   declare or trust something: `assume`, `expect`, `function`, `predicate`,
   `method`, `ghost`, `const`, `type`, `datatype`, `include`, `import`,
   `module`, `reads`, `modifies`, `opaque`, `axiom`, `verify` and the rest of
-  `FORBIDDEN` in `tools/prove.ts`.
+  `FORBIDDEN` in `vibespec/prove.ts`.
 - After that, LemmaScript refuses the `.dfy` unless it is its own output plus
   added lines, and `dafny audit` refuses anything assumed rather than proved.
   A failure anywhere but in a generated definition (a helper, the library, a
@@ -413,7 +493,7 @@ a body.
 
 **What a proof can call:**
 
-- `ProofLib.<Name>(...)` from `tools/proof/lib.dfy`, added to every unit that
+- `ProofLib.<Name>(...)` from `vibespec/proof/lib.dfy`, added to every unit that
   has a proof file: `Filter` (a heap-free view of `Std.Collections.Seq.Filter`,
   see below), `Distinct`, `DistinctBy`, and lemmas about filters
   (`FilterNil`, `FilterCons`, `FilterAppend`, `FilterMember`, `FilterSubset`,
@@ -455,7 +535,7 @@ supply one to replace it.
 3. Run `npm run check`. Dafny's messages point into the `.dfy`; the log has
    them all.
 
-`tools/fixtures/highest.md` is the smallest example: its law needs induction
+`vibespec/fixtures/highest.md` is the smallest example: its law needs induction
 over a fold, and this proof file proves it (the selftest runs it):
 
 ```dafny
@@ -484,7 +564,7 @@ Every definition from the spec carries a doc comment naming its rule and spec
 line.
 
 - Import with the `.ts` extension, as Node requires:
-  `import { type Event, enabled, step } from "../gen/order.ts";`
+  `import { type Event, enabled, step } from "../gen/index.ts";`
 - **Pass everything that arrives from outside through `parseEvent` or
   `parseState`.** The proofs assume whole numbers and plain data.
 
@@ -497,7 +577,7 @@ line.
   afterwards.
 - Calling a transition directly (`pay(o, 5)`) is only meaningful when its
   guard holds. Application code goes through `enabled` and `step`, as
-  `src/app.ts` does.
+  `vibespec/examples/order/src/app.ts` does.
 - `gen/` is rebuilt by `npm run gen` and `npm run check`, and by
   `npm install` when every spec is valid.
 
@@ -507,7 +587,7 @@ Put logic in the spec when you can: it is then simulated, proved and
 generated. For pure logic that Quint cannot express, such as a loop over an
 event log, write TypeScript under `src/` with
 [LemmaScript](https://github.com/midspiral/LemmaScript) annotations.
-`src/ledger.ts` is the worked example.
+`vibespec/examples/order/src/ledger.ts` is the worked example.
 
 - Any `.ts` file under `src/` that contains `//@` is proved by
   `npm run check`, as the unit `src-<path>`. Its `//@` lines are its
@@ -546,19 +626,21 @@ a tarball made with `npm pack`.
 ```sh
 npm install --save-dev /path/to/vibespec-0.1.0.tgz
 npx spec init          # adds what is missing; updates only its own marked instructions
-npx spec new <name>    # a starter spec/<name>.md
+npx spec new           # fill an empty spec/index.md
+npx spec new <name>    # a starter spec/<name>/index.md
 npm run check
 ```
 
 | `spec init` adds | |
 |---|---|
-| `.claude/skills/sync/`, `.claude/skills/design/`, `AGENTS.md`, `CONTRIBUTING.md` | the agent's procedure and this reference; existing AGENTS content is kept around a marked Vibespec section |
+| `.claude/skills/sync/`, `.claude/skills/design/`, `AGENTS.md` | the agent's procedure and this reference; existing AGENTS content is kept around a marked Vibespec section |
+| `.agents/skills/` | links to the same skills in `.claude/skills/` |
 | `CLAUDE.md` | imports `AGENTS.md`, preserving any existing instructions |
-| `tsconfig.json`, `spec/` | |
+| `tsconfig.json`, an empty `spec/index.md` | |
 | `.gitignore` | `gen/`, `.spec-cache/` |
 | `package.json` scripts | `check`, `gen`, `accept` |
 
-`spec` works on `spec/*.md`, and optionally `src/`, the package's
+`spec` works on `spec/**/*.md`, and optionally `src/`, the package's
 [tests](#tests) and a `tsconfig.json`, in the directory it is run from. Without a `tsconfig.json`, a package containing `src/` or `test/` fails the
 types stage; a spec-only package reports that there is no code to typecheck. To hand the generated code to another package, compile `gen/*.ts`
 with `tsc`; it has no dependencies.
@@ -575,7 +657,7 @@ with `tsc`; it has no dependencies.
   result is kept in `.spec-cache/` under a fingerprint of the spec, everything it
   imports and the versions of the tools.
 - **The spec covers the rules, not the plumbing.** Chat, HTTP and storage stay
-  hand-written around the generated core, as `examples/dashboard/src/notify.ts`
+  hand-written around the generated core, as `vibespec/examples/dashboard/src/notify.ts`
   does for sending messages.
 
 ## Checking harder
@@ -588,7 +670,7 @@ To check a model exhaustively up to a depth with the Apalache model checker
 (needs Java 17+, downloads Apalache on first use):
 
 ```sh
-npx quint verify gen/order.run.qnt --main order_run --invariant inv --max-steps 10
+npx quint verify gen/index.run.qnt --main index_run --invariant inv --max-steps 10
 ```
 
 ## Changing the tools
@@ -597,18 +679,18 @@ In the vibespec-starter repository:
 
 | File | Role |
 |---|---|
-| `tools/spec.ts` | the pipeline and the `spec` command |
-| `tools/parse.ts`, `tools/review.ts` | literate specs and the review ledgers |
-| `tools/cache.ts`, `tools/run.ts` | stage caches and bounded tool execution |
-| `tools/units.ts`, `tools/simulate.ts` | generation, proof units, simulation and replay |
-| `tools/util.ts` | source discovery, test execution and citations |
-| `tools/prove.ts` | proves one unit: checks and splices the proof file, runs LemmaScript and `dafny audit`, and rechecks alone every postcondition a failing one could hide |
-| `tools/proof/lib.dfy` | the library proof files call |
-| `tools/gen.ts` | the translator: reads what a module imports and defines |
-| `tools/gen/types.ts` | everything decided by a type |
-| `tools/gen/print.ts` | expressions |
-| `tools/gen/classify.ts` | which definition is a transition, a guard or a rule |
-| `tools/gen/typescript.ts`, `tools/gen/harness.ts` | the two outputs |
+| `vibespec/spec.ts` | the pipeline and the `spec` command |
+| `vibespec/parse.ts`, `vibespec/review.ts` | literate specs and the review ledgers |
+| `vibespec/cache.ts`, `vibespec/run.ts` | stage caches and bounded tool execution |
+| `vibespec/units.ts`, `vibespec/simulate.ts` | generation, proof units, simulation and replay |
+| `vibespec/util.ts` | source discovery, test execution and citations |
+| `vibespec/prove.ts` | proves one unit: checks and splices the proof file, runs LemmaScript and `dafny audit`, and rechecks alone every postcondition a failing one could hide |
+| `vibespec/proof/lib.dfy` | the library proof files call |
+| `vibespec/gen.ts` | the translator: reads what a module imports and defines |
+| `vibespec/gen/types.ts` | everything decided by a type |
+| `vibespec/gen/print.ts` | expressions |
+| `vibespec/gen/classify.ts` | which definition is a transition, a guard or a rule |
+| `vibespec/gen/typescript.ts`, `vibespec/gen/harness.ts` | the two outputs |
 
 Node runs all of it directly; `npm run build` compiles it for the packaged
 `spec` command.
@@ -617,6 +699,6 @@ Node runs all of it directly; `npm run build` compiles it for the packaged
 that object. Each result has `ok`, `stage` (a stage, or `skipped`),
 `summary`, `detail` and, when it concerns one, `where`; `next` is the line
 the command line ends with. `npm run selftest` builds scratch projects from
-this project's spec or from `tools/fixtures/`, breaks one thing at a time and
+this project's spec or from `vibespec/fixtures/`, breaks one thing at a time and
 asserts which stage catches each. Add a case for every new kind of mistake a
 change is meant to catch.

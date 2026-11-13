@@ -4,11 +4,16 @@
     "module": "nodenext",
     "strict": true,
     "outDir": "dist",
-    "rootDir": "tools",
+    "rootDir": "vibespec",
     "rewriteRelativeImportExtensions": true,
     "erasableSyntaxOnly": true,
     "skipLibCheck": true,
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
-  "include": ["tools/spec.ts", "tools/studio/server.ts"]
+  "include": [
+    "vibespec/spec.ts",
+    "vibespec/studio/server.ts"
+  ]
 }
