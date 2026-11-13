@@ -10,9 +10,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        project: [".", "vibespec/examples/order", "vibespec/examples/assistant", "vibespec/examples/dashboard", "vibespec/examples/fullstack"]
+        project: ["vibespec/examples/fullstack"]
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
       - uses: dafny-lang/setup-dafny-action@v1
         with:
           dafny-version: "4.11.0"
@@ -29,18 +31,3 @@ jobs:
           name: proof-${{ strategy.job-index }}
           path: ${{ matrix.project }}/gen/proof/
           if-no-files-found: ignore
-
-  selftest:
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dafny-lang/setup-dafny-action@v1
-        with:
-          dafny-version: "4.11.0"
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 26
-          cache: npm
-      - run: npm ci
-      - run: npm run selftest

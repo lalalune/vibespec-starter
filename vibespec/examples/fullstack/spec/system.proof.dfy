@@ -75,6 +75,29 @@ lemma act_ensures(sys: System, who: string, op: todo_Op)
   }
 }
 
+lemma LogAppendFacts(before: server_Server, after: server_Server, entry: server_Answered, client: string, number: int, op: todo_Op)
+  requires after.log == before.log + [entry]
+  ensures server_answered(after, client, number) == (server_answered(before, client, number) || (entry.client == client && entry.seq_ == number))
+  ensures server_acceptedAs(after, client, number, op) == (server_acceptedAs(before, client, number, op) || (entry.client == client && entry.seq_ == number && entry.ok && todo_sameOp(entry.op, op)))
+{
+  if server_answered(before, client, number) {
+    var h :| h in before.log && h.client == client && h.seq_ == number;
+    assert h in after.log;
+  }
+  if server_answered(after, client, number) {
+    var h :| h in after.log && h.client == client && h.seq_ == number;
+    assert h in before.log || h == entry;
+  }
+  if server_acceptedAs(before, client, number, op) {
+    var h :| h in before.log && h.client == client && h.seq_ == number && h.ok && todo_sameOp(h.op, op);
+    assert h in after.log;
+  }
+  if server_acceptedAs(after, client, number, op) {
+    var h :| h in after.log && h.client == client && h.seq_ == number && h.ok && todo_sameOp(h.op, op);
+    assert h in before.log || h == entry;
+  }
+}
+
 lemma serve_ensures(sys: System, i: int)
   ensures (inv(sys) ==> canServe(sys, i) ==> alwaysOnlyTheOldestQueuedEditIsOnItsWay(serve(sys, i)))
   ensures (inv(sys) ==> canServe(sys, i) ==> alwaysEachPartKeepsItsRules(serve(sys, i)))
@@ -99,12 +122,46 @@ lemma serve_ensures(sys: System, i: int)
     DropAtSubset(sys.net, i);
     var after := serve(sys, i);
     assert sys.server.version >= 0;
+    if !server_answered(sys.server, m.client, m.seq_) && after.forged == 0 {
+      var entry := server_Answered(m.client, m.seq_, m.op, server_allows(sys.server, m.client, m.seq_, m.op));
+      assert m.kind.Request?;
+      forall h | h in after.server.log ensures numbered(after, h.client, h.seq_) {
+        if h in sys.server.log {
+          var k :| 0 <= k < |sys.server.log| && sys.server.log[k] == h;
+        } else { assert h == entry; }
+      }
+      forall owner | owner in {"a", "b"}
+        ensures onlyTheOldestAnswered(after, owner)
+      {
+        var c := clientOf(sys, owner);
+        forall p | p in c.pending
+          ensures p.seq_ == oldest(c).seq_ || !server_answered(after.server, owner, p.seq_)
+        {
+          var k :| 0 <= k < |c.pending| && c.pending[k] == p;
+          LogAppendFacts(sys.server, after.server, entry, owner, p.seq_, p.op);
+        }
+      }
+    }
     if server_answered(sys.server, m.client, m.seq_) {
       assert after == repeatAnswer(m, rest, sys);
       forall j | 0 <= j < |after.net|
         ensures isRequest(after.net[j]) || isPast(after.history, after.net[j].version, after.net[j].todos)
+        ensures (!after.net[j].kind.Request? || server_answered(after.server, after.net[j].client, after.net[j].seq_) || (|clientOf(after, after.net[j].client).pending| > 0 && after.net[j].seq_ == oldest(clientOf(after, after.net[j].client)).seq_))
+        ensures (!after.net[j].kind.Ack? || forall p :: p in clientOf(after, after.net[j].client).pending ==> p.seq_ != after.net[j].seq_ || server_acceptedAs(after.server, after.net[j].client, p.seq_, p.op))
+        ensures (!after.net[j].kind.Request? || forall p :: p in clientOf(after, after.net[j].client).pending ==> p.seq_ != after.net[j].seq_ || todo_sameOp(p.op, after.net[j].op))
+        ensures (after.net[j].kind.Forged? || after.net[j].kind.Push? || (numbered(after, after.net[j].client, after.net[j].seq_) && (after.net[j].kind.Request? || server_answered(after.server, after.net[j].client, after.net[j].seq_))))
+        ensures (after.forged != 0 || !after.net[j].kind.Forged?)
+        ensures (!after.net[j].kind.Push? || clientOf(after, other(after.net[j].client)).made >= 1 || after.forged >= 1)
       {
-        if j < |rest| { OnTheWire(sys, rest[j]); }
+        var wire := after.net[j];
+        if !server_answered(sys.server, m.client, m.seq_) {
+          var entry := server_Answered(m.client, m.seq_, m.op, server_allows(sys.server, m.client, m.seq_, m.op));
+          LogAppendFacts(sys.server, after.server, entry, wire.client, wire.seq_, wire.op);
+          forall p | p in clientOf(after, wire.client).pending {
+            LogAppendFacts(sys.server, after.server, entry, wire.client, p.seq_, p.op);
+          }
+        }
+        if j < |rest| { WireProperties(sys, rest[j]); }
       }
     } else if server_allows(sys.server, m.client, m.seq_, m.op) {
       var s := server_commit(m.client, sys.server, m.seq_, m.op);
@@ -116,9 +173,23 @@ lemma serve_ensures(sys: System, i: int)
       PastExtends(sys.history, s.todos, sys.b.seen, sys.b.confirmed);
       forall j | 0 <= j < |after.net|
         ensures isRequest(after.net[j]) || isPast(after.history, after.net[j].version, after.net[j].todos)
+        ensures (!after.net[j].kind.Request? || server_answered(after.server, after.net[j].client, after.net[j].seq_) || (|clientOf(after, after.net[j].client).pending| > 0 && after.net[j].seq_ == oldest(clientOf(after, after.net[j].client)).seq_))
+        ensures (!after.net[j].kind.Ack? || forall p :: p in clientOf(after, after.net[j].client).pending ==> p.seq_ != after.net[j].seq_ || server_acceptedAs(after.server, after.net[j].client, p.seq_, p.op))
+        ensures (!after.net[j].kind.Request? || forall p :: p in clientOf(after, after.net[j].client).pending ==> p.seq_ != after.net[j].seq_ || todo_sameOp(p.op, after.net[j].op))
+        ensures (after.net[j].kind.Forged? || after.net[j].kind.Push? || (numbered(after, after.net[j].client, after.net[j].seq_) && (after.net[j].kind.Request? || server_answered(after.server, after.net[j].client, after.net[j].seq_))))
+        ensures (after.forged != 0 || !after.net[j].kind.Forged?)
+        ensures (!after.net[j].kind.Push? || clientOf(after, other(after.net[j].client)).made >= 1 || after.forged >= 1)
       {
+        var wire := after.net[j];
+        if !server_answered(sys.server, m.client, m.seq_) {
+          var entry := server_Answered(m.client, m.seq_, m.op, server_allows(sys.server, m.client, m.seq_, m.op));
+          LogAppendFacts(sys.server, after.server, entry, wire.client, wire.seq_, wire.op);
+          forall p | p in clientOf(after, wire.client).pending {
+            LogAppendFacts(sys.server, after.server, entry, wire.client, p.seq_, p.op);
+          }
+        }
         if j < |rest| {
-          OnTheWire(sys, rest[j]);
+          WireProperties(sys, rest[j]);
           if !isRequest(rest[j]) { PastExtends(sys.history, s.todos, rest[j].version, rest[j].todos); }
         }
       }
@@ -127,8 +198,22 @@ lemma serve_ensures(sys: System, i: int)
       server_lawARefusalKeepsTheRules_ensures(sys.server, m.client, m.seq_, m.op);
       forall j | 0 <= j < |after.net|
         ensures isRequest(after.net[j]) || isPast(after.history, after.net[j].version, after.net[j].todos)
+        ensures (!after.net[j].kind.Request? || server_answered(after.server, after.net[j].client, after.net[j].seq_) || (|clientOf(after, after.net[j].client).pending| > 0 && after.net[j].seq_ == oldest(clientOf(after, after.net[j].client)).seq_))
+        ensures (!after.net[j].kind.Ack? || forall p :: p in clientOf(after, after.net[j].client).pending ==> p.seq_ != after.net[j].seq_ || server_acceptedAs(after.server, after.net[j].client, p.seq_, p.op))
+        ensures (!after.net[j].kind.Request? || forall p :: p in clientOf(after, after.net[j].client).pending ==> p.seq_ != after.net[j].seq_ || todo_sameOp(p.op, after.net[j].op))
+        ensures (after.net[j].kind.Forged? || after.net[j].kind.Push? || (numbered(after, after.net[j].client, after.net[j].seq_) && (after.net[j].kind.Request? || server_answered(after.server, after.net[j].client, after.net[j].seq_))))
+        ensures (after.forged != 0 || !after.net[j].kind.Forged?)
+        ensures (!after.net[j].kind.Push? || clientOf(after, other(after.net[j].client)).made >= 1 || after.forged >= 1)
       {
-        if j < |rest| { OnTheWire(sys, rest[j]); }
+        var wire := after.net[j];
+        if !server_answered(sys.server, m.client, m.seq_) {
+          var entry := server_Answered(m.client, m.seq_, m.op, server_allows(sys.server, m.client, m.seq_, m.op));
+          LogAppendFacts(sys.server, after.server, entry, wire.client, wire.seq_, wire.op);
+          forall p | p in clientOf(after, wire.client).pending {
+            LogAppendFacts(sys.server, after.server, entry, wire.client, p.seq_, p.op);
+          }
+        }
+        if j < |rest| { WireProperties(sys, rest[j]); }
       }
     }
   }
