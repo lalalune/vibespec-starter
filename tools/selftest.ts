@@ -640,3 +640,116 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.match(spec.rules[0].prose, /### Not a rule[\s\S]*### Nor this/);
   });
 });
+
+describe("fix-check", { concurrency: true }, () => {
+  const cli = (root: string, args: string[], env: Record<string, string> = {}) => new Promise<{ status: number; stdout: string; stderr: string }>((done) =>
+    execFile(process.execPath, [path.join(project, "tools/spec.ts"), ...args], { cwd: root, maxBuffer: 1 << 26, env: { ...process.env, ...env } }, (e, stdout, stderr) => done({ status: e ? Number(e.code) : 0, stdout, stderr })));
+  const cacheEntries = (root: string, prefix = "") => fs.readdirSync(path.join(root, ".spec-cache")).filter((f) => f.startsWith(prefix) && f.endsWith(".json")).sort();
+
+  test("a cache entry cut short is a miss, not a crash, and no run leaves its modules behind in gen/", async () => {
+    const root = fixtures(["door"]);
+    const first = await run(root);
+    assert.deepEqual(first.failed, ["review"], first.text);
+    const entries = cacheEntries(root);
+    assert.ok(entries.some((f) => f.startsWith("model-")) && entries.some((f) => f.startsWith("simulate-")) && entries.some((f) => f.startsWith("prove-")), entries.join());
+    for (const f of entries) fs.writeFileSync(path.join(root, ".spec-cache", f), fs.readFileSync(path.join(root, ".spec-cache", f), "utf8").slice(0, 40));
+    const second = await run(root);
+    assert.deepEqual(second.failed, ["review"], second.text);
+    assert.deepEqual(fs.readdirSync(path.join(root, "gen")).filter((f) => f.startsWith("run-")), []);
+    for (const f of cacheEntries(root)) assert.doesNotThrow(() => JSON.parse(fs.readFileSync(path.join(root, ".spec-cache", f), "utf8")), f);
+  });
+
+  test("generated modules load in a project whose package.json says commonjs, and init sets the type a project lacks", async () => {
+    const root = fixtures(["lamp"]);
+    fs.writeFileSync(path.join(root, "package.json"), `{"type":"commonjs"}\n`);
+    const { failed, text } = await run(root);
+    assert.deepEqual(failed, ["review"], text);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, "gen/package.json"), "utf8")), { type: "module" });
+    const warned: string[] = [];
+    assert.deepEqual(init(root, (m) => warned.push(m)).filter((d) => d.startsWith("package.json")), ["package.json scripts: check, watch, gen, accept, new"]);
+    assert.match(warned.join("\n"), /"type" is "commonjs"/);
+    const bare = scratch({ "package.json": "{}\n" });
+    assert.ok(init(bare, () => assert.fail("nothing to warn of")).includes('package.json "type": "module"'));
+    assert.equal(JSON.parse(fs.readFileSync(path.join(bare, "package.json"), "utf8")).type, "module");
+  });
+
+  test("a failing simulation is remembered with its trace, and a model or application broken after a passing run is still caught", async () => {
+    const root = fixtures(["lamp"], (f) => { f["spec/lamp.md"] = f["spec/lamp.md"].replace("l.flips >= 0", "l.flips < 3"); });
+    const first = await run(root);
+    assert.equal(first.said("always", /./)?.ok, false, first.text);
+    assert.equal(cacheEntries(root, "simulate-").length, 1, "the failure is remembered");
+    const again = await run(root);
+    assert.equal(again.said("always", /./)?.detail, first.said("always", /./)!.detail);
+    // Fixed, then broken in the model or in the hand-written code: a remembered model or typecheck does not hide either.
+    fs.writeFileSync(path.join(root, "spec/lamp.md"), read("tools/fixtures/lamp.md"));
+    fs.mkdirSync(path.join(root, "src"));
+    fs.writeFileSync(path.join(root, "src/use.ts"), 'import { initial } from "../gen/lamp.ts";\nexport const flips: number = initial.flips;\n');
+    fs.writeFileSync(path.join(root, "tsconfig.json"), read("tsconfig.json"));
+    fs.symlinkSync(nodeModules, path.join(root, "node_modules"), "dir");
+    const fixed = await run(root);
+    assert.deepEqual(fixed.failed, ["review"], fixed.text);
+    assert.ok(fs.existsSync(path.join(root, ".spec-cache/tsbuildinfo")), "the typecheck is incremental");
+    fs.writeFileSync(path.join(root, "src/use.ts"), 'import { initial } from "../gen/lamp.ts";\nexport const flips: string = initial.flips;\n');
+    assert.deepEqual((await run(root)).failed, ["types", "review"]);
+    fs.writeFileSync(path.join(root, "spec/lamp.md"), read("tools/fixtures/lamp.md").replace("flips: l.flips + 1 }", "flips: l.flips + true }"));
+    assert.ok((await run(root)).said("model", /not a valid model/));
+  });
+
+  test("a check with another budget or seed leaves a full check's simulations in the cache, until no check has used them for a week", async () => {
+    const root = fixtures(["door"]);
+    const full = await run(root);
+    assert.deepEqual(full.failed, ["review"], full.text);
+    const simulated = cacheEntries(root, "simulate-");
+    assert.equal(simulated.length, 1);
+    const old = path.join(root, ".spec-cache", "simulate-00000000-000000000000000000000000.json");
+    fs.writeFileSync(old, "[]");
+    const weekAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+    fs.utimesSync(old, weekAgo, weekAgo);
+    const quick = await cli(root, ["check"], { SPEC_QUICK: "1" });
+    assert.match(quick.stdout, /SPEC_QUICK: a tenth/, quick.stdout + quick.stderr);
+    for (const f of simulated) assert.ok(fs.existsSync(path.join(root, ".spec-cache", f)), `${f} is kept`);
+    assert.ok(!fs.existsSync(old), "an entry unused for a week goes");
+    assert.equal(cacheEntries(root, "simulate-").length, 2);
+  });
+
+  test("accept unproved reports what it recorded after the units it recorded them for", async () => {
+    const root = fixtures(["lib", "shop"]);
+    const { results } = await check(root, "unproved");
+    const ledger = results.findIndex((r) => r.stage === "proof" && /^spec\/unproved\.lock\.json: /.test(r.summary));
+    assert.ok(ledger >= 0, results.map(show).join("\n"));
+    const units = results.flatMap((r, i) => (r.stage === "proof" && r.where ? [i] : []));
+    assert.ok(units.length && units.every((i) => i < ledger), results.map(show).join("\n"));
+  });
+
+  test("watch sees src/ and test/ created after it started, and every save of tsconfig.json, even by renaming a new file over it", async () => {
+    const { spawn } = await import("node:child_process");
+    const root = fixtures(["door"]);
+    fs.writeFileSync(path.join(root, "tsconfig.json"), read("tsconfig.json"));
+    fs.symlinkSync(nodeModules, path.join(root, "node_modules"), "dir");
+    const child = spawn(process.execPath, [path.join(project, "tools/spec.ts"), "watch"], { cwd: root, env: { ...process.env, SPEC_QUICK: "1" } });
+    let out = "";
+    child.stdout.setEncoding("utf8").on("data", (d) => (out += d));
+    child.stderr.setEncoding("utf8").on("data", (d) => (out += d));
+    const runs = () => out.split("\nnext: ").length - 1;
+    const until = async (n: number) => {
+      for (const started = Date.now(); runs() < n; await new Promise((r) => setTimeout(r, 200)))
+        if (Date.now() - started > 600_000) assert.fail(`run ${n} never came:\n${out}`);
+      await new Promise((r) => setTimeout(r, 500)); // let the watchers settle before the next change
+    };
+    try {
+      await until(1);
+      fs.mkdirSync(path.join(root, "test"));
+      fs.writeFileSync(path.join(root, "test/a.test.ts"), 'import { test } from "node:test";\ntest("a", () => {});\n');
+      await until(2);
+      fs.writeFileSync(path.join(root, "test/b.test.ts"), 'import { test } from "node:test";\ntest("b", () => {});\n');
+      await until(3);
+      for (const n of [4, 5]) {
+        fs.writeFileSync(path.join(root, "tsconfig.json.tmp"), read("tsconfig.json") + "\n".repeat(n));
+        fs.renameSync(path.join(root, "tsconfig.json.tmp"), path.join(root, "tsconfig.json"));
+        await until(n);
+      }
+    } finally {
+      child.kill();
+    }
+  });
+});
