@@ -75,7 +75,7 @@ ranked by value within each section.
 - A guard takes only the parameters it uses.
 - Witness searches that find nothing in 20 events try 40, then 100.
 - Counterexamples show each event with only what it changed.
-- Errors about unsupported Quint point to CONTRIBUTING.md, not the tools.
+- Errors about unsupported Quint point to the spec reference in AGENTS.md, not the tools.
 
 **Agents**
 

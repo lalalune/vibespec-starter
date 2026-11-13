@@ -19,12 +19,10 @@ export interface Roles {
   sender: Json | undefined;
 }
 
-/** The parameter that names who sent an event (CONTRIBUTING.md, "Who sent an event"). */
+/** The parameter that names who sent an event (AGENTS.md, "Who sent an event"). */
 export const SENDER = "by";
-/** The parameter of a `step` rule that names the transition taken (CONTRIBUTING.md, "What goes in the Quint blocks"). */
+/** The parameter of a `step` rule that names the transition taken (AGENTS.md, "What goes in the Quint blocks"). */
 export const VIA = "via";
-
-const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
 
 /**
  * `funs` are the spec's `pure def`s in the order it gives them; `sig` gives a definition's parameters and result.
@@ -60,7 +58,7 @@ export function classify(funs: Json[], stateType: Json | undefined, sig: (d: Jso
     .filter((d) => !rules.has(d.name) && onState(d) && shape(sig(d).result) === stateShape)
     .map((d) => {
       const params = sig(d).params.slice(1);
-      const guard = funs.find((g) => g.name === `can${cap(d.name)}`);
+      const guard = funs.find((g) => g.name === `can${d.name[0].toUpperCase()}${d.name.slice(1)}`);
       if (guard && !onState(guard)) fail(`${guard.name} must take the state first, as ${d.name} does`);
       if (guard && !isBool(guard)) fail(`${guard.name}: a guard returns bool`);
       // A guard takes the state, then any of its transition's parameters, by the same names and types.

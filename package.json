@@ -21,6 +21,22 @@
   },
   "version": "0.1.0",
   "description": "Stories, rules and a Quint model in one Markdown file; verified TypeScript out.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lalalune/onespec.git"
+  },
+  "homepage": "https://github.com/lalalune/onespec#readme",
+  "bugs": "https://github.com/lalalune/onespec/issues",
+  "keywords": [
+    "formal-verification",
+    "quint",
+    "dafny",
+    "typescript",
+    "specification",
+    "state-machine",
+    "ai-agents"
+  ],
   "bin": {
     "spec": "dist/spec.js"
   },
@@ -29,7 +45,8 @@
     ".claude/skills",
     "README.md",
     "AGENTS.md",
-    "CONTRIBUTING.md"
+    "CONTRIBUTING.md",
+    "LICENSE"
   ],
   "dependencies": {
     "@informalsystems/quint": "^0.33.1",

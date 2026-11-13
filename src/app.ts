@@ -1,5 +1,5 @@
 // The unverified shell: storage and error reporting around the verified core.
-import { type Event, type Order, enabled, parseEvent } from "../gen/order.ts";
+import { type Event, type Order, enabled, parseEvent, step } from "../gen/order.ts";
 import { balance, replay } from "./ledger.ts";
 
 export class Rejected extends Error {}
@@ -19,7 +19,7 @@ export class OrderBook {
     const order = this.get(id);
     if (!enabled(order, event)) throw new Rejected(`${event.type} is not allowed for a ${order.status} order`);
     this.logs.set(id, [...(this.logs.get(id) ?? []), event]);
-    return this.get(id);
+    return step(order, event); // what `replay` (src/ledger.ts) gives for the longer log
   }
 
   balance(id: string): number {
