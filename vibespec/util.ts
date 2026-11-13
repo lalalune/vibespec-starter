@@ -11,6 +11,11 @@ export const sha = (...parts: string[]) => digest(JSON.stringify(parts));
 export const short = (text: string) => digest(text).slice(0, 12);
 export const indent = (s: string, by = 6) => s.split("\n").map((l) => " ".repeat(by) + l).join("\n");
 
+/** Files below a project directory, excluding directory entries and symlinks. */
+export const filesUnder = (root: string, dir: string) => !fs.existsSync(path.join(root, dir)) ? []
+  : fs.readdirSync(path.join(root, dir), { recursive: true, withFileTypes: true }).filter((e) => e.isFile())
+    .map((e) => path.relative(root, path.join(e.parentPath, e.name)).split(path.sep).join("/")).sort();
+
 /** Resolve a project folder before a command reads or writes its files. */
 export function projectRoot(directory: string, base = process.cwd()): string {
   const root = path.resolve(base, directory);
@@ -39,7 +44,7 @@ export interface SrcFile { file: string; code: string; ts: boolean }
 /** Every such file, read once: a check proves and reviews the same text, even if a file changes while it runs. */
 export function readSrc(root: string): SrcFile[] {
   const src = path.join(root, "src");
-  const files = fs.existsSync(src) ? (fs.readdirSync(src, { recursive: true }) as string[]).filter((f) => /\.(?:[mc]?ts|tsx|[mc]?jsx?)$/.test(f)).sort() : [];
+  const files = filesUnder(root, "src").map((f) => f.slice(4)).filter((f) => /\.(?:[mc]?ts|tsx|[mc]?jsx?)$/.test(f));
   return files.map((f) => ({ file: f, code: fs.readFileSync(path.join(src, f), "utf8"), ts: /\.ts$/.test(f) })).filter((u) => u.code.includes("//@"));
 }
 /** Compatibility view of the verified or unsupported source files. */
@@ -59,7 +64,7 @@ export async function tests(root: string, specs: Spec[]): Promise<[boolean, "tes
     // Node's on test/**/*.test.ts. The placeholder `npm init` writes is no script.
     const pkg = fs.existsSync(path.join(root, "package.json")) ? JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) : {};
     const script = /no test specified/.test(pkg.scripts?.test ?? "") ? undefined : pkg.scripts?.test;
-    const files = fs.existsSync(path.join(root, "test")) ? (fs.readdirSync(path.join(root, "test"), { recursive: true }) as string[]).filter((f) => f.endsWith(".test.ts")).map((f) => `test/${f}`) : [];
+    const files = filesUnder(root, "test").filter((f) => f.endsWith(".test.ts"));
     const [command, args] = script ? [packageManager(root), ["run", "test"]] : [process.execPath, ["--test", ...files]];
     if (script || files.length) {
       const { NODE_TEST_CONTEXT: _, ...env } = process.env;

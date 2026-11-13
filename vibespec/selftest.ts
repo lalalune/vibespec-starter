@@ -894,7 +894,8 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
 
   test("the studio publishes a spec with its origins, checks it, and refuses remote or concurrent writes", async () => {
     const root = fixtures(["door"]);
-    fs.mkdirSync(path.join(root, "src/components.ts"), { recursive: true });
+    for (const dir of ["src/components.ts", "test/journey.test.ts", "spec/facts.proof.dfy"])
+      fs.mkdirSync(path.join(root, dir), { recursive: true });
     const studio = await startStudio({ projects: [{ id: ".", name: "Door", root }], port: 0, agents: {
       ledgerEdit: { label: "Ledger writer", command: () => [process.execPath, ["-e", "require('node:fs').appendFileSync('spec/lock.json', '\\n')"]] },
       invalidState: { label: "State writer", command: () => [process.execPath, ["-e", "const fs = require('node:fs'); fs.rmSync('.studio', { recursive: true }); fs.writeFileSync('.studio', 'invalid')"]] },
@@ -942,7 +943,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
         current = await (await fetch(`${url}/api/project`)).json();
       }
       assert.equal(current.jobs?.check?.status, "failed");
-      assert.equal(current.check?.next.includes("npm run accept"), true);
+      assert.equal(current.check?.next.includes("npm run accept"), true, JSON.stringify(current.check));
       const created = await post("spec", { name: "nested/child" });
       assert.equal(created.status, 200, await created.clone().text());
       assert.equal((await created.json()).file, "spec/nested/child/index.md");
@@ -999,7 +1000,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
           text = frames.pop()!;
           for (const frame of frames.filter((f) => f.startsWith("event: job\n"))) {
             const job = JSON.parse(frame.split("\ndata: ")[1]).jobs.agent;
-            if (!job.finished) continue;
+            if (job.label !== "State writer" || !job.finished) continue;
             assert.equal(job.status, "failed");
             assert.match(job.log.join("\n"), /ENOTDIR/);
             finished = true;

@@ -8,8 +8,8 @@ import http from "node:http";
 import path from "node:path";
 import { newSpec, parseSpec, pending, readSpecs, type Result } from "../spec.ts";
 import { specFiles, specName } from "../parse.ts";
-import { projectRoot } from "../util.ts";
-import { filesUnder, manifestOf, nodesOf, parseDoc, promptFor, type Ids, type Manifest } from "./doc.ts";
+import { filesUnder, projectRoot } from "../util.ts";
+import { manifestOf, nodesOf, parseDoc, promptFor, type Ids, type Manifest } from "./doc.ts";
 
 /** The `spec` command beside this file, as source or as built. */
 const SPEC = path.join(import.meta.dirname, "..", `spec${path.extname(import.meta.filename)}`);

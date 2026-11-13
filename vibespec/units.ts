@@ -9,7 +9,7 @@ import { run, type Unit } from "./prove.ts";
 import { originalColumn, readSpecs, type Spec } from "./parse.ts";
 import { defines } from "./review.ts";
 import { entry, recall, store, type Memory } from "./cache.ts";
-import { plainText, readSrc, type SrcFile } from "./util.ts";
+import { filesUnder, plainText, readSrc, type SrcFile } from "./util.ts";
 
 const ANNOTATIONS = ["backend", "pure", "requires", "ensures", "invariant", "decreases", "type", "ghost", "assert"];
 
@@ -221,8 +221,7 @@ export function checkVerifiedSource(file: string, code: string) {
 
 /** Proof files that belong to no unit: a typo, or a source file that is no longer proved. */
 export function strayProofFiles(root: string, units: Unit[]): string[] {
-  const found = ["spec", "src"].flatMap((dir) => fs.existsSync(path.join(root, dir))
-    ? (fs.readdirSync(path.join(root, dir), { recursive: true }) as string[]).filter((f) => f.endsWith(".proof.dfy")).map((f) => path.join(dir, f).split(path.sep).join("/")) : []);
+  const found = ["spec", "src"].flatMap((dir) => filesUnder(root, dir)).filter((f) => f.endsWith(".proof.dfy"));
   return found.filter((f) => !units.some((u) => u.proofFile === f));
 }
 

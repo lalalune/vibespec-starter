@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { danglingCitations, dependencies, parseSpec, scanSpec, type Spec } from "../spec.ts";
 import { readSpecs, specName } from "../parse.ts";
+import { filesUnder } from "../util.ts";
 
 /** A run of prose, or the code of one quint block. */
 export interface Item { quint: boolean; text: string }
@@ -127,11 +128,6 @@ function moved(before: string[], after: string[]): Set<string> {
   }
   return new Set(after.filter((id) => !kept.has(id)));
 }
-
-/** Files below a project directory, excluding directory entries and symlinks. */
-export const filesUnder = (root: string, dir: string) => !fs.existsSync(path.join(root, dir)) ? []
-  : fs.readdirSync(path.join(root, dir), { recursive: true, withFileTypes: true }).filter((e) => e.isFile())
-    .map((e) => path.relative(root, path.join(e.parentPath, e.name)).split(path.sep).join("/"));
 
 const specsOf = (root: string, texts: Record<string, string>): Spec[] => {
   try { return readSpecs(root, texts); } catch {
