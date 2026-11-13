@@ -6,10 +6,10 @@
 import { fail, type Json, type Types } from "./types.ts";
 import type { Param, Roles } from "./classify.ts";
 
-export const SECRET = /^Secret[A-Z0-9_]/;
+const SECRET = /^Secret[A-Z0-9_]/;
 export const DECLASSIFY = /^declassify[A-Z]/;
 
-export interface Flow {
+interface Flow {
   funs: Json[];
   vals: Json[];
   sig: (d: Json) => { params: Param[]; result: Json };

@@ -35,7 +35,7 @@ const fakeAgent: Agent = {
 
 /** The studio on one project, and how to talk to it as its page does. */
 async function studioOn(root: string) {
-  const studio = await startStudio({ projects: [{ id: ".", name: "Door", root }], port: 0, agents: {
+  const studio = await startStudio({ project: { name: "Door", root }, port: 0, agents: {
     fake: fakeAgent,
     // Agents that write what only the tools may: the review ledger, and Studio's own state.
     ledgerEdit: { label: "Ledger writer", command: () => [process.execPath, ["-e", "require('node:fs').appendFileSync('spec/lock.json', '\\n')"]] },
@@ -101,6 +101,9 @@ test("a spec is published with its origins, checked, synced by an agent, and ref
     assert.match(checked.check.next, /npm run accept/);
     // spec/index.md, "Sign-off needs a check that left only review, nothing unpublished and nothing waiting"
     assert.equal((await post("accept", {})).status, 409);
+    // Only the studio's own agents run, not what every object inherits.
+    assert.equal((await post("agent", { agent: "toString" })).status, 400);
+    assert.equal((await project()).session.job, "Idle");
 
     // spec/index.md, "A sync that ends well leaves nothing waiting and checks again"
     assert.equal((await post("agent", { agent: "fake" })).status, 200);
@@ -118,6 +121,7 @@ test("a spec is published with its origins, checked, synced by an agent, and ref
 test("new and nested specs are published, deleted specs leave their ledger for review, and paths stay inside spec/", async () => {
   const root = scratch({ "spec/index.md": "# Home\n", "outside.md": "" });
   const { studio, post, project, settled } = await studioOn(root);
+  let manifest = "";
   try {
     // A new spec is a file published with no base; its parent links to it.
     const linked = await post("publish", { files: [
@@ -135,8 +139,10 @@ test("new and nested specs are published, deleted specs leave their ledger for r
     assert.equal((await post("synced", {})).status, 409);
 
     // Paths that would leave spec/, or follow a link out of it, are refused.
-    const escaped = await post("publish", { files: [{ file: "spec/../outside.md", base: null, text: "x" }], origins: [] });
-    assert.equal(escaped.status, 400);
+    for (const file of [{ file: "spec/../outside.md", base: null, text: "x" }, { file: "docs/evil.md", base: null, text: "# Evil\n" }, { file: "outside.md", base: "", text: null }]) {
+      assert.equal((await post("publish", { files: [file], origins: [], force: true })).status, 400, file.file);
+    }
+    assert.ok(fs.existsSync(path.join(root, "outside.md")) && !fs.existsSync(path.join(root, "docs")));
     fs.symlinkSync(path.join(root, "outside.md"), path.join(root, "spec/escape.md"));
     assert.equal((await post("publish", { files: [{ file: "spec/escape.md", base: null, text: "x" }], origins: [], force: true })).status, 400);
     assert.equal(fs.readFileSync(path.join(root, "outside.md"), "utf8"), "");
@@ -172,13 +178,25 @@ test("new and nested specs are published, deleted specs leave their ledger for r
     assert.match(ledgerEdited.jobs.agent.log.join("\n"), /spec\/lock.json: not marked synced/);
     assert.ok(fs.existsSync(path.join(root, ".studio/manifest.json")));
     assert.deepEqual([ledgerEdited.session.waiting, ledgerEdited.session.verdict], [2, "Unknown"]);
+    manifest = fs.readFileSync(path.join(root, ".studio/manifest.json"), "utf8");
     assert.equal((await post("agent", { agent: "invalidState" })).status, 200);
     const broken = await settled();
     assert.equal(broken.jobs.agent.status, "failed");
     assert.match(broken.jobs.agent.log.join("\n"), /ENOTDIR/);
-
   } finally {
     await studio.close();
+  }
+
+  // spec/index.md, "What is waiting outlives the studio"
+  fs.rmSync(path.join(root, ".studio"), { force: true });
+  fs.mkdirSync(path.join(root, ".studio"));
+  fs.writeFileSync(path.join(root, ".studio/manifest.json"), manifest);
+  const again = await studioOn(root);
+  try {
+    assert.deepEqual((await again.project()).session, { unpublished: false, waiting: 2, job: "Idle", verdict: "Unknown" });
+    assert.equal((await again.post("synced", {})).status, 200);
+  } finally {
+    await again.studio.close();
   }
 });
 
@@ -209,12 +227,10 @@ test("the studio opens only the current project or the requested project path", 
       });
       const root = fs.realpathSync(expected);
       const name = fs.existsSync(path.join(root, "package.json")) ? JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).name : path.basename(root);
-      assert.deepEqual(await (await fetch(`${url}/api/projects`)).json(), { projects: [{ id: ".", name }], open: "." });
       const current = await (await fetch(`${url}/api/project`)).json();
-      assert.deepEqual(current.project, { id: ".", name, root });
+      assert.deepEqual(current.project, { name, root });
       assert.deepEqual(current.specs.map((s: { file: string; text: string }) => [s.file, s.text]).sort(),
         readSpecs(root).filter((s) => s.file.startsWith("spec/")).map((s) => [s.file, fs.readFileSync(path.join(root, s.file), "utf8")]).sort());
-      assert.equal((await fetch(`${url}/api/project?project=vibestack/examples/order`)).status, 404);
     } finally {
       child.kill("SIGTERM");
       await closed;

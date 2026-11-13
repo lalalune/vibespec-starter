@@ -3,7 +3,6 @@ import path from "node:path";
 import { BUILTINS, LIST_HELPERS } from "./gen/print.ts";
 import { scanSpec } from "./scan.ts";
 import { plainText } from "./util.ts";
-export { scanSpec, type LineKind } from "./scan.ts";
 
 /** `defs` are the rule's top-level definitions and types; `locals` the names it binds inside a definition (`val x = …` in a body). */
 export interface Rule { key: string; story: string; line: number; prose: string; code: string; defs: string[]; locals: string[] }
@@ -67,7 +66,7 @@ export function parseSpec(root: string, file: string, text = fs.readFileSync(loc
   let preamble = "";
   let story: Story | undefined;
   let rule: Rule | undefined;
-  let fence: { mark: string; quint: boolean } | undefined;
+  let quint = false;
   // The Quint of the block in progress, to check that no comment or string runs on past its end.
   let block = "";
   // How deeply the Quint so far nests in brackets of any kind, carried from block to block.
@@ -96,40 +95,37 @@ export function parseSpec(root: string, file: string, text = fs.readFileSync(loc
   };
   // Quint and Markdown may not agree on where a line ends at an odd line break, and prose could then end a comment early.
   const source = plainText(file, text);
-  source.split("\n").forEach((text, i) => {
-    if (!story && !rule && (fence || !/^#{2,3} /.test(text))) preamble += text + "\n";
-    const marker = text.match(/^\s*(`{3,}|~{3,})(.*)$/);
-    const closes = fence && marker && marker[1][0] === fence.mark[0] && marker[1].length >= fence.mark.length && !marker[2].trim();
-    if (closes) {
+  scanSpec(source).forEach(({ text, kind }, i) => {
+    if (!story && !rule && kind !== "story" && kind !== "rule") preamble += text + "\n";
+    if (kind === "close") {
       // Prose is tangled as `//` comments, which is only safe if no comment or string runs on into it from the code.
-      const open = fence!.quint ? scan(block).mode : "";
+      const open = quint ? scan(block).mode : "";
       if (open) throw new Error(`${file}:${i + 1}: a ${open === '"' ? "string" : "comment"} is still open at the end of this quint block; close it inside the block`);
-      if (fence!.quint) declare(block, rule!);
-      fence = undefined;
+      if (quint) declare(block, rule!);
+      quint = false;
       block = "";
-    } else if (fence?.quint) {
+    } else if (kind === "quint") {
       block += text + "\n";
       meaning.push(text);
       rule!.code += text + "\n";
       qnt.push(text);
       return;
-    } else if (!fence && marker && (marker[1][0] === "~" || !marker[2].includes("`"))) {
-      const quint = marker[2].trim().split(/\s+/)[0] === "quint";
+    } else if (kind === "open quint" || kind === "open") {
+      quint = kind === "open quint";
       if (quint && !rule) throw new Error(`${file}:${i + 1}: a quint block must sit under a ### rule`);
-      fence = { mark: marker[1], quint };
-    } else if (!fence && text.startsWith("## ")) {
+    } else if (kind === "story") {
       story = { title: text.slice(3).trim(), line: i + 1, prose: "" };
       // The ledger records a story under its title, so a second one would share its entry.
       const twin = stories.find((s) => s.title === story!.title);
       if (twin) throw new Error(`${file}:${i + 1}: duplicate story "${story.title}" (also at line ${twin.line}); give each ## heading its own title`);
       stories.push(story);
       rule = undefined;
-    } else if (!fence && text.startsWith("### ")) {
+    } else if (kind === "rule") {
       rule = { key: `${story?.title ?? ""} / ${text.slice(4).trim()}`, story: story?.title ?? "", line: i + 1, prose: "", code: "", defs: [], locals: [] };
       if (rules.some((r) => r.key === rule!.key)) throw new Error(`${file}:${i + 1}: duplicate rule "${rule.key}"`);
       rules.push(rule);
     } else {
-      if (!fence) {
+      if (kind === "prose") {
         const prose = text.replace(/(`+).*?\1/g, "");
         for (const link of prose.matchAll(/(?<!!)\[[^\]]*\]\(\s*(?:<([^>]+)>|([^\s)]+))(?:\s+[^)]*)?\)/g)) {
           const target = link[1] ?? link[2];
@@ -143,7 +139,7 @@ export function parseSpec(root: string, file: string, text = fs.readFileSync(loc
     qnt.push(i === 0 ? `module ${name} { // ${text}` : text ? `// ${text}` : "");
     meaning.push(i === 0 ? `module ${name} {` : "");
   });
-  if (fence?.quint) {
+  if (quint) {
     if (scan(block).mode) throw new Error(`${file}: a quint block is never closed, and a comment or string in it is still open`);
     declare(block, rule!);
   }

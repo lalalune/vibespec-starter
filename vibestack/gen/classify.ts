@@ -8,7 +8,7 @@ export interface Law { name: string; params: Param[] }
 /** A function declared without a body (`const f: (A) => R`), its parameters named p0, p1, …, and the laws assumed of it. */
 export interface Opaque { name: string; params: Param[]; result: Json; laws: Law[] }
 /** A `step` rule; `via` if it also takes the name of the transition between the two states, `out` if what it output. */
-export interface StepRule { name: string; via: boolean; out: boolean }
+interface StepRule { name: string; via: boolean; out: boolean }
 export interface Roles {
   /** The type of `initial`; undefined for a library, which has definitions and laws but no state machine. */
   stateType: Json | undefined;
@@ -32,14 +32,14 @@ export interface Roles {
  * A machine this spec imports under a name, as this spec spells its types. `refines<Alias>(state)` maps the state onto
  * it; each transition then corresponds to the machine's transition of the same name, or to none (AGENTS.md, "Refinement").
  */
-export interface Machine { alias: string; module: string; stateType: Json; transitions: Transition[] }
-export interface Refinement { fn: string; of: Machine }
+export interface ImportedMachine { alias: string; module: string; stateType: Json; transitions: Transition[] }
+export interface Refinement { fn: string; of: ImportedMachine }
 
-/** The parameter that names who sent an event (AGENTS.md, "Who sent an event"). */
+/** The parameter that names who sent an event (AGENTS.md, "What goes in the Quint blocks"). */
 export const SENDER = "by";
 /** The parameter of a `step` rule that names the transition taken (AGENTS.md, "What goes in the Quint blocks"). */
 export const VIA = "via";
-/** The last parameter of a `step` rule that sees what the transition output (AGENTS.md, "Transitions with output"). */
+/** The last parameter of a `step` rule that sees what the transition output (AGENTS.md, "What goes in the Quint blocks"). */
 const OUT = "out";
 /** The prefixes that make a definition a rule; all but `law` and `refines` are rules about states. */
 const STATE_ROLES = ["always", "sometimes", "step", "leadsTo"];
@@ -55,7 +55,7 @@ const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
  * `leadsToX(from, to)` and `sometimesX(state)` are rules; `lawX(...)` is a law. `refines<Alias>(state)` maps the state
  * onto a machine in `machines`, those the spec imports under a name.
  */
-export function classify(funs: Json[], stateType: Json | undefined, sig: (d: Json) => { params: Param[]; result: Json }, { shape, resolve, fields, holdsSet }: Types, machines: Machine[]): Roles {
+export function classify(funs: Json[], stateType: Json | undefined, sig: (d: Json) => { params: Param[]; result: Json }, { shape, resolve, fields, holdsSet }: Types, machines: ImportedMachine[]): Roles {
   const stateShape = stateType && shape(stateType);
   const isState = (t: Json) => shape(t) === stateShape;
   const onState = (d: Json, at = 0) => sig(d).params.length > at && isState(sig(d).params[at].type);

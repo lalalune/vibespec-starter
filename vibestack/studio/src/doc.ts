@@ -1,29 +1,27 @@
 // The manifest of what a publish changed since the agent last synced, and the prompt that hands it to an agent.
 import fs from "node:fs";
 import path from "node:path";
-import { danglingCitations, dependencies, parseSpec, type Spec } from "../../spec.ts";
-import { itemsOf, nodeId, outlineOf, ruleKey, storyKey } from "./markdown.ts";
-import { readSpecs, specName } from "../../parse.ts";
-import { filesUnder } from "../../util.ts";
+import { parseSpec, readSpecs, specName, type Spec } from "../../parse.ts";
+import { dependencies } from "../../review.ts";
+import { danglingCitations, filesUnder } from "../../util.ts";
+import { itemsOf, nodeId, nodesOfOutline, outlineOf } from "./markdown.ts";
 
 // --- identity: which node of the baseline a node of the current specs is -----------------------------
 
-/** A story or rule, in one spec, under the key the review ledger uses (spec.ts, `pending`). */
+/** A story or rule, in one spec, under the key the review ledger uses (review.ts, `pendingKey`). */
 export interface Node { id: string; file: string; key: string; kind: "story" | "rule"; parent?: string; heading: string; prose: string; quint: string }
 const collapse = (s: string) => s.replace(/\s+/g, " ").trim();
 
 /** The stories and rules of a spec's text; rules before the first story belong to no story. */
 export function nodesOf(file: string, text: string): Node[] {
-  return outlineOf(file, text).stories.flatMap((s) => {
-    const story: Node = { id: nodeId(file, storyKey(s.title)), file, key: storyKey(s.title), kind: "story", heading: s.title.trim(), prose: collapse(s.body), quint: "" };
-    return [...(s.origin ? [story] : []), ...s.rules.map((r): Node => {
-      const items = itemsOf(r.body);
-      return {
-        id: nodeId(file, ruleKey(s.title, r.title)), file, key: ruleKey(s.title, r.title), kind: "rule", parent: story.id, heading: r.title.trim(),
-        prose: collapse(items.filter((i) => !i.quint).map((i) => i.text).join("\n")),
-        quint: items.filter((i) => i.quint).map((i) => i.text.split("\n").map((l) => l.trimEnd()).join("\n").trim()).join("\n\n"),
-      };
-    })];
+  return nodesOfOutline(file, outlineOf(file, text)).flatMap(({ id, key, story, rule, parent }): Node[] => {
+    if (!rule) return story.origin ? [{ id, file, key, kind: "story", heading: story.title.trim(), prose: collapse(story.body), quint: "" }] : [];
+    const items = itemsOf(rule.body);
+    return [{
+      id, file, key, kind: "rule", parent, heading: rule.title.trim(),
+      prose: collapse(items.filter((i) => !i.quint).map((i) => i.text).join("\n")),
+      quint: items.filter((i) => i.quint).map((i) => i.text.split("\n").map((l) => l.trimEnd()).join("\n").trim()).join("\n\n"),
+    }];
   });
 }
 

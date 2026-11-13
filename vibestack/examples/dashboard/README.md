@@ -2,13 +2,9 @@
 
 A synthesized team task dashboard: tasks live in a shared spreadsheet people
 also edit by hand, a chat app carries commands and notifications, a web
-dashboard shows the state. A separate package that depends on the toolchain
-like any project would.
-
-```sh
-npm install
-npm run check
-```
+dashboard shows the state. A workspace of this repository: run
+`npm run check --workspace dashboard-model` from the root, or `npm run check`
+here after the root install.
 
 | Path | Kind | Covers |
 |---|---|---|
@@ -32,5 +28,5 @@ Not modelled: the chat app, HTTP, spreadsheet access, the web dashboard.
 - **A missing precondition.** `columnName` called `columnDigits` without
   showing the column is not negative; the proof refused it.
 
-Obligations that hold in simulation only are listed in
-`spec/unproved.lock.json`; `npm run check` shows where each stands.
+Obligations accepted as holding in simulation only are recorded in
+`spec/lock.json`, under `unproved`; `npm run check` shows where each stands.

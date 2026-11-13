@@ -11,10 +11,23 @@ function book(...events: object[]): OrderBook {
 }
 const submitted = (qty: number) => book({ type: "addItem", qty }, { type: "submit" });
 
-// spec/index.md, "Story: Check out"
-test("an order is filled, submitted and paid off in instalments", () => {
-  const b = submitted(2);
-  assert.equal(b.dispatch("A1", { type: "pay", amount: 4 }).status, "Pending");
+// spec/index.md, "Story: Check out"; spec/index.md, "Story: Change my mind"; spec/index.md, "Story: Take back a payment"; spec/index.md, "Story: Cancel"; spec/index.md, "Story: Reopen a cancelled order"
+test("an order is filled, paid in part, cancelled with a refund, reopened and paid off", () => {
+  const b = book({ type: "addItem", qty: 3 });
+  // spec/index.md, "No more can be removed than the order holds"
+  assert.equal(b.dispatch("A1", { type: "removeItem", qty: 1 }).due, 10);
+  assert.throws(() => b.dispatch("A1", { type: "removeItem", qty: 3 }), Rejected);
+  b.dispatch("A1", { type: "submit" });
+  b.dispatch("A1", { type: "pay", amount: 6 });
+  // spec/index.md, "No more can be taken back than was paid"
+  assert.equal(b.dispatch("A1", { type: "takeBack", amount: 2 }).paid, 4);
+  assert.throws(() => b.dispatch("A1", { type: "takeBack", amount: 5 }), Rejected);
+  // spec/index.md, "A pending order can be cancelled, refunding every payment"
+  assert.deepEqual(b.dispatch("A1", { type: "cancel" }), { status: "Cancelled", units: 2, due: 10, paid: 0 });
+  // spec/index.md, "A cancelled order can be reopened as a draft"
+  assert.deepEqual(b.dispatch("A1", { type: "reopen" }), { status: "Draft", units: 2, due: 10, paid: 0 });
+  b.dispatch("A1", { type: "submit" });
+  b.dispatch("A1", { type: "pay", amount: 4 });
   assert.equal(b.balance("A1"), 6);
   assert.equal(b.dispatch("A1", { type: "pay", amount: 6 }).status, "Paid");
   assert.equal(b.balance("A1"), 0);
@@ -28,35 +41,11 @@ test("events the rules do not allow are rejected and not stored", () => {
   assert.deepEqual(b.get("A1"), { status: "Pending", units: 1, due: 5, paid: 0 });
 });
 
-// spec/index.md, "A pending order can be cancelled, refunding every payment"
-test("cancelling refunds what was paid", () => {
-  const b = submitted(1);
-  b.dispatch("A1", { type: "pay", amount: 3 });
-  assert.deepEqual(b.dispatch("A1", { type: "cancel" }), { status: "Cancelled", units: 1, due: 5, paid: 0 });
-});
-
 test("malformed input never reaches the verified core", () => {
   const b = book();
   assert.throws(() => b.dispatch("A1", { type: "addItem", qty: 1.5 }), Rejected);
   assert.throws(() => b.dispatch("A1", { type: "refund" }), Rejected);
   assert.deepEqual(b.get("A1"), { status: "Draft", units: 0, due: 0, paid: 0 });
-});
-
-// spec/index.md, "No more can be removed than the order holds"
-test("items can be taken back out of a draft, but never more than it holds", () => {
-  const b = book({ type: "addItem", qty: 3 });
-  assert.equal(b.dispatch("A1", { type: "removeItem", qty: 2 }).due, 5);
-  assert.throws(() => b.dispatch("A1", { type: "removeItem", qty: 2 }), Rejected);
-});
-
-// spec/index.md, "A cancelled order can be reopened as a draft"; spec/index.md, "No more can be taken back than was paid"
-test("a cancelled order can be reopened, and a payment partly taken back", () => {
-  const b = submitted(2);
-  b.dispatch("A1", { type: "pay", amount: 6 });
-  assert.equal(b.dispatch("A1", { type: "takeBack", amount: 2 }).paid, 4);
-  assert.throws(() => b.dispatch("A1", { type: "takeBack", amount: 5 }), Rejected);
-  b.dispatch("A1", { type: "cancel" });
-  assert.deepEqual(b.dispatch("A1", { type: "reopen" }), { status: "Draft", units: 2, due: 10, paid: 0 });
 });
 
 test("an event is copied on the way in, so nothing the caller keeps can change it", () => {

@@ -69,8 +69,8 @@ build step) and Dafny on the path. The page loads React 18 from esm.sh.
   two-tab run against the real server (`test/`).
 - **Trusted**: the shell (`src/server.ts`, `src/web/`), React, the
   generator, LemmaScript, Dafny and Quint. Convergence is a `sometimes`
-  rule: the model shows it can happen, not that it always does (liveness
-  needs fairness, which the tools do not check).
+  rule: the model shows it can happen, not that it always does; a `leadsTo`
+  rule could say it always does (see "Simplifying it").
 
 ## What the checks found
 
@@ -91,43 +91,41 @@ build step) and Dafny on the path. The page loads React 18 from esm.sh.
 
 ## Limits of the spec language met here
 
-- **An imported machine's types could only mention its own types.** This
-  example found the bug: `import client as C` qualified every type name
-  inside `Client` with `C::`, including `Todo` and `Op`, which `client`
-  imported from `todo`, and the check stopped with `unknown type C::Op`. The
-  tools now bring an imported machine's imported types along (selftest: "a
-  machine whose state holds a library's type can be imported under a name").
-  The specs here still use the workaround they were written with: the server
-  and client state types write the to-do and edit records out in full (the
-  tools match them back to `Todo` and `Op` by shape), and the edit's kind is
-  a string. Simplifying them is a good first exercise.
 - **A machine cannot be imported with `.*`**, and two machines whose
   transitions share names (`create`, `initial`) could not be anyway; the
   system spec uses `S::` and `C::`.
-- **Proofs about an imported machine's transitions cannot be reused.** The
-  system unit is proved against the server's and client's definitions, not
-  their proofs. The server and client therefore restate "a commit / refusal /
-  queued edit / answer keeps the rules" as laws, which the system proof file
-  calls as `server_law…_ensures` and `client_law…_ensures`.
-- **No equality on records or lists.** `sameTodos` compares two lists by a
-  fold with a position counter; that list equality is reflexive is a law
-  with an inductive proof.
-- **No list indexing operations besides `nth`.** Taking the i-th message off
-  the network is a fold (`dropAt`), and the proof that it only keeps messages
-  that were there is an induction.
 - **Folds over records need a named type.** `foldl` with an anonymous record
   accumulator is refused (`unsupported type rec`), hence `Walk` and `Cut`.
 - **A helper that takes the state first and returns it is a transition**, so
   helpers such as `commit`, `queue`, `withClient` take it second.
-- **Sample sets are per spec.** `<param>Values` in an imported library is
-  not used for the importing spec's parameters, and two specs that define the
-  same name cannot be imported `.*` together, so the library's sets have
-  their own names (`changeValues`, `xsValues`).
-- **No liveness.** "Both tabs eventually agree" can only be stated as
-  "sometimes they agree".
-- **Hand-written loops see only definitions, not proofs.** `drain` could not
-  call the generated `step` and keep `inv`, because the client's transition
-  proofs live in its proof file; it calls `receiveSnapshot`, which Dafny
-  proves on its own.
+- **Two specs that define the same name cannot be imported `.*` together**,
+  so the library's sample sets have their own names (`changeValues`,
+  `xsValues`).
 - **The HTTP and React layers are outside the model.** Retry timing, the
   push stream and the DOM are tested, not proved.
+
+## Simplifying it
+
+The specs were written before the tools could do the following, and still
+work around their absence. Each is a good first exercise:
+
+- **Imported types.** The server and client state types write the to-do and
+  edit records out in full (the tools match them back to `Todo` and `Op` by
+  shape), and the edit's kind is a string. An imported machine now brings the
+  types it imports along (selftest: "a machine whose state holds a library's
+  type can be imported under a name"), so they can use `Todo` and `Op`.
+- **Imported proofs.** The server and client restate "a commit / refusal /
+  queued edit / answer keeps the rules" as laws for the system proof file.
+  It can call `server_<transition>_ensures` and `client_<transition>_ensures`
+  instead (AGENTS.md, "Proof files").
+- **Equality.** `sameTodos` and its reflexivity law can become `==`, which
+  compares lists and records by structure.
+- **List operations.** `dropAt`, and its induction, can become `removeAt`.
+- **Sample sets.** An imported library's `<param>Values` now apply to the
+  specs that import it; a set an importing spec only repeats can go.
+- **Hand-written loops.** `drain` calls `receiveSnapshot`; it can call the
+  generated `step` instead, since a `src` unit can call `step_ensures` of
+  the module it imports.
+- **Liveness.** "Both tabs eventually agree" is stated as "sometimes they
+  agree"; a `leadsTo` rule with `fair_` events can state it (AGENTS.md,
+  "Liveness").

@@ -228,10 +228,3 @@ export const proofFiles = (root: string) => ["spec", "src"].flatMap((dir) => fil
 
 /** Proof files that belong to no unit: a typo, or a source file that is no longer proved. */
 export const strayProofFiles = (root: string, units: Unit[]) => proofFiles(root).filter((f) => !units.some((u) => u.proofFile === f));
-
-/**
- * Obligations that hold in simulation but that Dafny cannot prove on its own,
- * accepted by a person: per unit, the list, and a fingerprint of the unit's
- * text and proof file when they were accepted. A list accepted for another
- * text no longer counts.
- */

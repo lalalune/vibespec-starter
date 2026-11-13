@@ -1,10 +1,16 @@
 import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
-import { readSpecs, bareQuint as bare, type Import, type Spec, type Story, type Rule } from "./parse.ts";
-import { short, readSrc, indent } from "./util.ts";
+import { readSpecs, isStd, bareQuint as bare, type Import, type Spec, type Story, type Rule } from "./parse.ts";
+import { short, readSrc, indent, type SrcFile } from "./util.ts";
 import { DECLASSIFY } from "./gen/secrecy.ts";
 
+/**
+ * Obligations that hold in simulation but that Dafny cannot prove on its own,
+ * accepted by a person: per unit, the list, and a fingerprint of the unit's
+ * text and proof file when they were accepted. A list accepted for another
+ * text no longer counts.
+ */
 export interface Accepted { text: string; unproved: string[] }
 interface ReviewLock { version: 1; specs: Record<string, Lock>; contracts: Record<string, string>; unproved: Record<string, Accepted> }
 export const ledgerFile = (root: string) => path.join(root, "spec/lock.json");
@@ -206,8 +212,6 @@ function reviewed(spec: Spec, specs: Spec[]): Lock {
   return { "@document": [proseFingerprint(spec.preamble)], ...Object.fromEntries(entries.map((e) => [e.key, e.value])) };
 }
 
-// --- the contracts of hand-written verified code ------------------------------------
-
 /** Record one spec while preserving the rest of the central ledger. */
 export function acceptReviews(root: string, spec: Spec, specs: Spec[] = readSpecs(root)) {
   const lock = readReviewLock(root);
@@ -221,13 +225,19 @@ export function pendingSpecs(root: string, specs: Spec[]): Pending[] {
     .map((file) => ({ where: file, status: "removed or renamed" }));
 }
 
-/** Atomically record the exact spec and source snapshot checked by accept. */
+/**
+ * Atomically record the exact spec and source snapshot checked by accept. Every spec, std/ libraries included, is what
+ * a rule's dependencies are fingerprinted against, as `pending` does; only the project's own specs are recorded.
+ */
 export function acceptAllReviews(root: string, specs: Spec[], src = readSrc(root)) {
   const lock = readReviewLock(root);
-  lock.specs = Object.fromEntries(specs.map((spec) => [spec.file, reviewed(spec, specs)]));
-  lock.contracts = Object.fromEntries([...contracts(root, src)].map(([file, lines]) => [file, short(lines.join("\n"))]));
+  lock.specs = Object.fromEntries(specs.filter((spec) => !isStd(spec.file)).map((spec) => [spec.file, reviewed(spec, specs)]));
+  lock.contracts = contractLock(root, src);
   writeReviewLock(root, lock);
 }
+
+// --- the contracts of hand-written verified code ------------------------------------
+
 /**
  * The contract of a file: every `//@` comment line, under the declarations it sits in (`f: //@ requires …`), so that
  * moving an annotation from one function to another changes it. Keep every line containing `//@`, including an
@@ -282,9 +292,11 @@ export function pendingContracts(root: string, src = readSrc(root)): Pending[] {
 /** Record the `//@` contract of every proved src file as reconciled. */
 export function acceptContracts(root: string, src = readSrc(root)) {
   const lock = readReviewLock(root);
-  lock.contracts = Object.fromEntries([...contracts(root, src)].map(([file, lines]) => [file, short(lines.join("\n"))]));
+  lock.contracts = contractLock(root, src);
   writeReviewLock(root, lock);
 }
+/** The contracts as the ledger records them: a fingerprint per file. */
+const contractLock = (root: string, src: SrcFile[]) => Object.fromEntries([...contracts(root, src)].map(([file, lines]) => [file, short(lines.join("\n"))]));
 
 /**
  * Both halves of every rule that has moved, the text and rules of every story that has, and the lines of every new or
@@ -318,8 +330,8 @@ export function migrateLocks(root: string): string[] {
   for (const file of files) {
     const data = JSON.parse(fs.readFileSync(path.join(dir, file), "utf8"));
     if (file === "src.lock.json") lock.contracts = data;
-    else if (file === "unproved.lock.json") lock.unproved = Object.fromEntries(Object.entries(data).map(([unit, value]) =>
-      [unit, Array.isArray(value) ? { text: "", unproved: value } : value as Accepted]));
+    // An exception in the old list form names no text it was accepted for, so it could never count again: it is dropped.
+    else if (file === "unproved.lock.json") lock.unproved = Object.fromEntries(Object.entries(data).filter(([, value]) => !Array.isArray(value)) as [string, Accepted][]);
     else lock.specs[`spec/${file.replace(/\.lock\.json$/, ".md").split(path.sep).join("/")}`] = data;
   }
   writeReviewLock(root, lock);

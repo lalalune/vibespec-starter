@@ -110,6 +110,16 @@ pure def canMarkSynced(s: Session): bool = s.job == Idle and s.waiting > 0
 pure def markSynced(s: Session): Session = { ...s, waiting: 0 }
 ```
 
+### What is waiting outlives the studio
+
+The manifest is kept on disk, so a studio started again begins its session
+with as many changes waiting as the manifest lists.
+
+```quint
+pure def canResume(s: Session, changes: int): bool = s.job == Idle and s.waiting == 0 and changes >= 0
+pure def resume(s: Session, changes: int): Session = { ...s, waiting: changes }
+```
+
 ### What is waiting goes down only by a sync, by hand, or by publishing what undoes a change
 
 What waits is measured against the specs as last synced, so publishing an

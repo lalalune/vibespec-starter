@@ -10,7 +10,7 @@ Read AGENTS.md and README.md in full first, once per session.
 ## The loop
 
 1. Run `npm run check`. Each `✗` line is something to resolve; `-` lines are
-   stages skipped because of a `✗` above, or `types` in a spec-only package with no tsconfig.json.
+   stages skipped because of a `✗` above.
    Under `review` it prints a changed rule's prose and Quint, a story's text
    and rules, and a contract's `//@` lines; for a **new** rule, read it in the
    spec. The last line, `next:`, names what to do first.
@@ -50,7 +50,8 @@ Give up and report after five rounds on the same failure.
 | `sometimes` ✓ … **never seen to refuse** | Not a failure. For each guard listed, check that it refuses what its rule says. If it only restates an `always` rule, keep it when it protects `enabled` from outside input; if it was meant to refuse something, write what, or define `<param>Values` that it refuses. List these guards in your report. |
 | `replay` | Generated TypeScript and Quint disagree. That is a bug in the tools, not in the spec. Stop and report it. |
 | `types` | Update `src/` and the tests to the new generated contract. |
-| `- skipped types: no tsconfig.json` | Not a failure only for a spec-only package without `src/` or `test/`; otherwise add a tsconfig.json with `spec init`. |
+| `types` ✓ "skipped: there is no tsconfig.json and no src/ or test/" | Not a failure. |
+| `types` … "exist but there is no tsconfig.json" | Add one with `spec init`. |
 | `proof` … "not proved" | It holds in simulation; it is yours to prove. First decide whether it is true for every state that satisfies all the rules. If it is not (you can name such a state), no proof can help: the missing fact about reachable states becomes a new `always` rule, a discovered rule. If it is, prove it in the unit's proof file, `spec/<path>.proof.dfy` or `src/<path>.proof.dfy`: copy the obligation's `lemma …_ensures` header from `gen/proof/<unit>/<unit>.dfy` and write its body, calling `ProofLib` lemmas and your own helper lemmas (AGENTS.md, "Proof files"). Only what you cannot prove goes in your report, with what you tried; recording it as simulated only is the user's last resort, not yours. |
 | `proof` … "Dafny could not check it" | The generated or hand-written code is not something Dafny accepts (an unguarded lookup, index or division, or a wrong annotation), or the proof file is refused or does not verify: a stale header, a forbidden construct, a helper lemma that fails. The lines under it say which, with the file and line. |
 | `proof` … "belongs to no proof unit" | A stray proof file. Rename it to `spec/<path>.proof.dfy` for `spec/<path>.md`, or `src/<path>.proof.dfy` for a `src/<path>.ts` that contains `//@`; or delete it. |

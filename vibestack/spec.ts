@@ -15,7 +15,7 @@ import { generated, typecheckAll, proofUnits, proofFiles, strayProofFiles } from
 import { SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, LASSO_TRACES, STEPS, DEPTHS, SEARCHED, simulate, search, firstBreak, lasso, showTrace, replay, standIn, type Step } from "./simulate.ts";
 import { sha, indent, packageScripts, tests, readSrc, projectRoot, allDone, type SrcFile } from "./util.ts";
 
-export { readSpecs, badSpecName, parseSpec, scanSpec, expandListHelpers, type Spec, type Rule, type Story } from "./parse.ts";
+export { readSpecs, parseSpec, expandListHelpers, type Spec, type Rule, type Story } from "./parse.ts";
 export { pending, pendingKey, pendingContracts, acceptReviews, acceptContracts, dependencies, type Lock, type Pending } from "./review.ts";
 export { generated, typecheckAll, checkVerifiedSource } from "./units.ts";
 export { replay, type Step } from "./simulate.ts";
@@ -159,7 +159,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
     // A spec whose model and harness are unchanged is not simulated again: the seed is part of what is simulated, so a
     // failure comes back the same. Only a simulator that could not run is tried again.
     const simulationSteps = STEPS + Math.max(0, ...model.within.values());
-    const simulated = remembered<{ said: Result[]; tested?: Found<any> }>(memory, entry(root, "simulate", [importedMeanings(spec, specs), spec.meaning, model.harness, String([SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, LASSO_TRACES, simulationSteps, ...DEPTHS]), process.env.SPEC_SEED?.trim() ?? ""]), async () => {
+    const simulated = remembered<{ said: Result[]; tested?: Found<any> }>(memory, entry(root, "simulate", [importedMeanings(spec, specs), spec.meaning, model.harness, String([SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, LASSO_TRACES, simulationSteps, ...DEPTHS])]), async () => {
       const said: Result[] = [];
       let tested: Found<any> | undefined;
       const say = (ok: boolean, stage: Result["stage"], summary: string, detail = "") => said.push({ ok, stage, summary, detail });
@@ -293,7 +293,6 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
     if (notRun.length && said.some((r) => !r.ok)) skip(`${notRun.join(" and ")} of ${spec.file}`, "simulation stopped at the failure above");
   }
 
-  const complete = allOk;
   if (!allOk) skip("types, proof, tests and traces", "a stage above failed, and their failures would only restate it");
   if (allOk) {
     let proofsRan = false;
@@ -416,7 +415,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
     const scripts = packageScripts(root);
     for (const r of await tests(root, specs, scripts)) report(...r);
     for (const r of await conformance(root, machines, scripts)) report(...r);
-    if (complete && proofsRan) collectGarbage(memory);
+    if (proofsRan) collectGarbage(memory);
   }
   fs.rmSync(loaded, { recursive: true, force: true });
 
@@ -447,7 +446,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
   }
   const formal = todos.every(({ todo }) => !todo.some((t) => t.status === "story has no rules" || t.status === "not formalized"));
   const record = accept === "reviews" && allOk && formal;
-  if (record) acceptAllReviews(root, specs.filter((spec) => !isStd(spec.file)), srcFiles);
+  if (record) acceptAllReviews(root, specs, srcFiles);
   const why = accept !== "reviews" ? "then run `npm run accept`" : !allOk ? "nothing was accepted: fix the stages above first" : "every story needs rules and every rule a quint block before anything can be accepted";
   const items = (todo: Pending[], heading: string) => {
     const shown = moved(todo);
@@ -496,8 +495,8 @@ export function init(root: string, warn: (message: string) => void = (message) =
   const previous = fs.existsSync(agents) ? fs.readFileSync(agents, "utf8") : "";
   const eol = previous.includes("\r\n") ? "\r\n" : "\n";
   const section = `<!-- vibestack:start -->${eol}${procedure.replace(/\r?\n/g, eol)}${eol}<!-- vibestack:end -->`;
-  const starts = [...previous.matchAll(/<!-- (vibestack|onespec):start\b[^>]*-->/g)];
-  const ends = [...previous.matchAll(/<!-- (vibestack|onespec):end -->/g)];
+  const starts = [...previous.matchAll(/<!-- (vibestack|vibespec|onespec):start\b[^>]*-->/g)];
+  const ends = [...previous.matchAll(/<!-- (vibestack|vibespec|onespec):end -->/g)];
   if (starts.length !== ends.length || starts.length > 1 || (starts.length === 1 && (starts[0][1] !== ends[0][1] || starts[0].index! > ends[0].index!)))
     throw new Error("AGENTS.md: repair the duplicated or incomplete Vibestack markers before running spec init");
   const updated = starts.length ? previous.slice(0, starts[0].index) + section + previous.slice(ends[0].index! + ends[0][0].length)
@@ -718,7 +717,7 @@ if (isMain()) {
       const release = lockProject(root);
       try {
         const files = migrateLocks(root);
-        console.log(files.length ? `migrated ${files.length} ledgers to spec/lock.json; existing acceptance preserved` : "no legacy ledgers to migrate");
+        console.log(files.length ? `migrated ${files.length} ledgers to spec/lock.json; reviews preserved, and proof exceptions in the old list form, if any, dropped: prove them or run \`npm run accept -- unproved\` again` : "no legacy ledgers to migrate");
       } finally { release(); }
     } else if (command === "new" && takes([], ["*"])) {
       console.log(`wrote ${newSpec(root, args[0])}; run \`npm run check\``);

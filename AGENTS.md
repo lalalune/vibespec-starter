@@ -131,13 +131,30 @@ How `npm run check` runs them:
 # Spec reference
 
 The spec format, the generated code and the code built on it. The agent's
-loop is the [`sync` skill](.claude/skills/sync/SKILL.md); setup and the stages
-of `npm run check` are in [README.md](README.md).
+loop is the [`sync` skill](.claude/skills/sync/SKILL.md); the stages of
+`npm run check` are [below](#stages-of-npm-run-check).
 
 In the vibestack repository, "the order example" is
 `vibestack/examples/order/spec/index.md` and "the tracker example" is
 `vibestack/examples/dashboard/spec/tracker.md`. The root `spec/index.md` is blank, ready
 for a new application.
+
+## Stages of `npm run check`
+
+Each line of a report names its stage: `✓` passed, `✗` failed, `-` skipped,
+with the reason.
+
+| Stage | Checks | Skipped when |
+|---|---|---|
+| `model` | each spec parses, and its Quint typechecks | never |
+| `always` | `always` rules and laws hold on simulated traces; `leadsTo` rules on fair runs | the spec is not a valid model |
+| `sometimes` | each `sometimes` goal is reached, and each event happens in some simulated state | the model is invalid, or simulation stopped at an `always` failure |
+| `replay` | the generated TypeScript agrees with Quint on the simulated traces | as `sometimes` |
+| `types` | `tsc` checks `src/` and the tests against `gen/` | a stage above failed; without a `tsconfig.json` it passes as skipped only when there is no `src/` or `test/` |
+| `proof` | Dafny proves each unit's obligations, or `spec/lock.json` records them as simulated only | a stage above failed |
+| `tests` | the package's [tests](#tests) pass, and their citations name a story or rule the spec has | a stage above failed |
+| `traces` | recorded traces and `driver:` programs agree with the spec ([Conformance](#conformance)) | a stage above failed |
+| `review` | every story, rule and contract changed since `spec/lock.json` was accepted ([Review](#review)) | never |
 
 ## Writing a spec
 
@@ -258,11 +275,6 @@ and near-misses of the conventions above such as `alwayspaid` or `CanPay`.
   `L::alwaysFlipsAreCounted` of each, and add rules about the pair that
   neither lamp could state (`vibestack/fixtures/room.md` in the vibestack
   repository).
-
-Import paths resolve relative to the spec that contains them. For example,
-`import currency.* from "../shared/currency"` uses a sibling area's library,
-and `import payments as P from "./payments"` uses `payments/index.md`.
-Generated code uses the imported spec's full module path.
 - **`import net as N from "./net"`** takes a spec that ships with the tools,
   from their `std/` directory, when `spec/` has none of that name. It is
   simulated and proved with the specs that import it, never reviewed.
@@ -270,6 +282,11 @@ Generated code uses the imported spec's full module path.
   the numbers of the messages in flight, with `N::send`, `N::take` (to
   deliver or lose one), `N::repeat`, and laws for an `always` rule that only
   messages sent are in flight. `vibestack/fixtures/ping.md` uses it.
+
+Import paths resolve relative to the spec that contains them. For example,
+`import currency.* from "../shared/currency"` uses a sibling area's library,
+and `import payments as P from "./payments"` uses `payments/index.md`.
+Generated code uses the imported spec's full module path.
 
 A spec is imported once, one way or the other, and imports cannot form a
 circle. Navigation links may point back to a parent. In the generated
@@ -478,7 +495,8 @@ removed and one new.
 The versioned `spec/lock.json` holds `specs` keyed by source path, `contracts`
 keyed by source file, and `unproved` keyed by proof unit. `npx spec migrate`
 consolidates older per-spec ledgers without accepting new reviews or proof
-exceptions. Commit the resulting lock with the specs.
+exceptions. A proof exception in the old list form is not carried over: its
+obligations are reported as not proved until proved or accepted again. Commit the resulting lock with the specs.
 
 Removed spec paths stay in review until their removal is accepted.
 
@@ -744,8 +762,8 @@ npm run check
 | `.agents/skills/` | links to the same skills in `.claude/skills/` |
 | `CLAUDE.md` | imports `AGENTS.md`, preserving any existing instructions |
 | `tsconfig.json`, an empty `spec/index.md` | |
-| `.gitignore` | `gen/`, `.spec-cache/` |
-| `package.json` scripts | `check`, `gen`, `accept` |
+| `.gitignore` | `gen/`, `.spec-cache/`, `.studio/` |
+| `package.json` | scripts `dev`, `check`, `gen`, `accept`; `"type": "module"` when unset |
 
 `spec` works on `spec/**/*.md`, and optionally `src/`, the package's
 [tests](#tests) and a `tsconfig.json`, in the directory it is run from. Without a `tsconfig.json`, a package containing `src/` or `test/` fails the
@@ -793,6 +811,8 @@ In the vibestack repository:
 | `vibestack/cache.ts`, `vibestack/run.ts` | stage caches and bounded tool execution |
 | `vibestack/units.ts`, `vibestack/simulate.ts` | generation, proof units, simulation and replay |
 | `vibestack/util.ts` | source discovery, test execution and citations |
+| `vibestack/conform.ts` | the `traces` stage, and the writer of `gen/<name>.conformance.ts` |
+| `vibestack/conformance.ts` | the runtime copied into `gen/` as `_conformance.ts` |
 | `vibestack/scan.ts` | how a spec's lines are read; imports nothing, so Studio's page uses it too |
 | `vibestack/studio/` | Studio, a workspace package with its own spec, checked by `npm run check --workspace vibestack-studio`: change `spec/`, then its shell in `src/` |
 | `vibestack/prove.ts` | proves one unit: checks and splices the proof file, runs LemmaScript and `dafny audit`, verifies again with every assertion isolated each definition that fails, and alone every postcondition a failing one could hide |
@@ -804,6 +824,7 @@ In the vibestack repository:
 | `vibestack/gen/classify.ts` | which definition is a transition, a guard or a rule |
 | `vibestack/gen/secrecy.ts` | where a secret may go |
 | `vibestack/gen/typescript.ts`, `vibestack/gen/harness.ts` | the two outputs |
+| `vibestack/selftest.ts`, `vibestack/fixtures/` | the selftest and the specs it uses besides the order example |
 
 Node runs all of it directly; `npm run build` compiles it for the packaged
 `spec` command.

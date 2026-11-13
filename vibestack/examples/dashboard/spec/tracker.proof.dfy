@@ -371,7 +371,7 @@ lemma renameOwner_ensures(s: Tracker, owner: string, name: string)
       var t := s.tasks[i];
       var renamed := (var s_map := t.owners; seq(|s_map|, i_map requires 0 <= i_map < |s_map| => var o := s_map[i_map]; (if (o == owner) then name else o)));
       assert s2.tasks[i].owners == distinctNames(renamed);
-      TDedupMember((acc: seq<string>, x: string) => (if (x in acc) then acc else (acc + [x])), [], renamed, o);
+      ProofLib.FoldLeftDedupMember((acc: seq<string>, x: string) => (if (x in acc) then acc else (acc + [x])), [], renamed, o);
       var k :| 0 <= k < |renamed| && renamed[k] == o;
       var w :| 0 <= w < |s.owners| && s.owners[w] == owner;
       assert s2.owners[w] == name;
@@ -877,22 +877,6 @@ lemma TSentRecordedKept(s: Tracker, s2: Tracker)
 
 // ===== The notes of one notifier pass =====
 
-// What a fold that appends h(x) for each x holds.
-lemma TFoldConcatMember<A, T>(f: (seq<A>, T) -> seq<A>, h: T -> seq<A>, init: seq<A>, xs: seq<T>, x: A)
-  requires forall a, y :: f(a, y) == a + h(y)
-  ensures x in Std.Collections.Seq.FoldLeft(f, init, xs) <==> (x in init || exists i :: 0 <= i < |xs| && x in h(xs[i]))
-  decreases |xs|
-{
-  if |xs| > 0 {
-    TFoldConcatMember(f, h, f(init, xs[0]), xs[1..], x);
-    assert forall i :: 1 <= i < |xs| ==> xs[i] == xs[1..][i - 1];
-    if x in Std.Collections.Seq.FoldLeft(f, init, xs) && !(x in init) && !(x in h(xs[0])) {
-      var i :| 0 <= i < |xs[1..]| && x in h(xs[1..][i]);
-      assert x in h(xs[i + 1]);
-    }
-  }
-}
-
 // A note of one task's pass names the task, goes out now, and is due.
 lemma TNoteFacts(s: Tracker, t: Task, x: Note)
   requires x in notesFor(s, t)
@@ -908,7 +892,7 @@ lemma TNewNote(s: Tracker, x: Note)
   requires x in Std.Collections.Seq.FoldLeft((acc: seq<Note>, t: Task) => (acc + notesFor(s, t)), [], s.tasks)
   ensures exists i :: 0 <= i < |s.tasks| && x in notesFor(s, s.tasks[i])
 {
-  TFoldConcatMember((acc: seq<Note>, t: Task) => (acc + notesFor(s, t)), (t: Task) => notesFor(s, t), [], s.tasks, x);
+  ProofLib.FoldLeftConcatMember((acc: seq<Note>, t: Task) => (acc + notesFor(s, t)), (t: Task) => notesFor(s, t), [], s.tasks, x);
 }
 
 // Two positions of a list with unique task numbers that hold the same number are one position.
@@ -995,48 +979,6 @@ lemma TMemberAddedSameProblems(s: Tracker, t: Task, t2: Task, owner: string)
 
 // ===== Nothing is sent twice by a notifier pass =====
 
-// Two lists without repeated keys, and no key in both: their concatenation repeats no key.
-lemma TDistinctByConcat<T, K>(a: seq<T>, b: seq<T>, key: T -> K)
-  requires ProofLib.DistinctBy(a, key) && ProofLib.DistinctBy(b, key)
-  requires forall x, y :: x in a && y in b ==> key(x) != key(y)
-  ensures ProofLib.DistinctBy(a + b, key)
-{
-  var c := a + b;
-  forall i, j | 0 <= i < |c| && 0 <= j < |c| && i != j
-    ensures key(c[i]) != key(c[j])
-  {
-    if i < |a| && j >= |a| {
-      assert c[i] == a[i] && c[j] == b[j - |a|];
-    } else if i >= |a| && j < |a| {
-      assert c[j] == a[j] && c[i] == b[i - |a|];
-    } else if i >= |a| && j >= |a| {
-      assert c[i] == b[i - |a|] && c[j] == b[j - |a|];
-    }
-  }
-}
-
-// A fold that appends h(x) for each x repeats no key when no piece does and no two pieces share one.
-lemma TFoldDistinctBy<T, U, K>(f: (seq<T>, U) -> seq<T>, h: U -> seq<T>, key: T -> K, init: seq<T>, xs: seq<U>)
-  requires forall a, y :: f(a, y) == a + h(y)
-  requires ProofLib.DistinctBy(init, key)
-  requires forall i :: 0 <= i < |xs| ==> ProofLib.DistinctBy(h(xs[i]), key)
-  requires forall i, x, y :: 0 <= i < |xs| && x in init && y in h(xs[i]) ==> key(x) != key(y)
-  requires forall i, j, x, y :: 0 <= i < j < |xs| && x in h(xs[i]) && y in h(xs[j]) ==> key(x) != key(y)
-  ensures ProofLib.DistinctBy(Std.Collections.Seq.FoldLeft(f, init, xs), key)
-  decreases |xs|
-{
-  if |xs| > 0 {
-    TDistinctByConcat(init, h(xs[0]), key);
-    assert forall i :: 1 <= i < |xs| ==> xs[i] == xs[1..][i - 1];
-    forall i, x, y | 0 <= i < |xs[1..]| && x in f(init, xs[0]) && y in h(xs[1..][i])
-      ensures key(x) != key(y)
-    {
-      assert xs[1..][i] == xs[i + 1];
-    }
-    TFoldDistinctBy(f, h, key, f(init, xs[0]), xs[1..]);
-  }
-}
-
 // The rule, restated over ProofLib.Filter.
 lemma TSentTwiceBridge(s: Tracker)
   ensures alwaysNothingIsSentTwice(s) == !(exists a :: a in s.sent && !(|ProofLib.Filter((b: Note) => ((((a.kind == b.kind) && (a.task == b.task)) && (a.to == b.to)) && (a.version == b.version)), s.sent)| == 1))
@@ -1073,8 +1015,8 @@ lemma TNotesForDistinct(s: Tracker, t: Task)
   assert ProofLib.DistinctBy(a, key);
   assert ProofLib.DistinctBy(b, key);
   assert ProofLib.DistinctBy(c, key);
-  TDistinctByConcat(a, b, key);
-  TDistinctByConcat(a + b, c, key);
+  ProofLib.DistinctByConcat(a, b, key);
+  ProofLib.DistinctByConcat(a + b, c, key);
 }
 
 lemma TNotifyNothingSentTwice(s: Tracker)
@@ -1100,7 +1042,7 @@ lemma TNotifyNothingSentTwice(s: Tracker)
       TUniqueIndex(s, i, j);
     }
   }
-  TFoldDistinctBy((acc: seq<Note>, t: Task) => (acc + notesFor(s, t)), (t: Task) => notesFor(s, t), key, [], s.tasks);
+  ProofLib.FoldLeftConcatDistinctBy((acc: seq<Note>, t: Task) => (acc + notesFor(s, t)), (t: Task) => notesFor(s, t), key, [], s.tasks);
   TSentTwiceBridge(s);
   TSentDistinct(s.sent);
   forall x, y | x in s.sent && y in newNotes
@@ -1114,7 +1056,7 @@ lemma TNotifyNothingSentTwice(s: Tracker)
       assert x.task == t.id;
     }
   }
-  TDistinctByConcat(s.sent, newNotes, key);
+  ProofLib.DistinctByConcat(s.sent, newNotes, key);
   TSentTwiceBridge(s2);
   TSentDistinct(s2.sent);
 }
@@ -1125,7 +1067,7 @@ lemma TNotifyNothingSentTwice(s: Tracker)
 lemma TProblemsMember(s: Tracker, p: Problem)
   ensures p in problems(s) <==> exists i :: 0 <= i < |s.tasks| && p in problemsOf(s, s.tasks[i])
 {
-  TFoldConcatMember((acc: seq<Problem>, t: Task) => (acc + problemsOf(s, t)), (t: Task) => problemsOf(s, t), [], s.tasks, p);
+  ProofLib.FoldLeftConcatMember((acc: seq<Problem>, t: Task) => (acc + problemsOf(s, t)), (t: Task) => problemsOf(s, t), [], s.tasks, p);
 }
 
 // Every problem after was already a problem before: nothing was added.
@@ -1225,17 +1167,6 @@ lemma TOwnersShrinkNoNewProblem(s: Tracker, s2: Tracker)
     TProblemsMember(s, p);
   }
   TSubsetNoNewProblem(s, s2);
-}
-
-// A de-duplicating fold holds only what it started with and what it read.
-lemma TDedupMember<T>(f: (seq<T>, T) -> seq<T>, acc: seq<T>, xs: seq<T>, x: T)
-  requires forall a, y :: f(a, y) == (if y in a then a else a + [y])
-  ensures x in Std.Collections.Seq.FoldLeft(f, acc, xs) ==> x in acc || x in xs
-  decreases |xs|
-{
-  if |xs| > 0 {
-    TDedupMember(f, f(acc, xs[0]), xs[1..], x);
-  }
 }
 
 // ===== A task's problems, part by part; each part has its own code =====
@@ -1794,62 +1725,6 @@ lemma TFixOneSided(s: Tracker, index: int, k: int)
 
 // ===== A fix shortens the warning list =====
 
-// A predicate that passes less often keeps no more, and fewer if it fails somewhere the other passes.
-lemma TFilterImpLen<T>(f: T -> bool, g: T -> bool, xs: seq<T>)
-  requires forall i :: 0 <= i < |xs| && f(xs[i]) ==> g(xs[i])
-  ensures |ProofLib.Filter(f, xs)| <= |ProofLib.Filter(g, xs)|
-  ensures (exists i :: 0 <= i < |xs| && g(xs[i]) && !f(xs[i])) ==> |ProofLib.Filter(f, xs)| < |ProofLib.Filter(g, xs)|
-  decreases |xs|
-{
-  if |xs| == 0 {
-    ProofLib.FilterNil(f, xs);
-    ProofLib.FilterNil(g, xs);
-  } else {
-    ProofLib.FilterCons(f, xs);
-    ProofLib.FilterCons(g, xs);
-    assert forall i :: 0 <= i < |xs[1..]| ==> xs[1..][i] == xs[i + 1];
-    TFilterImpLen(f, g, xs[1..]);
-    if exists i :: 0 <= i < |xs| && g(xs[i]) && !f(xs[i]) {
-      var i :| 0 <= i < |xs| && g(xs[i]) && !f(xs[i]);
-      if i > 0 {
-        assert xs[1..][i - 1] == xs[i];
-      }
-    }
-  }
-}
-
-// The same after first dropping some elements.
-lemma TFilterKeepLen<T>(d: T -> bool, f: T -> bool, g: T -> bool, xs: seq<T>)
-  requires forall i :: 0 <= i < |xs| && d(xs[i]) && f(xs[i]) ==> g(xs[i])
-  ensures |ProofLib.Filter(f, ProofLib.Filter(d, xs))| <= |ProofLib.Filter(g, xs)|
-  ensures (exists i :: 0 <= i < |xs| && g(xs[i]) && !(d(xs[i]) && f(xs[i]))) ==> |ProofLib.Filter(f, ProofLib.Filter(d, xs))| < |ProofLib.Filter(g, xs)|
-  decreases |xs|
-{
-  if |xs| == 0 {
-    ProofLib.FilterNil(d, xs);
-    ProofLib.FilterNil(f, ProofLib.Filter(d, xs));
-    ProofLib.FilterNil(g, xs);
-  } else {
-    var r := ProofLib.Filter(d, xs[1..]);
-    ProofLib.FilterCons(d, xs);
-    ProofLib.FilterCons(g, xs);
-    assert forall i :: 0 <= i < |xs[1..]| ==> xs[1..][i] == xs[i + 1];
-    TFilterKeepLen(d, f, g, xs[1..]);
-    if d(xs[0]) {
-      ProofLib.FilterCons(f, [xs[0]] + r);
-      assert ([xs[0]] + r)[1..] == r;
-    } else {
-      assert ProofLib.Filter(d, xs) == r;
-    }
-    if exists i :: 0 <= i < |xs| && g(xs[i]) && !(d(xs[i]) && f(xs[i])) {
-      var i :| 0 <= i < |xs| && g(xs[i]) && !(d(xs[i]) && f(xs[i]));
-      if i > 0 {
-        assert xs[1..][i - 1] == xs[i];
-      }
-    }
-  }
-}
-
 // Two folds that append a piece per element: if no piece is longer, the result is no longer; if one is shorter, shorter.
 lemma TFoldLenLe<A, T, U>(f: (seq<A>, T) -> seq<A>, g: (seq<A>, U) -> seq<A>, h: T -> seq<A>, h2: U -> seq<A>, a: seq<A>, a2: seq<A>, xs: seq<T>, ys: seq<U>)
   requires forall acc, x :: f(acc, x) == acc + h(x)
@@ -1912,14 +1787,14 @@ lemma TFixOwnersLen(s: Tracker, s2: Tracker, index: int, k: int)
   var t2 := s2.tasks[k];
   if !(pr.code.OneSided? && t.id == pr.ref) && t.id == pr.task && pr.code.UnknownOwner? {
     assert t2.owners == ProofLib.Filter((y: string) => (y != pr.name), t.owners);
-    TFilterKeepLen((y: string) => (y != pr.name), (o: string) => !((o in s2.owners)), (o: string) => !((o in s.owners)), t.owners);
+    ProofLib.FilterOfFilterLength((y: string) => (y != pr.name), (o: string) => !((o in s2.owners)), (o: string) => !((o in s.owners)), t.owners);
     if pr in problemsOf(s, t) {
       TFixHome(s, t, pr);
       var w :| 0 <= w < |t.owners| && t.owners[w] == pr.name;
     }
   } else {
     assert t2.owners == t.owners;
-    TFilterImpLen((o: string) => !((o in s2.owners)), (o: string) => !((o in s.owners)), t.owners);
+    ProofLib.FilterImpLength((o: string) => !((o in s2.owners)), (o: string) => !((o in s.owners)), t.owners);
   }
 }
 
@@ -1935,7 +1810,7 @@ lemma TFixParentsLen(s: Tracker, s2: Tracker, index: int, k: int)
   TSameIdsHasTask(s, s2);
   if !(pr.code.OneSided? && t.id == pr.ref) && t.id == pr.task && (pr.code.UnknownParent? || pr.code.SelfParent?) {
     assert t2.parents == ProofLib.Filter((y: int) => (y != pr.ref), t.parents);
-    TFilterKeepLen((y: int) => (y != pr.ref), (p: int) => ((p != t2.id) && !(hasTask(s2, p))), (p: int) => ((p != t.id) && !(hasTask(s, p))), t.parents);
+    ProofLib.FilterOfFilterLength((y: int) => (y != pr.ref), (p: int) => ((p != t2.id) && !(hasTask(s2, p))), (p: int) => ((p != t.id) && !(hasTask(s, p))), t.parents);
     if pr in problemsOf(s, t) {
       TFixHome(s, t, pr);
       if pr.code.UnknownParent? {
@@ -1946,7 +1821,7 @@ lemma TFixParentsLen(s: Tracker, s2: Tracker, index: int, k: int)
     }
   } else {
     assert t2.parents == t.parents;
-    TFilterImpLen((p: int) => ((p != t2.id) && !(hasTask(s2, p))), (p: int) => ((p != t.id) && !(hasTask(s, p))), t.parents);
+    ProofLib.FilterImpLength((p: int) => ((p != t2.id) && !(hasTask(s2, p))), (p: int) => ((p != t.id) && !(hasTask(s, p))), t.parents);
   }
 }
 
@@ -1970,8 +1845,8 @@ lemma TFixRelatedLen(s: Tracker, s2: Tracker, index: int, k: int)
     } else {
       assert t2.related == t.related;
     }
-    TFilterImpLen((r: int) => ((r != t2.id) && !(hasTask(s2, r))), (r: int) => ((r != t.id) && !(hasTask(s, r))), t.related);
-    TFilterImpLen((r: int) => (((r != t2.id) && hasTask(s2, r)) && !(linksBack(s2, r, t2.id))), (r: int) => (((r != t.id) && hasTask(s, r)) && !(linksBack(s, r, t.id))), t.related);
+    ProofLib.FilterImpLength((r: int) => ((r != t2.id) && !(hasTask(s2, r))), (r: int) => ((r != t.id) && !(hasTask(s, r))), t.related);
+    ProofLib.FilterImpLength((r: int) => (((r != t2.id) && hasTask(s2, r)) && !(linksBack(s2, r, t2.id))), (r: int) => (((r != t.id) && hasTask(s, r)) && !(linksBack(s, r, t.id))), t.related);
   } else if t.id == pr.task && (pr.code.UnknownRelated? || pr.code.SelfRelated?) {
     assert t2.related == ProofLib.Filter((y: int) => (y != pr.ref), t.related);
     forall r | r in t.related && r != pr.ref
@@ -1979,8 +1854,8 @@ lemma TFixRelatedLen(s: Tracker, s2: Tracker, index: int, k: int)
     {
       ProofLib.FilterMember((y: int) => (y != pr.ref), t.related, r);
     }
-    TFilterKeepLen((y: int) => (y != pr.ref), (r: int) => ((r != t2.id) && !(hasTask(s2, r))), (r: int) => ((r != t.id) && !(hasTask(s, r))), t.related);
-    TFilterKeepLen((y: int) => (y != pr.ref), (r: int) => (((r != t2.id) && hasTask(s2, r)) && !(linksBack(s2, r, t2.id))), (r: int) => (((r != t.id) && hasTask(s, r)) && !(linksBack(s, r, t.id))), t.related);
+    ProofLib.FilterOfFilterLength((y: int) => (y != pr.ref), (r: int) => ((r != t2.id) && !(hasTask(s2, r))), (r: int) => ((r != t.id) && !(hasTask(s, r))), t.related);
+    ProofLib.FilterOfFilterLength((y: int) => (y != pr.ref), (r: int) => (((r != t2.id) && hasTask(s2, r)) && !(linksBack(s2, r, t2.id))), (r: int) => (((r != t.id) && hasTask(s, r)) && !(linksBack(s, r, t.id))), t.related);
     if pr in problemsOf(s, t) {
       TFixHome(s, t, pr);
       if pr.code.UnknownRelated? {
@@ -1991,8 +1866,8 @@ lemma TFixRelatedLen(s: Tracker, s2: Tracker, index: int, k: int)
     }
   } else {
     assert t2.related == t.related;
-    TFilterImpLen((r: int) => ((r != t2.id) && !(hasTask(s2, r))), (r: int) => ((r != t.id) && !(hasTask(s, r))), t.related);
-    TFilterImpLen((r: int) => (((r != t2.id) && hasTask(s2, r)) && !(linksBack(s2, r, t2.id))), (r: int) => (((r != t.id) && hasTask(s, r)) && !(linksBack(s, r, t.id))), t.related);
+    ProofLib.FilterImpLength((r: int) => ((r != t2.id) && !(hasTask(s2, r))), (r: int) => ((r != t.id) && !(hasTask(s, r))), t.related);
+    ProofLib.FilterImpLength((r: int) => (((r != t2.id) && hasTask(s2, r)) && !(linksBack(s2, r, t2.id))), (r: int) => (((r != t.id) && hasTask(s, r)) && !(linksBack(s, r, t.id))), t.related);
     if pr in problemsOf(s, t) && pr.code.OneSided? {
       TFixHome(s, t, pr);
       // the other task now links back
@@ -2062,18 +1937,6 @@ lemma TFixShortens(s: Tracker, index: int)
 // ===== The ancestor search finds everything there is to find =====
 // A list c is closed when it holds every parent (other than itself) of each task it names.
 
-// A subset is no larger.
-lemma TSubsetCard(a: set<int>, b: set<int>)
-  requires a <= b
-  ensures |a| <= |b|
-  decreases |a|
-{
-  if a != {} {
-    var x :| x in a;
-    TSubsetCard(a - {x}, b - {x});
-  }
-}
-
 // No more distinct task numbers than tasks.
 lemma TIdCountBound(xs: seq<Task>, a: seq<int>)
   ensures |(set u | u in xs && u.id in a :: u.id)| <= |xs|
@@ -2094,7 +1957,7 @@ lemma TIdCountBound(xs: seq<Task>, a: seq<int>)
         }
       }
     }
-    TSubsetCard(w, r + {xs[0].id});
+    ProofLib.SubsetCard(w, r + {xs[0].id});
   }
 }
 
@@ -2158,7 +2021,7 @@ lemma TAncRoundGrows(s: Tracker, a: seq<int>, t: Task)
   }
   assert u.id in sb;
   assert !(u.id in sa);
-  TSubsetCard(sa + {u.id}, sb);
+  ProofLib.SubsetCard(sa + {u.id}, sb);
 }
 
 // Either the search ends closed, or every round added a task number to an open start.
@@ -2182,7 +2045,7 @@ lemma TAncOpenCount(s: Tracker, a: seq<int>)
   ensures |(set u | u in s.tasks && u.id in a :: u.id)| >= 1
 {
   var u, p :| u in s.tasks && u.id in a && p in u.parents && p != u.id && !(p in a);
-  TSubsetCard({u.id}, (set v | v in s.tasks && v.id in a :: v.id));
+  ProofLib.SubsetCard({u.id}, (set v | v in s.tasks && v.id in a :: v.id));
 }
 
 // After one round per task, the ancestors are closed: one more round finds nothing new.
@@ -2236,7 +2099,7 @@ lemma TCreateTask(s: Tracker, actor: string, j: int)
     forall r | r in t.related
       ensures r != n.id
     {
-      TFoldConcatMember((acc: seq<int>, t: Task) => (((acc + [t.id]) + t.parents) + t.related), (t: Task) => (([t.id] + t.parents) + t.related), [], s.tasks, r);
+      ProofLib.FoldLeftConcatMember((acc: seq<int>, t: Task) => (((acc + [t.id]) + t.parents) + t.related), (t: Task) => (([t.id] + t.parents) + t.related), [], s.tasks, r);
     }
     forall r | hasTask(s, r)
       ensures hasTask(s2, r)

@@ -50,6 +50,8 @@ export function harness(
     }
     return TRIED[t.kind] ?? fail(`parameter ${p.name}: the simulator has no values to try for type ${t.kind}; define \`pure val ${p.name}Values = Set(...)\` in the spec`);
   };
+  /** What the simulator tries for a parameter of `of`: its `<param>Values`, or the default for its type. */
+  const tried = (p: Param, of: string) => given(p, of) ?? byType(p, p.type);
   /**
    * Picks for the parameters of `of`. `<param>Values` in the spec overrides the default for its type. A list parameter
    * is up to two independent picks, rather than one pick from the set of every such list, which Quint would build in
@@ -60,7 +62,7 @@ export function harness(
   const picks = (ps: Param[], of: string) => ps.map((p) => {
     const own = takesVia(of) && p.name === VIA ? viaValues : given(p, of);
     const t = resolve(p.type);
-    if (own || t.kind !== "list") return `nondet ${p.name} = ${own ?? byType(p, p.type)}.oneOf() `;
+    if (own || t.kind !== "list") return `nondet ${p.name} = ${own ?? tried(p, of)}.oneOf() `;
     const [x0, x1] = [`${p.name}__0`, `${p.name}__1`];
     const each = byType(p, t.elem);
     return `nondet ${x0} = ${each}.oneOf() nondet ${x1} = ${each}.oneOf() nondet ${p.name} = Set(List(), List(${x0}), List(${x0}, ${x1})).oneOf() `;
@@ -96,7 +98,6 @@ export function harness(
   // module the harness imports (`simulated`, below). A trace starts once a `settle` step finds that the laws assumed of
   // each hold on its table for every value tried; until then no rule is checked, and a trace whose tables break them
   // ends there, and is dropped (simulate.ts, readTrace).
-  const tried = (p: Param, of: string) => given(p, of) ?? byType(p, p.type);
   const keys = (o: Opaque) => (o.params.length === 1 ? tried(o.params[0], o.name) : `tuples(${o.params.map((p) => tried(p, o.name)).join(", ")})`);
   const results = (o: Opaque) => tried({ name: o.name, type: o.result }, o.name);
   const tables = opaques.flatMap((o) => [`M::opaque_${o.name}`, `M::opaque_${o.name}_else`]);
@@ -132,7 +133,7 @@ export function harness(
   /** Whether a fair event is possible in state `x0`: its guard allows it for some value the simulator tries. */
   const possible = (t: Transition) => t.guardParams.reduceRight((inner, name) => {
     const p = t.params.find((p) => p.name === name)!;
-    return `${given(p, t.name) ?? byType(p, p.type)}.exists(${name} => ${inner})`;
+    return `${tried(p, t.name)}.exists(${name} => ${inner})`;
   }, t.guard ? call(t.guard, t.guardParams, "x0") : "true");
   // A law is tried on values picked for each parameter. One that takes the state is also evaluated on the states the
   // simulator reaches (below); if the spec gives no `<param>Values` for that parameter, that is the only way it is tried.

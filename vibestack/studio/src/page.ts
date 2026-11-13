@@ -3,25 +3,12 @@
 // session allows it. This file draws what they hold and turns clicks, keys and drags into their events.
 import { enabled as allowed, type Event as SessionEvent, type Session } from "../gen/index.ts";
 import { enabled, headingsAreSound, parseState, step, type Event as Edit, type Outline, type Rule, type Story } from "../gen/outline.ts";
-import { bodyOf, itemsOf, nodeId, ruleKey, storyKey, textBody, textOf, type Item } from "./markdown.ts";
+import { bodyOf, itemsOf, nodeId, nodesOfOutline, ruleKey, specOrder, storyKey, textBody, textOf, type Item } from "./markdown.ts";
+// Types only: the page loads none of the server's or the tools' code.
+import type { Result } from "../../spec.ts";
+import type { JobView, Snapshot } from "./server.ts";
 
-// --- what the server sends -------------------------------------------------------------------------------
-
-interface Result { ok: boolean; stage: string; summary: string; detail: string; where?: string }
-interface JobView { label: string; status: "running" | "passed" | "failed" | "stopped"; started: number; finished?: number; log: string[] }
-interface Change { action: "added" | "deleted" | "changed"; kind: "spec" | "story" | "rule"; spec: string; key: string; what: string[] }
-interface SpecView { file: string; module: string; hash: string; text: string; outline: Outline; review: Record<string, string> }
-interface Snapshot {
-  project: { id: string; name: string; root: string };
-  session: Session;
-  specs: SpecView[];
-  problem?: string;
-  manifest?: { changes: Change[]; regenerate: { gen: string }[] };
-  prompt: string;
-  check?: { ok: boolean; results: Result[]; next: string; finished: number };
-  jobs: Partial<Record<"check" | "agent" | "accept", JobView>>;
-  agents: { id: string; label: string; available: boolean; link?: string }[];
-}
+type SpecView = Snapshot["specs"][number];
 
 // --- the working copy --------------------------------------------------------------------------------------
 
@@ -29,8 +16,6 @@ interface Snapshot {
 interface Working { file: string; base: string | null; orig: string | null; was: Outline; outline: Outline; deleted: boolean }
 
 const S = {
-  projects: [] as { id: string; name: string }[],
-  project: new URLSearchParams(location.search).get("project") ?? "",
   snap: undefined as Snapshot | undefined,
   specs: [] as Working[],
   sel: "",
@@ -89,8 +74,7 @@ function loadDraft(): { specs: Working[]; sel: string } | null {
 
 /** The specs on disk, with the ones this page changed kept, and those that changed on disk underneath them noted. */
 function merge(snap: Snapshot, mine: Working[]): Working[] {
-  const keys = (specs: Working[]) => new Map(specs.flatMap((w) => w.outline.stories.flatMap((s) => [
-    [nodeId(w.file, storyKey(s.title)), ui(w.file, s.id)], ...s.rules.map((r) => [nodeId(w.file, ruleKey(s.title, r.title)), ui(w.file, r.id)])] as [string, string][])));
+  const keys = (specs: Working[]) => new Map(specs.flatMap((w) => nodesOfOutline(w.file, w.outline).map((n) => [n.id, ui(w.file, (n.rule ?? n.story).id)] as const)));
   const before = keys(mine);
   const out: Working[] = [];
   S.conflicts = [];
@@ -100,8 +84,7 @@ function merge(snap: Snapshot, mine: Working[]): Working[] {
     out.push(d);
   }
   for (const f of snap.specs) if (!out.some((o) => o.file === f.file)) out.push(working(f));
-  const order = (file: string) => file.replace(/(?:^spec\/|\/)index\.md$/, "/");
-  out.sort((a, b) => order(a.file).localeCompare(order(b.file)));
+  out.sort((a, b) => specOrder(a.file, b.file));
   // A story or rule stays open, or being edited, across a reload: by what it is called, since its number may change.
   const after = keys(out);
   const carry = (set: Set<string>) => new Set([...set].map((id) => {
@@ -116,7 +99,7 @@ function merge(snap: Snapshot, mine: Working[]): Working[] {
 // --- server -------------------------------------------------------------------------------------------------
 
 async function api(route: string, body?: unknown) {
-  const res = await fetch(`/api/${route}?project=${encodeURIComponent(S.project)}`, body === undefined ? {} : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const res = await fetch(`/api/${route}`, body === undefined ? {} : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw Object.assign(new Error(json.error ?? res.statusText), { status: res.status, body: json });
   return json;
@@ -222,7 +205,7 @@ function markdown(text: string, file: string) {
     : `<p>${inline(block)}</p>`).join("");
 }
 
-const KEYWORDS = /^(pure|def|val|type|import|from|if|else|match|and|or|not|implies|iff|all|any|Set|List|Map|int|bool|str|true|false|module|as)$/;
+const KEYWORDS = /^(pure|def|val|const|type|import|from|if|else|match|and|or|not|implies|iff|all|any|Set|List|Map|int|bool|str|true|false|module|as)$/;
 /** Quint, coloured: keywords, the names a block defines, strings, numbers and comments. */
 function highlight(code: string) {
   const out: string[] = [];
@@ -238,21 +221,36 @@ function highlight(code: string) {
   return out.join("") + esc(code.slice(end));
 }
 
-/** What a rule's Quint defines, read off the names (AGENTS.md, "What goes in the Quint blocks"). */
+/**
+ * What a rule's Quint defines, read off the names and signatures as gen/classify.ts reads them (AGENTS.md, "What goes
+ * in the Quint blocks"), so that a rule being edited is marked too.
+ */
+const ROLE = (prefix: string) => new RegExp(`^\\s*pure\\s+def\\s+${prefix}[A-Z]`, "m");
+/** The prefixes that make a definition something other than a transition. */
+const NOT_TRANSITION = /^(can|always|step|sometimes|leadsTo|refines|law|declassify)[A-Z]/;
 const KINDS: [string, RegExp | null, string, string][] = [
   ["type", /^\s*type\s+\w+/m, "T", "a type"],
   ["initial", /^\s*pure\s+val\s+initial\b/m, "●", "the initial state"],
-  ["guard", /^\s*pure\s+def\s+can[A-Z]/m, "?", "a guard"],
+  ["guard", ROLE("can"), "?", "a guard"],
   ["transition", null, "→", "a transition"],
-  ["always", /^\s*pure\s+def\s+always[A-Z]/m, "□", "an always rule"],
-  ["step", /^\s*pure\s+def\s+step[A-Z]/m, "Δ", "a step rule"],
-  ["sometimes", /^\s*pure\s+def\s+sometimes[A-Z]/m, "◇", "a sometimes rule"],
-  ["law", /^\s*pure\s+def\s+law[A-Z]/m, "∀", "a law"],
+  ["always", ROLE("always"), "□", "an always rule"],
+  ["step", ROLE("step"), "Δ", "a step rule"],
+  ["sometimes", ROLE("sometimes"), "◇", "a sometimes rule"],
+  ["leadsTo", ROLE("leadsTo"), "↝", "a liveness rule"],
+  ["refines", ROLE("refines"), "⊑", "a refinement"],
+  ["law", ROLE("law"), "∀", "a law"],
+  ["opaque", /^\s*const\s+\w+\s*:/m, "ƒ", "an opaque function"],
+  ["declassify", ROLE("declassify"), "⇣", "the way out for a secret"],
 ];
-function kindsOf(items: Item[]) {
+/** The records `{ state, out }` a spec's transitions with output return, by name, with the state type each holds. */
+const outputsOf = (spec: Working) =>
+  new Map([...textOf(spec.outline).matchAll(/^\s*type\s+(\w+)\s*=\s*\{\s*state\s*:\s*(\w+)\s*,\s*out\s*:/gm)].map((m) => [m[1], m[2]]));
+/** A transition takes the state first and returns it, alone or with what it outputs; a rule or guard is not one. */
+function kindsOf(items: Item[], outputs: Map<string, string>) {
   const code = items.filter((i) => i.quint).map((i) => i.text).join("\n");
   return KINDS.filter(([kind, re]) => kind === "transition"
-    ? [...code.matchAll(/^\s*pure\s+def\s+(\w+)\s*\(\s*\w+\s*:\s*(\w+)[^)]*\)\s*:\s*(\w+)/gm)].some((m) => m[2] === m[3] && !/^(always|step|sometimes|law|can)[A-Z]/.test(m[1]))
+    ? [...code.matchAll(/^\s*pure\s+def\s+(\w+)\s*\(\s*\w+\s*:\s*(\w+)[^)]*\)\s*:\s*(\w+)/gm)]
+      .some(([, name, state, result]) => (result === state || outputs.get(result) === state) && !NOT_TRANSITION.test(name))
     : re!.test(code));
 }
 
@@ -438,8 +436,7 @@ function renderRail() {
   const newName = h("input", { placeholder: "area/child", "aria-label": "Path of a new spec", onkeydown: (e: KeyboardEvent) => e.key === "Enter" && create() }) as HTMLInputElement;
   const create = () => (newName.value.trim() ? newSpec(newName.value.trim()) : newName.focus());
   rail.replaceChildren(
-    h("select", { class: "project", "aria-label": "Project", onchange: (e: any) => { location.search = `?project=${encodeURIComponent(e.target.value)}`; } },
-      S.projects.map((p) => h("option", { value: p.id, selected: p.id === S.project }, p.name))),
+    h("div", { class: "project", title: S.snap?.project.root }, S.snap?.project.name),
     h("ul", { class: "specs" }, S.specs.map((spec) => {
       const review = Object.keys(S.snap?.specs.find((s) => s.file === spec.file)?.review ?? {}).length;
       const status = isDirty(spec) ? ["dirty", "unpublished changes"] : fails.has(spec.file) ? ["bad", "failing checks"] : review ? ["review", `${review} to review`] : ["", ""];
@@ -550,7 +547,8 @@ function renderDoc() {
     : [h("h1", { ondblclick: () => editNode(headId), title: "Double-click to edit" }, o.title || specName(spec.file), " ", iconButton("edit", "Edit title and introduction", () => editNode(headId))),
       o.body.trim() && h("div", { class: "intro prose", html: markdown(o.body, spec.file) })]);
 
-  const stories = o.stories.map((s, i) => renderStory(spec, s, i, byKey)).filter((x): x is HTMLElement => !!x);
+  const outputs = outputsOf(spec);
+  const stories = o.stories.map((s, i) => renderStory(spec, s, i, byKey, outputs)).filter((x): x is HTMLElement => !!x);
   el.replaceChildren(toolbar, conflict || "", problem || "",
     specFails?.length ? h("div", { class: "banner bad" }, h("span", {}, specFails.map((r) => `${r.stage}: ${r.summary}`).join("\n"))) : "",
     spec.deleted ? h("div", { class: "banner bad" }, h("span", {}, "Deleted on publish."), h("button", { class: "btn", type: "button", onclick: () => change(() => { spec.deleted = false; }) }, "Keep")) : "",
@@ -574,11 +572,11 @@ function editNode(id: string, undoable = true) {
 const statusOf = (changed: boolean, fails: string[] | undefined, review: string | undefined) =>
   fails?.length ? ["bad", fails.join("\n")] : review ? ["review", review] : changed ? ["dirty", "unpublished change"] : ["", ""];
 
-function renderStory(spec: Working, story: Story, s: number, byKey: Map<string, string[]>) {
+function renderStory(spec: Working, story: Story, s: number, byKey: Map<string, string[]>, outputs: Map<string, string>) {
   const id = ui(spec.file, story.id);
   const review = reviewOf(spec, storyKey(story.title));
   const changed = storyChanged(spec, story, s);
-  const rules = story.rules.map((r, j) => renderRule(spec, story, s, r, j, byKey)).filter(Boolean);
+  const rules = story.rules.map((r, j) => renderRule(spec, story, s, r, j, byKey, outputs)).filter(Boolean);
   if (!(matches(`${story.title}\n${story.body}`) && (!S.attention || changed || review)) && !rules.length) return null;
   const open = S.open.has(id) || !!S.q || S.attention;
   const editing = S.editing.has(id);
@@ -612,7 +610,7 @@ function renderStory(spec: Working, story: Story, s: number, byKey: Map<string, 
 /** Whether `title` is non-empty and appears once among `titles` (spec/outline.md, "Every story and rule needs a heading, unique where it is"). */
 const soleHeading = (titles: string[], title: string) => !!title && titles.filter((t) => t === title).length === 1;
 
-function renderRule(spec: Working, story: Story, s: number, rule: Rule, r: number, byKey: Map<string, string[]>) {
+function renderRule(spec: Working, story: Story, s: number, rule: Rule, r: number, byKey: Map<string, string[]>, outputs: Map<string, string>) {
   const id = ui(spec.file, rule.id);
   const key = ruleKey(story.title, rule.title);
   const review = reviewOf(spec, key);
@@ -628,7 +626,7 @@ function renderRule(spec: Working, story: Story, s: number, rule: Rule, r: numbe
     h("span", { class: "grip", title: "Drag to reorder, or into another story", "aria-hidden": "true" }, icon("grip")),
     h("span", { class: `chev${open ? " open" : ""}`, "aria-hidden": "true", onclick: () => toggle(id) }, icon("chev")),
     h("span", { class: "title", onclick: () => toggle(id), ondblclick: () => editNode(id), style: unique ? undefined : "color: var(--bad)", title: unique ? undefined : "Every rule of a story needs its own heading" }, rule.title.trim() || "Untitled"),
-    h("span", { class: "kinds" }, kindsOf(items).map(([, , glyph, name]) => h("span", { title: name, role: "img", "aria-label": name }, glyph))),
+    h("span", { class: "kinds" }, kindsOf(items, outputs).map(([, , glyph, name]) => h("span", { title: name, role: "img", "aria-label": name }, glyph))),
     h("span", { class: `dot ${cls}`, role: "img", "aria-label": label || "in step", title: label }),
     h("span", { class: "actions" }, iconButton("edit", "Edit rule", () => editNode(id)), moveMenu(id, "rule"), iconButton("trash", "Delete rule", () => removeNode(id), "danger")));
   const body = !open ? "" : editing ? renderRuleEditor(spec, id) : h("div", { class: "body" },
@@ -697,7 +695,7 @@ function keys(e: KeyboardEvent, id: string) {
 /** A spec changed on disk while this page edits it: what changed there, so that keeping these edits is a choice. */
 function renderConflict(spec: Working) {
   const fresh = S.snap!.specs.find((s) => s.file === spec.file);
-  const titles = (o: Outline) => new Map(o.stories.flatMap((s) => [[storyKey(s.title), s.body], ...s.rules.map((r) => [ruleKey(s.title, r.title), r.body])] as [string, string][]));
+  const titles = (o: Outline) => new Map(nodesOfOutline(spec.file, o).map((n) => [n.key, (n.rule ?? n.story).body]));
   const was = titles(spec.was);
   const now = fresh ? titles(fresh.outline) : new Map<string, string>();
   const there = [...now].filter(([k, v]) => was.get(k) !== v).map(([k]) => k).concat([...was.keys()].filter((k) => !now.has(k)).map((k) => `${k} (removed)`));
@@ -725,7 +723,8 @@ function takeTheirs(file: string) {
 
 // --- the build panel: the session -----------------------------------------------------------------------------
 
-const STAGES = ["model", "always", "sometimes", "replay", "types", "proof", "tests", "review"];
+/** The stages of a check, in the order it runs them: every stage of spec.ts's `Result` but "skipped", or this does not typecheck. */
+const STAGES = Object.keys({ model: 0, always: 0, sometimes: 0, replay: 0, types: 0, proof: 0, tests: 0, traces: 0, review: 0 } satisfies Record<Exclude<Result["stage"], "skipped">, 0>);
 
 function renderBuild() {
   const build = document.getElementById("build")!;
@@ -864,8 +863,7 @@ async function publish(force = false): Promise<void> {
   if (S.publishing) return;
   const dirty = dirtySpecs();
   // What each story and rule was on disk, so the manifest can say what moved and what was renamed.
-  const origins = dirty.filter((s) => !s.deleted).flatMap((spec) => spec.outline.stories.flatMap((s) => [
-    [nodeId(spec.file, storyKey(s.title)), s.origin || null], ...s.rules.map((r) => [nodeId(spec.file, ruleKey(s.title, r.title)), r.origin || null])]));
+  const origins = dirty.filter((s) => !s.deleted).flatMap((spec) => nodesOfOutline(spec.file, spec.outline).map((n) => [n.id, (n.rule ?? n.story).origin || null]));
   S.publishing = true;
   try {
     await api("publish", { files: dirty.map((s) => ({ file: s.file, base: s.base, text: publishedText(s) })), origins, force });
@@ -911,11 +909,8 @@ document.addEventListener("click", (e) => {
 });
 window.addEventListener("beforeunload", () => { if (dirtySpecs().length) saveDraft(); });
 
-const { projects, open } = await (await fetch("/api/projects")).json();
-S.projects = projects;
-S.project ||= open;
 await refresh();
-const events = new EventSource(`/api/events?project=${encodeURIComponent(S.project)}`);
+const events = new EventSource("/api/events");
 events.addEventListener("files", () => refresh());
 events.addEventListener("job", (e) => {
   const { session, jobs, check } = JSON.parse((e as MessageEvent).data);

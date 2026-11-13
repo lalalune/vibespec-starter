@@ -207,8 +207,11 @@ node vibestack/spec.ts check .
 node vibestack/spec.ts check ../my-project
 ```
 
-CI runs this root check only. Examples and tool selftests run locally;
-changes confined to the examples do not trigger CI.
+CI runs this root check on every push and pull request. When a change
+touches `vibestack/` or `package.json`, it also runs `npm run selftest` and
+`npm run check --workspaces --if-present`, which checks Studio and each
+example. The stages a check runs are listed in
+[AGENTS.md](AGENTS.md#stages-of-npm-run-check).
 
 Each report ends with a `next:` line. The agent follows it until only your
 review remains:
@@ -280,9 +283,13 @@ npm run accept
 
 Before committing your application's starting point:
 
-1. **Remove the example projects.** Delete `vibestack/examples/` and remove
-   its workspace entries and npm scripts such as `demo` and
-   `check:dashboard`. Update the package name, description and repository
+1. **Remove the example projects.** Delete every directory in
+   `vibestack/examples/` except `order/`: `npm run selftest` builds its
+   scratch projects from it, so it stays, with its workspace entry and the
+   `demo` script. Replace the `vibestack/examples/*` workspace entry with
+   `vibestack/examples/order`, and remove the `check:dashboard` script.
+   AGENTS.md's references to the other examples then name files in the
+   Vibestack repository. Update the package name, description and repository
    links for your project.
 2. **Keep the toolchain guide with the toolchain.** Move this README to
    `vibestack/README.md`, update its relative links and the guide references
@@ -302,7 +309,7 @@ Before committing your application's starting point:
 | `npm run dev` / `npm run dev -- <project-path>` | Opens Studio for the current project or the supplied project directory |
 | `npx spec studio <project-path>` | Opens another project with the packaged CLI |
 | `npm run check` | Checks the root project’s spec, source and tests; ends with a `next:` line |
-| `npm run check --workspaces --if-present` | Checks all bundled example workspaces |
+| `npm run check --workspaces --if-present` | Checks Studio and every example workspace |
 | `node vibestack/spec.ts check <directory>` | Checks only the selected project |
 | `node vibestack/spec.ts check <directory> --json` | The selected project's check as one JSON object ([shape](AGENTS.md#changing-the-tools)) |
 | `npm run gen` | Generates `gen/` only |
@@ -312,7 +319,7 @@ Before committing your application's starting point:
 | `node vibestack/spec.ts accept <directory>` | Signs off on the selected project's reviewed changes |
 | `npm run accept -- unproved` | Records the listed obligations as simulated only. The user's decision |
 | `npm run new` / `npm run new -- <path>` | Fills an empty root index or creates a child [starter spec](AGENTS.md#writing-a-spec) |
-| `node vibestack/spec.ts migrate <directory>` | Consolidates that project's old review ledgers into `spec/lock.json`, preserving their recorded approvals |
+| `node vibestack/spec.ts migrate <directory>` | Consolidates that project's old review ledgers into `spec/lock.json`, preserving their recorded reviews; proof exceptions in the old list form are dropped and must be proved or accepted again |
 | `npm run demo` | Runs the order example's scripted checkout session |
 | `npm run check:dashboard` | `check` on `vibestack/examples/dashboard` |
 | `npm run selftest` | Breaks the pipeline one way at a time and checks each break is caught |

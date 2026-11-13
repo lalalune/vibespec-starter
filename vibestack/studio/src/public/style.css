@@ -84,7 +84,7 @@ a { color: var(--accent); }
 svg.i { width: 16px; height: 16px; flex: none; }
 
 /* --- rail --- */
-.project { width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); font-weight: 600; }
+.project { padding: 6px 8px; font-weight: 600; overflow-wrap: anywhere; }
 .specs { list-style: none; margin: var(--s2) 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .spec { display: flex; align-items: center; gap: var(--s2); padding: 6px 8px; border-radius: 6px; cursor: pointer; border: 1px solid transparent; }
 .spec:hover { background: var(--hover); }

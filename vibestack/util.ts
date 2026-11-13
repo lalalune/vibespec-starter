@@ -55,10 +55,6 @@ export function readSrc(root: string): SrcFile[] {
   const files = filesUnder(root, "src").map((f) => f.slice(4)).filter((f) => /\.(?:[mc]?ts|tsx|[mc]?jsx?)$/.test(f));
   return files.map((f) => ({ file: f, code: fs.readFileSync(path.join(src, f), "utf8"), ts: /\.ts$/.test(f) })).filter((u) => u.code.includes("//@"));
 }
-/** Compatibility view of the verified or unsupported source files. */
-export function srcUnits(root: string, other = false): { file: string; code: string }[] {
-  return readSrc(root).filter((u) => other ? !u.ts : u.ts).map(({ file, code }) => ({ file, code }));
-}
 
 /** One result as `report` in spec.ts takes it. */
 export type Reported<S extends Result["stage"] = Result["stage"]> = [ok: boolean, stage: S, summary: string, detail?: string, where?: string];
@@ -107,7 +103,7 @@ export function danglingCitations(root: string, specs: Spec[]): string[] {
         .map(([cited]) => `${f}:${i + 1}  ${cited}`)));
 }
 
-export function packageCode(root: string, dir = ""): string[] {
+function packageCode(root: string, dir = ""): string[] {
   return fs.readdirSync(path.join(root, dir), { withFileTypes: true }).flatMap((e) => {
     const rel = path.join(dir, e.name);
     if (e.isFile()) return /\.[cm]?[jt]sx?$/.test(e.name) ? [rel] : [];

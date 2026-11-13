@@ -1,6 +1,6 @@
 // Does each check catch the kind of mistake it exists for? Every case builds a
-// scratch project, from this project's own spec or from the small specs in
-// vibestack/fixtures/, breaks one thing, and asserts which stage of `check` fails.
+// scratch project, from the order example (vibestack/examples/order) or from the
+// small specs in vibestack/fixtures/, breaks one thing, and asserts which stage of `check` fails.
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -101,9 +101,9 @@ async function run(root: string, accept: false | "reviews" | "unproved" = false)
 }
 const failedStages = async (file: string, edit: (text: string) => string) => (await run(copyOfProject(file, edit))).failed;
 const pendingItems = (root: string) => readSpecs(root).flatMap((spec) => pending(root, spec).map((p) => `${p.where.split("  ")[1]}: ${p.status}${p.note ?? ""}`));
-/** Run a fresh CLI process so toolchain fingerprints cannot carry over from another invocation. */
 /** gen/ for one spec, as `check` and `spec gen` generate it. */
 const gen = async (root: string, spec: Spec) => generated(root, spec, await typecheckAll({ root, fresh: true, used: new Set() }, [spec]).get(spec.name)!, new Map());
+/** Run a fresh CLI process so toolchain fingerprints cannot carry over from another invocation. */
 const runCli = (script: string, root: string, ...args: string[]) => exec(process.execPath, [script, ...args], root);
 const unguarded = (s: string) => s.replace("o.status == Draft and o.units > 0", "o.status == Draft");
 const notInductive = (s: string) => s.replace(/### Drafts and cancelled orders hold no money[\s\S]*?```\n\n/, "");
@@ -736,6 +736,9 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const disguised = await run(lookalike);
     assert.deepEqual(disguised.failed, ["proof"], disguised.text);
     assert.ok(disguised.said("proof", /may only import generated modules/), disguised.text);
+    // Annotations in a file the prover does not read are refused, not ignored.
+    const module = await run(copyOfProject("src/dec.mts", () => "//@ backend dafny\nexport function dec(x: number): number {\n  //@ ensures \\result > x\n  return x - 1;\n}\n"));
+    assert.equal(module.said("proof", /src\/dec\.mts: `\/\/@` appears in it, but only \.ts files under src\/ are proved/)?.ok, false, module.text);
   });
 
   test("a law that needs induction is proved by a proof file, and only then offered to the spec that imports it", async () => {
@@ -846,7 +849,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
   });
 
   test("a comment in the Quint is reviewed, but the model it annotates is not simulated again", async () => {
-    const root = copyOfProject("spec/order.md", (s) => s.replace("pure val unitPrice = 5", "pure val unitPrice = 5 /* euros */ // per unit"));
+    const root = copyOfProject("spec/index.md", (s) => s.replace("pure val unitPrice = 5", "pure val unitPrice = 5 /* euros */ // per unit"));
     const { failed, text } = await run(root);
     assert.deepEqual(failed, ["review"], text);
     assert.ok(!fs.existsSync(path.join(root, "gen/traces")), text);
@@ -858,7 +861,8 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const agents = path.join(root, "AGENTS.md");
     const expected = `mine\n\n<!-- vibestack:start -->\n${read("AGENTS.md").trim()}\n<!-- vibestack:end -->\n`;
     assert.equal(fs.readFileSync(agents, "utf8"), expected);
-    assert.equal(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).scripts.check, "mine");
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).scripts, { check: "mine", dev: "spec studio", gen: "spec gen", accept: "spec accept" });
+    assert.equal(fs.readFileSync(path.join(root, ".gitignore"), "utf8"), "gen/\n.spec-cache/\n.studio/\n");
     assert.ok(["sync", "design"].every((s) => fs.existsSync(path.join(root, `.claude/skills/${s}/SKILL.md`))) && added.includes("tsconfig.json"), added.join());
     assert.match(fs.readFileSync(path.join(root, "CLAUDE.md"), "utf8"), /^@AGENTS\.md$/m);
     assert.deepEqual(init(root), []);
@@ -867,7 +871,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.equal(fs.readFileSync(path.join(root, "CLAUDE.md"), "utf8"), "My existing instructions.\n\n@AGENTS.md\n");
     assert.equal(fs.readFileSync(agents, "utf8"), expected);
     assert.deepEqual(init(root), []);
-    for (const marker of ["onespec", "vibestack"]) {
+    for (const marker of ["onespec", "vibespec", "vibestack"]) {
       fs.writeFileSync(agents, `before\r\n<!-- ${marker}:start -->\r\nold instructions\r\n<!-- ${marker}:end -->\r\nafter\r\n`);
       init(root);
       assert.equal(fs.readFileSync(agents, "utf8"), `before\r\n<!-- vibestack:start -->\r\n${read("AGENTS.md").trim().replace(/\r?\n/g, "\r\n")}\r\n<!-- vibestack:end -->\r\nafter\r\n`);
@@ -998,6 +1002,10 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.deepEqual(failed, ["tests"], text);
     assert.ok(said("tests", /^1 citations[\s\S]*test\/journeys\/checkout\.test\.ts:4 {2}spec\/index\.md, "Refunds are instant"$/), text);
     assert.ok(said("tests", /^pass\n$/), text);
+    // A driver that observes through the generated module checks the oracle against itself.
+    fs.writeFileSync(path.join(root, "test/journeys/checkout.test.ts"), `import { test } from "node:test";\nimport { conformance } from "../../gen/index.conformance.ts";\nimport { initial, step } from "../../gen/index.ts";\ntest("a journey", () => conformance({ reset() {}, dispatch: () => "accepted", observe: () => step(initial, { type: "submit" }) } as never));\n`);
+    const oracle = await run(root);
+    assert.ok(oracle.said("tests", /conformance drivers must reach the application[\s\S]*checkout\.test\.ts:4: driver uses generated step/), oracle.text);
   });
 
   test("nothing stale survives in gen/", async () => {
@@ -1037,7 +1045,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
   test("proof caching follows library changes and compiler failure waits for proof completion", async () => {
     const root = fixtures(["highest"], (f) => { f["package.json"] = '{"type":"module"}'; });
     fs.cpSync(path.join(project, "vibestack"), path.join(root, "vibestack"), {
-      recursive: true, filter: (from) => from !== path.join(project, "vibestack/examples"),
+      recursive: true, filter: (from) => !["examples", "studio"].some((d) => from === path.join(project, "vibestack", d)),
     });
     const modules = path.join(root, "node_modules");
     fs.mkdirSync(path.join(modules, ".bin"), { recursive: true });
@@ -1177,17 +1185,6 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.ok(!fs.existsSync(lock), "the lock is released");
     assert.ok(!fs.existsSync(unused), "a cache entry the run did not use is deleted");
     assert.ok(fs.readdirSync(path.dirname(lock)).length > 0, "the entries it used are kept");
-  });
-
-  test("a rebuilt packaged command can generate a project from the repository root", async () => {
-    const root = oneRule("packaged", "A packaged value", "pure val answer = 42");
-    const built = await exec(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "build"], project);
-    assert.equal(built.status, 0, built.stdout + built.stderr);
-    const script = path.join(project, "dist/spec.js");
-    const generated = await exec(process.platform === "win32" ? process.execPath : script,
-      [...(process.platform === "win32" ? [script] : []), "gen", root], project);
-    assert.equal(generated.status, 0, generated.stdout + generated.stderr);
-    assert.equal((await import(path.join(root, "gen/packaged.ts"))).answer, 42);
   });
 
   test("the command line checks, generates and watches a project directory from its parent", async () => {
@@ -1418,16 +1415,6 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     checkVerifiedSource("src/x.ts", "//@ backend dafny\nexport function f(x: number): number { //@ requires x > 0\n  let i = 0; //@ type nat\n  return x + i;\n}\n");
   });
 
-  test("verified code that renames an import or re-exports, or annotations in a file that is not .ts, fail the proof", async () => {
-    const renamed = copyOfProject("src/guard.ts", () => '//@ backend dafny\nimport { canSubmit as canCancel, type Order } from "../gen/index.ts";\n//@ pure\nexport function cancellable(o: Order): boolean {\n  //@ ensures \\result === (o.status === "Pending")\n  return canCancel(o);\n}\n');
-    const module = copyOfProject("src/dec.mts", () => "//@ backend dafny\nexport function dec(x: number): number {\n  //@ ensures \\result > x\n  return x - 1;\n}\n");
-    const reexport = copyOfProject("src/ledger.ts", (s) => s + '\nexport * from "./app.ts";\n');
-    const [r, m, x] = await Promise.all([run(renamed), run(module), run(reexport)]);
-    assert.equal(r.said("proof", /src\/guard\.ts:2: `canSubmit as canCancel`: verified code may not rename what it imports/)?.ok, false, r.text);
-    assert.equal(m.said("proof", /src\/dec\.mts: `\/\/@` appears in it, but only \.ts files under src\/ are proved/)?.ok, false, m.text);
-    assert.equal(x.said("proof", /src\/ledger\.ts.*may hold only imports, functions with a body/)?.ok, false, x.text);
-  });
-
   test("hand-written code is not simulated, so none of its obligations can be accepted as simulated only", async () => {
     const root = fixtures(["door"], (f) => { f["src/inc.ts"] = "//@ backend dafny\n//@ pure\nexport function inc(x: number): number {\n  //@ ensures \\result === x\n  return x + 1;\n}\n"; });
     const { said, text } = await run(root, "unproved");
@@ -1438,4 +1425,16 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const ledger = path.join(root, "spec/lock.json");
     assert.ok(!fs.existsSync(ledger) || !fs.readFileSync(ledger, "utf8").includes("src-inc.ts"), text);
   });
+});
+
+// The build rewrites dist/ and Studio's gen/ in this checkout, so it runs only once no concurrent case reads them.
+test("a rebuilt packaged command can generate a project from the repository root", async () => {
+  const root = oneRule("packaged", "A packaged value", "pure val answer = 42");
+  const built = await exec(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "build"], project);
+  assert.equal(built.status, 0, built.stdout + built.stderr);
+  const script = path.join(project, "dist/spec.js");
+  const generated = await exec(process.platform === "win32" ? process.execPath : script,
+    [...(process.platform === "win32" ? [script] : []), "gen", root], project);
+  assert.equal(generated.status, 0, generated.stdout + generated.stderr);
+  assert.equal((await import(path.join(root, "gen/packaged.ts"))).answer, 42);
 });

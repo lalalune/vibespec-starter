@@ -9,12 +9,13 @@
 // name is spelled. The rest is in gen/: types.ts (everything decided by a type),
 // print.ts (expressions), classify.ts (which definition is a transition, a guard
 // or a rule), secrecy.ts (where a secret may go), typescript.ts and harness.ts (the two outputs).
-import { classify, ROLES, type Machine, type Opaque, type Param, type Roles } from "./gen/classify.ts";
+import { classify, ROLES, type ImportedMachine, type Opaque, type Param, type Roles } from "./gen/classify.ts";
 import { harness, HARNESS, type Eval, type Fairness } from "./gen/harness.ts";
 import { BUILTIN, printer } from "./gen/print.ts";
 import { checkSecrets } from "./gen/secrecy.ts";
 import { EMITTED, HELPERS, typescript } from "./gen/typescript.ts";
 import { fail, typeOfIn, typeWalks, type Json } from "./gen/types.ts";
+import path from "node:path";
 import type { ComparisonShape } from "./conformance.ts";
 
 export interface Model extends Roles {
@@ -43,8 +44,8 @@ export interface Model extends Roles {
   shape: ComparisonShape | undefined;
   /** The shape of emitted effects, when transitions return them beside the state. */
   outputShape: ComparisonShape | undefined;
-  /** What importers may refer to: `typedefs` are owned here; `visible` includes imported types. */
-  exports: { types: string[]; values: string[]; variants: string[]; typedefs: Json[]; visible: Json[]; samples: { name: string; elem: Json }[] };
+  /** What importers may refer to; `visible` includes the types this module imported. */
+  exports: { types: string[]; values: string[]; variants: string[]; visible: Json[]; samples: { name: string; elem: Json }[] };
   ts: string;
   harness: string;
 }
@@ -68,12 +69,18 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
   // --- what the module imports -------------------------------------------------
   // `import kernel.* from "./kernel"` brings a library's names in as they are. `import order as O from "./order"`
   // brings any spec in, a state machine included, under the names O::pay, O::Order and so on.
+  /** A spec's path below spec/ (or std/), as an import names it. */
+  const stem = (file: string) => file.replaceAll(path.sep, "/").replace(/^(?:spec|std)\//, "").replace(/(^|\/)index\.md$|\.md$/, "");
   const links = decls.filter((d) => d.kind === "import").map((d) => {
-    const dep = deps.get(d.protoName) ?? fail(`import of ${d.protoName}: there is no spec/${d.protoName}.md`);
-    if (dep.opaques.length) fail(`import of ${d.protoName}: it declares opaque functions (${dep.opaques.map((o) => o.name).join(", ")}), which only its own spec can simulate; move them into the spec that imports it`);
+    const dep = deps.get(d.protoName) ?? fail(`internal: ${d.protoName} has no model`);
+    // How this spec writes the import: the path relative to it, and the name it ends in (AGENTS.md, "Using one spec from another").
+    const rel = path.posix.relative(path.posix.dirname(stem(source)), stem(dep.source));
+    const from = rel.startsWith("../") ? rel : `./${rel}`;
+    const short = from.split("/").pop()!;
+    if (dep.opaques.length) fail(`import of ${short}: it declares opaque functions (${dep.opaques.map((o) => o.name).join(", ")}), which only its own spec can simulate; move them into the spec that imports it`);
     if (d.qualifiedName) return { module: dep.name, exports: dep.exports, alias: d.qualifiedName as string };
-    if (d.defName !== "*") fail(`import ${d.protoName}: write \`import ${d.protoName}.* from "./${d.protoName}"\` or \`import ${d.protoName} as X from "./${d.protoName}"\``);
-    if (dep.stateType) fail(`import of ${d.protoName}: a spec with a state of its own is imported under a name, as in \`import ${d.protoName} as X from "./${d.protoName}"\``);
+    if (d.defName !== "*") fail(`import ${short}: write \`import ${short}.* from "${from}"\` or \`import ${short} as X from "${from}"\``);
+    if (dep.stateType) fail(`import of ${short}: a spec with a state of its own is imported under a name, as in \`import ${short} as X from "${from}"\``);
     return { module: dep.name, exports: dep.exports, alias: undefined as string | undefined };
   });
   const imports = links.map((l) => l.module);
@@ -93,18 +100,19 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
     fail(`${d.name} is reserved for generated collection operations`);
   const defs = decls.filter((d) => d.kind === "def" && !localVariants.includes(d.name) && !BUILTIN.test(d.name));
   for (const d of [...decls.filter((d) => !["def", "typedef", "import", "const"].includes(d.kind)), ...defs.filter((d) => d.qualifier !== "puredef" && d.qualifier !== "pureval")])
-    fail(`${d.name ?? d.kind}: only types, imports, \`pure val\` and \`pure def\` belong in a spec (state and actions are generated)`);
+    fail(`${d.name ?? d.kind}: only types, imports, \`pure val\` and \`pure def\` belong in a spec, besides the \`const\` of an opaque function (state and actions are generated)`);
   const inferred = (id: number): Json | undefined => ir.types[id]?.type;
   const typeOf = typeOfIn(inferred);
   // A set named `<param>Values` tells the simulator what to try for a parameter. It never reaches TypeScript, so any Quint is allowed in it.
   const isSampleSet = (d: Json) => d.qualifier === "pureval" && d.name.endsWith("Values") && inferred(d.id)?.kind === "set";
   const ownSamples = defs.filter(isSampleSet).map((d) => ({ name: d.name as string, elem: inferred(d.id)!.elem as Json }));
-  const sampleSets = new Set([...ownSamples.map((s) => s.name), ...links.flatMap((l) => l.exports.samples.map((s) => qualify(l.alias, s.name)))]);
   // `weight_<event>`, `fair_<event>` and `within_<rule>` tell the simulator how often to try an event, which events a run
   // cannot put off for ever and how soon a `leadsTo` rule is met (AGENTS.md, "What goes in the Quint blocks"); like
   // sample sets, they never reach TypeScript.
   const settings = defs.filter((d) => d.qualifier === "pureval" && /^(weight|fair|within)_/.test(d.name));
   const code = defs.filter((d) => !isSampleSet(d) && !settings.includes(d));
+  /** Names only the simulator reads; a definition that used one would refer to nothing in TypeScript. */
+  const simulatorOnly = new Set([...ownSamples, ...settings, ...links.flatMap((l) => l.exports.samples.map((s) => ({ name: qualify(l.alias, s.name) })))].map((d) => d.name as string));
   // `const f: (A, B) => R` is an opaque function: no body, only the laws stated with it (AGENTS.md, "Opaque functions").
   const consts = decls.filter((d) => d.kind === "const");
   for (const d of consts) if (d.typeAnnotation?.kind !== "oper" || !d.typeAnnotation.args.length) fail(`${d.name}: a \`const\` is an opaque function, written \`const ${d.name}: (A, B) => R\` on one line`);
@@ -161,7 +169,7 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
   for (const v of vals) if (RULE_OR_GUARD.test(v.name) && typeOf(v.id).kind === "bool") fail(`${v.name}: a rule or guard is a \`pure def\` with parameters (AGENTS.md, "What goes in the Quint blocks"), not a \`pure val\`; if it is a constant, name it otherwise`);
   const initial = vals.find((d) => d.name === "initial");
   // The machines imported under a name, as this module spells their types: what a `refines<Alias>` may map onto.
-  const machines = links.flatMap((l): Machine[] => {
+  const machines = links.flatMap((l): ImportedMachine[] => {
     const dep = deps.get(l.module)!;
     const spelled = (t: Json) => requalify(t, l.alias);
     return l.alias && dep.stateType ? [{ alias: l.alias, module: l.module, stateType: spelled(dep.stateType),
@@ -209,7 +217,7 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
     // A definition from another module is spelled <module>_<name>, however it was imported.
     const ref = (n: string) => (localNames.has(n) ? local(n) : cameFrom.has(n) ? `${cameFrom.get(n)}_${n.split("::").pop()}` : n);
     const scoped = typeWalks(typedefs, name, prefix);
-    const print = printer({ types: scoped, inferred, ref, helper, bind, variants, definitions: new Set([...localNames, ...cameFrom.keys()]), sampleSets, proof });
+    const print = printer({ types: scoped, inferred, ref, helper, bind, variants, definitions: new Set([...localNames, ...cameFrom.keys()]), simulatorOnly, proof });
     return typescript({ header, typedefs: [...localTypedefs].sort(bySpecOrder), vals, funs, sig, typeOf, doc: docs ? doc : () => "", local, source }, roles, scoped, print, helper);
   };
   const ts = render("", true, false);
@@ -220,6 +228,6 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
     ts, render, decode: types.decode, canon: types.canon,
     shape: roles.stateType ? types.comparison(roles.stateType) : undefined,
     outputShape: roles.output ? types.comparison(roles.output.out) : undefined,
-    exports: { types: localTypedefs.map((d) => d.name as string), values: [...localNames], variants: localVariants, typedefs: localTypedefs, visible: typedefs, samples: ownSamples },
+    exports: { types: localTypedefs.map((d) => d.name as string), values: [...localNames], variants: localVariants, visible: typedefs, samples: ownSamples },
   };
 }

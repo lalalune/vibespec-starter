@@ -8,12 +8,13 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import ts from "typescript";
-import { parseSpec, pending, pendingKey, readSpecs, type Lock, type Result } from "../../spec.ts";
-import { specFiles, specName } from "../../parse.ts";
+import { parseSpec, readSpecs, specFiles, specName } from "../../parse.ts";
+import { ledgerFile, pending, pendingKey, type Lock } from "../../review.ts";
+import type { Result } from "../../spec.ts";
 import { filesUnder, projectRoot } from "../../util.ts";
 import { enabled, initial, step, type Event, type Session, type Verdict } from "../gen/index.ts";
 import { manifestOf, nodesOf, promptFor, type Ids, type Manifest } from "./doc.ts";
-import { outlineOf } from "./markdown.ts";
+import { outlineOf, specOrder } from "./markdown.ts";
 
 const EXT = path.extname(import.meta.filename);
 /** The tools: vibestack/ from source, dist/ when built. */
@@ -25,7 +26,7 @@ const PUBLIC = path.join(import.meta.dirname, "public");
 const MODULES = /^(scan|studio\/src\/(page|markdown)|studio\/gen\/(index|outline))$/;
 const DEEPLINK_LIMIT = 5000; // characters of a prompt a claude-cli:// link carries
 
-export interface Project { id: string; name: string; root: string }
+interface Project { name: string; root: string }
 
 /** An agent the studio can start on the sync prompt, and the link that opens its app on the same prompt. */
 export interface Agent {
@@ -34,7 +35,7 @@ export interface Agent {
   command: (p: { root: string; check: string }) => [string, string[]];
   link?: (p: { root: string; prompt: string }) => string;
 }
-export const AGENTS: Record<string, Agent> = {
+const AGENTS: Record<string, Agent> = {
   claude: {
     label: "Claude Code",
     command: ({ check }) => ["claude", ["-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "acceptEdits",
@@ -97,9 +98,10 @@ function skillPath(root: string): string {
   }
 }
 
-/** The review ledgers and Studio state belong to the tools, not the sync agent. */
+/** The review ledger and Studio's state belong to the tools, not the sync agent. */
 function ownedFiles(root: string): Record<string, string> {
-  return Object.fromEntries([...filesUnder(root, "spec").filter((f) => f.endsWith("lock.json")), ...filesUnder(root, ".studio")]
+  const ledger = ledgerFile(root);
+  return Object.fromEntries([...(fs.existsSync(ledger) ? [path.relative(root, ledger)] : []), ...filesUnder(root, ".studio")]
     .map((f) => [f, hash(fs.readFileSync(path.join(root, f), "utf8"))]));
 }
 
@@ -113,14 +115,15 @@ const onPath = (program: string) => {
  * What a check found, as spec/index.md's verdict. `Reviewable` is what `accept` can record: every stage but review
  * passed, every story has rules and every rule has Quint.
  */
-export function verdictOf(results: Result[]): Verdict {
+function verdictOf(results: Result[]): Verdict {
   const failed = results.filter((r) => !r.ok);
   if (!failed.length) return "Green";
   const reviewOnly = failed.every((r) => r.stage === "review") && !failed.some((r) => /story has no rules|not formalized/.test(r.detail));
   return reviewOnly ? "Reviewable" : "Failing";
 }
 
-/** Everything the page shows for a project. */
+/** Everything the page shows of the project. */
+export type Snapshot = ReturnType<typeof snapshot>;
 function snapshot(live: Live, agents: Record<string, Agent>) {
   const { root } = live.project;
   // The specs, and what the review ledger says of each story and rule; what is wrong if they cannot be read.
@@ -137,11 +140,10 @@ function snapshot(live: Live, agents: Record<string, Agent>) {
   }
   const manifest = readJson<Manifest>(manifestFile(root));
   const context = { skill: skillPath(root), check: checkCommand(root) };
-  const order = (file: string) => file.replace(/(?:^spec\/|\/)index\.md$/, "/");
   return {
     project: live.project,
     session: live.session,
-    specs: Object.entries(texts).sort(([a], [b]) => order(a).localeCompare(order(b)))
+    specs: Object.entries(texts).sort(([a], [b]) => specOrder(a, b))
       .map(([file, text]) => ({ file, module: specName(file), hash: hash(text), text, outline: outlineOf(file, text), review: review[file] ?? {} })),
     problem,
     manifest,
@@ -151,7 +153,9 @@ function snapshot(live: Live, agents: Record<string, Agent>) {
     agents: Object.entries(agents).map(([id, a]) => ({ id, label: a.label, available: onPath(a.command({ root, check: context.check })[0]), link: a.link?.({ root, prompt: promptFor(manifest, context, DEEPLINK_LIMIT) }) })),
   };
 }
-const jobsView = (live: Live) => Object.fromEntries(Object.values(live.jobs).map((j) => [j.kind, { label: j.label, status: j.status, started: j.started, finished: j.finished, log: j.log.slice(-400) }]));
+const jobView = ({ label, status, started, finished, log }: Job) => ({ label, status, started, finished, log: log.slice(-400) });
+export type JobView = ReturnType<typeof jobView>;
+const jobsView = (live: Live): Partial<Record<Job["kind"], JobView>> => Object.fromEntries(Object.values(live.jobs).map((j) => [j.kind, jobView(j)]));
 
 /** A line of an agent's JSON output, as a person would want to read it; undefined for bookkeeping. */
 function readable(line: string): string | undefined {
@@ -164,7 +168,7 @@ function readable(line: string): string | undefined {
   // The final message was already shown; the result says only how the run ended, and what it cost.
   if (e.type === "result") return `${e.is_error ? "✗ failed" : "✓ done"}${e.total_cost_usd ? ` · $${Number(e.total_cost_usd).toFixed(2)}` : ""}`;
   // Codex's --json events
-  const item = e.item ?? e.msg;
+  const item = e.item;
   if (e.type === "item.completed" && item?.type === "agent_message") return clip(item.text ?? "");
   if (e.type === "item.started" && item?.type === "command_execution") return `▸ ${clip(item.command ?? "", 200)}`;
   if (e.type === "item.completed" && item?.type === "file_change") return `▸ edit ${(item.changes ?? []).map((c: any) => c.path).join(", ")}`;
@@ -179,48 +183,53 @@ function pageModule(file: string): string {
   return ts.transpileModule(code, { fileName: file, compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2023, rewriteRelativeImportExtensions: true } }).outputText;
 }
 
-/** The studio's HTTP server. `open` is the project shown first. */
-export async function startStudio({ projects, open = projects[0].id, port = 4321, agents = AGENTS }: { projects: Project[]; open?: string; port?: number; agents?: Record<string, Agent> }) {
-  const lives = new Map<string, Live>(projects.map((p) => [p.id, { project: p, session: initial, jobs: {}, clients: new Set() }]));
+/**
+ * The studio's HTTP server on one project. What its manifest still lists is waiting, from a studio that ran before
+ * (spec/index.md, "What is waiting outlives the studio").
+ */
+export async function startStudio({ project, port = 4321, agents = AGENTS }: { project: Project; port?: number; agents?: Record<string, Agent> }) {
+  const { root } = project;
+  const changes = readJson<Manifest>(manifestFile(root))?.changes.length ?? 0;
+  const live: Live = { project, session: step(initial, { type: "resume", changes }), jobs: {}, clients: new Set() };
 
-  const broadcast = (live: Live, event: string, data: unknown) => {
+  const broadcast = (event: string, data: unknown) => {
     for (const res of live.clients) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   };
-  const changed = (live: Live) => {
+  const changed = () => {
     clearTimeout(live.timer);
-    live.timer = setTimeout(() => broadcast(live, "job", { session: live.session, jobs: jobsView(live), check: live.check }), 100);
+    live.timer = setTimeout(() => broadcast("job", { session: live.session, jobs: jobsView(live), check: live.check }), 100);
   };
   /** Refuse what the session does not allow now, saying why. */
-  const allow = (live: Live, event: Event, session = live.session) => {
+  const allow = (event: Event, session = live.session) => {
     if (enabled(session, event)) return;
     const busy = Object.values(live.jobs).find((j) => j.child);
     throw new Refused(busy ? `${busy.label} is still running` : `${event.type} is not allowed now`);
   };
   /** The session moves only by an event it allows. */
-  const act = (live: Live, event: Event, session = live.session) => {
-    allow(live, event, session);
+  const act = (event: Event, session = live.session) => {
+    allow(event, session);
     live.session = step(session, event);
-    changed(live);
+    changed();
   };
   /** Changes to the specs reach every page, whoever made them, and make the last verdict unknown (spec/index.md). */
-  const watch = (live: Live) => {
-    if (live.watcher || !fs.existsSync(path.join(live.project.root, "spec"))) return;
+  const watch = () => {
+    if (live.watcher || !fs.existsSync(path.join(root, "spec"))) return;
     let timer: NodeJS.Timeout | undefined;
-    live.watcher = fs.watch(path.join(live.project.root, "spec"), { recursive: true }, () => {
+    live.watcher = fs.watch(path.join(root, "spec"), { recursive: true }, () => {
       clearTimeout(timer);
       timer = setTimeout(() => {
-        act(live, { type: "touch" });
-        broadcast(live, "files", {});
+        act({ type: "touch" });
+        broadcast("files", {});
       }, 150);
     });
   };
 
   /** Run the program behind the job the session has just started; `done` hears how it ended. */
-  const run = (live: Live, kind: Job["kind"], label: string, [program, args]: [string, string[]], input: string | undefined, read: (line: string) => string | undefined, done: (job: Job, out: string) => void) => {
+  const run = (kind: Job["kind"], label: string, [program, args]: [string, string[]], input: string | undefined, read: (line: string) => string | undefined, done: (job: Job, out: string) => void) => {
     const job: Job = { kind, label, status: "running", started: Date.now(), log: [] };
     live.jobs[kind] = job;
     let out = "";
-    const child = spawn(program, args, { cwd: live.project.root, env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1" }, stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"] });
+    const child = spawn(program, args, { cwd: root, env: { ...process.env, FORCE_COLOR: "0", NO_COLOR: "1" }, stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"] });
     job.child = child;
     if (input !== undefined) child.stdin!.end(input);
     const lines = (stream: NodeJS.ReadableStream, keep: boolean) => {
@@ -230,7 +239,7 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
         const parts = (rest + chunk.toString()).split("\n");
         rest = parts.pop()!;
         for (const l of parts) { const r = read(l); if (r?.trim()) job.log.push(r); }
-        changed(live);
+        changed();
       });
       stream.on("end", () => { const r = rest.trim() && read(rest); if (r) job.log.push(r); });
     };
@@ -247,13 +256,13 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
         job.status = "failed";
         job.log.push(`✗ ${(e as Error).message}`);
       }
-      changed(live);
+      changed();
     });
-    changed(live);
+    changed();
   };
 
   /** The check the session is now waiting on (`job == Checking`). */
-  const runCheck = (live: Live) => run(live, "check", "check", [process.execPath, [SPEC, "check", "--json"]], undefined, () => undefined, (job, out) => {
+  const runCheck = () => run("check", "check", [process.execPath, [SPEC, "check", "--json"]], undefined, () => undefined, (job, out) => {
     let verdict: Verdict = "Failing";
     try {
       const r = JSON.parse(out) as { ok: boolean; results: Result[]; next: string };
@@ -264,7 +273,7 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
       job.log.push(out.trim() || "the check did not finish");
     }
     job.status = verdict === "Failing" ? "failed" : "passed";
-    act(live, { type: "checked", verdict });
+    act({ type: "checked", verdict });
   });
 
   /** What the agent synced is the new baseline of the manifest. */
@@ -273,17 +282,17 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
     fs.rmSync(manifestFile(root), { force: true });
   };
 
-  const publish = (live: Live, body: { files: { file: string; base: string | null; text: string | null }[]; origins: [string, string | null][]; force?: boolean }) => {
+  const publish = (body: { files: { file: string; base: string | null; text: string | null }[]; origins: [string, string | null][]; force?: boolean }) => {
     // The request carries edits, so the session as the page sees it has some (spec/index.md, "Only edits can be published, and not while a job runs").
     const session = { ...live.session, unpublished: true };
-    allow(live, { type: "publish", changes: 0 }, session);
-    const { root } = live.project;
+    allow({ type: "publish", changes: 0 }, session);
     const disk = specTexts(root);
     const conflicts = body.force ? [] : body.files.filter((f) => (f.file in disk ? hash(disk[f.file]) : null) !== f.base).map((f) => f.file);
     if (conflicts.length) return { status: 409, body: { error: "changed on disk since you loaded it", conflicts } };
     const next = { ...disk };
     for (const f of body.files) {
       try {
+        if (!/^spec\/.+\.md$/.test(f.file)) throw new Error(`${f.file}: a spec lives under spec/ and ends in .md`);
         specName(f.file);
         let target = root;
         for (const segment of f.file.split("/")) {
@@ -321,8 +330,8 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
       writeJson(manifestFile(root), manifest);
     }
     live.check = undefined;
-    act(live, { type: "publish", changes: manifest.changes.length }, session);
-    runCheck(live);
+    act({ type: "publish", changes: manifest.changes.length }, session);
+    runCheck();
     return { status: 200, body: { manifest: manifest.changes.length ? manifest : undefined } };
   };
 
@@ -356,15 +365,11 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
         res.writeHead(200, { "content-type": TYPES[path.extname(file)] ?? "application/octet-stream", "cache-control": "no-store" });
         return res.end(fs.readFileSync(file));
       }
-      if (url.pathname === "/api/projects") return send(res, 200, { projects: projects.map(({ id, name }) => ({ id, name })), open });
-      const live = lives.get(url.searchParams.get("project") ?? open);
-      if (!live) return send(res, 404, { error: "no such project" });
-      const { root } = live.project;
       if (url.pathname === "/api/events") {
         res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", connection: "keep-alive" });
         res.write(": studio\n\n");
         live.clients.add(res);
-        watch(live);
+        watch();
         req.on("close", () => live.clients.delete(res));
         return;
       }
@@ -376,20 +381,20 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
       const body = raw ? JSON.parse(raw) : {};
       switch (url.pathname) {
         case "/api/publish": {
-          const r = publish(live, body);
+          const r = publish(body);
           return send(res, r.status, r.body);
         }
         case "/api/check":
-          act(live, { type: "check" });
-          runCheck(live);
+          act({ type: "check" });
+          runCheck();
           return send(res, 200, {});
         case "/api/agent": {
-          const agent = agents[body.agent];
+          const agent = Object.hasOwn(agents, body.agent) ? agents[body.agent] : undefined;
           if (!agent) return send(res, 400, { error: `no agent ${body.agent}` });
-          act(live, { type: "sync" });
+          act({ type: "sync" });
           const check = checkCommand(root);
           const owned = ownedFiles(root);
-          run(live, "agent", agent.label, agent.command({ root, check }), promptFor(readJson<Manifest>(manifestFile(root)), { skill: skillPath(root), check }), readable, (job) => {
+          run("agent", agent.label, agent.command({ root, check }), promptFor(readJson<Manifest>(manifestFile(root)), { skill: skillPath(root), check }), readable, (job) => {
             // The review ledgers and Studio's state are the tools' to write: a sync that touched them is not trusted.
             // Whatever happens here, the sync ends (spec/index.md, "A sync that ends well leaves nothing waiting and checks again").
             try {
@@ -402,28 +407,28 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
               job.log.push(`✗ ${(e as Error).message}`);
             }
             const ok = job.status === "passed";
-            act(live, { type: "synced", ok });
-            if (ok) runCheck(live);
+            act({ type: "synced", ok });
+            if (ok) runCheck();
           });
           return send(res, 200, {});
         }
         case "/api/accept":
-          act(live, { type: "signOff" });
-          run(live, "accept", "sign-off", [process.execPath, [SPEC, "accept"]], undefined, (l) => l, () => {
-            act(live, { type: "signedOff" });
-            runCheck(live);
+          act({ type: "signOff" });
+          run("accept", "sign-off", [process.execPath, [SPEC, "accept"]], undefined, (l) => l, () => {
+            act({ type: "signedOff" });
+            runCheck();
           });
           return send(res, 200, {});
         case "/api/stop": {
-          act(live, { type: "stop" });
+          act({ type: "stop" });
           const job = Object.values(live.jobs).find((j) => j.child);
           if (job) { job.status = "stopped"; job.child!.kill("SIGTERM"); }
           return send(res, 200, {});
         }
         case "/api/synced":
-          act(live, { type: "markSynced" });
+          act({ type: "markSynced" });
           clearManifest(root);
-          broadcast(live, "files", {});
+          broadcast("files", {});
           return send(res, 200, {});
         default:
           return send(res, 404, { error: "not found" });
@@ -443,12 +448,10 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
   return {
     url: address,
     close: () => new Promise<void>((resolve) => {
-      for (const live of lives.values()) {
-        live.watcher?.close();
-        clearTimeout(live.timer);
-        for (const job of Object.values(live.jobs)) job.child?.kill("SIGTERM");
-        for (const c of live.clients) c.end();
-      }
+      live.watcher?.close();
+      clearTimeout(live.timer);
+      for (const job of Object.values(live.jobs)) job.child?.kill("SIGTERM");
+      for (const c of live.clients) c.end();
       server.close(() => resolve());
       server.closeAllConnections();
     }),
@@ -463,9 +466,8 @@ export async function serve(cwd: string, args: string[]) {
   if (port !== undefined && !(Number.isInteger(port) && port >= 0 && port < 65536)) throw new Error(`--port ${args[at + 1]}: not a port`);
   const root = projectRoot(args[0] === "--port" ? "." : args[0] ?? ".", cwd);
   if (!fs.statSync(path.join(root, "spec"), { throwIfNoEntry: false })?.isDirectory()) throw new Error(`${root}: no spec/ directory; run \`spec init\` in the project first`);
-  const studio = await startStudio({ projects: [{ id: ".", name: projectName(root), root }], port });
-  const url = `${studio.url}/?project=.`;
-  console.log(`studio: ${url}`);
-  if (process.stdout.isTTY) spawn(process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer" : "xdg-open", [url], { stdio: "ignore", detached: true }).on("error", () => {}).unref();
+  const studio = await startStudio({ project: { name: projectName(root), root }, port });
+  console.log(`studio: ${studio.url}/`);
+  if (process.stdout.isTTY) spawn(process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer" : "xdg-open", [`${studio.url}/`], { stdio: "ignore", detached: true }).on("error", () => {}).unref();
   return studio;
 }

@@ -19,7 +19,7 @@ const SET_OPS: Record<string, (x: SetArgs) => string> = {
   exclude: ({ a, b, el }) => `${a}.filter((set_x: ${el}) => !${b}.includes(set_x))`,
   subseteq: ({ a, b, el }) => `!${a}.some((set_x: ${el}) => !${b}.includes(set_x))`,
   filter: ({ a, b }) => `${a}.filter(${b})`,
-  forall: ({ a, not }) => `!${a}.some(${not()})`, // as `every` (LIST_METHODS)
+  forall: ({ a, not }) => `!${a}.some(${not()})`, // as `every` (LIST_HELPERS)
   exists: ({ a, b }) => `${a}.some(${b})`,
   map: ({ a, b, out }) => `${a}.map(${b}).reduce((set_acc: ${out}[], set_x: ${out}) => set_acc.includes(set_x) ? set_acc : [...set_acc, set_x], ([] as ${out}[]))`,
 };
@@ -37,7 +37,8 @@ export interface Scope {
   bind: (name: string) => string;
   variants: Set<string>;
   definitions: Set<string>;
-  sampleSets: Set<string>;
+  /** Sample sets and `weight_`, `fair_` and `within_` settings, which never reach TypeScript (gen.ts). */
+  simulatorOnly: Set<string>;
   /**
    * Whether the code is for the prover rather than for Node. Node's code checks at run time two things the proof takes
    * as given: that integer arithmetic is exact (a number past 2^53 is rounded, where Quint's and Dafny's integers are
@@ -82,9 +83,10 @@ const members = (op: string, a: Json[]): [Json, Json] => (op === "in" ? [a[1], a
 /** Puts a binding back as it was before an inner scope shadowed it. */
 const restore = <V>(m: Map<string, V>, k: string, v: V | undefined) => (v === undefined ? m.delete(k) : m.set(k, v));
 
-export function printer({ types, inferred, ref, helper, bind, variants, definitions, sampleSets, proof }: Scope) {
+export function printer({ types, inferred, ref, helper, bind, variants, definitions, simulatorOnly, proof }: Scope) {
   const { resolve, tagged, isScalar, setElem, keyOf, storedKey, holdsSet, named, ownerOf, typeName, tsType } = types;
   const typeOf = typeOfIn(inferred);
+  const forSimulator = (n: string): never => fail(`\`${n}\` is for the simulator only (a sample set or a weight_, fair_ or within_ setting) and cannot be used in a definition`);
   /** Which helpers the printed code needs (see typescript.ts), and the types of the maps it looks things up in. */
   const helpers = new Set<string>();
   const lookups: { map: string; key: string; of: string; stored: string }[] = [];
@@ -166,7 +168,7 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
       case "bool": return [String(e.value), ATOM];
       case "str": return [JSON.stringify(e.value), ATOM];
       case "name": {
-        if (sampleSets.has(e.name)) return fail(`${e.name} is a sample set for the simulator and cannot be used in a definition`);
+        if (simulatorOnly.has(e.name)) return forSimulator(e.name);
         if (renamed.has(e.name)) return fail(`\`${e.name}\` is what a match arm carries; use its fields (${e.name}.field), or rebuild the variant, rather than the value as a whole`);
         if (!variants.has(e.name)) return [ref(e.name), ATOM];
         const owner = ownerOf(e.name);
@@ -295,7 +297,7 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
       return [members.length ? `[${members.join(", ")}]` : `([] as ${tsType(t.elem)}[])`, ATOM];
     }
     if (definitions.has(op)) return [`${ref(op)}(${a.map((x) => ex(x, TERNARY)).join(", ")})`, ATOM];
-    if (sampleSets.has(op)) return fail(`${op} is a sample set for the simulator and cannot be used in a definition`);
+    if (simulatorOnly.has(op)) return forSimulator(op);
     return fail(`\`${op}\` is not in the Quint a spec may use (AGENTS.md, "Supported Quint"); write it with the operators listed there`);
   };
 
