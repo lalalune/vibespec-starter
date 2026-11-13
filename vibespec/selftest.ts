@@ -8,7 +8,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { after, describe, test } from "node:test";
-import { LIB_FILE, isolatedCopies, parseProofFile, readVerdict, splice } from "./prove.ts";
+import { exec, LIB_FILE, isolatedCopies, parseProofFile, readVerdict, splice } from "./prove.ts";
 import { nodesOf } from "./studio/doc.ts";
 import { canonical, departure } from "./conformance.ts";
 import { conformance as checkTraces, conformanceFound, writeConformance } from "./conform.ts";
@@ -1025,6 +1025,17 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.ok(fs.readdirSync(path.dirname(lock)).length > 0, "the entries it used are kept");
   });
 
+  test("a rebuilt packaged command can generate a project from the repository root", async () => {
+    const root = oneRule("packaged", "A packaged value", "pure val answer = 42");
+    const built = await exec(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "build"], project);
+    assert.equal(built.status, 0, built.stdout + built.stderr);
+    const script = path.join(project, "dist/spec.js");
+    const generated = await exec(process.platform === "win32" ? process.execPath : script,
+      [...(process.platform === "win32" ? [script] : []), "gen", root], project);
+    assert.equal(generated.status, 0, generated.stdout + generated.stderr);
+    assert.equal((await import(path.join(root, "gen/packaged.ts"))).answer, 42);
+  });
+
   test("the command line checks, generates and watches a project directory from its parent", async () => {
     const script = path.join(project, "vibespec/spec.ts");
     const cli = (root: string, ...args: string[]) => runCli(script, root, ...args);
@@ -1086,6 +1097,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       fs.writeFileSync(path.join(watchedRoot, "spec/index.md"), `# Watched\n\n## Story\n\n### Value\n\n${F}quint\npure val watchedValue = 1\n${F}\n`);
       const generated = path.join(watchedRoot, "gen/index.ts");
       await waitFor(() => fs.existsSync(generated) && fs.readFileSync(generated, "utf8").includes("export const watchedValue"));
+      await waitFor(() => (output.match(/watching spec\//g)?.length ?? 0) >= 2);
       assert.equal((await import(generated)).watchedValue, 1);
       assert.ok(!fs.existsSync(path.join(parent, "gen")));
     } finally {
