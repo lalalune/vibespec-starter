@@ -1,5 +1,5 @@
-// Proofs for spec/tracker.md. Every transition's body has the shape
-// `if inv(s) && can<X>(...) { var s2 := <x>(s, ...); ... }` and calls the helpers after it.
+// Proofs for spec/tracker.md. Each transition's body opens with `if inv(s) && can<X>(...)`
+// (or `if inv(s)` for one without a guard), names the state after, and calls the helpers below.
 
 lemma create_ensures(s: Tracker, actor: string)
   ensures (inv(s) ==> canCreate(s, actor) ==> alwaysTheWarningListIsTheTruth(create(s, actor)))
@@ -69,7 +69,7 @@ lemma setStatus_ensures(s: Tracker, id: int, status: Status, actor: string)
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
     TSameShapeProblems(s, s2);
-    TNoNewProblem(s, s2);
+    TSubsetNoNewProblem(s, s2);
   }
 }
 
@@ -97,7 +97,7 @@ lemma setDue_ensures(s: Tracker, id: int, due: int, actor: string)
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
     TSameShapeProblems(s, s2);
-    TNoNewProblem(s, s2);
+    TSubsetNoNewProblem(s, s2);
   }
 }
 
@@ -132,7 +132,7 @@ lemma addOwner_ensures(s: Tracker, id: int, owner: string, actor: string)
       }
     }
     TSameProblems(s, s2);
-    TNoNewProblem(s, s2);
+    TSubsetNoNewProblem(s, s2);
   }
 }
 
@@ -325,7 +325,7 @@ lemma deleteTask_ensures(s: Tracker, id: int)
     assert forall j :: 0 <= j < |kept| ==> s2.tasks[j] == kept[j].(parents := drop(kept[j].parents, id), related := drop(kept[j].related, id));
     TFilterKeepsUnique((t: Task) => (t.id != id), s.tasks);
     TIdsKeptUnique(kept, s2.tasks);
-    TFilterTasks((t: Task) => (t.id != id), s.tasks);
+    ProofLib.FilterSubset((t: Task) => (t.id != id), s.tasks);
     forall j | 0 <= j < |s2.tasks|
       ensures exists i :: 0 <= i < |s.tasks| && s.tasks[i].id == s2.tasks[j].id && s.tasks[i].notifiedAt == s2.tasks[j].notifiedAt && s.tasks[i].updatedAt == s2.tasks[j].updatedAt && s.tasks[i].toldSoon == s2.tasks[j].toldSoon && s.tasks[i].toldDue == s2.tasks[j].toldDue
     {
@@ -518,7 +518,7 @@ lemma handDeleteTask_ensures(s: Tracker, id: int)
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TFilterKeepsUnique((t: Task) => (t.id != id), s.tasks);
-    TFilterTasks((t: Task) => (t.id != id), s.tasks);
+    ProofLib.FilterSubset((t: Task) => (t.id != id), s.tasks);
     forall j | 0 <= j < |s2.tasks|
       ensures exists i :: 0 <= i < |s.tasks| && s.tasks[i] == s2.tasks[j]
     {
@@ -605,7 +605,7 @@ lemma tick_ensures(s: Tracker)
     TWarningList(s2);
     TNoOneToldTwice(s2);
     TSameShapeProblems(s, s2);
-    TNoNewProblem(s, s2);
+    TSubsetNoNewProblem(s, s2);
   }
 }
 
@@ -636,11 +636,11 @@ lemma notify_ensures(s: Tracker)
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
     TSameShapeProblems(s, s2);
-    TNoNewProblem(s, s2);
+    TSubsetNoNewProblem(s, s2);
   }
 }
 
-// ===== Task numbers are unique (F4) =====
+// ===== Task numbers are unique =====
 
 // The rule, restated over ProofLib.Filter.
 lemma TUniqueBridge(s: Tracker)
@@ -703,7 +703,7 @@ lemma TFilterKeepsUnique(f: Task -> bool, xs: seq<Task>)
   }
 }
 
-// ===== The warning list is the truth, for every state (F6) =====
+// ===== The warning list is the truth, for every state =====
 
 // One task has no problem exactly when it is well formed.
 lemma TTaskClean(s: Tracker, t: Task)
@@ -728,7 +728,7 @@ lemma TWarningList(s: Tracker)
   }
 }
 
-// ===== No one is told twice in one pass, for every state (F10) =====
+// ===== No one is told twice in one pass, for every state =====
 
 lemma TNoOneToldTwice(s: Tracker)
   ensures alwaysNoOneIsToldTwiceInOnePass(s)
@@ -744,7 +744,7 @@ lemma TNoOneToldTwice(s: Tracker)
   }
 }
 
-// ===== Problems depend only on the members and each task's number, owners and links (F5) =====
+// ===== Problems depend only on the members and each task's number, owners and links =====
 
 // Same task numbers and links, position by position: the same tasks exist, and link back alike.
 lemma TSameLinksHasTask(s: Tracker, s2: Tracker)
@@ -753,20 +753,7 @@ lemma TSameLinksHasTask(s: Tracker, s2: Tracker)
   ensures forall p :: hasTask(s, p) == hasTask(s2, p)
   ensures forall r, id :: linksBack(s, r, id) == linksBack(s2, r, id)
 {
-  forall p
-    ensures hasTask(s, p) == hasTask(s2, p)
-  {
-    if hasTask(s, p) {
-      var t :| t in s.tasks && t.id == p;
-      var i :| 0 <= i < |s.tasks| && s.tasks[i] == t;
-      assert s2.tasks[i] in s2.tasks;
-    }
-    if hasTask(s2, p) {
-      var t :| t in s2.tasks && t.id == p;
-      var i :| 0 <= i < |s2.tasks| && s2.tasks[i] == t;
-      assert s.tasks[i] in s.tasks;
-    }
-  }
+  TSameIdsHasTask(s, s2);
   forall r, id
     ensures linksBack(s, r, id) == linksBack(s2, r, id)
   {
@@ -820,14 +807,12 @@ lemma TSameLinksProblemsOf(s: Tracker, s2: Tracker)
   requires forall i :: 0 <= i < |s.tasks| ==> s.tasks[i].id == s2.tasks[i].id && s.tasks[i].parents == s2.tasks[i].parents && s.tasks[i].related == s2.tasks[i].related
   ensures forall t :: problemsOf(s, t) == problemsOf(s2, t)
 {
-  TSameLinksHasTask(s, s2);
-  TSameParentsAncestors(s, s2);
+  TSameLinksNoOwners(s, s2);
   forall t: Task
     ensures problemsOf(s, t) == problemsOf(s2, t)
   {
-    ProofLib.FilterSamePredicate((p: int) => ((p != t.id) && !(hasTask(s, p))), (p: int) => ((p != t.id) && !(hasTask(s2, p))), t.parents);
-    ProofLib.FilterSamePredicate((r: int) => ((r != t.id) && !(hasTask(s, r))), (r: int) => ((r != t.id) && !(hasTask(s2, r))), t.related);
-    ProofLib.FilterSamePredicate((r: int) => (((r != t.id) && hasTask(s, r)) && !(linksBack(s, r, t.id))), (r: int) => (((r != t.id) && hasTask(s2, r)) && !(linksBack(s2, r, t.id))), t.related);
+    TProblemsOfSplit(s, t);
+    TProblemsOfSplit(s2, t);
   }
 }
 
@@ -858,31 +843,9 @@ lemma TSameShapeProblems(s: Tracker, s2: Tracker)
   TSameProblems(s, s2);
 }
 
-lemma TNoNewProblem(s: Tracker, s2: Tracker)
-  requires problems(s) == problems(s2)
-  ensures addsNoProblem(s, s2)
-{
-  var ps := problems(s2);
-  forall i | 0 <= i < |ps|
-    ensures exists q :: q in problems(s) && sameProblem(ps[i], q)
-  {
-    assert ps[i] in problems(s) && sameProblem(ps[i], ps[i]);
-  }
-}
+// ===== Counter and bookkeeping when tasks are only removed =====
 
-// ===== Counter and bookkeeping when tasks are only removed (F11) =====
-
-lemma TFilterTasks(f: Task -> bool, xs: seq<Task>)
-  ensures forall t :: t in ProofLib.Filter(f, xs) ==> t in xs
-{
-  forall t | t in ProofLib.Filter(f, xs)
-    ensures t in xs
-  {
-    ProofLib.FilterMember(f, xs, t);
-  }
-}
-
-// ===== What was sent is recorded (the new rule) =====
+// ===== What was sent is recorded (alwaysWhatWasSentIsRecorded) =====
 
 // Every note sent before is still recorded when each remaining task is an old one that recorded at least as much, or a new number.
 lemma TOldNotesRecorded(s: Tracker, s2: Tracker)
@@ -912,7 +875,7 @@ lemma TSentRecordedKept(s: Tracker, s2: Tracker)
   TOldNotesRecorded(s, s2);
 }
 
-// ===== The notes of one notifier pass (F9) =====
+// ===== The notes of one notifier pass =====
 
 // What a fold that appends h(x) for each x holds.
 lemma TFoldConcatMember<A, T>(f: (seq<A>, T) -> seq<A>, h: T -> seq<A>, init: seq<A>, xs: seq<T>, x: A)
@@ -1156,7 +1119,7 @@ lemma TNotifyNothingSentTwice(s: Tracker)
   TSentDistinct(s2.sent);
 }
 
-// ===== Edits that only take owners away, or members away, add no problem (part of F7) =====
+// ===== Edits that only take owners away, or members away, add no problem =====
 
 // A problem is on the warning list exactly when it is a problem of one of the tasks.
 lemma TProblemsMember(s: Tracker, p: Problem)
@@ -1496,7 +1459,7 @@ lemma TUnrelateTask(s: Tracker, id: int, other: int, actor: string, i: int)
   TProblemsOfSubset(s, s2, t, t2);
 }
 
-// ===== Ancestors only shrink when links only shrink (part of F7) =====
+// ===== Ancestors only shrink when links only shrink =====
 
 // What the parent-collecting fold holds: every parent, other than the task itself, of a task it read.
 lemma TParentsFoldMember(init: seq<int>, ts: seq<Task>, x: int)
@@ -1623,7 +1586,6 @@ lemma TRemoveParentTask(s: Tracker, id: int, other: int, actor: string, i: int)
   var s2 := removeParent(s, id, other, actor);
   var t := s.tasks[i];
   var t2 := s2.tasks[i];
-  TSameIdsHasTask(s, s2);
   TSameLinksHasTask(s, s2);
   forall u2 | u2 in s2.tasks
     ensures exists u :: u in s.tasks && u.id == u2.id && (forall p :: p in u2.parents ==> p in u.parents)
@@ -1775,48 +1737,12 @@ lemma TFixTask(s: Tracker, index: int, k: int)
   ensures forall q :: q in problemsOf(fix(s, index), fix(s, index).tasks[k]) ==> q in problemsOf(s, s.tasks[k])
 {
   var s2 := fix(s, index);
-  var p := problemAt(s, index);
-  TFixTarget(s, index);
-  var i :| 0 <= i < |s.tasks| && p in problemsOf(s, s.tasks[i]);
-  var P := s.tasks[i];
-  TProblemsOfParts(s, P);
-  TUnknownOwnerPart(s, P, p);
-  TUnknownParentPart(s, P, p);
-  TUnknownRelatedPart(s, P, p);
-  TOneSidedPart(s, P, p);
-  assert p.task == P.id;
-  assert hasTask(s, p.task) by {
-    assert P in s.tasks;
-  }
-  assert p.code.UnknownRelated? ==> !hasTask(s, p.ref);
-  assert p.code.SelfRelated? ==> p.ref == p.task;
-  assert p.code.OneSided? ==> p.ref in P.related && p.ref != P.id;
-  forall m | 0 <= m < |s.tasks|
-    ensures s2.tasks[m].id == s.tasks[m].id
-    ensures forall o :: o in s2.tasks[m].owners ==> o in s.tasks[m].owners
-    ensures forall x :: x in s2.tasks[m].parents ==> x in s.tasks[m].parents
-    ensures forall r :: r in s2.tasks[m].related ==> r in s.tasks[m].related || (p.code.OneSided? && s.tasks[m].id == p.ref && r == p.task)
-    ensures forall r :: r in s.tasks[m].related ==> r in s2.tasks[m].related || (s.tasks[m].id == p.task && (p.code.UnknownRelated? || p.code.SelfRelated?) && r == p.ref && !(p.code.OneSided? && s.tasks[m].id == p.ref))
-  {
-    TFixShape(s, index, m);
-  }
   TFixShape(s, index, k);
+  TFixFacts(s, index);
   TSameIdsHasTask(s, s2);
-  forall u2 | u2 in s2.tasks
-    ensures exists u :: u in s.tasks && u.id == u2.id && (forall x :: x in u2.parents ==> x in u.parents)
-  {
-    var m :| 0 <= m < |s2.tasks| && s2.tasks[m] == u2;
-    assert s.tasks[m] in s.tasks;
-  }
-  TAncestorsShrink(s, s2);
-  var t := s.tasks[k];
-  var t2 := s2.tasks[k];
+  TFixCycleLen(s, s2, index, k);
   TFixOneSided(s, index, k);
-  forall r | r in t2.related && r != t.id && !hasTask(s2, r)
-    ensures r in t.related
-  {
-  }
-  TProblemsOfSubset(s, s2, t, t2);
+  TProblemsOfSubset(s, s2, s.tasks[k], s2.tasks[k]);
 }
 
 // After a fix, a related link that is one-sided was already there and already one-sided.
@@ -1829,13 +1755,7 @@ lemma TFixOneSided(s: Tracker, index: int, k: int)
   TFixTarget(s, index);
   var i :| 0 <= i < |s.tasks| && p in problemsOf(s, s.tasks[i]);
   var P := s.tasks[i];
-  TProblemsOfParts(s, P);
-  TUnknownRelatedPart(s, P, p);
-  TOneSidedPart(s, P, p);
-  assert p.task == P.id;
-  assert p.code.UnknownRelated? ==> !hasTask(s, p.ref);
-  assert p.code.SelfRelated? ==> p.ref == p.task;
-  assert p.code.OneSided? ==> p.ref in P.related && p.ref != P.id;
+  TFixHome(s, P, p);
   forall m | 0 <= m < |s.tasks|
     ensures s2.tasks[m].id == s.tasks[m].id
     ensures forall r :: r in s2.tasks[m].related ==> r in s.tasks[m].related || (p.code.OneSided? && s.tasks[m].id == p.ref && r == p.task)
@@ -1872,7 +1792,7 @@ lemma TFixOneSided(s: Tracker, index: int, k: int)
   }
 }
 
-// ===== A fix shortens the warning list (F8) =====
+// ===== A fix shortens the warning list =====
 
 // A predicate that passes less often keeps no more, and fewer if it fails somewhere the other passes.
 lemma TFilterImpLen<T>(f: T -> bool, g: T -> bool, xs: seq<T>)
@@ -1952,7 +1872,7 @@ lemma TFoldLenLe<A, T, U>(f: (seq<A>, T) -> seq<A>, g: (seq<A>, U) -> seq<A>, h:
   }
 }
 
-// What the problem a fix acts on says about the task it belongs to.
+// What a problem of a task says about that task.
 lemma TFixHome(s: Tracker, t: Task, pr: Problem)
   requires pr in problemsOf(s, t)
   ensures pr.task == t.id
@@ -2139,10 +2059,10 @@ lemma TFixShortens(s: Tracker, index: int)
 }
 
 
-// ===== The ancestor search finds everything there is to find (F7) =====
+// ===== The ancestor search finds everything there is to find =====
 // A list c is closed when it holds every parent (other than itself) of each task it names.
 
-// A subset is no larger. (General: belongs in tools/proof/lib.dfy.)
+// A subset is no larger.
 lemma TSubsetCard(a: set<int>, b: set<int>)
   requires a <= b
   ensures |a| <= |b|
@@ -2442,7 +2362,6 @@ lemma TAddParentTask(s: Tracker, id: int, other: int, actor: string, i: int)
   var s2 := addParent(s, id, other, actor);
   var t := s.tasks[i];
   var t2 := s2.tasks[i];
-  TSameIdsHasTask(s, s2);
   TSameLinksHasTask(s, s2);
   TAddParentAncestors(s, id, other, actor, t.id);
   TProblemsOfSubset(s, s2, t, t2);
