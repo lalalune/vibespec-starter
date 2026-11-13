@@ -204,6 +204,7 @@ export function danglingCitations(root: string, specs: Spec[], dir = ""): string
 function packageFiles(root: string, keep: (name: string) => boolean, dir = "", nested = false): string[] {
   return fs.readdirSync(path.join(root, dir), { withFileTypes: true }).flatMap((e) => {
     const rel = dir ? `${dir}/${e.name}` : e.name;
+    if (e.name === ".git") return [];
     if (e.isFile()) return keep(e.name) ? [rel] : [];
     const skip = /^(node_modules|dist|build|out|coverage|storybook-static|__traces__|__screenshots__|\..*)$/.test(e.name)
       || (e.name === "gen" && rel !== "vibestack/gen") || (!nested && fs.existsSync(path.join(root, rel, "package.json")));

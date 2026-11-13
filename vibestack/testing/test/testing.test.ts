@@ -86,6 +86,7 @@ const vitest = (dir: string, env: Record<string, string> = {}, rerun?: string, m
 describe.concurrent("generated tests", () => {
   it("are the same bytes on every run, follow their sources, and pass for a package that keeps its contracts", async () => {
     const dir = fixture("good"), out = path.join(dir, ".cache/generated/tests");
+    fs.copyFileSync(path.join(root, "pnpm-lock.yaml"), path.join(dir, "pnpm-lock.yaml"));
     // src/point.schema.vibe is VibeLang, which the generator loads through vibelang/register.
     const files = ["src/math.contract.test.ts", "src/point.schema.test.ts", "src/user.schema.test.ts"];
     const skipped = [
@@ -119,6 +120,28 @@ describe.concurrent("generated tests", () => {
     for (const artifact of artifacts) fs.appendFileSync(path.join(dir, artifact), "changed");
     expect(testInputs(dir)).toBe(recorded.fingerprint);
     for (const artifact of artifacts) fs.rmSync(path.dirname(path.join(dir, artifact)), { recursive: true });
+    expect(testInputs(dir)).toBe(recorded.fingerprint);
+
+    const git = path.join(dir, ".git");
+    for (const contents of ["gitdir: ../one\n", "gitdir: ../two\n"]) {
+      fs.writeFileSync(git, contents);
+      expect(testInputs(dir)).toBe(recorded.fingerprint);
+    }
+    fs.rmSync(git);
+    expect(testInputs(dir)).toBe(recorded.fingerprint);
+    fs.mkdirSync(git);
+    fs.writeFileSync(path.join(git, "HEAD"), "ref: refs/heads/main\n");
+    expect(testInputs(dir)).toBe(recorded.fingerprint);
+    fs.rmSync(git, { recursive: true });
+    expect(testInputs(dir)).toBe(recorded.fingerprint);
+
+    const npmrc = path.join(dir, ".npmrc");
+    fs.writeFileSync(npmrc, "fund=false\n");
+    const withConfig = testInputs(dir);
+    expect(withConfig).not.toBe(recorded.fingerprint);
+    fs.writeFileSync(npmrc, "fund=true\n");
+    expect(testInputs(dir)).not.toBe(withConfig);
+    fs.rmSync(npmrc);
     expect(testInputs(dir)).toBe(recorded.fingerprint);
 
     const payload = path.join(dir, "test/fixtures/payload.json");
