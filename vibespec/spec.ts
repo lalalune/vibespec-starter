@@ -679,7 +679,7 @@ if (isMain()) {
       await watch(root);
     } else if (command === "studio" && takes([], ["*"], ["--port", "*"], ["*", "--port", "*"])) {
       // The studio imports this module; defer loading it until the command module has finished evaluating.
-      import("./studio/server.ts").then(({ serve }) => serve(root, args)).catch((e: Error) => {
+      import("./studio/src/server.ts").then(({ serve }) => serve(root, args)).catch((e: Error) => {
         console.error(e.message);
         process.exitCode = 1;
       });

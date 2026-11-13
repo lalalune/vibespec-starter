@@ -10,10 +10,16 @@
     "skipLibCheck": true,
     "types": [
       "node"
+    ],
+    "lib": [
+      "es2023",
+      "dom",
+      "dom.iterable"
     ]
   },
   "include": [
     "vibespec/spec.ts",
-    "vibespec/studio/server.ts"
+    "vibespec/studio/src/server.ts",
+    "vibespec/studio/src/page.ts"
   ]
 }

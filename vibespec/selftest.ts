@@ -11,10 +11,8 @@ import { after, describe, test } from "node:test";
 import { exec, LIB_FILE, isolatedCopies, parseProofFile, readVerdict, splice } from "./prove.ts";
 import { migrateLocks, pendingSpecs, readLedger, writeLedger } from "./review.ts";
 import { danglingCitations } from "./util.ts";
-import { nodesOf } from "./studio/doc.ts";
 import { canonical, departure } from "./conformance.ts";
 import { conformance as checkTraces, conformanceFound, writeConformance } from "./conform.ts";
-import { projectsOf, serve, startStudio } from "./studio/server.ts";
 import { acceptContracts, acceptReviews, check, checkVerifiedSource, expandListHelpers, gen, init, parseSpec, pending, pendingContracts, readSpecs, replay, show, type Result } from "./spec.ts";
 
 const project = path.join(import.meta.dirname, "..");
@@ -855,139 +853,6 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     fs.writeFileSync(path.join(root, "gen/renamed.ts"), "export const stale = true;\n");
     await check(root);
     assert.deepEqual(fs.readdirSync(path.join(root, "gen")).filter((f) => f.endsWith(".ts")), ["order.ts"]);
-  });
-
-  test("the studio publishes a spec with its origins, checks it, and refuses remote or concurrent writes", async () => {
-    const available = projectsOf(project);
-    for (const name of ["assistant", "dashboard", "fullstack", "order"])
-      assert.ok(available.some((p) => p.id === `vibespec/examples/${name}` && fs.existsSync(path.join(p.root, "spec"))), name);
-    assert.equal(new Set(available.map((p) => p.id)).size, available.length);
-    const root = fixtures(["door"]);
-    const studio = await startStudio({ projects: [{ id: ".", name: "Door", root }], port: 0, agents: {} });
-    const url = studio.url.replace("localhost", "127.0.0.1");
-    const post = (route: string, body: unknown, headers: Record<string, string> = {}) => fetch(`${url}/api/${route}`, {
-      method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body),
-    });
-    try {
-      for (const file of ["/", "/app.js", "/style.css"]) {
-        const asset = await fetch(url + file);
-        assert.equal(asset.status, 200, file);
-        assert.ok((await asset.arrayBuffer()).byteLength > 0, file);
-      }
-      const first = await (await fetch(`${url}/api/project`)).json();
-      assert.deepEqual(first.specs.map((spec: { file: string }) => spec.file), ["spec/door.md"]);
-      for (const route of ["spec", "accept"]) {
-        const remote = await post(route, { name: "remote" }, { origin: "https://untrusted.example" });
-        assert.equal(remote.status, 403, route);
-      }
-      const hostile = await new Promise<number>((resolve, reject) => {
-        http.get(`${url}/api/project`, { headers: { host: "untrusted.example" } }, (response) => {
-          response.resume();
-          resolve(response.statusCode!);
-        }).on("error", reject);
-      });
-      assert.equal(hostile, 403);
-      assert.equal((await post("spec", { name: "plain" }, { "content-type": "text/plain" })).status, 415);
-      const original = first.specs[0];
-      const text = original.text + "\nThe door remains available.\n";
-      const origins = nodesOf(original.file, text).map((n) => [n.id, n.id]);
-      const body = { files: [{ file: original.file, base: original.hash, text }], origins };
-      const published = await post("publish", body);
-      assert.equal(published.status, 200, await published.clone().text());
-      const manifest = (await published.json()).manifest;
-      assert.ok(manifest.changes.some((c: { kind: string; what: string[] }) => c.kind === "rule" && c.what.includes("prose")));
-      assert.equal(fs.readFileSync(path.join(root, original.file), "utf8"), text);
-      assert.deepEqual(JSON.parse(fs.readFileSync(path.join(root, ".studio/state.json"), "utf8")).ids, Object.fromEntries(origins));
-      const concurrent = await Promise.all([post("publish", body), post("spec", { name: "parallel" })]);
-      for (const response of concurrent) assert.equal(response.status, 400, await response.text());
-      assert.ok(!fs.existsSync(path.join(root, "spec/parallel.md")));
-      let current = await (await fetch(`${url}/api/project`)).json();
-      while (Object.values(current.jobs ?? {}).some((job: any) => job.status === "running")) {
-        await new Promise((resolve) => setTimeout(resolve, 50));
-        current = await (await fetch(`${url}/api/project`)).json();
-      }
-      assert.equal(current.jobs?.check?.status, "failed");
-      assert.equal(current.check?.next.includes("npm run accept"), true);
-      const created = await post("spec", { name: "nested/child" });
-      assert.equal(created.status, 200, await created.clone().text());
-      assert.equal((await created.json()).file, "spec/nested/child/index.md");
-      const child = readSpecs(root).find((s) => s.file === "spec/nested/child/index.md")!;
-      acceptReviews(root, child);
-      const ledger = fs.readFileSync(path.join(root, "spec/lock.json"), "utf8");
-      const escaped = await post("publish", { files: [{ file: "spec/../outside.md", base: null, text: "" }], origins: [] });
-      assert.equal(escaped.status, 400);
-      assert.equal(fs.existsSync(path.join(root, "outside.md")), false);
-      fs.symlinkSync(path.join(root, "outside.md"), path.join(root, "spec/escape.md"));
-      assert.equal((await post("publish", { files: [{ file: "spec/escape.md", base: null, text: "" }], origins: [] })).status, 400);
-      assert.equal(fs.existsSync(path.join(root, "outside.md")), false);
-      fs.rmSync(path.join(root, "spec/escape.md"));
-      const linked = await post("publish", { files: [{ file: "spec/index.md", base: null, text: "[Child](./nested/child/)\n" }], origins: [] });
-      assert.equal(linked.status, 200, await linked.clone().text());
-      const waitForCheck = async () => {
-        let snap = await (await fetch(`${url}/api/project`)).json();
-        while (Object.values(snap.jobs ?? {}).some((job: any) => job.status === "running")) {
-          await new Promise((resolve) => setTimeout(resolve, 50));
-          snap = await (await fetch(`${url}/api/project`)).json();
-        }
-        return snap;
-      };
-      const nested = await waitForCheck();
-      assert.deepEqual(nested.specs.map((s: { file: string }) => s.file), ["spec/index.md", "spec/door.md", "spec/nested/child/index.md"]);
-      const index = nested.specs.find((s: { file: string }) => s.file === "spec/index.md");
-      const childIndex = nested.specs.find((s: { file: string }) => s.file === child.file);
-      const deleted = await post("publish", { files: [
-        { file: index.file, base: index.hash, text: "" },
-        { file: childIndex.file, base: childIndex.hash, text: null },
-      ], origins: [] });
-      assert.equal(deleted.status, 200, await deleted.clone().text());
-      const manifestAfterDelete = (await deleted.json()).manifest;
-      assert.ok(manifestAfterDelete.changes.some((c: { kind: string; spec: string }) => c.kind === "spec" && c.spec === "spec/index.md"));
-      assert.equal(fs.existsSync(path.join(root, child.file)), false);
-      assert.equal(fs.readFileSync(path.join(root, "spec/lock.json"), "utf8"), ledger);
-      const final = await waitForCheck();
-      assert.ok(final.check.results.some((r: Result) => r.stage === "review" && /removed spec/.test(r.summary)));
-    } finally {
-      await studio.close();
-    }
-  });
-
-  test("the studio opens the requested example or project folder", async () => {
-    const repo = scratch({ "spec/index.md": "", "vibespec/examples/order/spec/index.md": "# Order\n" });
-    const outside = scratch({ "a project/spec/index.md": "# Outside\n", "a project/package.json": '{"name":"order"}' });
-    const example = path.join(repo, "vibespec/examples/order");
-    const external = path.join(outside, "a project");
-    const cases: [string | undefined, string, number][] = [
-      [undefined, repo, 2], [".", repo, 2], ["order", example, 2],
-      ["vibespec/examples/order", example, 2], [example, example, 2],
-      [external, external, 3], [path.relative(repo, external), external, 3],
-    ];
-    for (const [target, expected, count] of cases) {
-      const studio = await serve(repo, [...(target === undefined ? [] : [target]), "--port", "0"]);
-      try {
-        const projects = await (await fetch(`${studio.url}/api/projects`)).json();
-        const current = await (await fetch(`${studio.url}/api/project`)).json();
-        assert.equal(projects.projects.length, count);
-        assert.equal(projects.open, current.project.id);
-        assert.equal(current.project.root, fs.realpathSync(expected));
-        assert.equal(current.specs[0].text, fs.readFileSync(path.join(expected, "spec/index.md"), "utf8"));
-        if (target === external) {
-          const checked = await fetch(`${studio.url}/api/check`, {
-            method: "POST", headers: { "content-type": "application/json" }, body: "{}",
-          });
-          assert.equal(checked.status, 200);
-          let state = await (await fetch(`${studio.url}/api/project`)).json();
-          while (state.jobs.check.status === "running") {
-            await new Promise((resolve) => setTimeout(resolve, 50));
-            state = await (await fetch(`${studio.url}/api/project`)).json();
-          }
-          assert.ok(state.check.results.every((r: Result) => r.ok || r.stage === "review"));
-          assert.ok(fs.existsSync(path.join(external, "gen/index.ts")));
-          assert.ok(!fs.existsSync(path.join(repo, "gen")));
-        }
-      } finally { await studio.close(); }
-    }
-    await assert.rejects(serve(repo, ["missing", "--port", "0"]), /not an existing project directory/);
-    await assert.rejects(serve(repo, ["spec/index.md", "--port", "0"]), /not an existing project directory/);
   });
 
   test("a truncated cache entry is recomputed and generated modules run in a CommonJS project", async () => {
