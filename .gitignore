@@ -2,6 +2,7 @@ node_modules/
 gen/
 dist/
 .spec-cache/
+.studio/
 *.tgz
 .lemmascript/
 _apalache-out/

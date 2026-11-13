@@ -12,7 +12,7 @@ const BINARY: Record<string, [string, number]> = {
 type SetArgs = { a: string; b: string; el: string; out: string };
 const SET_OPS: Record<string, (x: SetArgs) => string> = {
   contains: ({ a, b }) => `${a}.includes(${b})`,
-  in: (x) => SET_OPS.contains(x), // members() puts its arguments in contains' order
+  in: ({ a, b }) => `${a}.includes(${b})`,
   size: ({ a }) => `${a}.length`,
   union: ({ a, b, el }) => `[...${a}, ...${b}.filter((set_x: ${el}) => !${a}.includes(set_x))]`,
   intersect: ({ a, b, el }) => `${a}.filter((set_x: ${el}) => ${b}.includes(set_x))`,
@@ -50,7 +50,7 @@ const members = (op: string, a: Json[]): [Json, Json] => (op === "in" ? [a[1], a
 const restore = <V>(m: Map<string, V>, k: string, v: V | undefined) => (v === undefined ? m.delete(k) : m.set(k, v));
 
 export function printer({ types, inferred, ref, helper, bind, variants, definitions, sampleSets }: Scope) {
-  const { resolve, tagged, isScalar, named, ownerOf, typeName, tsType } = types;
+  const { resolve, tagged, isScalar, setElem, named, ownerOf, typeName, tsType } = types;
   const typeOf = typeOfIn(inferred);
   /** Which arithmetic helpers the printed code needs, and the value types of the maps it looks things up in. */
   const arithmetic = new Set<string>();
@@ -79,7 +79,6 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
   };
   const scalarOnly = (what: string, xs: Json[]) =>
     xs.every((x) => isScalar(typeOf(x.id))) || fail(`${what} on records or lists is not supported: compare fields, or use every/some`);
-  const scalarSet = (t: Json) => isScalar(t.elem) || fail("sets of records or lists are not supported; use a list");
   /** `name: value` for each pair of a record literal's arguments. */
   const pairs = (args: Json[]) => args.flatMap((_, i) => (i % 2 ? [] : [`${args[i].value}: ${ex(args[i + 1], TERNARY)}`]));
   /** `{ ...x, a: 1, b: 2 }` arrives as nested updates; this is what is updated, and the updates in order. */
@@ -88,9 +87,18 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
     for (; e.kind === "app" && e.opcode === "with"; e = e.args[0]) updates.unshift(`${e.args[1].value}: ${ex(e.args[2], TERNARY)}`);
     return { base: e, updates };
   };
+  /** `a.append(x).concat(b)` as the items of one array literal, `...a, x, ...b`, rather than spreads nested in spreads. */
+  const items = (e: Json): string[] =>
+    e.kind === "app" && e.opcode === "append" ? [...items(e.args[0]), ex(e.args[1], TERNARY)]
+    : e.kind === "app" && e.opcode === "concat" ? [...items(e.args[0]), ...items(e.args[1])]
+    : [`...${ex(e, ATOM)}`];
   /** A lambda. Its parameters carry their types, which LemmaScript cannot always infer. */
   const arrow = (params: Json[], result: Json): string => {
+    // A parameter hides an enclosing match arm's binder of the same name: inside the lambda the name is the parameter.
+    const hidden = params.map((p) => [p.name, renamed.get(p.name), matchedAs.get(p.name)] as const);
+    for (const [n] of hidden) { renamed.delete(n); matchedAs.delete(n); }
     const text = ex(result, TERNARY);
+    for (const [n, r, m] of hidden) { restore(renamed, n, r); restore(matchedAs, n, m); }
     const param = (p: Json) => (inferred(p.id) ? `${bind(p.name)}: ${tsType(typeOf(p.id))}` : bind(p.name));
     return `(${params.map(param).join(", ")}) => ${text.startsWith("{") ? `(${text})` : text}`;
   };
@@ -103,6 +111,7 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
       case "bool": return [String(e.value), ATOM];
       case "str": return [JSON.stringify(e.value), ATOM];
       case "name": {
+        if (sampleSets.has(e.name)) return fail(`${e.name} is a sample set for the simulator and cannot be used in a definition`);
         if (renamed.has(e.name)) return fail(`\`${e.name}\` is what a match arm carries; use its fields (${e.name}.field), or rebuild the variant, rather than the value as a whole`);
         if (!variants.has(e.name)) return [ref(e.name), ATOM];
         const owner = ownerOf(e.name);
@@ -158,8 +167,7 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
       // Lists are arrays.
       // An empty list carries its type, which TypeScript cannot infer where it is a fold's starting value.
       case "List": return [a.length ? `[${a.map((x) => ex(x, TERNARY)).join(", ")}]` : `([] as ${tsType(typeOf(e.id))})`, ATOM];
-      case "append": return [`[...${recv()}, ${ex(a[1], TERNARY)}]`, ATOM];
-      case "concat": return [`[...${recv()}, ...${ex(a[1], ATOM)}]`, ATOM];
+      case "append": case "concat": return [`[${items(e).join(", ")}]`, ATOM];
       case "length": return [`${recv()}.length`, ATOM];
       case "nth": return [`${recv()}[${ex(a[1])}]`, ATOM];
       case "head": return [`${recv()}[0]`, ATOM];
@@ -192,8 +200,8 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
       const isTagged = tagged(resolve(typeOf(a[0].id)));
       const arms: { test?: string; result: string }[] = [];
       for (let i = 1; i < a.length; i += 2) {
-        // Inside the arm the binder stands for the matched value; an outer binder of the same name comes back after.
         const binder = a[i + 1].params[0]?.name;
+        // Inside the arm the binder stands for the matched value; an outer arm's binder of the same name comes back after.
         const bound = binder && binder !== "_";
         const outer = bound ? [renamed.get(binder), matchedAs.get(binder)] : [];
         if (bound) { renamed.set(binder, subject); matchedAs.set(binder, a[i].value); }
@@ -204,27 +212,30 @@ export function printer({ types, inferred, ref, helper, bind, variants, definiti
       const last = arms.pop()!;
       return [arms.reduceRight((rest, arm) => `${arm.test} ? ${arm.result} : ${rest}`, last.result), arms.length ? TERNARY : OR];
     }
-    const [x, y] = members(op, a);
-    if ((op === "contains" || op === "in") && x.opcode === "keys") return [`(${mapKey(y)}) in ${ex(x.args[0], COMPARE + 1)}`, COMPARE];
+    if ((op === "contains" || op === "in") && (op === "in" ? a[1] : a[0]).opcode === "keys") {
+      const [keys, key] = op === "in" ? [a[1], a[0]] : [a[0], a[1]];
+      return [`(${mapKey(key)}) in ${ex(keys.args[0], COMPARE + 1)}`, COMPARE];
+    }
     if (SET_OPS[op]) {
       // A set is an array that never holds the same value twice. Only simple values can be in one.
-      const t = resolve(typeOf(x.id));
+      const t = resolve(typeOf(op === "in" ? a[1].id : a[0].id));
       if (t.kind !== "set") return fail(`\`${op}\` is supported on sets only`);
-      scalarSet(t);
-      const el = tsType(t.elem);
-      return [SET_OPS[op]({ a: ex(x, ATOM), b: y && ex(y, y.kind === "lambda" ? ARROW : ATOM), el, out: op === "map" ? tsType(resolve(typeOf(e.id)).elem) : el }), ATOM];
+      const el = tsType(setElem(t));
+      const [x, y] = op === "in" ? [a[1], a[0]] : [a[0], a[1]];
+      // What `map` makes is a set too, so it is held to the same rule as what it maps.
+      return [SET_OPS[op]({ a: ex(x, ATOM), b: y && ex(y, y.kind === "lambda" ? ARROW : ATOM), el, out: op === "map" ? tsType(setElem(resolve(typeOf(e.id)))) : el }), ATOM];
     }
     if (op === "Set") {
       const t = resolve(typeOf(e.id));
-      scalarSet(t);
-      const items = [...new Set(a.map((x) => ex(x, TERNARY)))];
+      setElem(t);
+      const members = [...new Set(a.map((x) => ex(x, TERNARY)))];
       const literal = (x: Json) => ["int", "str", "bool"].includes(x.kind) || (x.kind === "name" && variants.has(x.name));
       if (a.length > 1 && !a.every(literal)) fail("Set(…) with several members that are not literals could hold the same value twice; write Set(a).union(Set(b))");
-      return [items.length ? `[${items.join(", ")}]` : `([] as ${tsType(t.elem)}[])`, ATOM];
+      return [members.length ? `[${members.join(", ")}]` : `([] as ${tsType(t.elem)}[])`, ATOM];
     }
     if (definitions.has(op)) return [`${ref(op)}(${a.map((x) => ex(x, TERNARY)).join(", ")})`, ATOM];
     if (sampleSets.has(op)) return fail(`${op} is a sample set for the simulator and cannot be used in a definition`);
-    return fail(`unsupported Quint operator \`${op}\`: extend print() in tools/gen/print.ts`);
+    return fail(`\`${op}\` is not in the Quint a spec may use (AGENTS.md, "Supported Quint"); write it with the operators listed there`);
   };
 
   /** A definition body: leading `val`s become `const`s, the rest is returned. */

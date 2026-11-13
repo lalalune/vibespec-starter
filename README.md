@@ -401,6 +401,13 @@ Modelling an owners cell as a list, not a set, exposed a case a set cannot
 express: a name typed twice. The rule "A person named twice in a cell is told
 once" covers it, and `src/notify.ts` sends each person one message.
 
+Two more examples exercise different boundaries:
+
+- [Shared to-do list](examples/fullstack/README.md): an HTTP server, browser
+  client and a model of two tabs exchanging messages over an unreliable network.
+- [Assistant](examples/assistant/README.md): trusted senders, a bounded agent
+  turn, late replies and a bill payment that requires the person's confirmation.
+
 ## What is and is not guaranteed
 
 Proved for all states and inputs: the initial state satisfies every `always`

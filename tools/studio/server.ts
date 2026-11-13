@@ -47,6 +47,7 @@ interface Live {
   check?: { ok: boolean; results: Result[]; next: string; finished: number };
   clients: Set<http.ServerResponse>;
   watcher?: fs.FSWatcher;
+  jobTimer?: NodeJS.Timeout;
 }
 
 const hash = (text: string) => createHash("sha256").update(text).digest("hex").slice(0, 16);
@@ -160,15 +161,14 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
       timer = setTimeout(() => broadcast(live, "files", {}), 150);
     });
   };
-  let jobTimer: NodeJS.Timeout | undefined;
   const jobChanged = (live: Live) => {
-    clearTimeout(jobTimer);
-    jobTimer = setTimeout(() => broadcast(live, "job", { job: jobView(live.job), check: live.check }), 100);
+    clearTimeout(live.jobTimer);
+    live.jobTimer = setTimeout(() => broadcast(live, "job", { job: jobView(live.job), check: live.check }), 100);
   };
 
   /** Start a program in the project as its one job; `done` hears how it ended. */
   const startJob = (live: Live, kind: Job["kind"], label: string, [program, args]: [string, string[]], input: string | undefined, read: (line: string) => string | undefined, done: (job: Job, out: string) => void) => {
-    if (live.job?.status === "running") throw new Error(`${live.job.label} is still running`);
+    if (live.job?.child) throw new Error(`${live.job.label} is still running`);
     const job: Job = { kind, label, status: "running", started: Date.now(), log: [] };
     live.job = job;
     let out = "";
@@ -218,7 +218,10 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
     fs.rmSync(manifestFile(root), { force: true });
   };
 
+  const idle = (live: Live) => { if (live.job?.child) throw new Error(`${live.job.label} is still running`); };
+
   const publish = (live: Live, body: { files: { file: string; base: string | null; text: string | null }[]; origins: [string, string | null][]; force?: boolean }) => {
+    idle(live);
     const { root } = live.project;
     const disk = specTexts(root);
     const conflicts = body.force ? [] : body.files.filter((f) => (f.file in disk ? hash(disk[f.file]) : null) !== f.base).map((f) => f.file);
@@ -259,7 +262,8 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
       writeJson(stateFile(root), { baseline: state.baseline, ids });
       writeJson(manifestFile(root), manifest);
     }
-    if (live.job?.status !== "running") runCheck(live);
+    live.check = undefined;
+    runCheck(live);
     return { status: 200, body: { manifest: manifest.changes.length ? manifest : undefined } };
   };
 
@@ -270,8 +274,17 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
   const TYPES: Record<string, string> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml" };
 
   const server = http.createServer(async (req, res) => {
-    const url = new URL(req.url ?? "/", "http://localhost");
+    res.setHeader("content-security-policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; object-src 'none'; frame-ancestors 'none'");
+    res.setHeader("x-content-type-options", "nosniff");
     try {
+      const port = (server.address() as { port: number }).port;
+      const hosts = [`localhost:${port}`, `127.0.0.1:${port}`];
+      const host = req.headers.host?.toLowerCase();
+      if (!host || !hosts.includes(host)) return send(res, 403, { error: "use the local studio address" });
+      const origin = req.headers.origin;
+      if (origin !== undefined && origin !== `http://${host}`) return send(res, 403, { error: "cross-origin requests are not allowed" });
+      if (req.headers["sec-fetch-site"] === "cross-site") return send(res, 403, { error: "cross-site requests are not allowed" });
+      const url = new URL(req.url ?? "/", `http://${host}`);
       if (req.method === "GET" && !url.pathname.startsWith("/api/")) {
         const file = path.join(PUBLIC, url.pathname === "/" ? "index.html" : path.normalize(url.pathname).replace(/^([/\\])+/, ""));
         if (!file.startsWith(PUBLIC) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) return send(res, 404, { error: "not found" });
@@ -292,6 +305,7 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
       }
       if (req.method === "GET" && url.pathname === "/api/project") return send(res, 200, snapshot(live, agents));
       if (req.method !== "POST") return send(res, 405, { error: "method not allowed" });
+      if (req.headers["content-type"]?.split(";")[0].trim().toLowerCase() !== "application/json") return send(res, 415, { error: "send application/json" });
       let raw = "";
       for await (const chunk of req) raw += chunk;
       const body = raw ? JSON.parse(raw) : {};
@@ -300,8 +314,13 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
           const r = publish(live, body);
           return send(res, r.status, r.body);
         }
-        case "/api/spec":
-          return send(res, 200, { file: newSpec(root, String(body.name ?? "")) });
+        case "/api/spec": {
+          idle(live);
+          const file = newSpec(root, String(body.name ?? ""));
+          live.check = undefined;
+          broadcast(live, "files", {});
+          return send(res, 200, { file });
+        }
         case "/api/check":
           runCheck(live);
           return send(res, 200, {});
@@ -347,6 +366,7 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
     close: () => new Promise<void>((resolve) => {
       for (const live of lives.values()) {
         live.watcher?.close();
+        clearTimeout(live.jobTimer);
         live.job?.child?.kill("SIGTERM");
         for (const c of live.clients) c.end();
       }
@@ -356,3 +376,18 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
   };
 }
 
+
+/** `spec studio [<example>] [--port <n>]`: serve the projects under `repo`, show the example if one is named, and open the page. */
+export async function serve(repo: string, args: string[]) {
+  const projects = projectsOf(repo);
+  const example = args[0] === "--port" ? undefined : args[0];
+  const at = args.indexOf("--port");
+  const port = at < 0 ? undefined : Number(args[at + 1]);
+  if (port !== undefined && !(Number.isInteger(port) && port >= 0 && port < 65536)) throw new Error(`--port ${args[at + 1]}: not a port`);
+  const open = example === undefined ? "." : projects.find((p) => p.id === `examples/${example}`)?.id;
+  if (!open) throw new Error(`no example ${example}; there are: ${projects.slice(1).map((p) => p.name).join(", ") || "none"}`);
+  const studio = await startStudio({ projects, open, port });
+  const url = `${studio.url}/?project=${encodeURIComponent(open)}`;
+  console.log(`studio: ${url}`);
+  if (process.stdout.isTTY) spawn(process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer" : "xdg-open", [url], { stdio: "ignore", detached: true }).on("error", () => {}).unref();
+}
