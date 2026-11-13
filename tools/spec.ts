@@ -6,7 +6,9 @@
 //   spec accept [unproved]  check afresh, then record the reviews (or the obligations simulated only)
 //   spec new <name>         write a starter spec/<name>.md
 //   spec init               add the sync skill, AGENTS.md, CONTRIBUTING.md and scripts to a project
+//   spec studio [<example>] [--port <n>]   the studio: edit stories and rules, publish, sync, sign off
 
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -38,6 +40,30 @@ export function badSpecName(name: string): string | undefined {
   if (name === "src" || name === "unproved") return `\`${name}\` cannot name a spec: spec/${name}.lock.json is a ledger the tools keep`;
 }
 
+/** What one line of a spec is: a story or rule heading, a fence that opens or closes, a line inside a fence, or prose. */
+export type LineKind = "story" | "rule" | "open" | "open quint" | "close" | "quint" | "fenced" | "prose";
+
+/**
+ * Every line of a spec with what it is. A fence of any kind (``` or ~~~, of any length) closes only with a fence of
+ * the same character at least as long and nothing after it; `##` and `###` inside a fence are not headings.
+ */
+export function scanSpec(text: string): { text: string; kind: LineKind }[] {
+  let fence: { mark: string; quint: boolean } | undefined;
+  return text.split("\n").map((text) => {
+    const marker = text.match(/^\s*(`{3,}|~{3,})(.*)$/);
+    if (fence && marker && marker[1][0] === fence.mark[0] && marker[1].length >= fence.mark.length && !marker[2].trim()) {
+      fence = undefined;
+      return { text, kind: "close" };
+    }
+    if (fence) return { text, kind: fence.quint ? "quint" : "fenced" };
+    if (marker && (marker[1][0] === "~" || !marker[2].includes("`"))) {
+      fence = { mark: marker[1], quint: marker[2].trim().split(/\s+/)[0] === "quint" };
+      return { text, kind: fence.quint ? "open quint" : "open" };
+    }
+    return { text, kind: text.startsWith("## ") ? "story" : text.startsWith("### ") ? "rule" : "prose" };
+  });
+}
+
 /**
  * A spec is Markdown. `##` starts a story (or any grouping), `###` starts a
  * rule, and the ```quint blocks under a rule are its formal half. Tangling
@@ -45,7 +71,7 @@ export function badSpecName(name: string): string | undefined {
  * Markdown file. A fence of any other kind (``` or ~~~, of any length) is
  * prose, and closes only with a fence of the same character at least as long.
  */
-export function parseSpec(root: string, file: string): Spec {
+export function parseSpec(root: string, file: string, text = fs.readFileSync(path.join(root, file), "utf8")): Spec {
   const name = path.basename(file, ".md");
   const bad = badSpecName(name);
   if (bad) throw new Error(`${file}: ${bad}`);
@@ -55,12 +81,8 @@ export function parseSpec(root: string, file: string): Spec {
   const imports: string[] = [];
   let story: Story | undefined;
   let rule: Rule | undefined;
-  let fence: { mark: string; quint: boolean } | undefined;
-  fs.readFileSync(path.join(root, file), "utf8").split("\n").forEach((text, i) => {
-    const marker = text.match(/^\s*(`{3,}|~{3,})(.*)$/);
-    const closes = fence && marker && marker[1][0] === fence.mark[0] && marker[1].length >= fence.mark.length && !marker[2].trim();
-    if (closes) fence = undefined;
-    else if (fence?.quint) {
+  scanSpec(text).forEach(({ text, kind }, i) => {
+    if (kind === "quint") {
       rule!.code += text + "\n";
       const def = text.match(/^\s*(?:pure\s+)?(?:def|val|type)\s+(\w+)/);
       if (def) rule!.defs.push(def[1]);
@@ -68,20 +90,20 @@ export function parseSpec(root: string, file: string): Spec {
       if (dep) imports.push(dep[1]);
       qnt.push(text);
       return;
-    } else if (!fence && marker && (marker[1][0] === "~" || !marker[2].includes("`"))) {
-      const quint = marker[2].trim().split(/\s+/)[0] === "quint";
-      if (quint && !rule) throw new Error(`${file}:${i + 1}: a quint block must sit under a ### rule`);
-      fence = { mark: marker[1], quint };
-    } else if (!fence && text.startsWith("## ")) {
+    }
+    if (kind === "open quint" && !rule) throw new Error(`${file}:${i + 1}: a quint block must sit under a ### rule`);
+    if (kind === "story") {
       story = { title: text.slice(3).trim(), line: i + 1, prose: "" };
       stories.push(story);
       rule = undefined;
-    } else if (!fence && text.startsWith("### ")) {
+    } else if (kind === "rule") {
       rule = { key: `${story?.title ?? ""} / ${text.slice(4).trim()}`, line: i + 1, prose: "", code: "", defs: [] };
       if (rules.some((r) => r.key === rule!.key)) throw new Error(`${file}:${i + 1}: duplicate rule "${rule.key}"`);
       rules.push(rule);
-    } else if (rule) rule.prose += text + "\n";
-    else if (story) story.prose += text + "\n";
+    } else if (kind === "prose" || kind === "fenced") {
+      if (rule) rule.prose += text + "\n";
+      else if (story) story.prose += text + "\n";
+    }
     qnt.push(i === 0 ? `module ${name} { // ${text}` : text ? `// ${text}` : "");
   });
   try {
@@ -328,8 +350,9 @@ const toolchainId = () => (toolchain ??= (async () => {
     }
     return dep;
   };
-  // Every file of the tools themselves, as source or as built, and the proof library; the self-test and its fixtures are not part of them.
-  const own = (f: string) => f.endsWith(path.extname(import.meta.filename)) && !f.startsWith("selftest") && !f.startsWith("fixtures");
+  // Every file of the tools themselves, as source or as built, and the proof library; the self-test, its fixtures and the studio are not part of them.
+  // The studio only edits specs and starts checks, so changing it changes no result.
+  const own = (f: string) => f.endsWith(path.extname(import.meta.filename)) && !/^(selftest|fixtures|studio)/.test(f);
   const tools = [...(fs.readdirSync(import.meta.dirname, { recursive: true }) as string[]).filter(own).sort().map((f) => fs.readFileSync(path.join(import.meta.dirname, f), "utf8")), fs.readFileSync(LIB_FILE, "utf8")];
   return [version("@informalsystems/quint"), version("lemmascript"), `dafny@${(await dafnyVersion()).version ?? "none"}`, sha(...tools).slice(0, 12)].join(" ");
 })());
@@ -1132,7 +1155,7 @@ export function newSpec(root: string, name: string): string {
 
 const script = process.argv[1];
 const isMain = !!script && fs.existsSync(script) && fs.realpathSync(script) === fs.realpathSync(import.meta.filename);
-const USAGE = "usage: spec check [--json] | gen [--if-valid] | accept [unproved] | new <name> | init";
+const USAGE = "usage: spec check [--json] | gen [--if-valid] | accept [unproved] | new <name> | init | studio [<example>] [--port <n>]";
 
 if (isMain) {
   const root = process.cwd();
@@ -1158,6 +1181,18 @@ if (isMain) {
     } else if (command === "init" && takes([])) {
       const done = init(root);
       console.log(done.length ? `added ${done.join(", ")}` : "nothing to add");
+    } else if (command === "studio" && takes([], ["*"], ["--port", "*"], ["*", "--port", "*"])) {
+      const { projectsOf, startStudio } = await import("./studio/server.ts");
+      const projects = projectsOf(root);
+      const example = args[0] === "--port" ? undefined : args[0];
+      const port = args.includes("--port") ? Number(args[args.indexOf("--port") + 1]) : undefined;
+      const open = example === undefined ? "." : projects.find((p) => p.id === `examples/${example}`)?.id;
+      if (!open) throw new Error(`no example ${example}; there are: ${projects.slice(1).map((p) => p.name).join(", ") || "none"}`);
+      if (port !== undefined && !(Number.isInteger(port) && port >= 0 && port < 65536)) throw new Error(`--port ${args[args.indexOf("--port") + 1]} is not a port`);
+      const studio = await startStudio({ projects, open, port });
+      const url = `${studio.url}/?project=${encodeURIComponent(open)}`;
+      console.log(`studio: ${url}`);
+      if (process.stdout.isTTY) spawn(process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer" : "xdg-open", [url], { stdio: "ignore", detached: true }).on("error", () => {}).unref();
     } else if (command === "new" && takes(["*"])) {
       console.log(`wrote ${newSpec(root, args[0])}`);
     } else {
