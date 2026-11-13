@@ -30,16 +30,16 @@ export interface Roles {
 
 /**
  * A machine this spec imports under a name, as this spec spells its types. `refines<Alias>(state)` maps the state onto
- * it; each transition then corresponds to the machine's transition of the same name, or to none (AGENTS.md, "Refinement").
+ * it; each transition then corresponds to the machine's transition of the same name, or to none (SPEC.md, "Refinement").
  */
 export interface ImportedMachine { alias: string; module: string; stateType: Json; transitions: Transition[] }
 export interface Refinement { fn: string; of: ImportedMachine }
 
-/** The parameter that names who sent an event (AGENTS.md, "What goes in the Quint blocks"). */
+/** The parameter that names who sent an event (SPEC.md, "What goes in the Quint blocks"). */
 export const SENDER = "by";
-/** The parameter of a `step` rule that names the transition taken (AGENTS.md, "What goes in the Quint blocks"). */
+/** The parameter of a `step` rule that names the transition taken (SPEC.md, "What goes in the Quint blocks"). */
 export const VIA = "via";
-/** The last parameter of a `step` rule that sees what the transition output (AGENTS.md, "What goes in the Quint blocks"). */
+/** The last parameter of a `step` rule that sees what the transition output (SPEC.md, "What goes in the Quint blocks"). */
 const OUT = "out";
 /** The prefixes that make a definition a rule; all but `law` and `refines` are rules about states. */
 const STATE_ROLES = ["always", "sometimes", "step", "leadsTo"];

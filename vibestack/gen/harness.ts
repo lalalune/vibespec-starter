@@ -115,7 +115,7 @@ export function harness(
   const frame = (conditions: string[], set: Record<string, string>) =>
     `all { ${[...conditions, ...vars.map((v) => `${v}' = ${set[v] ?? v}`)].join(", ")} }`;
   const call = (fn: string, params: string[], from = "state") => `M::${fn}(${[from, ...params].join(", ")})`;
-  /** The step from `state` to `after` leaves the abstract state as it was, or is the abstract step of its name (AGENTS.md, "Refinement"; gen/typescript.ts). */
+  /** The step from `state` to `after` leaves the abstract state as it was, or is the abstract step of its name (SPEC.md, "Refinement"; gen/typescript.ts). */
   const refined = (t: Transition, after: string) => {
     const A = `D_${refines!.of.module}`;
     const [from, to] = ["state", after].map((s) => `M::${refines!.fn}(${s})`);

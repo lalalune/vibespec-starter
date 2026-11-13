@@ -96,7 +96,7 @@ Asynchronous Effect programs are tested, not proved. Each `proof` line of
 
 `apps/*` deploy; `packages/*` are shared by them; `vibestack/` is the tools;
 `vibestack/examples/*` stand alone. The root's `check` is also the check of
-each package a directory of `spec/` names (AGENTS.md, "One spec tree"); a
+each package a directory of `spec/` names (SPEC.md, "One spec tree"); a
 package with a `spec/` of its own, as Studio and each example have, is a
 project of its own. ESLint (`eslint.config.js`) refuses an
 import of another package beyond its `exports`, React in domain and tool

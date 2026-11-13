@@ -73,7 +73,7 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
   const stem = (file: string) => file.replaceAll(path.sep, "/").replace(/^(?:spec|std)\//, "").replace(/(^|\/)index\.md$|\.md$/, "");
   const links = decls.filter((d) => d.kind === "import").map((d) => {
     const dep = deps.get(d.protoName) ?? fail(`internal: ${d.protoName} has no model`);
-    // How this spec writes the import: the path relative to it, and the name it ends in (AGENTS.md, "Using one spec from another").
+    // How this spec writes the import: the path relative to it, and the name it ends in (SPEC.md, "Using one spec from another").
     const rel = path.posix.relative(path.posix.dirname(stem(source)), stem(dep.source));
     const from = rel.startsWith("../") ? rel : `./${rel}`;
     const short = from.split("/").pop()!;
@@ -107,13 +107,13 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
   const isSampleSet = (d: Json) => d.qualifier === "pureval" && d.name.endsWith("Values") && inferred(d.id)?.kind === "set";
   const ownSamples = defs.filter(isSampleSet).map((d) => ({ name: d.name as string, elem: inferred(d.id)!.elem as Json }));
   // `weight_<event>`, `fair_<event>` and `within_<rule>` tell the simulator how often to try an event, which events a run
-  // cannot put off for ever and how soon a `leadsTo` rule is met (AGENTS.md, "What goes in the Quint blocks"); like
+  // cannot put off for ever and how soon a `leadsTo` rule is met (SPEC.md, "What goes in the Quint blocks"); like
   // sample sets, they never reach TypeScript.
   const settings = defs.filter((d) => d.qualifier === "pureval" && /^(weight|fair|within)_/.test(d.name));
   const code = defs.filter((d) => !isSampleSet(d) && !settings.includes(d));
   /** Names only the simulator reads; a definition that used one would refer to nothing in TypeScript. */
   const simulatorOnly = new Set([...ownSamples, ...settings, ...links.flatMap((l) => l.exports.samples.map((s) => ({ name: qualify(l.alias, s.name) })))].map((d) => d.name as string));
-  // `const f: (A, B) => R` is an opaque function: no body, only the laws stated with it (AGENTS.md, "Opaque functions").
+  // `const f: (A, B) => R` is an opaque function: no body, only the laws stated with it (SPEC.md, "Opaque functions").
   const consts = decls.filter((d) => d.kind === "const");
   for (const d of consts) if (d.typeAnnotation?.kind !== "oper" || !d.typeAnnotation.args.length) fail(`${d.name}: a \`const\` is an opaque function, written \`const ${d.name}: (A, B) => R\` on one line`);
   const localNames = new Set([...code, ...consts].map((d) => d.name as string));
@@ -166,7 +166,7 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
   const funs = code.filter((d) => d.qualifier === "puredef").sort(bySpecOrder);
   for (const d of funs) if (d.expr.kind !== "lambda") fail(`${d.name}: a \`pure def\` takes parameters; for a constant write \`pure val ${d.name} = …\``);
   // A rule must be a definition: as a `pure val` it would be generated as a constant and never checked.
-  for (const v of vals) if (RULE_OR_GUARD.test(v.name) && typeOf(v.id).kind === "bool") fail(`${v.name}: a rule or guard is a \`pure def\` with parameters (AGENTS.md, "What goes in the Quint blocks"), not a \`pure val\`; if it is a constant, name it otherwise`);
+  for (const v of vals) if (RULE_OR_GUARD.test(v.name) && typeOf(v.id).kind === "bool") fail(`${v.name}: a rule or guard is a \`pure def\` with parameters (SPEC.md, "What goes in the Quint blocks"), not a \`pure val\`; if it is a constant, name it otherwise`);
   const initial = vals.find((d) => d.name === "initial");
   // The machines imported under a name, as this module spells their types: what a `refines<Alias>` may map onto.
   const machines = links.flatMap((l): ImportedMachine[] => {

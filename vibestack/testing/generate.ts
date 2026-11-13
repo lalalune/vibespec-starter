@@ -89,7 +89,7 @@ export async function generateTests(packageDir: string): Promise<Generated> {
       importing(from, "{ conformanceTests }", library("conformance.ts")),
       importing(from, "* as machine", path.join(root, machine)),
       importing(from, "* as app", path.join(root, driver)), "",
-      // `options` is the driver module's optional export: the Options of AGENTS.md, "Conformance".
+      // `options` is the driver module's optional export: the Options of SPEC.md, "Conformance".
       `conformanceTests(${JSON.stringify(name)}, machine, app.driver, { ...app.options, dir: \`\${import.meta.dirname}/${from(path.join(root, "test/counterexamples", name))}\` });`,
     ]);
   }
