@@ -52,6 +52,9 @@ Every project built here uses this, and nothing beside it:
 | `vibestack/` | the tools: the `spec` command, Studio, and what any project uses but does not own (`vibestack/testing`, `vibestack/design`, `vibestack/stories`) |
 | `vibestack/examples/` | standalone projects, each with its own install; never part of the workspace |
 
+[docs/architecture.md](docs/architecture.md) maps what is generated from what,
+which test is for what, and what each green result means.
+
 A package states what it offers in `exports`; import a package by name, never
 by a path into its `src/`. Domain code does not import React, and a UI package
 holds no business rules. A shared type lives with the contract that owns it.
