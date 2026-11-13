@@ -4,9 +4,10 @@
 
 **Write user stories. Get formally verified TypeScript.**
 
-One Markdown file per application holds the stories, the rules each story
-implies, and under every rule a few lines of [Quint](https://quint-lang.org)
-that say it exactly. Everything else is generated, simulated and proved with
+A Markdown spec tree starts at `spec/index.md` and holds the stories, the
+rules each story implies, and under every rule a few lines of
+[Quint](https://quint-lang.org) that say it exactly. Link to child specs to
+keep each area small. Everything else is generated, simulated and proved with
 [Dafny](https://dafny.org). The coding agent in your session keeps prose and
 model in step; you sign off.
 
@@ -42,9 +43,9 @@ there:
 
 ```mermaid
 flowchart LR
-  spec["spec/order.md<br/>stories · rules · Quint"]
+  spec["spec/index.md + child specs<br/>stories · rules · Quint"]
   qnt["Quint model<br/>+ generated harness"]
-  ts["gen/order.ts<br/>types · guards · transitions · rules"]
+  ts["gen/*.ts<br/>types · guards · transitions · rules"]
   app["src/<br/>hand-written logic and shell"]
 
   spec -- tangle --> qnt
@@ -57,14 +58,16 @@ flowchart LR
   app -. "LemmaScript + Dafny" .-> v2
 ```
 
-The example is an order checkout (`spec/order.md`, about 250 lines): fill a
-draft, submit, pay in instalments, hold, cancel, reopen.
+The [order example](examples/order/README.md) is a checkout
+(`examples/order/spec/index.md`, about 250 lines): fill a draft, submit, pay
+in instalments, hold, cancel, reopen. The template's own `spec/index.md` is
+blank.
 
 | Order example | |
 |---|---|
 | Model | 10 transitions, 6 `always`, 1 `step`, 3 `sometimes` rules |
 | Proved, spec | 72 obligations, all states and inputs |
-| Proved, `src/ledger.ts` | 2 hand-written functions, 3 obligations |
+| Proved, `examples/order/src/ledger.ts` | 2 hand-written functions, 3 obligations |
 
 ## Quick start
 
@@ -73,7 +76,7 @@ draft, submit, pay in instalments, hold, cancel, reopen.
 
 1. Click **[Use this template](https://github.com/lalalune/vibespec-starter/generate)**
    to create your own repository, then clone it.
-2. Install, check, and run the example:
+2. Install and check the template and examples:
 
 ```bash
 npm install
@@ -88,8 +91,9 @@ npm run demo
 ```
 
 `npm install` builds the `spec` command and generates `gen/` when every spec
-is valid. `npm run check` runs every stage and ends with one `next:` line
-naming what to do first. `npm run demo` drives the verified order checkout
+is valid. `npm run check` checks the blank template and each example workspace,
+ending each project with a `next:` line naming what to do first.
+`npm run demo` generates and runs `examples/order`, driving the verified checkout
 through a scripted session; every `✗` is a rule refusing an event:
 
 ```
@@ -107,8 +111,8 @@ balance 0
 
 ### 1. Read a spec
 
-In [spec/order.md](spec/order.md), `##` is a story, `###` a rule, and the
-`quint` block under a rule is its formal half.
+In [the order spec](examples/order/spec/index.md), `##` is a story, `###` a
+rule, and the `quint` block under a rule is its formal half.
 
 ````markdown
 ## Story: Check out
@@ -151,11 +155,11 @@ its role ([all of them](AGENTS.md#what-goes-in-the-quint-blocks)):
 | `pure def sometimesX(o: Order): bool` | some reachable state has it |
 | `pure def lawX(…): bool` | true for every argument |
 
-`gen/order.ts` gets the same definitions in TypeScript. Each transition
-carries one obligation per rule, which Dafny proves:
+The example's `gen/index.ts` gets the same definitions in TypeScript. Each
+transition carries one obligation per rule, which Dafny proves:
 
 ```ts
-/** Story: Check out / A payment never exceeds the balance (spec/order.md:73) */
+/** Story: Check out / A payment never exceeds the balance (spec/index.md:73) */
 //@ pure
 export function pay(o: Order, amount: number): Order {
   //@ ensures (inv(o) && canPay(o, amount)) ==> alwaysPendingHasBalance(\result)
@@ -174,15 +178,33 @@ export function inv(current: Order): boolean               // every always rule 
 ### 2. Start your own application
 
 ```bash
-npm run new -- tally
+npm run new
 ```
 
-This writes `spec/tally.md`, a [starter spec](AGENTS.md#writing-a-spec)
-that passes every stage but `review`: one story, a state, one guarded
-transition, an `always` and a `sometimes` rule. Replace its story with yours.
-When you no longer need the order example, delete `spec/order.*`, everything
-in `src/` and `test/` (the example's logic, shell and tests), and the `demo` script in
-`package.json`.
+This fills the blank `spec/index.md` with a
+[starter spec](AGENTS.md#writing-a-spec) that passes every stage but `review`:
+one story, a state, one guarded transition, an `always` and a `sometimes`
+rule. Replace its story with yours. The order app remains in `examples/order/`.
+
+As the application grows, `npm run new -- billing` creates
+`spec/billing/index.md`, and `npm run new -- billing/payments` creates
+`spec/billing/payments/index.md`. Once those areas exist, link from an index
+to its child specs:
+
+```markdown
+# Application
+
+[Billing](./billing/)
+```
+
+Directory links resolve to `index.md`. `check` discovers every Markdown spec
+recursively, including children; links organize navigation, while Quint
+imports share definitions. For example, a billing spec can write
+`import currency.* from "../shared/currency"` under a rule. The generated
+module names reflect paths: `spec/index.md` → `gen/index.ts`,
+`spec/billing/index.md` → `gen/billing.ts`, and
+`spec/billing/payments/index.md` → `gen/billing__payments.ts`.
+All paths stay inside `spec/`; see the [spec reference](AGENTS.md#writing-a-spec).
 
 ### 3. Write a story; let the agent write the rules
 
@@ -239,18 +261,18 @@ Weaken `canSubmit` in the order example to `o.status == Draft`, and the
 `always` stage finds the shortest trace to a broken rule:
 
 ```
-✗ always    spec/order.md: a reachable state breaks "Story: Check out /
-            A pending order still has a balance" (spec/order.md:93)
+✗ always    spec/index.md: a reachable state breaks "Story: Check out /
+            A pending order still has a balance" (spec/index.md:93)
       initial                        -> {"status":"Draft","units":0,"due":0,"paid":0}
       {"type":"submit"}              -> {"status":"Pending","units":0,"due":0,"paid":0}
-      last event: "Story: Check out / Only a non-empty draft can be submitted" (spec/order.md:63); its guard canSubmit let it through
+      last event: "Story: Check out / Only a non-empty draft can be submitted" (spec/index.md:63); its guard canSubmit let it through
       fallback: refuse submit when its result would break alwaysPendingHasBalance
-      seed …; to simulate again: npx quint run gen/order.run.qnt …
+      seed …; to simulate again: npx quint run gen/index.run.qnt …
 ```
 
 The fix is the *reason*, written as a rule in the user's words. Rules found
 this way say so: see "No more can be removed than the order holds" in
-[spec/order.md](spec/order.md).
+[the order spec](examples/order/spec/index.md).
 
 ### 5. When a proof fails
 
@@ -265,7 +287,7 @@ decide whether the obligation holds in every state that satisfies the rules.
 If you can name one where it does not, as with the paid draft here, no proof
 can help.
 
-1. **Prove it**, if it holds, in `spec/<name>.proof.dfy`, with Dafny lemmas
+1. **Prove it**, if it holds, in `spec/<path>.proof.dfy`, with Dafny lemmas
    only. The tools refuse anything that would assume rather than prove.
 2. **State the missing fact** as a new `always` rule, if it does not. "An
    order on hold still has a balance" in the order example was found this way.
@@ -276,7 +298,7 @@ can help.
 ### 6. Build on the generated code
 
 Application code goes through `parseEvent`, `enabled` and `step`, as
-[src/app.ts](src/app.ts) does:
+[the order shell](examples/order/src/app.ts) does:
 
 ```ts
 dispatch(id: string, input: unknown): Order {
@@ -290,7 +312,7 @@ dispatch(id: string, input: unknown): Order {
 
 Logic Quint cannot express, such as a loop over an event log, is written in
 TypeScript with [LemmaScript](https://github.com/midspiral/LemmaScript)
-contracts and proved too. From [src/ledger.ts](src/ledger.ts):
+contracts and proved too. From [the order ledger](examples/order/src/ledger.ts):
 
 ```ts
 export function replay(events: Event[]): Order {
@@ -310,19 +332,20 @@ check that each rule's sentence and its Quint say the same thing. Then:
 npm run accept
 ```
 
-`accept` checks afresh and records what `review` lists in the lock files,
+`accept` checks afresh and records what `review` lists in `spec/lock.json`,
 [all or nothing](AGENTS.md#review). Commit them with the spec.
 
 ## Commands
 
 | Command | Does |
 |---|---|
-| `npm run check` | Every stage below; ends with one `next:` line. `rm -rf .spec-cache` runs it afresh |
-| `npm run -s check -- --json` | The same, as one JSON object ([shape](AGENTS.md#changing-the-tools)) |
+| `npm run check` | Every stage below, for the template and example workspaces; ends each project with a `next:` line |
+| `npx spec check --json` | The current project's check as one JSON object ([shape](AGENTS.md#changing-the-tools)) |
 | `npm run gen` | Generates `gen/` only |
 | `npm run accept` | The user's sign-off: checks afresh and records what `review` lists, [all or nothing](AGENTS.md#review) |
 | `npm run accept -- unproved` | Records the listed obligations as simulated only. The user's decision |
-| `npm run new -- <name>` | Writes a [starter spec](AGENTS.md#writing-a-spec) |
+| `npm run new` / `npm run new -- <path>` | Fills an empty root index or creates a child [starter spec](AGENTS.md#writing-a-spec) |
+| `npx spec migrate` | Consolidates old review ledgers into `spec/lock.json`, preserving their recorded approvals |
 | `npm run demo` | A scripted session against the verified core |
 | `npm run check:dashboard` | `check` on `examples/dashboard` |
 | `npm run selftest` | Breaks the pipeline one way at a time and checks each break is caught |
@@ -347,7 +370,7 @@ Stages run cheapest first. `✓` passed, `✗` failed, `-` skipped: blocked by a
 | `sometimes` | Can each `sometimes` goal be reached? Does each guard allow its event in some reachable state? | a witness trace is a proof; a failure means 200,000 traces found none. [Guards never seen to refuse](AGENTS.md#writing-good-rules) are listed, not failed |
 | `replay` | Does the generated TypeScript mean what the Quint means? | 400 sampled traces and every witness: every state, every law, and every definition the simulator can evaluate. The rest are listed |
 | `types` | Does the application fit the generated contract? | exact |
-| `proof` | Does every transition preserve every `always` and `step` rule, does every law hold, and does hand-written logic meet its `//@` contract? | all states, all inputs, counted per obligation under a fixed resource limit. What Dafny cannot prove alone is proved in a proof file (`spec/<name>.proof.dfy`: lemmas only, checked to add nothing but proof), or listed; a listed obligation passes only once the user records it in `spec/unproved.lock.json`, for that text of the unit |
+| `proof` | Does every transition preserve every `always` and `step` rule, does every law hold, and does hand-written logic meet its `//@` contract? | all states, all inputs, counted per obligation under a fixed resource limit. What Dafny cannot prove alone is proved in a proof file (`spec/<path>.proof.dfy`: lemmas only, checked to add nothing but proof), or listed; a listed obligation passes only once the user records it in `spec/lock.json` under `unproved`, for that text of the unit |
 | `tests` | Does the shell work with the real services around it? | whole user journeys, where the checks above cannot see ([AGENTS.md](AGENTS.md#tests)) |
 | `review` | Does every story have rules and every rule Quint? Has every new or changed story, rule and `//@` contract been reconciled? | exact |
 
@@ -358,11 +381,9 @@ Keep `spec/`, `src/`, `test/` and `tools/` in git, lock files included.
 
 | Path | Role |
 |---|---|
-| `spec/order.md` | The source of truth: stories, rules, Quint |
-| `spec/order.lock.json` | Review ledger of stories and rules, written by `npm run accept` |
-| `spec/src.lock.json` | Review ledger of the `//@` contracts in `src/`, written by `npm run accept`. Absent when there are none |
-| `spec/<name>.proof.dfy`, `src/<path>.proof.dfy` | Proofs, in Dafny lemmas, of obligations Dafny cannot prove alone. Written by the agent; optional |
-| `spec/unproved.lock.json` | Obligations accepted as simulated only, per unit and tied to its text, written by `npm run accept -- unproved`. Absent when there are none |
+| `spec/index.md`, `spec/**/index.md`, `spec/**/*.md` | The spec tree: stories, rules, Quint and links; the template root is blank |
+| `spec/lock.json` | Versioned review ledger: `specs` by source path, `contracts` by source file, and `unproved` by proof unit |
+| `spec/<path>.proof.dfy`, `src/<path>.proof.dfy` | Proofs, in Dafny lemmas, of obligations Dafny cannot prove alone. Written by the agent; optional |
 | `.spec-cache/` | Remembered results, and `lock`: one check or accept per project at a time |
 | `.claude/skills/sync/SKILL.md` | How the agent in your session keeps stories, rules and model in step |
 | `.claude/skills/design/SKILL.md` | How the agent designs what a person sees: only what the spec asks, visual first, few words |
@@ -370,9 +391,10 @@ Keep `spec/`, `src/`, `test/` and `tools/` in git, lock files included.
 | `tools/prove.ts`, `tools/proof/lib.dfy` | The proof stage for one unit, with the checks on proof files, and the library of general lemmas proof files call |
 | `tools/gen.ts`, `tools/gen/` | Quint → TypeScript and the simulation harness |
 | `tools/selftest.ts`, `tools/fixtures/` | Tests of the pipeline itself, and the small specs they use |
-| `src/ledger.ts` | Hand-written logic, proved against the generated contract |
-| `src/app.ts`, `src/demo.ts` | Unverified shell: storage, input parsing, error reporting; and the demo |
-| `test/app.test.ts` | Tests of the shell, run by the `tests` stage |
+| `examples/order/src/ledger.ts` | Hand-written logic, proved against the generated contract |
+| `examples/order/src/app.ts`, `examples/order/src/demo.ts` | Unverified shell: storage, input parsing, error reporting; and the demo |
+| `examples/order/test/app.test.ts` | Tests of the shell, run by the `tests` stage |
+| `examples/order/` | Complete checkout example, with its own spec, shell and tests |
 | `examples/dashboard/` | A larger, synthesized example, as a separate package |
 | `writeup.html` | A narrative explainer of the approach |
 | `.github/workflows/check.yml` | Continuous integration: `npm run check` without the cache |
@@ -413,7 +435,7 @@ Two more examples exercise different boundaries:
 Proved for all states and inputs: the initial state satisfies every `always`
 rule, every transition preserves every `always` and `step` rule, every law
 holds, and hand-written `//@ ensures` hold, except for obligations listed in
-`spec/unproved.lock.json` (spec units only; hand-written code must be proved)
+`spec/lock.json` under `unproved` (spec units only; hand-written code must be proved)
 and those resting on them, which every proof line lists. The order example has
 none. Proof files add only lemmas, and those are proved too
 ([what they may use](AGENTS.md#proof-files)).
@@ -424,12 +446,12 @@ Trusted, not proved:
   it says is a judgement. The `review` stage makes sure someone made it.
 - **The generator** (`tools/gen.ts`, `tools/gen/`). Simulation checks the Quint model; the proof checks the
   TypeScript. `replay` ties the two together on sampled traces only.
-- **The shell** (`src/app.ts`), LemmaScript, Dafny and Quint.
+- **The shell** (`examples/order/src/app.ts`), LemmaScript, Dafny and Quint.
 - **Built-ins.** The proofs assume that built-ins such as `Math` and
   `Array.prototype` are not modified at run time, anywhere in the process.
 - **Preconditions.** A `//@ requires` that can never hold makes a contract
   vacuous: everything after it is proved. That is why contracts are reviewed,
-  through `spec/src.lock.json`.
+  through `spec/lock.json` under `contracts`.
 - **Numbers.** The proofs treat `number` as an unbounded integer. The
   generated `parseEvent` admits only safe integers, but nothing stops sums of
   them from passing 2^53, where JavaScript arithmetic is no longer exact.

@@ -5,8 +5,8 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Model } from "./gen.ts";
 import { LIB_FILE, prove, run, type Proof } from "./prove.ts";
-import { readSpecs, badSpecName, type Spec } from "./parse.ts";
-import { contracts, pending, pendingContracts, acceptReviews, acceptContracts, moved, showPending, ledgerFile, readLedger, writeLedger, type Pending, type Accepted } from "./review.ts";
+import { readSpecs, badSpecName, specFiles, specName, type Spec } from "./parse.ts";
+import { contracts, pending, pendingContracts, acceptAllReviews, pendingSpecs, migrateLocks, moved, showPending, ledgerFile, readLedger, writeLedger, type Pending, type Accepted } from "./review.ts";
 import { entry, remembered, collectGarbage, dafnyVersion, type Memory } from "./cache.ts";
 import { gen, generated, typecheckAll, proofUnits, strayProofFiles } from "./units.ts";
 import { SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, STEPS, DEPTHS, SEARCHED, simulate, search, firstBreak, showTrace, replay, type Step } from "./simulate.ts";
@@ -103,6 +103,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
   let specs: Spec[];
   try {
     specs = readSpecs(root);
+    pendingSpecs(root, specs); // Validate the ledger before running any stages.
   } catch (e) {
     report(false, "model", (e as Error).message);
     return false;
@@ -356,8 +357,10 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
   // A spec that is not a valid model has nothing to reconcile yet. Everything is recorded at once, or nothing is.
   const todos = valid.map((spec) => ({ spec, todo: pending(root, spec, specs) }));
   const contractsToDo = pendingContracts(root);
+  const removedSpecs = pendingSpecs(root, specs);
   const formal = todos.every(({ todo }) => !todo.some((t) => t.status === "story has no rules" || t.status === "not formalized"));
   const record = accept === "reviews" && allOk && formal;
+  if (record) acceptAllReviews(root, specs);
   const why = accept !== "reviews" ? "then run `npm run accept`" : !allOk ? "nothing was accepted: fix the stages above first" : "every story needs rules and every rule a quint block before anything can be accepted";
   const items = (todo: Pending[], heading: string) => {
     const shown = moved(todo);
@@ -365,14 +368,14 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
   };
   for (const { spec, todo } of todos) {
     if (record && todo.length) {
-      acceptReviews(root, spec, specs);
-      report(true, "review", `${spec.file}: recorded as reconciled: ${todo.map((t) => t.rule?.key ?? t.story?.title ?? t.where.slice(t.where.indexOf("  ") + 2)).join("; ")}`, "", spec.file);
+      report(true, "review", `${spec.file}: recorded as reconciled: ${todo.map((t) => t.rule?.key ?? t.story?.title ?? (t.where.includes("  ") ? t.where.slice(t.where.indexOf("  ") + 2) : t.where)).join("; ")}`, "", spec.file);
     } else report(!todo.length, "review", todo.length ? `${spec.file}: ${todo.length} item(s) to reconcile, ${why}` : `${spec.file}: prose and model reconciled for all ${spec.rules.length} rules and ${spec.stories.length} stories`,
       items(todo, "What moved, in full"), spec.file);
   }
+  if (removedSpecs.length) report(record, "review", record ? "removed specs recorded as reconciled" : `${removedSpecs.length} removed spec(s) to reconcile, ${why}`,
+    removedSpecs.map((p) => "    " + showPending(p)).join("\n"));
   const proved = contracts(root).size;
   if (record && contractsToDo.length) {
-    acceptContracts(root);
     report(true, "review", `src/: recorded as reconciled: ${contractsToDo.map((t) => t.where).join("; ")}`, "", "src/");
   } else if (contractsToDo.length) report(false, "review", `src/: ${contractsToDo.length} contract(s) to reconcile, ${why}`, items(contractsToDo, "The contracts, in full"), "src/");
   else if (proved) report(true, "review", `src/: the //@ contracts of all ${proved} proved files reconciled`, "", "src/");
@@ -393,7 +396,7 @@ export function init(root: string): string[] {
   };
   for (const doc of [".claude/skills/sync/SKILL.md", ".claude/skills/design/SKILL.md", "AGENTS.md", "CONTRIBUTING.md"]) add(doc, () => fs.readFileSync(path.join(pkg, doc), "utf8"));
   add("tsconfig.json", () => JSON.stringify({ compilerOptions: { target: "es2023", module: "nodenext", strict: true, noEmit: true, allowImportingTsExtensions: true, erasableSyntaxOnly: true, skipLibCheck: true, types: ["node"] }, include: ["src", "test", "gen/*.ts"] }, null, 2) + "\n");
-  if (!fs.existsSync(path.join(root, "spec"))) { fs.mkdirSync(path.join(root, "spec")); done.push("spec/"); }
+  add("spec/index.md", () => "");
   const ignore = path.join(root, ".gitignore");
   const ignored = fs.existsSync(ignore) ? fs.readFileSync(ignore, "utf8") : "";
   const missing = ["gen/", ".spec-cache/", ".studio/"].filter((l) => !ignored.split("\n").includes(l));
@@ -451,18 +454,28 @@ pure def sometimesFull(t: Tally): bool = t.count == limit
 ${fence}
 `;
 
-/** Write spec/<name>.md, a starter spec; returns its path. Nothing is overwritten. */
-export function newSpec(root: string, name: string): string {
-  const bad = badSpecName(name);
-  if (bad) throw new Error(`spec new ${name}: ${bad}`);
-  const file = `spec/${name}.md`;
-  fs.mkdirSync(path.join(root, "spec"), { recursive: true });
-  try {
-    fs.writeFileSync(path.join(root, file), starter(name), { flag: "wx" });
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "EEXIST") throw new Error(`${file} already exists; nothing was written`);
-    throw e;
+/** Write a directory's index without replacing an existing specification. */
+export function newSpec(root: string, name = ""): string {
+  const parts = name === "index" || !name ? [] : name.split("/");
+  for (const part of parts) {
+    const bad = badSpecName(part);
+    if (bad) throw new Error(`spec new ${name}: ${bad}`);
   }
+  const file = ["spec", ...parts, "index.md"].join("/");
+  const collision = specFiles(root).find((existing) => existing !== file && specName(existing) === specName(file));
+  if (collision) throw new Error(`${file} and ${collision} would have the same module name; nothing was written`);
+  let directory = root;
+  for (const part of ["spec", ...parts]) {
+    directory = path.join(directory, part);
+    if (fs.existsSync(directory) && fs.lstatSync(directory).isSymbolicLink()) throw new Error(`${file}: spec directories may not be symlinks`);
+    fs.mkdirSync(directory, { recursive: true });
+  }
+  const target = path.join(root, file);
+  if (fs.existsSync(target)) {
+    if (fs.lstatSync(target).isSymbolicLink() || parts.length || fs.readFileSync(target, "utf8") !== "")
+      throw new Error(`${file} already exists; nothing was written`);
+    fs.writeFileSync(target, starter("Application"));
+  } else fs.writeFileSync(target, starter(parts.at(-1) ?? "Application"), { flag: "wx" });
   return file;
 }
 
@@ -478,7 +491,7 @@ const isMain = (): boolean => {
   }
 };
 
-const USAGE = "usage: spec check [--json] | watch | gen | accept | accept unproved | new <name> | init | studio [<example>] [--port <n>]";
+const USAGE = "usage: spec check [--json] | watch | gen | accept | accept unproved | new [<path>] | init | migrate | studio [<example>] [--port <n>]";
 
 /**
  * Check, then check again whenever spec/, src/, test/ or tsconfig.json changes. One process stays warm between runs
@@ -548,7 +561,13 @@ if (isMain()) {
         console.error(e.message);
         process.exitCode = 1;
       });
-    } else if (command === "new" && takes(["*"])) {
+    } else if (command === "migrate" && takes([])) {
+      const release = lockProject(root);
+      try {
+        const files = migrateLocks(root);
+        console.log(files.length ? `migrated ${files.length} ledgers to spec/lock.json; existing reviews and proof acceptance preserved` : "no legacy ledgers to migrate");
+      } finally { release(); }
+    } else if (command === "new" && takes([], ["*"])) {
       console.log(`wrote ${newSpec(root, args[0])}; run \`npm run check\``);
     } else {
       console.error(command === "accept" ? `accept takes no argument, or \`unproved\`; not ${args.join(" ")}\n${USAGE}` : USAGE);

@@ -33,4 +33,4 @@ Not modelled: the chat app, HTTP, spreadsheet access, the web dashboard.
   showing the column is not negative; the proof refused it.
 
 Obligations that hold in simulation only are listed in
-`spec/unproved.lock.json`; `npm run check` shows where each stands.
+`spec/lock.json` under `unproved`; `npm run check` shows where each stands.

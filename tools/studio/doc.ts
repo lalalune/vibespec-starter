@@ -3,6 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { danglingCitations, dependencies, parseSpec, scanSpec, type Spec } from "../spec.ts";
+import { readSpecs, specName } from "../parse.ts";
 
 /** A run of prose, or the code of one quint block. */
 export interface Item { quint: boolean; text: string }
@@ -127,8 +128,11 @@ function moved(before: string[], after: string[]): Set<string> {
   return new Set(after.filter((id) => !kept.has(id)));
 }
 
-const specsOf = (root: string, texts: Record<string, string>): Spec[] =>
-  Object.entries(texts).flatMap(([file, text]) => { try { return [parseSpec(root, file, text)]; } catch { return []; } });
+const specsOf = (root: string, texts: Record<string, string>): Spec[] => {
+  try { return readSpecs(root, texts); } catch {
+    return Object.entries(texts).flatMap(([file, text]) => { try { return [parseSpec(root, file, text)]; } catch { return []; } });
+  }
+};
 
 /** What changed between the specs as the agent last synced them and as they are now, with what each change asks for. */
 export function manifestOf(root: string, baseline: Record<string, string>, current: Record<string, string>, ids: Ids): Manifest {
@@ -140,7 +144,12 @@ export function manifestOf(root: string, baseline: Record<string, string>, curre
   const add = (c: Omit<Change, "todo">, todo: string[]) => changes.push({ ...c, todo });
 
   for (const f of Object.keys(current)) if (!(f in baseline)) add({ action: "added", kind: "spec", spec: f, key: f, what: [] }, ["A new spec: its stories and rules are listed below"]);
-  for (const f of Object.keys(baseline)) if (!(f in current)) add({ action: "deleted", kind: "spec", spec: f, key: f, what: [] }, ["The spec is gone, with its review ledger and proof file: remove code in src/ and tests that import gen/" + path.basename(f, ".md") + ".ts or cite it"]);
+  for (const f of Object.keys(baseline)) if (!(f in current)) add({ action: "deleted", kind: "spec", spec: f, key: f, what: [] }, ["The spec and proof file are gone: review its removal and code in src/ and tests that import gen/" + specName(f) + ".ts or cite it"]);
+  for (const [file, text] of Object.entries(current)) if (file in baseline && text !== baseline[file]) {
+    const was = parseDoc(baseline[file]);
+    const now = parseDoc(text);
+    if (was.title !== now.title || was.body !== now.body) add({ action: "changed", kind: "spec", spec: file, key: file, what: ["title or introduction"] }, ["Review the spec's title, introduction and links to other specs"]);
+  }
 
   // Order: each list of siblings, as baseline ids, against the same list in the baseline.
   const byId = new Map(after.map((n) => [n.id, n]));
@@ -210,7 +219,7 @@ export function manifestOf(root: string, baseline: Record<string, string>, curre
     for (const s of specs) if (s.imports.includes(spec.name)) visit(s, `imports ${spec.name}`);
   };
   for (const s of specs) if (edited.includes(s.file)) visit(s, "edited");
-  const modules = new Set(regenerate.map((r) => r.gen.slice(4)).concat(Object.keys(baseline).filter((f) => !(f in current)).map((f) => `${path.basename(f, ".md")}.ts`)));
+  const modules = new Set(regenerate.map((r) => r.gen.slice(4)).concat(Object.keys(baseline).filter((f) => !(f in current)).map((f) => `${specName(f)}.ts`)));
   const code = ["src", "test"].flatMap((dir) => fs.existsSync(path.join(root, dir)) ? (fs.readdirSync(path.join(root, dir), { recursive: true }) as string[]).map((f) => path.join(dir, f)) : [])
     .filter((f) => /\.[cm]?tsx?$/.test(f) && [...modules].some((m) => fs.readFileSync(path.join(root, f), "utf8").includes(`gen/${m}`))).map((f) => f.split(path.sep).join("/")).sort();
   let citations: string[] = [];

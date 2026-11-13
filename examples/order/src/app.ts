@@ -1,5 +1,5 @@
 // The unverified shell: storage and error reporting around the verified core.
-import { type Event, type Order, enabled, parseEvent, step } from "../gen/order.ts";
+import { type Event, type Order, enabled, parseEvent, step } from "../gen/index.ts";
 import { balance, replay } from "./ledger.ts";
 
 export class Rejected extends Error {}

@@ -5,7 +5,7 @@ import ts from "typescript";
 import { generate, type Model, type Origin } from "./gen.ts";
 import { fail } from "./gen/types.ts";
 import { run, type Unit } from "./prove.ts";
-import type { Spec } from "./parse.ts";
+import { readSpecs, type Spec } from "./parse.ts";
 import { entry, recall, store, type Memory } from "./cache.ts";
 import { srcUnits } from "./util.ts";
 
@@ -24,10 +24,10 @@ function genDir(root: string): string {
 }
 
 /** Quint's errors, at their places in the Markdown: tangling keeps line numbers. */
-function typeErrors(spec: Spec, ir: any, out: string): Error {
+function typeErrors(spec: Spec, ir: any, out: string, specs: Spec[]): Error {
   const errors = (ir?.errors ?? []).map((e: any) => {
     const at = e.locs?.[0];
-    const file = at?.source ? `spec/${path.basename(at.source, ".qnt")}.md` : spec.file;
+    const file = specs.find((s) => s.name === path.basename(at?.source ?? "", ".qnt"))?.file ?? spec.file;
     return at ? `${file}:${at.start.line + 1}:${at.start.col + 1}  ${e.explanation}` : e.explanation;
   });
   return new Error(errors.join("\n") || out);
@@ -57,7 +57,7 @@ export async function gen(root: string, spec: Spec, models = new Map<string, Mod
   const typed = await run("quint", ["typecheck", "--out", out, `gen/${spec.name}.qnt`], root);
   const ir = fs.existsSync(out) ? JSON.parse(fs.readFileSync(out, "utf8")) : { errors: [] };
   fs.rmSync(out, { force: true });
-  if (!typed.ok) throw typeErrors(spec, ir, typed.out);
+  if (!typed.ok) throw typeErrors(spec, ir, typed.out, readSpecs(root));
   return generated(root, spec, ir, models);
 }
 
@@ -83,7 +83,7 @@ export function typecheckAll(memory: Memory, specs: Spec[]): Map<string, Promise
       let ir: any;
       try { ir = JSON.parse(fs.readFileSync(out, "utf8")); } catch { ir = undefined; }
       fs.rmSync(out, { force: true });
-      if (!typed.ok || !ir || ir.errors?.length) throw typeErrors(spec, ir, typed.out);
+      if (!typed.ok || !ir || ir.errors?.length) throw typeErrors(spec, ir, typed.out, specs);
       store(memory, at, ir);
       return ir;
     })();
@@ -129,7 +129,7 @@ export async function proofUnits(root: string, models: Model[]): Promise<Unit[]>
     text: [...needs(m).map((n) => asDependency(n)), withoutImports(m.ts).kept].join("\n"),
     meaning: [...needs(m).map((n) => asDependency(n, false)), withoutImports(m.render("", false)).kept].join("\n"),
     src: false,
-    proofFile: `spec/${m.name}.proof.dfy`,
+    proofFile: m.source.replace(/\.md$/, ".proof.dfy"),
     laws: lawsOf(needs(m), (dep) => `${dep}_`),
     rests: [], // proved against the definitions of what it imports, never against their obligations
     transitions: m.stateType ? m.transitions.map((t) => ({ name: t.name, params: t.params.map((p) => p.name) })) : undefined,
