@@ -13,7 +13,8 @@ const build = (tokens: Tokens) => {
   writeFileSync("design.md", syncDoc(read("design.md"), tokens))
 }
 
-const [command, file, flag] = process.argv.slice(2)
+const [command, ...rest] = process.argv.slice(2)
+const file = rest.find((word) => !word.startsWith("--"))
 try {
   if (command === "build") build(load())
   else if (command === "check") {
@@ -22,7 +23,7 @@ try {
   } else if (command === "apply" && file) {
     const { tokens, diff } = applyChanges(load(), JSON.parse(read(file)))
     console.log(diff)
-    if (flag === "--write") {
+    if (rest.includes("--write")) {
       writeFileSync("tokens.json", `${JSON.stringify(tokens, null, 2)}\n`)
       build(tokens)
     } else console.log("Not written. Pass --write to apply.")

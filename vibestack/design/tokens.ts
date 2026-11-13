@@ -40,7 +40,8 @@ export function parseTokens(input: unknown): Tokens {
     return typeof value === "string" && kind[0].test(value) ? [] : [`${path}: expected ${kind[1]}, got ${JSON.stringify(value)}`]
   }).concat(required.filter((path) => !found.some(([at]) => at === path)).map((path) => `${path}: missing`))
   if (problems.length) throw new Error(problems.join("\n"))
-  return structuredClone(input) as Tokens
+  const given = structuredClone(input) as Partial<Tokens>
+  return { shadow: {}, breakpoint: {}, ...given, motion: { duration: {}, ease: {}, ...given.motion } } as Tokens
 }
 
 const linear = (color: string) => {
@@ -67,7 +68,7 @@ export const contrast = (one: string, other: string) => {
 
 /** Text color on surface: each `x-foreground` on `x`, and every color used as text on the page and on a card. */
 export const contrastPairs: [ColorName, ColorName][] = [
-  ["foreground", "background"],
+  ["foreground", "background"], ["foreground", "muted"], ["muted-foreground", "popover"],
   ...colorNames.filter((name) => name.endsWith("-foreground")).map((name): [ColorName, ColorName] => [name, name.slice(0, -11) as ColorName]),
   ...(["muted-foreground", "primary", "destructive", "ok", "warn"] as const).flatMap((name): [ColorName, ColorName][] => [[name, "background"], [name, "card"]]),
 ]

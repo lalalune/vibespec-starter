@@ -1,7 +1,15 @@
 import type { Tokens } from "./tokens.ts"
 
-// A hex or functional color that is not inside a Tailwind arbitrary value, which no-restricted-classes reports.
-const literalColor = /(?<![\w&[/-])(?:#(?:[\da-f]{3,4}|[\da-f]{6}|[\da-f]{8})\b|(?:rgba?|hsla?|oklch|oklab|lab|lch)\()/i
+const hex = "#(?:[\\da-f]{3,4}|[\\da-f]{6}|[\\da-f]{8})"
+const functional = "(?:rgba?|hsla?|hwb|oklch|oklab|lab|lch|color)\\("
+// In a style, a color anywhere in a value; elsewhere a whole hex or a color function, so "#orders" and "Order #1042" pass.
+const inStyle = new RegExp(`(?<![\\w&-])(?:${hex}\\b|${functional})`, "i")
+const anywhere = new RegExp(`^${hex}$|(?<![\\w&[/-])${functional}`, "i")
+
+interface Node { type: string; parent?: Node; name?: { name?: string } }
+const attribute = (node: Node | undefined): string | undefined => node && (node.type === "JSXAttribute" ? node.name?.name : attribute(node.parent))
+// An anchor or an id may spell a hex: "#feed".
+const names = /^(?:href|id|htmlFor|to)$/
 
 interface Context {
   sourceCode: { getAllComments(): { value: string; loc?: object | null }[] }
@@ -17,16 +25,17 @@ const noLiteralColors = {
     },
   },
   create(context: Context) {
-    const report = (node: object, value: unknown) => {
-      if (typeof value === "string" && literalColor.test(value)) context.report({ node, messageId: "literal", data: { value } })
+    const report = (node: Node, value: unknown) => {
+      const within = attribute(node)
+      if (typeof value === "string" && !names.test(within ?? "") && (within === "style" ? inStyle : anywhere).test(value.trim())) context.report({ node, messageId: "literal", data: { value } })
     }
     return {
       Program() {
         for (const comment of context.sourceCode.getAllComments())
           if (/eslint-disable.*design-system\/no-literal-colors(?!.* -- \S)/.test(comment.value) && comment.loc) context.report({ loc: comment.loc, messageId: "reason" })
       },
-      Literal: (node: { value?: unknown }) => report(node, node.value),
-      TemplateElement: (node: { value: { cooked?: string | null } }) => report(node, node.value.cooked),
+      Literal: (node: Node & { value?: unknown }) => report(node, node.value),
+      TemplateElement: (node: Node & { value: { cooked?: string | null } }) => report(node, node.value.cooked),
     }
   },
 }
@@ -44,7 +53,7 @@ export function designSystem<Plugin>({ tailwind, tokens, entryPoint }: { tailwin
   const colors = `Use a color token: ${names(tokens.color.light)}.`
   const restrict = [
     { pattern: `${variants}[a-z-]+-(?:${palettes})-\\d{2,3}(?:/.+)?$`, message: `"$0" is a palette color. ${colors}` },
-    { pattern: `${variants}[a-z-]+-\\[(?:#[\\da-fA-F]{3,8}|(?:rgba?|hsla?|oklch|oklab|lab|lch|color)\\().*\\]$`, message: `"$0" is an arbitrary color. ${colors}` },
+    { pattern: `${variants}!?[a-z-]+-\\[[^\\]]*(?:#[\\da-fA-F]{3,8}|(?:rgba?|hsla?|hwb|oklch|oklab|lab|lch|color)\\()[^\\]]*\\](?:/[^!]+)?!?$`, message: `"$0" is an arbitrary color. ${colors}` },
     { pattern: `${variants}rounded(?:-[a-z]{1,2})?-\\[.+\\]$`, message: `"$0" is an arbitrary radius. Use the radius token: rounded-sm, rounded-md, rounded-lg, rounded-xl.` },
     { pattern: `${variants}shadow-\\[.+\\]$`, message: `"$0" is an arbitrary shadow. Use a shadow token: ${names(tokens.shadow, "shadow-")}.` },
   ]
