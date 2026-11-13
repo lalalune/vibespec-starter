@@ -17,8 +17,6 @@ model in step; you sign off.
 
 [![Use this template](https://img.shields.io/badge/Use_this_template-2ea44f?style=for-the-badge&logo=github)](https://github.com/lalalune/vibespec-starter/generate)
 
-[![check](https://github.com/lalalune/vibespec-starter/actions/workflows/check.yml/badge.svg)](https://github.com/lalalune/vibespec-starter/actions/workflows/check.yml)
-
 [Quickstart](#quickstart) ·
 [Getting started](#getting-started) ·
 [Project setup](#set-up-a-new-project) ·
