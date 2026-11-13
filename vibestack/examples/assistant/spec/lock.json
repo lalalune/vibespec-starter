@@ -34,12 +34,12 @@
         "f39e71973bd7"
       ],
       "Story: Take a turn / Only the person starts a turn, and not while one is under way": [
-        "486dcca18ded",
+        "9d044f410281",
         "388dcb261c7f",
         "60cd763e653c"
       ],
       "Story: Take a turn / The model chooses each action, and each costs one from the turn": [
-        "e866b18fb9ca",
+        "9a16dea752bf",
         "e3fb7678cf7b",
         "60cd763e653c"
       ],
