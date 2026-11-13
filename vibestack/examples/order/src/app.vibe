@@ -1,7 +1,7 @@
-// The unverified shell: storage and error reporting around the verified core.
+// spec/index.md, "Story: Check out"
 import { type Event, type Order, NotAnEvent, Rejected, apply, decodeEvent } from "../gen/index.effect.vibe"
 
-// src/ledger.ts stays TypeScript, where `npm run check` proves its contracts. What it throws is said here, as
+// src/ledger.ts stays TypeScript, where `pnpm check` proves its contracts. What it throws is said here, as
 // gen/index.effect.vibe says it of the generated module: nothing but the defect of a number past 2^53.
 module ledger {
   import type { Event, Order } from "../gen/index.ts"

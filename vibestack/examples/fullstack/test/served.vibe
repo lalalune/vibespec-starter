@@ -1,5 +1,19 @@
-// The backend as the tests meet it: the real server on a free port with the
-// frontend `bundle.ts` built, and an HttpClient that reaches it.
-import { server } from "../src/server.vibe"
+// The real server on a free port with the page `bundle.ts` built, and an HttpClient that reaches it.
+import { listening, server } from "../src/server.vibe"
 
-export const Served = Layer.provideMerge(Layer.provide(HttpServer.layerTestClient, FetchHttpClient.layer), server("dist/web", 0))
+module node {
+  import { type Server, createServer } from "node:http"
+  let served: Server | undefined
+  /** @throws {never} */
+  export function create() {
+    return (served = createServer())
+  }
+  /** Cut every connection to the server, as a network failure does. */
+  export function dropConnections() {
+    served?.closeAllConnections()
+  }
+}
+import { create, dropConnections } from node
+
+export { dropConnections }
+export const Served = Layer.provideMerge(Layer.provide(HttpServer.layerTestClient, FetchHttpClient.layer), server("dist/web", listening(0, create)))

@@ -1,27 +1,18 @@
-// spec/server.md, "A request is answered only once"; spec/server.md, "A new request can be refused, which is logged with its edit and changes nothing else"
-// The backend: the unverified shell around the generated server machine
-// (gen/server.effect.vibe). It decodes requests, applies the ones the rules
-// allow, logs and refuses the rest, repeats the logged answer to a retried
-// request (the same number and the same edit), and pushes every change to the
-// open tabs. It also serves the frontend as `npm run build` bundled it.
-import { type Rejected, type Server, Machine, NotAnEvent, acceptedAs, answered, decodeEvent, decodeState, initial, machine } from "../gen/server.effect.vibe"
+// spec/server.md, "A request is answered only once"; spec/server.md, "A new request can be refused, which is logged with its edit and changes nothing else"; spec/client.md, "Story: Hear back from the server"
+import { type Rejected, type Server, Machine, NotAnEvent, acceptedAs, answered, decodeEvent, machine } from "../gen/server.effect.vibe"
 import { type Answer, type Request, type Snapshot, opOf } from "./protocol.vibe"
 
 module node {
   import { createServer } from "node:http"
   import { NodeHttpServer } from "@effect/platform-node"
-  // A push stream never ends by itself, so closing does not wait for the open tabs.
-  export function listening(port: number) {
-    return NodeHttpServer.layer(createServer, { port, gracefulShutdownTimeout: 0 })
+  /** An HTTP server on `port` (0 picks a free one). A push stream never ends by itself, so closing does not wait for the open tabs. */
+  export function listening(port: number, create = createServer) {
+    return NodeHttpServer.layer(create, { port, gracefulShutdownTimeout: 0 })
   }
 }
 import { listening } from node
 
-/**
- * The server machine. Every transition is proved to keep the rules, so they
- * are checked once, of the state the server starts in, and not on every request.
- */
-const Store = Layer.unwrap(effect { return machine(try decodeState(initial)) })
+export { listening }
 
 const noStore = { "cache-control": "no-store" }
 
@@ -29,14 +20,13 @@ function snapshot(s: Server): Snapshot {
   return { version: s.version, todos: s.todos }
 }
 
-/** Answer one request: its edit is applied if the rules allow it, and refused if not. */
+/** The answer to one request: its edit is applied if the rules allow it, and refused if not. */
 effect function answer(request: Request) {
   const machine = try Machine
   const { client, seq } = request
   const op = opOf(request)
   const as = (ok: boolean, s: Server): Answer => ({ ok, seq, ...snapshot(s) })
-  // A number answered before: nothing is applied again. Only a retry of the
-  // accepted edit is told it was accepted; another edit under that number is refused.
+  // Answered before: nothing is applied again, and only a retry of the accepted edit is told it was accepted.
   const retried = ({ state }: Rejected) => as(acceptedAs(state, client, seq, op), state)
   return map(machine.send(request), (s) => as(true, s)) catch effect (rejected) =>
     answered(rejected.state, client, seq)
@@ -48,6 +38,10 @@ effect function answer(request: Request) {
 effect function postEvent() {
   return effect {
     const request = try HttpServerRequest.HttpServerRequest
+    // src/web/sync.vibe sends JSON; a cross-site page cannot without a CORS preflight, which is never granted.
+    if (!request.headers["content-type"]?.startsWith("application/json")) {
+      return try HttpServerResponse.json({ error: "send application/json" }, { status: 415, headers: noStore })
+    }
     // A body that is not JSON, or longer than the limit, is no event either.
     const event = try decodeEvent(request.json catch () => undefined)
     // `refuse` is the server's own decision.
@@ -78,8 +72,8 @@ const Api = Layer.mergeAll(
   HttpRouter.add("GET", "/api/stream", getStream())
 )
 
-/** The HTTP API and the frontend's files in `web`, on `port` (0 picks a free one), over a server machine of its own. */
-export function server(web: string, port: number) {
+/** The HTTP API and the page's files in `web`, on `listener`, over a server machine of its own. */
+export function server(web: string, listener: ReturnType<typeof listening>) {
   const app = Layer.mergeAll(Api, HttpStaticServer.layer({ root: web }))
-  return Layer.provideMerge(HttpRouter.serve(app, { disableLogger: true, disableListenLog: true }), Layer.mergeAll(Store, listening(port)))
+  return Layer.provideMerge(HttpRouter.serve(app, { disableLogger: true, disableListenLog: true }), Layer.mergeAll(machine(), listener))
 }

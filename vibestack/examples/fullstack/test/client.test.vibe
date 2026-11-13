@@ -1,9 +1,6 @@
 // spec/client.md, "Story: Edit the list in the browser"; spec/client.md, "Story: Hear back from the server"
-// A tab applies events with the generated client machine; these tests drive
-// it the way the page does.
 import { assert, it } from "@effect/vitest"
 import { type Client, type Event, initial, inv, step, view, visible } from "../gen/client.effect.vibe"
-import { drain } from "../src/inbox.ts"
 
 const run = (events: Event[], from: Client = initial) => events.reduce(step, from)
 const milk = { id: "x", title: "milk", done: false, deleted: false }
@@ -75,11 +72,11 @@ it.effect("a confirmed copy that already holds a queued edit shows it once", () 
 })
 
 it.effect("a batch of pushes is drained in order and keeps the client's rules", () => effect {
-  const c = try Effect.try(() => drain(initial, [
+  const c = run([
     { type: "receiveSnapshot", version: 1, todos: [milk] },
     { type: "receiveSnapshot", version: 3, todos: [] },
     { type: "receiveSnapshot", version: 2, todos: [milk] },
-  ]))
+  ])
   try Effect.try(() => {
     assert.strictEqual(c.seen, 3)
     assert.isTrue(inv(c))

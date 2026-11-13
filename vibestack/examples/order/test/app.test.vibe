@@ -45,8 +45,14 @@ layer(OrderBookMemory, { buildPerTest: true })((it) => {
   })
 
   it.effect("malformed input never reaches the verified core", () => effect {
-    const seen = [try refusal({ type: "addItem", qty: 1.5 }), try refusal({ type: "refund" }), try order()]
-    try Effect.try(() => assert.deepStrictEqual(seen, ["NotAnEvent", "NotAnEvent", { status: "Draft", units: 0, due: 0, paid: 0 }]))
+    const refused = [try refusal({ type: "addItem", qty: 1.5 }), try refusal({ type: "refund" }), try order()]
+    let reads = 0
+    const sly = { type: "pay", get amount() { return reads++ === 0 ? 1 : 1_000_000 }, extra: "ignored" }
+    try submitted(2)
+    const seen = [...refused, try send(sly)]
+    try Effect.try(() => assert.deepStrictEqual(seen, [
+      "NotAnEvent", "NotAnEvent", { status: "Draft", units: 0, due: 0, paid: 0 }, { status: "Pending", units: 2, due: 10, paid: 1 },
+    ]))
   })
 
   // spec/index.md, "No more can be removed than the order holds"
@@ -64,14 +70,6 @@ layer(OrderBookMemory, { buildPerTest: true })((it) => {
     try send({ type: "cancel" })
     const seen = [...back, try send({ type: "reopen" })]
     try Effect.try(() => assert.deepStrictEqual(seen, [4, "Rejected", { status: "Draft", units: 2, due: 10, paid: 0 }]))
-  })
-
-  it.effect("an event is copied on the way in, so nothing the caller keeps can change it", () => effect {
-    let reads = 0
-    const sly = { type: "pay", get amount() { return reads++ === 0 ? 1 : 1_000_000 }, extra: "ignored" }
-    try submitted(2)
-    const paid = try send(sly)
-    try Effect.try(() => assert.deepStrictEqual(paid, { status: "Pending", units: 2, due: 10, paid: 1 }))
   })
 })
 
