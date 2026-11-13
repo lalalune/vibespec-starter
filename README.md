@@ -1,8 +1,8 @@
 <div align="center">
 
-# Vibespec (Starter Template)
+# Vibestack
 
-**Write user stories. Get formally verified TypeScript.**
+**Write user stories. Get formally verified TypeScript. Build your application with minimal bloat.**
 
 </div>
 
