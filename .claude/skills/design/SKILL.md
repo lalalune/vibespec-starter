@@ -38,11 +38,9 @@ description: "Design or review anything a person looks at, built from a spec in 
 - **One system.** One type pairing, a small palette with one accent and one
   spacing scale, as the project's design tokens. Extend an existing component
   before adding one.
-- **React, Tailwind, shadcn/ui.** Every interface is React components styled
-  with Tailwind CSS v4 utilities on those tokens, composed from shadcn/ui
-  components on Radix primitives (AGENTS.md, "The stack"). Name a color, size
-  or radius by its token, never by its value; a new value is a new token,
-  added once.
+- **Tokens.** Every interface is built on the stack (AGENTS.md, "The
+  stack"). Name a color, size or radius by its token, never by its value; a
+  new value is a new token, added once ("Components, stories and tokens").
 
 ## Review: two or three passes
 
@@ -55,3 +53,54 @@ Reread the rules above before each pass, then ask:
 
 Stop when a pass changes nothing. Report the chosen direction in one line, and
 anything cut that the user might expect to see.
+
+## Components, stories and tokens
+
+A component is ordinary source the project owns: one `.tsx` file in
+`src/components/`, a named export, an exported `<Name>Props` type, and a
+JSDoc sentence on the component and on each prop that needs one. In this
+repository they are `@repo/ui`; a standalone project keeps its own.
+
+| | Source, kept in Git | Generated, never committed | Command, in the project |
+|---|---|---|---|
+| Tokens | `tokens.json`, and `design.md` describing them | `generated/tokens.css`, `generated/theme.css` (the Tailwind v4 entry) | `spec tokens build`, `check` |
+| Stories | the component, and `<Name>.meta.tsx` where its types are not enough | `generated/stories/`: Storybook stories, `catalog.json`, and a mount test and a browser test (accessibility, marked snapshots) of every story | `spec stories gen [--watch] [--check]` |
+
+`spec` is the tool's command: `pnpm exec spec` in a project that installed
+it, `node ../../spec.ts` in an example. In `@repo/ui`: `pnpm gen` (the stories),
+`pnpm storybook`, `pnpm test`, `pnpm test:browser`; in
+`@repo/design-system`: `pnpm build`, `pnpm check`.
+
+- **Never write a story for what the generator can derive.** It reads each
+  prop's type, default and JSDoc and writes a Default story, one per option
+  of a union or boolean prop, and Disabled, Loading, Error and Empty where
+  such a prop exists, twelve at most. A hand-written `<Name>.stories.tsx`
+  beside the component is kept, and wins over a generated story of the same
+  name.
+- **`<Name>.meta.tsx`** exports `meta: ComponentMeta<Props>` (from
+  `vibestack/stories`): `args` every story starts from, named `examples` and
+  `states`, `bounds` of a numeric prop, a `schema` to sample, a `decorator`,
+  `play` interactions and the stories worth a `snapshot`. Stories, tests and
+  Studio read the same object. A required prop the generator cannot give a
+  value is reported, with the field to add; it never invents data.
+- **A component that shows a model** says so: `@model spec/index.md` in its
+  JSDoc links it to that spec's state and events, and `@design design.md#…`
+  to its design document. Studio's Components view follows both ways.
+- **A file named after one of its exports** (`Dialog.tsx`) gives stories to
+  that component; its other exports are its parts.
+- **Colors, radii, shadows and fonts are tokens.** Use the utilities named
+  after them (`bg-primary`, `text-muted-foreground`, `rounded-md`); the lint
+  rules of `vibestack/design/eslint.ts` refuse a palette class, an arbitrary
+  color and a literal color in a style. Merge classes with `cn()`; use CVA
+  only where a component has real variants.
+- **A design change is a token change.** Describe it in `design.md`, write
+  it as `[{ "path": "color.light.primary", "value": "oklch(…)", "reason": "…" }]`,
+  and run `spec tokens apply changes.json`: it refuses an
+  unknown path, an invalid value and a contrast below WCAG AA, and prints
+  the diff; `--write` applies it and rebuilds the CSS. Prose is never read
+  as tokens.
+
+To change a component: find it in `generated/stories/catalog.json` or in
+Studio's Components view, read its props and model there, edit the source,
+run `pnpm gen` (or leave `pnpm storybook` running), look at it, then
+`pnpm test` and `pnpm lint`.
