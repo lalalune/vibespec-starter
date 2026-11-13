@@ -172,7 +172,9 @@ it.live("two tabs, one of them offline for a while, end up with the server's lis
       const ticked = (try server.get()).version
 
       // A request that arrives twice is applied once.
-      try a.send(queued[0]!)
+      // spec/client.md, "Story: Hear back from the server": the answer identifies the request that was sent.
+      let seq = queued[0]!.seq
+      try a.send({ get seq() { return seq++ }, op: queued[0]!.op })
       try a.send({ seq: 2, op: { kind: "create", id: eggs, title: "eggs", done: false } })
       const sentTwice = (try server.get()).version
 

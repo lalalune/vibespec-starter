@@ -66,7 +66,7 @@ export effect function open(base: string, name: string) {
     const request: Request = { type: "request", client: name, seq: p.seq, op: p.op }
     const said = try (try client.execute(try HttpClientRequest.bodyJson(HttpClientRequest.post("/api/events"), request))).json
     const { ok, seq } = try Schema.decodeUnknownEffect(Verdict)(said)
-    if (seq !== p.seq) throw new NotAnEvent({ input: said })
+    if (seq !== request.seq) throw new NotAnEvent({ input: said })
     try hear(ok ? "receiveAck" : "receiveRefusal", said)
   }
 

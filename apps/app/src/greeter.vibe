@@ -1,7 +1,7 @@
 // spec/app/index.md, "Story: Say hello"
 // The shell: the greeter of spec/app/index.md, kept in a KeyValueStore, which main.tsx makes the browser's localStorage.
 import * as KeyValueStore from "effect/persistence/KeyValueStore"
-import { type Greeter, type NotAnEvent, type Rejected, apply, decodeEvent, decodeState, initial } from "../gen/app.effect.vibe"
+import { type Greeter, type NotAnEvent, type Rejected, apply, decodeEvent, decodeState, initial, parseState } from "../gen/app.effect.vibe"
 import { Saved } from "./greeter.schema.ts"
 
 const KEY = "greeter"
@@ -14,7 +14,7 @@ effect function saved() { return KeyValueStore.toSchemaStore(try KeyValueStore.K
 /** The stored greeter, or a new one where the store cannot be read or holds nothing the rules call a greeter. */
 export effect function load() {
   const found = (try saved()).get(KEY) catch () => Option.none()
-  return decodeState(Option.getOrUndefined(found)) catch () => initial
+  return decodeState(Option.getOrUndefined(found)) catch () => parseState(initial)!
 }
 
 /** The greeter as last stored, and the one way to change it. */
@@ -30,11 +30,11 @@ export const stored = Layer.effect(Greetings, effect {
   const store = try saved()
   const held = try SubscriptionRef.make(try load())
   return {
-    changes: SubscriptionRef.changes(held),
+    changes: Stream.map(SubscriptionRef.changes(held), (state) => parseState(state)!),
     receive: (input) => SubscriptionRef.modifyEffect(held, effect (current) => {
       const next = try apply(current, try decodeEvent(input))
       try mapError(store.set(KEY, next), (cause) => new NotSaved({ cause }))
-      return [next, next] as const
+      return [next, parseState(next)!] as const
     })
   }
 })

@@ -34,6 +34,15 @@ pure def greet(g: Greeter, name: str): Greeter = { name: name, count: g.count + 
 pure def alwaysGreetedHasName(g: Greeter): bool = g.count > 0 implies g.name != ""
 ```
 
+### The number of greetings is never negative
+
+Discovered by proof: the initial count is zero and each greeting adds one,
+so a saved negative count cannot represent a history of this greeter.
+
+```quint
+pure def alwaysCountIsNonnegative(g: Greeter): bool = g.count >= 0
+```
+
 ### Every step adds exactly one greeting
 
 ```quint

@@ -501,15 +501,16 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.equal(said("tests", /^note: test\/app\.test\.vibe, test\/draft\.test\.vibe run in one runner, in one language/)?.ok, true, text);
   });
 
-  test("a test that cites no story or rule is caught; a citation on it, on the describe around it or in the file's header covers it", async () => {
-    const reaching = 'import { assert, describe, it } from "@effect/vitest"\nimport { OrderBookMemory } from "../src/app.vibe"\n';
-    const tests = "\n" + citing("spec/index.md", "Story: Cancel") + 'describe("cancelling", () => {\n  it("is covered by the describe", () => { assert.ok(OrderBookMemory) })\n})\n' + citing("spec/index.md", "Story: Check out") + 'it("is covered by its own", () => { assert.ok(OrderBookMemory) })\nit("cites nothing", () => { assert.ok(OrderBookMemory) })\n';
+  test("a test that cites no story or rule is caught through aliases and namespaces; a citation on it, on the describe around it or in the file's header covers it", async () => {
+    const reaching = 'import { assert, describe, it, it as scenario } from "@effect/vitest"\nimport * as suite from "@effect/vitest"\nimport { OrderBookMemory } from "../src/app.vibe"\n';
+    const tests = "\n" + citing("spec/index.md", "Story: Cancel") + 'describe("cancelling", () => {\n  it("is covered by the describe", () => { assert.ok(OrderBookMemory) })\n})\n' + citing("spec/index.md", "Story: Check out") + 'it("is covered by its own", () => { assert.ok(OrderBookMemory) })\nit("cites nothing", () => { assert.ok(OrderBookMemory) })\nscenario("cites nothing through an alias", () => { assert.ok(OrderBookMemory) })\nsuite.it("cites nothing through a namespace", () => { assert.ok(OrderBookMemory) })\nsuite["it"]("cites nothing through element access", () => { assert.ok(OrderBookMemory) })\n';
     const [uncited, headed] = await Promise.all([
       run(copyOfProject("test/more.test.vibe", () => reaching + tests)),
       run(copyOfProject("test/more.test.vibe", () => citing("spec/index.md", "Story: Change my mind") + reaching + tests)),
     ]);
     assert.deepEqual(uncited.failed, ["tests"], uncited.text);
-    assert.equal(uncited.said("tests", /^1 tests cite no story or rule/)?.detail, "      test/more.test.vibe:10", uncited.text);
+    const missing = (reaching + tests).split("\n").flatMap((line, i) => line.includes("cites nothing") ? [`      test/more.test.vibe:${i + 1}`] : []);
+    assert.equal(uncited.said("tests", /^4 tests cite no story or rule/)?.detail, missing.join("\n"), uncited.text);
     assert.deepEqual(headed.failed, [], headed.text);
   });
 
@@ -1430,17 +1431,21 @@ pure def lawOwn(own: int): bool = shadowOwn(own) == own`));
 
   test("a driver reaches the application: it imports gen/ only as types, it is sent malformed input where it can receive it, and a shell without one is given one to fill in", async () => {
     const typed = 'import type { Driver } from "../../gen/index.conformance.ts";\n';
+    const oracleRoot = copyOfProject("test/drivers/index.ts", (s) => s.replace(typed, `${typed}import { initial as start } from "../../gen/index.ts";\nimport { type Event, step as advance } from "../../gen/index.effect.vibe";\nexport type { Order } from "../../gen/index.effect.vibe";\nexport { step } from "../../gen/index.ts";\nimport {} from "../../gen/index.ts";\nexport {} from "../../gen/index.ts";\nconst folder = "../../gen";\nconst literal = import(\`../../gen/index.ts\`);\nconst interpolated = import(\`\${folder}/index.ts\`);\nconst target = "../../gen/" + "index.ts";\nconst indirect = import((target as string)!);\nimport { initial as aliased } from "#oracle";\nconst outside = import("../../src/app.vibe");\nfunction unknown(folder: string) { return import(folder); }\nconst observe = () => start;\nconst named = { observe };\nvoid [named, advance, literal, interpolated, indirect, aliased, outside, unknown];\n`));
+    const pkg = JSON.parse(read("package.json", oracleRoot));
+    fs.writeFileSync(path.join(oracleRoot, "package.json"), JSON.stringify({ ...pkg, imports: { "#oracle": "./gen/index.ts" } }));
     const missing = copyOfProject();
     fs.rmSync(path.join(missing, "test/drivers/index.ts"));
     const [oracle, unchecked, scaffolded] = await Promise.all([
       // Values of the generated module, imported or re-exported, would compare the spec with itself; its types are the contract.
-      run(copyOfProject("test/drivers/index.ts", (s) => s.replace(typed, `${typed}import { initial as start } from "../../gen/index.ts";\nimport { type Event, step as advance } from "../../gen/index.effect.vibe";\nexport type { Order } from "../../gen/index.effect.vibe";\nexport { step } from "../../gen/index.ts";\nconst observe = () => start;\nconst named = { observe };\nvoid [named, advance];\n`))),
+      run(oracleRoot),
       // A book that takes its input on trust: the probes send each kind of event malformed.
       run(copyOfProject("src/app.vibe", (s) => s.replace("const event = try decodeEvent(input)", "const event = input as Event"))),
       run(missing),
     ]);
     assert.deepEqual(oracle.failed, ["tests"], oracle.text);
-    assert.equal(oracle.said("tests", /^a driver imports gen\/ as types only/)?.detail, "      test/drivers/index.ts:5: ../../gen/index.ts\n      test/drivers/index.ts:6: ../../gen/index.effect.vibe\n      test/drivers/index.ts:8: ../../gen/index.ts", oracle.text);
+    const forbidden: [number, string][] = [[5, "../../gen/index.ts"], [6, "../../gen/index.effect.vibe"], [8, "../../gen/index.ts"], [9, "../../gen/index.ts"], [10, "../../gen/index.ts"], [12, "../../gen/index.ts"], [13, "../../gen/index.ts"], [15, "../../gen/index.ts"], [16, "#oracle"]];
+    assert.equal(oracle.said("tests", /^a driver imports gen\/ as types only/)?.detail, forbidden.map(([line, module]) => `      test/drivers/index.ts:${line}: ${module}`).join("\n"), oracle.text);
     assert.deepEqual(unchecked.failed, ["traces"], unchecked.text);
     assert.ok(unchecked.said("traces", /^test\/drivers\/index\.ts: the program departs from the spec\n +conformance to spec\/index\.md: probe \{"type":"\w+","\w+":(1\.5|9007199254740992)\}, after \d+ events of a journey: the application (?:"accepted" it, where the spec refuses it|failed: )/), unchecked.text);
     assert.ok(unchecked.said("traces", /probe/) && !/Saved as/.test(unchecked.text), "a probe is no trace to save");

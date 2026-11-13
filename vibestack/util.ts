@@ -243,6 +243,8 @@ function readTests(text: string): { generated: boolean; tests: { line: number; g
   const starts = tokens.flatMap((t, i) => t.depth === 0 && (i === 0 || t.fresh && word(i) && !/[=,.:?+\-*/%&|^<>!~]$/.test(tokens[i - 1].text)) ? [i] : []);
   const statements = starts.map((from, n) => ({ from, to: (starts[n + 1] ?? tokens.length) - 1 }));
   const bound = new Map<string, ReturnType<typeof reaches>>();
+  const runners = new Set(["it", "test"]);
+  const runnerNamespaces = new Set<string>();
   const helpers = new Map<string, { from: number; to: number }>();
   let header = text.length;
   for (const s of statements) {
@@ -251,6 +253,12 @@ function readTests(text: string): { generated: boolean; tests: { line: number; g
       if (tokens[i + 1].text === "type") continue;
       const fromAt = tokens.findIndex((t, j) => j > i && j <= s.to && t.text === "from");
       const module = tokens[fromAt < 0 ? i + 1 : fromAt + 1].text;
+      if (/^["'](?:vitest|@effect\/vitest|node:test)["']$/.test(module)) {
+        if (tokens[i + 1]?.text === "*" && tokens[i + 2]?.text === "as") runnerNamespaces.add(tokens[i + 3].text);
+        else if (word(i + 1)) runners.add(tokens[i + 1].text);
+        for (let j = i + 1; j < fromAt; j++) if (["it", "test"].includes(tokens[j].text) && tokens[j - 1]?.text !== "type")
+          runners.add(tokens[j + 1]?.text === "as" ? tokens[j + 2].text : tokens[j].text);
+      }
       for (let j = i + 1; j < (fromAt < 0 ? i : fromAt); j++)
         if (word(j) && !["type", "as"].includes(tokens[j].text) && tokens[j - 1].text !== "type" && tokens[j + 1]?.text !== "as") bound.set(tokens[j].text, reaches(module));
       if (fromAt < 0) bound.set(`import ${module}`, reaches(module));
@@ -265,8 +273,11 @@ function readTests(text: string): { generated: boolean; tests: { line: number; g
   }
   const blocks: { from: number; to: number }[] = [];
   tokens.forEach((t, i) => {
-    if (!["it", "test"].includes(t.text) || [".", "function"].includes(tokens[i - 1]?.text)) return;
     let j = i + 1;
+    if ([".", "function"].includes(tokens[i - 1]?.text)) return;
+    if (runnerNamespaces.has(t.text) && tokens[j]?.text === "." && ["it", "test"].includes(tokens[j + 1]?.text)) j += 2;
+    else if (runnerNamespaces.has(t.text) && tokens[j]?.text === "[" && /^["'](?:it|test)["']$/.test(tokens[j + 1]?.text ?? "") && tokens[j + 2]?.text === "]") j += 3;
+    else if (!runners.has(t.text)) return;
     while (tokens[j]?.text === "." && word(j + 1)) j += 2;
     if (tokens[j]?.text !== "(") return;
     let to = close(j);
@@ -353,18 +364,47 @@ function testRules(checking: string, dir: string, specs: Spec[]): Reported<"test
 
 /** Each place a `test/drivers/` module of the package `root` imports or re-exports `gen/` as a value, as `file:line: module`. */
 function driverImports(root: string): string[] {
-  return packageCode(root).filter((file) => file.startsWith("test/drivers/")).flatMap((file) => {
-    const source = ts.createSourceFile(file, fs.readFileSync(path.join(root, file), "utf8"), ts.ScriptTarget.Latest, true);
+  const files = packageCode(root).filter((file) => file.startsWith("test/drivers/"));
+  if (!files.length) return [];
+  const config = ts.findConfigFile(root, ts.sys.fileExists);
+  const options = { module: ts.ModuleKind.NodeNext, moduleResolution: ts.ModuleResolutionKind.NodeNext,
+    ...config ? ts.getParsedCommandLineOfConfigFile(config, {}, { ...ts.sys, onUnRecoverableConfigFileDiagnostic() {} })?.options : {} };
+  const cache = ts.createModuleResolutionCache(root, (file) => file, options);
+  return files.flatMap((file) => {
+    const source = ts.createSourceFile(path.resolve(root, file), fs.readFileSync(path.join(root, file), "utf8"), ts.ScriptTarget.Latest, true);
+    const host = ts.createCompilerHost({ noResolve: true, noLib: true });
+    host.getSourceFile = (file) => file === source.fileName ? source : undefined;
+    const checker = ts.createProgram([source.fileName], { noResolve: true, noLib: true }, host).getTypeChecker();
+    const moduleName = (node: ts.Node | undefined, seen = new Set<ts.Symbol>()): string | undefined => {
+      if (!node) return undefined;
+      if (ts.isStringLiteralLike(node)) return node.text;
+      if (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isTypeAssertionExpression(node) || ts.isNonNullExpression(node) || ts.isSatisfiesExpression(node)) return moduleName(node.expression, seen);
+      if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+        const left = moduleName(node.left, seen), right = moduleName(node.right, seen);
+        return left === undefined || right === undefined ? undefined : left + right;
+      }
+      if (ts.isTemplateExpression(node)) {
+        let text = node.head.text;
+        for (const span of node.templateSpans) { const value = moduleName(span.expression, seen); if (value === undefined) return undefined; text += value + span.literal.text; }
+        return text;
+      }
+      const symbol = ts.isIdentifier(node) ? checker.getSymbolAtLocation(node) : undefined;
+      const declaration = symbol?.valueDeclaration;
+      if (!symbol || seen.has(symbol) || !declaration || !ts.isVariableDeclaration(declaration) || !(declaration.parent.flags & ts.NodeFlags.Const)) return undefined;
+      return moduleName(declaration.initializer, new Set([...seen, symbol]));
+    };
     const typesOnly = (node: ts.ImportDeclaration | ts.ExportDeclaration) => ts.isImportDeclaration(node)
       ? !!node.importClause && (node.importClause.isTypeOnly || !node.importClause.name && !!node.importClause.namedBindings
-        && ts.isNamedImports(node.importClause.namedBindings) && node.importClause.namedBindings.elements.every((e) => e.isTypeOnly))
-      : node.isTypeOnly || !!node.exportClause && ts.isNamedExports(node.exportClause) && node.exportClause.elements.every((e) => e.isTypeOnly);
+        && ts.isNamedImports(node.importClause.namedBindings) && node.importClause.namedBindings.elements.length > 0 && node.importClause.namedBindings.elements.every((e) => e.isTypeOnly))
+      : node.isTypeOnly || !!node.exportClause && ts.isNamedExports(node.exportClause) && node.exportClause.elements.length > 0 && node.exportClause.elements.every((e) => e.isTypeOnly);
     const found: string[] = [];
     const visit = (node: ts.Node) => {
       const module = (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && !typesOnly(node) ? node.moduleSpecifier
         : ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword ? node.arguments[0] : undefined;
-      if (module && ts.isStringLiteral(module) && /(?:^|\/)gen\//.test(module.text))
-        found.push(`${file.split(path.sep).join("/")}:${source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1}: ${module.text}`);
+      const name = moduleName(module);
+      const resolved = name && ts.resolveModuleName(name, source.fileName, options, ts.sys, cache, undefined, ts.ModuleKind.ESNext).resolvedModule?.resolvedFileName;
+      if (name !== undefined && /(?:^|\/)gen\//.test((resolved ?? name).split(path.sep).join("/")))
+        found.push(`${file.split(path.sep).join("/")}:${source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1}: ${name}`);
       node.forEachChild(visit);
     };
     visit(source);
