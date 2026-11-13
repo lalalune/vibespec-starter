@@ -920,7 +920,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       fs.symlinkSync(path.join(root, "outside.md"), path.join(root, "spec/escape.md"));
       assert.equal((await post("publish", { files: [{ file: "spec/escape.md", base: null, text: "" }], origins: [] })).status, 400);
       assert.equal(fs.existsSync(path.join(root, "outside.md")), false);
-      fs.rmSync(path.join(root, "spec/escape.md"));
+      fs.unlinkSync(path.join(root, "spec/escape.md"));
       const linked = await post("publish", { files: [{ file: "spec/index.md", base: null, text: "[Child](./nested/child/)\n" }], origins: [] });
       assert.equal(linked.status, 200, await linked.clone().text());
       const waitForCheck = async () => {
