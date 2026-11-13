@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
-import ts from "typescript";
+import { fileURLToPath } from "node:url";
 import { trusted } from "vibelang-runtime";
 import { acceptable, parseSpec, pending, pendingKey, readSpecs, type Lock, type Result } from "../../spec.ts";
 import { specFiles, specName } from "../../parse.ts";
@@ -18,11 +18,10 @@ const EXT = path.extname(import.meta.filename);
 export const TOOLS = path.join(import.meta.dirname, "..", "..");
 /** The `spec` command, as source or as built. */
 export const SPEC = path.join(TOOLS, `spec${EXT}`);
-export const PUBLIC = path.join(import.meta.dirname, "public");
+/** The page, as built by ../vite.config.ts. */
+export const PUBLIC = path.join(import.meta.dirname, "..", "dist", "page");
 /** This Node, to run the `spec` command with. */
 export const NODE = process.execPath;
-/** The modules the page may load from the tools, by their path below them: the page, what it imports, and nothing else. */
-const MODULES = /^(scan|studio\/src\/(page|markdown)|studio\/gen\/(index|outline))$/;
 
 /** @throws {never} */
 export const createServer = () => http.createServer();
@@ -97,14 +96,22 @@ export const specsOf = trusted(function specsOf(root: string) {
     .map(([file, text]) => ({ file, module: specName(file), hash: short(text), text, outline: outlineOf(file, text), review: review[file] ?? {} }));
 }, [Error]);
 
-/** A module the page imports, as JavaScript: transpiled from source, or as built; undefined for any other path. A trusted call. */
-export const pageModule = trusted(function pageModule(name: string): string | undefined {
-  const file = [`${name}${EXT}`, `${name}.js`].map((f) => path.join(TOOLS, f)).find((f) => MODULES.test(name) && fs.existsSync(f));
-  if (!file) return undefined;
-  const code = fs.readFileSync(file, "utf8");
-  if (!file.endsWith(".ts")) return code;
-  return ts.transpileModule(code, { fileName: file, compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2023, rewriteRelativeImportExtensions: true } }).outputText;
-}, [Error]);
+/**
+ * The page, built: from a source checkout, Vite builds it again when anything it is built from is newer than the
+ * build; a packaged studio ships it built.
+ */
+export async function buildPage(): Promise<void> {
+  if (EXT !== ".ts") return;
+  const studio = path.join(import.meta.dirname, "..");
+  const built = fs.statSync(path.join(PUBLIC, "index.html"), { throwIfNoEntry: false })?.mtimeMs ?? 0;
+  const newest = (dir: string): number => fs.readdirSync(dir, { withFileTypes: true }).reduce((n, e) => e.name === "node_modules" ? n
+    : Math.max(n, e.isDirectory() ? newest(path.join(dir, e.name)) : fs.statSync(path.join(dir, e.name)).mtimeMs), 0);
+  const inputs = [path.join(studio, "src"), path.join(studio, "gen"), path.join(studio, "vite.config.ts"),
+    path.dirname(fileURLToPath(import.meta.resolve("@repo/ui"))), fileURLToPath(import.meta.resolve("@repo/design-system/tokens.json"))];
+  if (inputs.every((f) => (fs.statSync(f).isDirectory() ? newest(f) : fs.statSync(f).mtimeMs) < built)) return;
+  const { build } = await import("vite");
+  await build({ configFile: path.join(studio, "vite.config.ts") });
+}
 
 /** What the page asks to publish: each file as it was loaded (`base`, a hash) and as it is now (`text`, null to delete). */
 export interface Publish { files: { file: string; base: string | null; text: string | null }[]; origins: [string, string | null][]; force?: boolean }

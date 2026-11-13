@@ -6,6 +6,7 @@ import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient"
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import * as HttpClient from "effect/http/HttpClient"
 import * as HttpClientRequest from "effect/http/HttpClientRequest"
+import { chromium } from "playwright"
 import { ChildProcess } from "effect/process"
 import { ChildProcessSpawner } from "effect/process/ChildProcessSpawner"
 import { acceptReviews, readSpecs, type Result } from "../../spec.ts"
@@ -67,7 +68,7 @@ effect function studioOn(root: string) {
       try sleep("50 millis")
     }
   }
-  return { ...page, settled }
+  return { ...page, url, settled }
 }
 
 // spec/index.md, "Story: Edit, then publish"; spec/index.md, "Story: Sync with an agent"; spec/index.md, "Story: Check"
@@ -76,14 +77,13 @@ it.live("a spec is published with its origins, checked, synced by an agent, and 
   const root = try scratch({ "spec/door.md": try fs.readFileString(`${TOOLS}/fixtures/door.md`) })
   const { get, post, project, settled } = try studioOn(root)
 
-  // The page and the modules it imports load; nothing else under the tools does.
-  for (const file of ["/", "/style.css", "/vibestack/studio/src/page.js", "/vibestack/studio/src/markdown.js", "/vibestack/studio/gen/outline.js", "/vibestack/studio/gen/index.js", "/vibestack/scan.js"]) {
-    const asset = try get(file)
-    try check(() => assert.ok(asset.status === 200 && asset.text.length > 0, file))
-  }
-  const page = (try get("/vibestack/studio/src/page.js")).text
+  // The page and what its HTML loads are served; nothing else under the tools is.
+  const html = (try get("/")).text
+  const assets = [...html.matchAll(/(?:src|href)="\.\/([^"]+)"/g)].map((m) => m[1])
+  const loaded: number[] = []
+  for (const asset of assets) loaded.push((try get(`/${asset}`)).status)
   const hidden: number[] = []
-  for (const file of ["/vibestack/spec.js", "/vibestack/studio/src/server.js", "/vibestack/studio/src/project.js", "/vibestack/studio/gen/index.conformance.js"]) hidden.push((try get(file)).status)
+  for (const file of ["/spec.ts", "/../spec.ts", "/src/server.vibe", "/vibestack/spec.js", "/studio/src/project.ts"]) hidden.push((try get(file)).status)
   // Only this machine's pages may act.
   const refused = [
     (try post("check", {}, { origin: "https://untrusted.example" })).status,
@@ -91,8 +91,8 @@ it.live("a spec is published with its origins, checked, synced by an agent, and 
     (try post("check", {}, { "content-type": "text/plain" })).status,
   ]
   try check(() => {
-    assert.match(page, /from "\.\.\/gen\/outline\.js"/)
-    assert.deepStrictEqual(hidden, [404, 404, 404, 404])
+    assert.deepStrictEqual([assets.some((a) => a.endsWith(".js")), assets.some((a) => a.endsWith(".css")), loaded.every((s) => s === 200)], [true, true, true])
+    assert.deepStrictEqual(hidden, [404, 404, 404, 404, 404])
     assert.deepStrictEqual(refused, [403, 403, 415])
   })
 
@@ -142,6 +142,38 @@ it.live("a spec is published with its origins, checked, synced by an agent, and 
     assert.match(prompt, /~ rule spec\/door\.md: .*\(prose\)/)
     assert.ok(!manifestLeft)
     assert.equal(synced.session.verdict, "Reviewable")
+  })
+}) } })
+
+// spec/index.md, "Story: Edit, then publish"; spec/outline.md, "Story: Group rules under stories"
+it.live("a rule is edited, a story added and both published from the page", () => effect { provide services { try scoped(effect {
+  const fs = try FileSystem.FileSystem
+  const root = try scratch({ "spec/door.md": try fs.readFileString(`${TOOLS}/fixtures/door.md`) })
+  const { url, project, settled } = try studioOn(root)
+  const browser = try acquireRelease(tryPromise(() => chromium.launch()), (b) => promise(() => b.close()))
+  const page = try tryPromise(() => browser.newPage())
+  const on = <A>(f: () => Promise<A>) => tryPromise(f)
+  try on(() => page.goto(`${url}/?project=.`))
+  // A story opens to its rules; a rule opens for editing, and its heading changes as it is typed.
+  try on(() => page.getByText("Story: Use the door", { exact: true }).click())
+  try on(() => page.getByRole("button", { name: "Edit rule" }).first().click())
+  try on(() => page.getByLabel("One checkable sentence").fill("Anyone can switch the alarm whenever they like"))
+  try on(() => page.keyboard.press("Escape"))
+  // A new story, at the end of the spec.
+  try on(() => page.getByRole("button", { name: "Story", exact: true }).click())
+  try on(() => page.getByLabel("Story: As a … I want …").fill("Story: Ring the bell"))
+  try on(() => page.getByRole("button", { name: "Done" }).click())
+  // spec/index.md, "Only edits can be published, and not while a job runs": publishing shows the diff first.
+  try on(() => page.keyboard.press("ControlOrMeta+s"))
+  try on(() => page.getByRole("dialog").getByRole("button", { name: "Publish" }).click())
+  try on(() => page.getByText("Published").waitFor())
+  const written = try fs.readFileString(`${root}/spec/door.md`)
+  const published = try settled()
+  try check(() => {
+    assert.match(written, /### Anyone can switch the alarm whenever they like\n/)
+    assert.match(written, /## Story: Ring the bell\n[^]*$/)
+    assert.deepStrictEqual(published.specs[0].outline.stories.map((s) => s.title), ["Domain", "Story: Use the door", "Story: Ring the bell"])
+    assert.equal(published.session.waiting, 2)
   })
 }) } })
 

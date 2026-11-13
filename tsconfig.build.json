@@ -24,7 +24,6 @@
   "include": [
     "vibestack/spec.ts",
     "vibestack/studio/src/main.vibe",
-    "vibestack/studio/src/page.ts",
     "vibestack/studio/gen/*.vibe"
   ],
   "vibe": {

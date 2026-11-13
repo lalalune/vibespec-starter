@@ -12,7 +12,7 @@ import { Machine, enabled, machine } from "../gen/index.effect.vibe"
 import type { Event, Session } from "../gen/index.ts"
 import { promptFor, type Manifest } from "./doc.ts"
 import {
-  NODE, PUBLIC, SPEC, checkCommand, createServer, finder, interactive, manifestFile, opener, ownedFiles, pageModule,
+  NODE, PUBLIC, SPEC, checkCommand, createServer, finder, interactive, manifestFile, opener, ownedFiles, buildPage,
   planPublish, projectName, readManifest, skillPath, specsOf, stateFile, studioRoot, verdictOf, type Publish,
 } from "./project.ts"
 
@@ -75,7 +75,7 @@ function readable(line: string): string | undefined {
 const messageOf = (e: unknown) => (e instanceof Error || e instanceof Refused ? e.message : String(e))
 
 const json = (status: number, body: unknown) => HttpServerResponse.jsonUnsafe(body, { status, headers: { "cache-control": "no-store" } })
-const TYPES: Record<string, string> = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml" }
+const TYPES: Record<string, string> = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml" }
 
 /** One project's studio: its session, its jobs, and the HTTP handler its page talks to. Lives as long as the scope. */
 effect function studio(project: Project, agents: Record<string, Agent>) {
@@ -317,6 +317,7 @@ export effect function startStudio({ projects, open = projects[0].id, port = 432
   for (const p of projects) lives.set(p.id, try studio(p, agents))
   const files = try FileSystem.FileSystem
   const path = try Path.Path
+  try tryPromise({ try: () => buildPage(), catch: (e) => new Refused({ status: 500, message: `the page did not build: ${messageOf(e)}` }) })
 
   let server: Effect.Success<ReturnType<typeof NodeHttpServer.make>> | undefined
   for (let p = port; !server; p++) {
@@ -337,11 +338,6 @@ export effect function startStudio({ projects, open = projects[0].id, port = 432
       if (origin !== undefined && origin !== `http://${host}`) throw new Refused({ status: 403, message: "cross-origin requests are not allowed" })
       if (request.headers["sec-fetch-site"] === "cross-site") throw new Refused({ status: 403, message: "cross-site requests are not allowed" })
       const url = new URL(request.url, `http://${host}`)
-      if (request.method === "GET" && url.pathname.startsWith("/vibestack/")) {
-        const code = (pageModule(url.pathname.slice("/vibestack/".length).replace(/\.js$/, "")))
-        if (code === undefined) throw new Refused({ status: 404, message: "not found" })
-        return HttpServerResponse.text(code, { contentType: "text/javascript; charset=utf-8", headers: { "cache-control": "no-store" } })
-      }
       if (request.method === "GET" && !url.pathname.startsWith("/api/")) {
         const file = path.join(PUBLIC, url.pathname === "/" ? "index.html" : path.normalize(url.pathname).replace(/^([/\\])+/, ""))
         const kind = files.stat(file) catch () => undefined
