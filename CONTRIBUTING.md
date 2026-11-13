@@ -4,6 +4,18 @@ Everything about how this repository works, for people and agents alike, is
 in [AGENTS.md](AGENTS.md); [README.md](README.md) is the overview and
 tutorial. **Every agent reads both in full before doing any work.**
 
+## Starting a project from the template
+
+Follow [project setup](README.md#set-up-a-new-project) before feature work:
+remove the example applications and their scripts and CI steps, move the
+template README to `vibespec/README.md` (formerly `tools/`), keep its license
+with the toolchain, and write the new project's root `README.md` and `LICENSE`.
+Update the guide links, add and check the project's initial spec, then commit
+all setup changes so `git status --short` is empty. The linked checklist is
+the setup procedure; the examples stay in this starter repository itself.
+
+## Working on the project
+
 In short:
 
 - Each application has one source of truth, `spec/<name>.md`: user stories,
