@@ -898,11 +898,11 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       for (const response of concurrent) assert.equal(response.status, 400, await response.text());
       assert.ok(!fs.existsSync(path.join(root, "spec/parallel.md")));
       let current = await (await fetch(`${url}/api/project`)).json();
-      while (current.jobs.check?.status === "running") {
+      while (Object.values(current.jobs ?? {}).some((job: any) => job.status === "running")) {
         await new Promise((resolve) => setTimeout(resolve, 50));
         current = await (await fetch(`${url}/api/project`)).json();
       }
-      assert.equal(current.jobs.check?.status, "failed");
+      assert.equal(current.jobs?.check?.status, "failed");
       assert.equal(current.check?.next.includes("npm run accept"), true);
       const created = await post("spec", { name: "nested/child" });
       assert.equal(created.status, 200, await created.clone().text());
@@ -921,7 +921,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       assert.equal(linked.status, 200, await linked.clone().text());
       const waitForCheck = async () => {
         let snap = await (await fetch(`${url}/api/project`)).json();
-        while (snap.jobs.check?.status === "running") {
+        while (Object.values(snap.jobs ?? {}).some((job: any) => job.status === "running")) {
           await new Promise((resolve) => setTimeout(resolve, 50));
           snap = await (await fetch(`${url}/api/project`)).json();
         }
