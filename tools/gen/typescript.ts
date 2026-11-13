@@ -119,16 +119,35 @@ export function typescript({ header, typedefs, vals, funs, sig, typeOf, doc, loc
     `}`,
   );
   // The helpers come last: which are needed is known only once every definition has been printed.
-  print.lookups.forEach((of, i) => out.push(
+  print.lookups.forEach(({ map, key, of, stored }, i) => out.push(
     ``,
     `/** What a map holds for a key, or \`otherwise\` if it holds nothing for it. */`,
     `//@ pure`,
-    `export function ${helper(`lookup${i}`)}(m: Record<string, ${of}>, k: string, otherwise: ${of}): ${of} {`,
-    `  const key = "$" + k;`,
+    `export function ${helper(`lookup${i}`)}(m: ${map}, k: ${key}, otherwise: ${of}): ${of} {`,
+    `  const key = ${stored};`,
     `  return key in m ? m[key] : otherwise;`,
     `}`,
   ));
-  if (print.arithmetic.has("quotient")) out.push(
+  // Only in the code Node runs, which checks what the proof takes as given (Scope.proof in print.ts).
+  if (print.helpers.has("exact")) out.push(
+    ``,
+    `/** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */`,
+    `export function ${helper("exact")}(n: number): number {`,
+    `  if (!Number.isSafeInteger(n)) throw new RangeError(\`an integer result is \${n}, beyond 2^53, where TypeScript cannot hold it exactly\`);`,
+    `  return n;`,
+    `}`,
+  );
+  if (print.helpers.has("equal")) out.push(
+    ``,
+    `/** Equality by structure, as Quint and the proof compare records, lists, maps and variants (none holds a set). */`,
+    `export function ${helper("equal")}(a: unknown, b: unknown): boolean {`,
+    `  if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return a === b;`,
+    `  const keys = Object.keys(a);`,
+    `  return Array.isArray(a) === Array.isArray(b) && keys.length === Object.keys(b).length`,
+    `    && keys.every((k) => Object.hasOwn(b, k) && ${helper("equal")}((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]));`,
+    `}`,
+  );
+  if (print.helpers.has("quotient")) out.push(
     ``,
     `/** Whole-number division as Quint does it: towards zero. */`,
     `//@ pure`,
@@ -137,7 +156,7 @@ export function typescript({ header, typedefs, vals, funs, sig, typeOf, doc, loc
     `  return (a < 0 === b < 0 ? 1 : -1) * Math.floor(Math.abs(a) / Math.abs(b)) + 0;`,
     `}`,
   );
-  if (print.arithmetic.has("remainder")) out.push(
+  if (print.helpers.has("remainder")) out.push(
     ``,
     `/** The remainder of that division; it has the sign of the dividend. */`,
     `//@ pure`,

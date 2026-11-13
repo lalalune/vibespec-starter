@@ -11,21 +11,21 @@ const TRIED: Record<string, string> = { int: "(-1).to(6)", bool: "Set(true, fals
 
 export function harness(
   module: string, source: string, imports: string[], funs: Json[], sig: (d: Json) => { params: Param[]; result: Json },
-  samples: Map<string, { elem: Json; line: number | undefined }>, { stateType, transitions, always, sometimes, steps, laws }: Roles,
+  samples: Map<string, { elem: Json; ref: string; line: number | undefined }>, { stateType, transitions, always, sometimes, steps, laws }: Roles,
   { fields, typedef, resolve, shape, tagged, named, qType }: Types,
 ): { text: string; evals: Eval[]; uncompared: string[] } {
   const stateShape = stateType && shape(stateType);
   const spell = (t: Json) => { try { return qType(t).replace(/^(M|D_\w+)::/, ""); } catch { return shape(t); } };
   /**
-   * The spec's own `<param>Values` for a parameter, if it defines one. A set of the wrong type would otherwise surface as
-   * a type error inside the generated harness, far from the spec line that causes it.
+   * The `<param>Values` for a parameter, the spec's own or an imported spec's, if there is one. A set of the spec's own
+   * of the wrong type would otherwise surface as a type error inside the generated harness, far from the spec line that
+   * causes it; an imported one of another type was meant for another parameter, and is not used.
    */
   const given = (p: Param, of: string): string | undefined => {
     const set = samples.get(`${p.name}Values`);
-    if (!set) return undefined;
-    if (set.elem.kind !== "var" && shape(set.elem) !== shape(p.type))
+    if (!set || set.elem.kind === "var" || shape(set.elem) === shape(p.type)) return set?.ref;
+    if (set.ref.startsWith("M::"))
       fail(`${p.name}Values (${source}${set.line ? `:${set.line}` : ""}) holds ${spell(set.elem)}, but the parameter ${p.name} of ${of} is ${spell(p.type)}: rename the parameter or the set, as each \`<param>Values\` is used for every parameter of that name`);
-    return `M::${p.name}Values`;
   };
   /** How the harness names a variant: by the module that defines its type, which an import may not re-export. */
   const definedIn = (t: Json): Json | undefined => (t.kind === "const" ? (typedef(t.name).type.kind === "const" ? definedIn(typedef(t.name).type) : typedef(t.name)) : named(t, "sum"));
@@ -137,7 +137,7 @@ export function harness(
   ].join("\n");
   // A sample set no parameter is named for is never used: most likely a typo for the parameter it was meant for.
   const forParams = new Set(funs.flatMap((d) => sig(d).params.map((p) => `${p.name}Values`)));
-  for (const [set, { line }] of samples)
-    if (!forParams.has(set)) fail(`${set} (${source}${line ? `:${line}` : ""}): no parameter is named ${set.slice(0, -"Values".length)}, so the simulator never uses it; name it after the parameter it is for`);
+  for (const [set, { ref, line }] of samples)
+    if (ref.startsWith("M::") && !forParams.has(set)) fail(`${set} (${source}${line ? `:${line}` : ""}): no parameter is named ${set.slice(0, -"Values".length)}, so the simulator never uses it; name it after the parameter it is for`);
   return { text, evals, uncompared };
 }

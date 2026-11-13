@@ -55,6 +55,25 @@ export function typeWalks(typedefs: Json[], module: string, prefix = "") {
   };
   /** A set's element type, refused unless it is a simple value: a set is an array that never holds the same value twice, which is only checkable for those. */
   const setElem = (t: Json): Json => (isScalar(t.elem) ? t.elem : fail("sets of records or lists are not supported; use a list"));
+  /**
+   * A map's key type: an integer, a string or a plain variant. In TypeScript a map is an object, which makes every key
+   * a string, so a string key is stored with a "$" in front (no key can then be a property every object has, such as
+   * "constructor"), and a variant may not be named like one. The proof sees a Dafny `map` from the key type itself.
+   */
+  const keyOf = (t: Json): Json => {
+    const k = resolve(t.arg);
+    if (!isScalar(k) || k.kind === "bool") fail("a map's keys must be integers, strings or the variants of a type whose variants carry no data");
+    const clash = k.kind === "sum" && fields(k).find((f) => f.fieldName in Object.prototype);
+    return clash ? fail(`variant ${clash.fieldName} cannot be a map's key: every JavaScript object has a property of that name`) : k;
+  };
+  /** A key as the generated object stores it. */
+  const storedKey = (t: Json, k: string) => (keyOf(t).kind === "str" ? `"$" + ${k}` : k);
+  /** Whether a value of the type can hold a set: equality would compare it in order in the proof, where a set is a sequence. */
+  const holdsSet = (t0: Json): boolean => {
+    const t = resolve(t0);
+    return t.kind === "set" || (t.kind === "list" && holdsSet(t.elem)) || (t.kind === "fun" && holdsSet(t.res))
+      || (t.kind === "rec" && fields(t).some((f) => holdsSet(f.fieldType))) || (tagged(t) && fields(t).some((f) => !!payload(f) && holdsSet(payload(f)!)));
+  };
   /** The type a variant belongs to. */
   const ownerOf = (variant: string): Json => {
     const [base, alias] = variant.split("::").reverse();
@@ -68,7 +87,7 @@ export function typeWalks(typedefs: Json[], module: string, prefix = "") {
     if (PRIMITIVE[t.kind]) return PRIMITIVE[t.kind];
     if (t.kind === "list") return `${tsType(t.elem)}[]`;
     if (t.kind === "set") return `${tsType(setElem(t))}[]`;
-    if (t.kind === "fun") return resolve(t.arg).kind === "str" ? `Record<string, ${tsType(t.res)}>` : fail("a map's keys must be strings");
+    if (t.kind === "fun") return `Record<${tsType(keyOf(t))}, ${tsType(t.res)}>`;
     const d = named(t);
     return d ? typeName(d) : fail(`a ${t.kind} type is not in the Quint a spec may use (AGENTS.md, "Supported Quint"); name it with \`type\` or use a supported one`);
   };
@@ -97,8 +116,8 @@ export function typeWalks(typedefs: Json[], module: string, prefix = "") {
   // --- untrusted values --------------------------------------------------------
   /**
    * A runtime test that an untrusted value inhabits a type. `exact` is for a whole state: a record or variant may have
-   * no field beyond those its type names, and a map is allowed, as a record whose keys all carry the "$" that every
-   * key in generated code carries.
+   * no field beyond those its type names, and a map is allowed, as a record whose keys are stored as the generated
+   * code stores them (keyOf).
    */
   const wellFormed = (v: string, t0: Json, depth = 0, exact = false): string => {
     const t = resolve(t0);
@@ -116,7 +135,11 @@ export function typeWalks(typedefs: Json[], module: string, prefix = "") {
     if (t.kind === "rec") return [object, ...record(t), ...sized(fields(t).length)].join(" && ");
     if (t.kind === "fun") {
       if (!exact) return fail("an event cannot carry a map; send a list of records instead");
-      return `${object} && Object.entries(${v}).every(([k${depth}, ${x}]: [string, any]) => k${depth}.startsWith("$") && ${wellFormed(x, t.res, depth + 1, exact)})`;
+      const [k, key] = [keyOf(t), `k${depth}`];
+      const stored = k.kind === "str" ? `${key}.startsWith("$")`
+        : k.kind === "int" ? `/^(0|-?[1-9][0-9]*)$/.test(${key}) && Number.isSafeInteger(Number(${key}))`
+        : `(${fields(k).map((f) => `${key} === ${JSON.stringify(f.fieldName)}`).join(" || ")})`;
+      return `${object} && Object.entries(${v}).every(([${key}, ${x}]: [string, any]) => ${stored} && ${wellFormed(x, t.res, depth + 1, exact)})`;
     }
     return fail(`a parameter of type ${t.kind} is not supported`);
   };
@@ -146,7 +169,7 @@ export function typeWalks(typedefs: Json[], module: string, prefix = "") {
     if (t.kind === "list") return v.map((x: any) => decode(t.elem, x));
     if (t.kind === "set") return v["#set"].map((x: any) => decode(t.elem, x));
     if (t.kind === "rec") return Object.fromEntries(fields(t).map((f) => [f.fieldName, decode(f.fieldType, v[f.fieldName])]));
-    if (t.kind === "fun") return Object.fromEntries(v["#map"].map(([k, x]: [any, any]) => ["$" + decode(t.arg, k), decode(t.res, x)]));
+    if (t.kind === "fun") return Object.fromEntries(v["#map"].map(([k, x]: [any, any]) => [keyOf(t).kind === "str" ? "$" + decode(t.arg, k) : decode(t.arg, k), decode(t.res, x)]));
     if (tagged(t)) {
       const carried = carriedBy(t, v.tag);
       return { tag: v.tag, ...(carried ? decode(carried, v.value) : {}) };
@@ -168,6 +191,6 @@ export function typeWalks(typedefs: Json[], module: string, prefix = "") {
     return v;
   };
 
-  return { fields, typedef, resolve, shape, payload, tagged, isScalar, setElem, named, ownerOf, typeName, tsType, declaration, qType, wellFormed, copy, decode, canon };
+  return { fields, typedef, resolve, shape, payload, tagged, isScalar, setElem, keyOf, storedKey, holdsSet, named, ownerOf, typeName, tsType, declaration, qType, wellFormed, copy, decode, canon };
 }
 export type Types = ReturnType<typeof typeWalks>;
