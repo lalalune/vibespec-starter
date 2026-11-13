@@ -276,12 +276,13 @@ effect function studio(project: Project, agents: Record<string, Agent>) {
     switch (route) {
       case "/api/publish": return try publish(body)
       // spec/index.md, "Story: Build the app": the project's own build script, as a job.
-      case "/api/build":
+      case "/api/build": {
         const command = buildCommand(root)
         if (!command) throw new Refused({ status: 404, message: "the project has no build script, and no app under apps/ has one" })
         try act({ type: "build" })
         try run("build", "build", command, undefined, (l) => l, () => act({ type: "built" }))
         return {}
+      }
       case "/api/check":
         try act({ type: "check" })
         try runCheck()
