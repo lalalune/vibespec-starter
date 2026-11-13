@@ -448,9 +448,11 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
 
   test("an obligation that fails is not assumed while the others are checked", async () => {
     const { said, text } = await run(fixtures(["twins"]));
-    const found = said("proof", /^twins\.ts: 2 of 4 obligations not proved/);
+    const found = said("proof", /^twins\.ts: 3 of 4 obligations not proved/);
     assert.equal(found?.ok, false, text);
     assert.match(found!.detail, /alwaysBIsAtMostThreeOrNinetyNine/);
+    // The tools' step body calls the transition's lemma, so step rests on what that lemma does not prove.
+    assert.match(found!.detail, /step: inv\(step\(current, event\)\)   \[rests on bump: /);
   });
 
   test("verified code cannot assume, or import a look-alike of the generated module", async () => {

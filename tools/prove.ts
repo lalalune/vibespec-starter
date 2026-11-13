@@ -319,7 +319,6 @@ const DEFINITION = /^\s*(?:ghost\s+)?(?:lemma|method|function|predicate)\s+(?:\{
  */
 export function splice(gen: string, { proof, stepBody, axioms, lib }: Additions, where = "gen/proof/<unit>/<unit>.dfy"): Spliced {
   const lemmas = proof ? parseProofFile(proof.text, proof.file) : [];
-  if (proof) checkNames(proof, gen, lib);
   const empty = emptyLemmas(gen);
   const bodies = new Map<string, string>();
   const helpers: Lemma[] = [];
@@ -335,6 +334,8 @@ export function splice(gen: string, { proof, stepBody, axioms, lib }: Additions,
       throw new Error(`${proof!.file}:${l.line}: lemma ${l.name}: the name is already declared in ${where}; a helper needs a name of its own`);
     } else helpers.push(l);
   }
+  // After the loop, so that a helper named like a generated definition or the library is refused as a duplicate.
+  if (proof) checkNames(proof, gen, lib);
   if (stepBody && empty.has("step_ensures") && !bodies.has("step_ensures")) bodies.set("step_ensures", stepBody);
   const lines: string[] = [];
   const regions: Region[] = [];
