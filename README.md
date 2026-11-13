@@ -94,8 +94,8 @@ npm run demo
 ```
 
 `npm install` builds the `spec` command and generates `gen/` when every spec
-is valid. `npm run check` checks the current project and ends with a `next:` line.
-Run `npm run check --workspaces --if-present` to check every example.
+is valid. `npm run check` checks the template and every example workspace,
+ending each project with a `next:` line.
 `npm run demo` generates and runs `vibespec/examples/order`, driving the verified checkout
 through a scripted session; every `✗` is a rule refusing an event:
 
@@ -117,8 +117,8 @@ project directory containing `spec/`, rather than an individual Markdown spec.
 Its `package.json`, when present, supplies the application's run scripts.
 
 ```bash
-npm run check -- vibespec/examples/order
-npm run gen -- vibespec/examples/order
+npx spec check vibespec/examples/order
+npx spec gen vibespec/examples/order
 npm --prefix vibespec/examples/order run demo
 ```
 
@@ -130,12 +130,12 @@ quoted paths containing spaces and absolute paths all work.
 | Example directory | What to run |
 |---|---|
 | `vibespec/examples/order` | The checkout demo above |
-| `vibespec/examples/dashboard` | `npm run check -- vibespec/examples/dashboard` for the task model and notification tests |
-| `vibespec/examples/assistant` | `npm run check -- vibespec/examples/assistant` for the trusted-sender and payment model |
+| `vibespec/examples/dashboard` | `npx spec check vibespec/examples/dashboard` for the task model and notification tests |
+| `vibespec/examples/assistant` | `npx spec check vibespec/examples/assistant` for the trusted-sender and payment model |
 | `vibespec/examples/fullstack` | Check it, then start the shared to-do app as shown below |
 
 ```bash
-npm run check -- vibespec/examples/fullstack
+npx spec check vibespec/examples/fullstack
 npm --prefix vibespec/examples/fullstack run start
 ```
 
@@ -148,10 +148,11 @@ To check every bundled example, use the workspace command:
 npm run check --workspaces --if-present
 ```
 
-The same directory argument works with `npm run accept -- <directory>`
+The same directory argument works with `npx spec accept <directory>`
 when you are ready to sign off on that project's reviews. To recheck while
 editing, run `npx spec watch <directory>`; stop it with Ctrl-C. Omitting the
-directory keeps each command on the current project.
+directory keeps the `spec` commands on the current project. The root
+`npm run check` script checks the template and all example workspaces.
 
 ## Set up a new project
 
@@ -160,7 +161,8 @@ use it for a new project, finish this cleanup before feature work:
 
 1. **Remove the examples.** Delete `vibespec/examples/`, including the order
    example. Remove their workspace entries, npm scripts and CI steps, such
-   as `demo` and `check:dashboard`, and replace the package metadata and
+   as `demo` and `check:dashboard`. Set `check` to `node vibespec/spec.ts check`
+   after removing the workspaces, and replace the package metadata and
    repository links with the new project's.
 2. **Keep the toolchain guide with the toolchain.** Move this README to
    `vibespec/README.md` (the toolchain directory formerly called `tools/`).
@@ -445,11 +447,13 @@ npm run accept
 | Command | Does |
 |---|---|
 | `npm run dev -- <example-or-directory>` | Opens Studio on that project; omit the argument for the root |
-| `npm run check -- <directory>` | Every stage below for that project; omit the directory for the current project |
+| `npm run check` | Checks the root specification and every example workspace; ends each project with a `next:` line |
+| `npm run check --workspaces --if-present` | Checks each example workspace |
+| `npx spec check <directory>` | Every stage below for that project; omit the directory for the current project |
 | `npx spec check <directory> --json` | That project's check as one JSON object ([shape](AGENTS.md#changing-the-tools)) |
-| `npm run gen -- <directory>` | Generates that project's `gen/` only |
+| `npx spec gen <directory>` | Generates that project's `gen/` only |
 | `npx spec watch <directory>` | Rechecks that project when its spec, source or tests change |
-| `npm run accept -- <directory>` | The user's sign-off: checks afresh and records what `review` lists, [all or nothing](AGENTS.md#review) |
+| `npx spec accept <directory>` | The user's sign-off: checks afresh and records what `review` lists, [all or nothing](AGENTS.md#review) |
 | `npm run accept -- unproved` | Records the listed obligations as simulated only. The user's decision |
 | `npm run new` / `npm run new -- <path>` | Fills an empty root index or creates a child [starter spec](AGENTS.md#writing-a-spec) |
 | `npx spec migrate <directory>` | Consolidates that project's old review ledgers into `spec/lock.json`, preserving their recorded approvals |
