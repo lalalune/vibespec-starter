@@ -321,7 +321,10 @@ stage with the name of the construct.
 - **`every`, `some`, `includes` and `listMap` are not Quint.** They are
   rewritten into `foldl` before Quint reads the spec, because Quint evaluates
   a definition that takes a lambda wrongly when it is used inside its own
-  argument.
+  argument. In TypeScript they are the array methods, except that `every`, a
+  set's `forall` and `subseteq` are written `!xs.some(x => !…)`: the proof
+  then sees each as a quantifier over the members
+  (`!(exists x :: x in xs && !…)`), as it sees `some` and `includes`.
 - **The simulator tries small values**: integers −1…6, both booleans, three
   strings, every variant of a plain sum type, and short lists and sets of
   those. Define `<param>Values` to choose, which a record or a variant that
@@ -436,10 +439,11 @@ for each one, in this order:
    to another. Read the list before recording it: an obligation that is false
    is also "not proved".
 
-Counting is per obligation. Dafny checks every `ensures` on its own, a
-failing one is never assumed while another is checked, and the prover works
-to a fixed resource limit (`RESOURCE_LIMIT` in `vibespec/prove.ts`) rather than a
-time limit, so the answer does not depend on the machine. An obligation it
+Counting is per obligation. Dafny verifies each definition whole, and one
+that fails again with every assertion on its own; a failing `ensures` is never
+assumed while another is checked. The prover works to a fixed resource limit
+(`RESOURCE_LIMIT` in `vibespec/prove.ts`, per definition and then per assertion)
+rather than a time limit, so the answer does not depend on the machine. An obligation it
 could not finish is marked `[the prover ran out of resources]`. A lemma
 assumes what every lemma it calls ensures, so an obligation whose proof calls,
 directly or through helpers, a lemma with an obligation not proved is not
@@ -480,7 +484,7 @@ a body.
   `match`, `var`, `reveal`, calls to lemmas, and the attributes `{:trigger}`
   and `{:induction}`.
 - Names from Dafny's standard library (`Std.…`) only as the generated code
-  writes them, such as `Std.Collections.Seq.All`: the library holds axioms,
+  writes them, such as `Std.Collections.Seq.Filter`: the library holds axioms,
   and `dafny audit` does not report them in the unit. `ProofLib.<Name>` only
   for what `vibespec/proof/lib.dfy` declares.
 - Refused: block comments, `@`, any other attribute, character literals, NUL,
@@ -499,8 +503,8 @@ a body.
 
 **What a proof can call:**
 
-- `ProofLib.<Name>(...)` from `vibespec/proof/lib.dfy`, added to every unit that
-  has a proof file: `Filter` (a heap-free view of `Std.Collections.Seq.Filter`,
+- `ProofLib.<Name>(...)` from `vibespec/proof/lib.dfy`, of which every unit that
+  has a proof file gets what the file calls and what that uses: `Filter` (a heap-free view of `Std.Collections.Seq.Filter`,
   see below), `Distinct`, `DistinctBy`, and lemmas about filters
   (`FilterNil`, `FilterCons`, `FilterAppend`, `FilterMember`, `FilterSubset`,
   `FilterNone`, `FilterOne`, `FilterTwo`, `FilterCountOneIffUnique`,
@@ -510,10 +514,15 @@ a body.
   Read the file for what each states. A lemma general enough for any project
   belongs there, with its proof; one about your spec belongs in your proof
   file.
-- A law of an imported module, if its own unit proved it in the same run,
-  neither simulated only nor resting on an obligation that is:
-  `<module>_<law>_ensures(args)` gives `<module>_<law>(args) == true`. (In a
-  `src` unit, the laws of the module it imports are `<law>_ensures`.)
+- What an imported module's own unit proved in the same run, neither
+  simulated only nor resting on an obligation that is: its lemmas
+  `<module>_<fn>_ensures(args)` for each law, transition, `step` and
+  `initialHolds`, with the clauses proved. `<module>_<law>_ensures(args)`
+  gives `<module>_<law>(args) == true`, and `<module>_<transition>_ensures(s, …)`
+  gives each rule of that module for `<module>_<transition>(s, …)`, under its
+  `inv` and guard, so a machine that holds another need not prove its rules
+  again (`vibespec/fixtures/office.md`). (In a `src` unit, those of the module
+  it imports are `<fn>_ensures`.)
 - The generated `_ensures` lemmas, and Dafny's standard library by the names
   the generated code uses.
 
@@ -527,7 +536,7 @@ supply one to replace it.
   State facts about `ProofLib.Filter`, and connect them to the rule with a
   helper whose `ensures` is the rule's body with `ProofLib.Filter` in place of
   `Std.Collections.Seq.Filter`; it proves with an empty body:
-  `lemma KeysBridge(r: Registry) ensures alwaysAKeyNamesOneProject(r) == Std.Collections.Seq.All(r.entries, (a: Entry) => (|ProofLib.Filter((b: Entry) => (b.key == a.key), r.entries)| == 1)) { }`.
+  `lemma KeysBridge(r: Registry) ensures alwaysAKeyNamesOneProject(r) == !(exists a :: a in r.entries && !(|ProofLib.Filter((b: Entry) => (b.key == a.key), r.entries)| == 1)) { }`.
 - A lambda is the same term only if it is the same text: pass the lambda the
   generated code uses, copied verbatim from the `.dfy`.
 
@@ -671,10 +680,12 @@ with `tsc`; it has no dependencies.
   that import machines where rules span them. `check` runs them in dependency
   order and proves each against the *definitions* of what it imports, not
   their proofs, so the cost of a proof grows with the spec, not with
-  everything beneath it.
-- **Only what changed is checked again.** Each passing simulation and proof
-  result is kept in `.spec-cache/` under a fingerprint of the spec, everything it
-  imports and the versions of the tools.
+  everything beneath it. Its proof file may call what their units proved.
+- **Only what changed is checked again.** Each simulation result, a failing
+  one too (its seed is fixed), and each passing proof result is kept in
+  `.spec-cache/` under a fingerprint of the spec's Quint without its comments,
+  everything it imports and the versions of the tools; `tsc` keeps its
+  incremental state there. The specs are simulated at once.
 - **The spec covers the rules, not the plumbing.** Chat, HTTP and storage stay
   hand-written around the generated core, as `vibespec/examples/dashboard/src/notify.ts`
   does for sending messages.
@@ -703,23 +714,3 @@ In the vibespec-starter repository:
 | `vibespec/cache.ts`, `vibespec/run.ts` | stage caches and bounded tool execution |
 | `vibespec/units.ts`, `vibespec/simulate.ts` | generation, proof units, simulation and replay |
 | `vibespec/util.ts` | source discovery, test execution and citations |
-| `vibespec/scan.ts` | how a spec's lines are read; imports nothing, so Studio's page uses it too |
-| `vibespec/studio/` | Studio, a workspace package with its own spec, checked by `npm run check --workspace vibespec-studio`: change `spec/`, then its shell in `src/` |
-| `vibespec/prove.ts` | proves one unit: checks and splices the proof file, runs LemmaScript and `dafny audit`, and rechecks alone every postcondition a failing one could hide |
-| `vibespec/proof/lib.dfy` | the library proof files call |
-| `vibespec/gen.ts` | the translator: reads what a module imports and defines |
-| `vibespec/gen/types.ts` | everything decided by a type |
-| `vibespec/gen/print.ts` | expressions |
-| `vibespec/gen/classify.ts` | which definition is a transition, a guard or a rule |
-| `vibespec/gen/typescript.ts`, `vibespec/gen/harness.ts` | the two outputs |
-
-Node runs all of it directly; `npm run build` compiles it for the packaged
-`spec` command.
-
-`check(root)` returns `{ ok, results, next }`, and `spec check --json` prints
-that object. Each result has `ok`, `stage` (a stage, or `skipped`),
-`summary`, `detail` and, when it concerns one, `where`; `next` is the line
-the command line ends with. `npm run selftest` builds scratch projects from
-this project's spec or from `vibespec/fixtures/`, breaks one thing at a time and
-asserts which stage catches each. Add a case for every new kind of mistake a
-change is meant to catch.

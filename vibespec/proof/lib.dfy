@@ -1,12 +1,13 @@
 // General lemmas for proof files (spec/<name>.proof.dfy, src/<path>.proof.dfy).
-// The tools add this module to every proof unit that has a proof file and
-// verify it there; call its lemmas as ProofLib.<Name>(...).
+// The tools add this module to every proof unit that has a proof file, with
+// only the declarations the proof file calls and those they use (`libraryFor`
+// in vibespec/prove.ts), and verify it there; call its lemmas as ProofLib.<Name>(...).
 //
 // Two facts about Dafny 4.11 shape it:
 // - Std.Collections.Seq.Filter is opaque and reads the heap. Inside a `->`
-//   lambda (such as the body of an All in a generated rule) it is evaluated in
-//   a different heap than in a lemma, so a fact proved about it in a lemma never
-//   meets the term in the rule. ProofLib.Filter has no reads clause: state facts
+//   lambda (such as the predicate of another filter in a generated rule) it is
+//   evaluated in a different heap than in a lemma, so a fact proved about it in
+//   a lemma never meets the term in the rule. ProofLib.Filter has no reads clause: state facts
 //   about it, and bridge to the generated term with an `assert` that unfolds
 //   the generated function (see AGENTS.md, "Proof files").
 // - Dafny has no function extensionality. A lambda copied verbatim from
