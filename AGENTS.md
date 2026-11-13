@@ -211,9 +211,9 @@ is generated. The role of a definition comes from its name and signature:
 | `pure def leadsToPaid(o: Order, later: Order): bool` | a liveness rule: from every reachable state `o`, every fair run reaches a state `later` that it relates to `o` (`o` itself counts) | a search of simulated traces for a fair run that breaks it ("Liveness", below) |
 | `pure def lawTotalIsNotNegative(xs: List[int]): bool` | a law: true for every value of its parameters | a function proved to return `true`, and sampled by the simulator |
 | `pure val idValues = Set(1, 2, 3)` | what the simulator tries for a parameter named `id`. It must be a set whose elements match the parameter type; any supported Quint is allowed in it | nothing: it never reaches TypeScript |
-
 | `pure val weight_pay = 5` | how often the simulator tries `pay`: a whole number from 1 to 100, times as often as an event of weight 1 (the default). For deep interleavings, such as a message lost, repeated and reordered | nothing |
 | `pure val fair_pay = "weak"` or `"strong"` | an assumption for `leadsTo` rules: a fair run does not put `pay` off for ever while its guard keeps allowing it (`"weak"`), or while it allows it again and again (`"strong"`) | nothing |
+| `pure val within_leadsToPaid = 3` | a bound for a `leadsTo` rule: every run meets it within 3 events, from 1 to 100 | a search of simulated traces for a run that does not ("Liveness", below) |
 | any other `pure val` or `pure def` | a constant or helper | the same constant or function |
 
 A transition parameter named `by` identifies its sender. All such parameters
@@ -278,7 +278,7 @@ TypeScript a name from another module is spelled
 | records | interfaces | Nest as deep as you like |
 | `type Status = Draft \| Paid` | `"Draft" \| "Paid"` | |
 | `type Parcel = Packed({ weight: int }) \| Lost` | `{ tag: "Packed"; weight: number } \| { tag: "Lost" }` | Read with `match p { \| Packed(x) => … \| _ => … }` |
-| `List[T]` | `T[]` | `List(…)`, `append`, `concat`, `length`, `nth`, `head`, `tail`, `select`, `foldl`, and `every`, `some`, `includes`, `listMap` |
+| `List[T]` | `T[]` | `List(…)`, `append`, `concat`, `length`, `nth`, `nthOr`, `removeAt`, `head`, `tail`, `select`, `foldl`, and `every`, `some`, `includes`, `listMap` |
 | `Set[T]` of simple values | `T[]` that never holds a value twice | `Set(…)`, `union`, `intersect`, `exclude`, `filter`, `map`, `forall`, `exists`, `contains`, `in`, `subseteq`, `size` |
 | `K -> T` | `Record<K, T>` | Keys are integers, strings or plain variants; `Map()`, `put`, `get`, `getOr`, `m.keys().contains(k)` |
 
@@ -312,8 +312,8 @@ stage with the name of the construct.
   real thing and a list when they are not.
 - **A map is a lookup table.** It cannot be listed or iterated; keep a list of
   keys beside it, or use a list of records with a key field. An event cannot
-  carry one. In the generated state its keys carry a `$` in front, so that no
-  key can collide with a property every JavaScript object has.
+  carry one. In the generated state a string key carries a `$` in front, so
+  that no key can collide with a property every JavaScript object has.
 - **In a `match` arm, use the fields of what the variant carries**
   (`x.weight`), or rebuild the variant (`Packed({ ...x, weight: 2 })`). The
   carried value cannot be passed on whole. `match` must be on a name.
@@ -324,7 +324,8 @@ stage with the name of the construct.
 - **The simulator tries small values**: integers −1…6, both booleans, three
   strings, every variant of a plain sum type, and short lists and sets of
   those. Define `<param>Values` to choose, which a record or a variant that
-  carries data needs.
+  carries data needs. The sets of an imported spec apply too; the spec's own
+  win.
 
 ### Writing good rules
 
@@ -366,6 +367,10 @@ the state marked.
 - An event lost and sent again forever loops; only `"strong"` fairness of
   the delivery rules that out (`vibespec/fixtures/ping.md`).
 - "Allows" is for the values the simulator tries (`<param>Values`).
+- `within_<rule> = n` also asks that the rule be met within `n` events of
+  any state, whatever events they are: a run that takes `n` without meeting
+  it breaks the rule, fair or not. Events of the environment count too, so a
+  bound holds only where nothing can delay the answer without limit.
 - A loop needs a state reached twice. A counter that only grows rules loops
   out, and then only runs that stop are checked: the stage says how many
   loops it found. Nothing proves a `leadsTo` rule.

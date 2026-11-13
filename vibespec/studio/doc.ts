@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { danglingCitations, dependencies, parseSpec, scanSpec, type Spec } from "../spec.ts";
 import { readSpecs, specName } from "../parse.ts";
+import { filesUnder } from "../util.ts";
 
 /** A run of prose, or the code of one quint block. */
 export interface Item { quint: boolean; text: string }
@@ -220,7 +221,7 @@ export function manifestOf(root: string, baseline: Record<string, string>, curre
   };
   for (const s of specs) if (edited.includes(s.file)) visit(s, "edited");
   const modules = new Set(regenerate.map((r) => r.gen.slice(4)).concat(Object.keys(baseline).filter((f) => !(f in current)).map((f) => `${specName(f)}.ts`)));
-  const code = ["src", "test"].flatMap((dir) => fs.existsSync(path.join(root, dir)) ? (fs.readdirSync(path.join(root, dir), { recursive: true }) as string[]).map((f) => path.join(dir, f)) : [])
+  const code = ["src", "test"].flatMap((dir) => filesUnder(root, dir))
     .filter((f) => /\.[cm]?tsx?$/.test(f) && [...modules].some((m) => fs.readFileSync(path.join(root, f), "utf8").includes(`gen/${m}`))).map((f) => f.split(path.sep).join("/")).sort();
   let citations: string[] = [];
   try { citations = danglingCitations(root, specs); } catch { /* no code to read */ }

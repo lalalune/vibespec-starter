@@ -2,28 +2,24 @@
 // scratch project, from this project's own spec or from the small specs in
 // vibespec/fixtures/, breaks one thing, and asserts which stage of `check` fails.
 import assert from "node:assert/strict";
-import { execFile, spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { after, describe, test } from "node:test";
-import { exec, LIB_FILE, isolatedCopies, parseProofFile, readVerdict, splice } from "./prove.ts";
+import { LIB_FILE, isolatedCopies, parseProofFile, readVerdict, splice } from "./prove.ts";
+import { exec } from "./run.ts";
 import { migrateLocks, pendingSpecs, readLedger, writeLedger } from "./review.ts";
-import { danglingCitations } from "./util.ts";
 import { nodesOf } from "./studio/doc.ts";
 import { canonical, departure } from "./conformance.ts";
 import { conformance as checkTraces, conformanceFound, writeConformance } from "./conform.ts";
 import { serve, startStudio } from "./studio/server.ts";
-import { acceptContracts, acceptReviews, check, checkVerifiedSource, expandListHelpers, gen, init, parseSpec, pending, pendingContracts, readSpecs, replay, show, type Result } from "./spec.ts";
+import { acceptContracts, acceptReviews, check, checkVerifiedSource, danglingCitations, expandListHelpers, generated, init, parseSpec, pending, pendingContracts, readSpecs, replay, show, typecheckAll, type Result, type Spec } from "./spec.ts";
 
 const project = path.join(import.meta.dirname, "..");
 const EXAMPLE = path.join(project, "vibespec/examples/order");
-const read = (file: string): string => {
-  const example = file === "spec/order.md" ? "spec/index.md" : /^(src|test)\//.test(file) || file === "tsconfig.json" ? file : undefined;
-  const text = fs.readFileSync(example ? path.join(EXAMPLE, example) : path.join(project, file), "utf8");
-  return example ? text.replaceAll("gen/index.", "gen/order.").replaceAll("spec/index.md", "spec/order.md") : text;
-};
+const read = (file: string, from = project): string => fs.readFileSync(path.join(from, file), "utf8");
 const F = "`".repeat(3);
 const roots: string[] = [];
 const nodeModules = (function find(dir: string): string {
@@ -41,31 +37,48 @@ function scratch(files: Record<string, string>): string {
     fs.writeFileSync(path.join(root, file), text);
   }
   if (Object.keys(files).some((f) => /^(src|test)\//.test(f)) && !files["tsconfig.json"]) {
-    fs.writeFileSync(path.join(root, "tsconfig.json"), read("tsconfig.json"));
+    fs.copyFileSync(path.join(EXAMPLE, "tsconfig.json"), path.join(root, "tsconfig.json"));
     fs.symlinkSync(nodeModules, path.join(root, "node_modules"), "dir");
   }
   return root;
 }
-/** A scratch project whose specs are the named fixtures, each changed by `edit` if it is given. */
+/** A scratch project whose specs are the named fixtures, with their proof files, each changed by `edit` if it is given. */
 const fixtures = (names: string[], edit: (files: Record<string, string>) => void = () => {}) => {
-  const files = Object.fromEntries(names.map((n) => [`spec/${n}.md`, read(`vibespec/fixtures/${n}.md`)]));
+  const files = Object.fromEntries(names.flatMap((n) => [`${n}.md`, `${n}.proof.dfy`]
+    .filter((f) => f.endsWith(".md") || fs.existsSync(path.join(project, "vibespec/fixtures", f))).map((f) => [`spec/${f}`, read(`vibespec/fixtures/${f}`)])));
   edit(files);
   return scratch(files);
 };
+/** A spec made of a single rule. */
+const ruleSpec = (quint: string, heading = "A rule", title = "T", story = "Story") => `# ${title}\n\n## ${story}\n\n### ${heading}\n\n${F}quint\n${quint}\n${F}\n`;
 /** A scratch project with one spec made of a single rule. */
-const oneRule = (name: string, heading: string, quint: string) => scratch({ [`spec/${name}.md`]: `# T\n\n## Story\n\n### ${heading}\n\n${F}quint\n${quint}\n${F}\n` });
+const oneRule = (name: string, heading: string, quint: string) => scratch({ [`spec/${name}.md`]: ruleSpec(quint, heading) });
+/** Hand-written code with a one-line contract. */
+const ONE = "//@ pure\nexport function one(): number {\n  //@ ensures \\result === 1\n  return 1;\n}\n";
+/** Generated Dafny: one function and its obligation. */
+const GENERATED_F = "function f(x: int): int\n{\n  x\n}\n\nlemma f_ensures(x: int)\n  ensures (f(x) >= x)\n{\n}\n";
+/** Wait until `ready`, failing with `why` after two minutes. */
+async function until(ready: () => boolean | Promise<boolean>, why: () => string = () => "timed out") {
+  const end = Date.now() + 120_000;
+  while (!(await ready())) {
+    assert.ok(Date.now() < end, why());
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+/** The studio's project once no job is running. */
+async function waitForCheck(url: string) {
+  let snap: any;
+  await until(async () => {
+    snap = await (await fetch(`${url}/api/project`)).json();
+    return !Object.values(snap.jobs ?? {}).some((job: any) => job.status === "running");
+  });
+  return snap;
+}
 
-// This project's spec and src with whatever awaits sign-off here accepted, checked once
+// The order example with whatever awaits sign-off here accepted, checked once
 // so that every copy starts with its cache: an edit then re-runs only what it changes.
 const pristine = scratch({});
-fs.mkdirSync(path.join(pristine, "spec"));
-fs.writeFileSync(path.join(pristine, "spec/order.md"), read("spec/order.md"));
-for (const dir of ["src", "test"]) {
-  fs.cpSync(path.join(EXAMPLE, dir), path.join(pristine, dir), { recursive: true });
-  for (const file of fs.readdirSync(path.join(pristine, dir))) if (file.endsWith(".ts"))
-    fs.writeFileSync(path.join(pristine, dir, file), read(`${dir}/${file}`));
-}
-fs.copyFileSync(path.join(EXAMPLE, "tsconfig.json"), path.join(pristine, "tsconfig.json"));
+for (const file of ["spec/index.md", "src", "test", "tsconfig.json"]) fs.cpSync(path.join(EXAMPLE, file), path.join(pristine, file), { recursive: true });
 fs.symlinkSync(nodeModules, path.join(pristine, "node_modules"), "dir");
 for (const spec of readSpecs(pristine)) acceptReviews(pristine, spec);
 acceptContracts(pristine);
@@ -100,8 +113,9 @@ async function run(root: string, accept: false | "reviews" | "unproved" = false)
 const failedStages = async (file: string, edit: (text: string) => string) => (await run(copyOfProject(file, edit))).failed;
 const pendingItems = (root: string) => readSpecs(root).flatMap((spec) => pending(root, spec).map((p) => `${p.where.split("  ")[1]}: ${p.status}${p.note ?? ""}`));
 /** Run a fresh CLI process so toolchain fingerprints cannot carry over from another invocation. */
-const runCli = (script: string, root: string, ...args: string[]) => new Promise<{ status: number; stdout: string; stderr: string }>((done) =>
-  execFile(process.execPath, [script, ...args], { cwd: root, maxBuffer: 1 << 26 }, (e, stdout, stderr) => done({ status: e ? Number(e.code) : 0, stdout, stderr })));
+/** gen/ for one spec, as `check` and `spec gen` generate it. */
+const gen = async (root: string, spec: Spec) => generated(root, spec, await typecheckAll({ root, fresh: true, used: new Set() }, [spec]).get(spec.name)!, new Map());
+const runCli = (script: string, root: string, ...args: string[]) => exec(process.execPath, [script, ...args], root);
 const unguarded = (s: string) => s.replace("o.status == Draft and o.units > 0", "o.status == Draft");
 const notInductive = (s: string) => s.replace(/### Drafts and cancelled orders hold no money[\s\S]*?```\n\n/, "");
 
@@ -137,7 +151,7 @@ pure def push(s: State, n: int): Did = { state: s.append(n), out: List(n) }
 pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = out.length() == 1`);
     const model = await gen(lists, parseSpec(lists, "spec/lists.md"));
     assert.equal(model.evals.find((e) => e.name === "stepHasOneEffect")?.params.at(-1)?.from, "emitted");
-    const root = fixtures(["mailer"], (files) => { files["spec/mailer.proof.dfy"] = read("vibespec/fixtures/mailer.proof.dfy"); });
+    const root = fixtures(["mailer"]);
     const result = await run(root);
     assert.deepEqual(result.failed, ["review"], result.text);
     const domain = await import(path.join(root, "gen/mailer.ts"));
@@ -175,13 +189,21 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.match(departure(domain, found, [{ event: { type: "inc" } }])?.why ?? "", /no observed state/);
     fs.mkdirSync(path.join(root, "test/traces"), { recursive: true });
     fs.writeFileSync(path.join(root, "test/traces/counter.jsonl"), '{"state":0}\n{"event":{"type":"inc"},"state":1}\n');
-    fs.writeFileSync(path.join(root, "offset.json"), "0");
-    fs.writeFileSync(path.join(root, "driver.mjs"), 'import fs from "node:fs"; import readline from "node:readline"; let n=0; for await (const line of readline.createInterface({input:process.stdin})) { const request=JSON.parse(line); if (!request.event) n=0; else if (n<2) n++; console.log(JSON.stringify({state:n+Number(fs.readFileSync("offset.json","utf8"))})); }');
+    fs.writeFileSync(path.join(root, "driver.json"), '{"offset":0,"limit":2}');
+    fs.writeFileSync(path.join(root, "driver.mjs"), 'import fs from "node:fs"; import readline from "node:readline"; let n=0; for await (const line of readline.createInterface({input:process.stdin})) { const request=JSON.parse(line), {offset,limit}=JSON.parse(fs.readFileSync("driver.json","utf8")); if (!request.event) n=0; else if (n<limit) n++; console.log(JSON.stringify({state:n+offset})); }');
     fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({type:"module",scripts:{"driver:counter":`${JSON.stringify(process.execPath)} driver.mjs`}}));
     const machines = new Map([["counter", { domain, model, found }]]);
-    assert.ok((await checkTraces(root, machines)).every(([ok]) => ok));
-    fs.writeFileSync(path.join(root, "offset.json"), "1");
-    assert.ok((await checkTraces(root, machines)).some(([ok, , summary]) => !ok && summary.startsWith("script driver:counter")));
+    const departs = async () => (await checkTraces(root, machines)).filter(([ok]) => !ok).map(([, , summary, detail]) => `${summary}\n${detail}`);
+    assert.deepEqual(await departs(), []);
+    // A driver that starts elsewhere, or takes the event the spec refuses in the last state of a trace, departs.
+    fs.writeFileSync(path.join(root, "driver.json"), '{"offset":1,"limit":2}');
+    assert.match((await departs()).join(), /^script driver:counter: the program departs[\s\S]*reset/);
+    fs.writeFileSync(path.join(root, "driver.json"), '{"offset":0,"limit":3}');
+    assert.match((await departs()).join(), /^script driver:counter: the program departs[\s\S]*line 4/);
+    // So does a trace the program wrote, at the first line that differs.
+    fs.writeFileSync(path.join(root, "driver.json"), '{"offset":0,"limit":2}');
+    fs.writeFileSync(path.join(root, "test/traces/counter.jsonl"), '{"state":0}\n{"event":{"type":"inc"},"state":2}\n');
+    assert.match((await departs()).join(), /^test\/traces\/counter\.jsonl: the program departs[\s\S]*line 2/);
 
     const quiet = oneRule("quiet", "Wait", "pure val initial: int = 0\npure def stay(n: int): int = n\npure def alwaysZero(n: int): bool = n == 0");
     const quietSpec = parseSpec(quiet, "spec/quiet.md"), quietModel = await gen(quiet, quietSpec);
@@ -208,40 +230,40 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
   });
 
   test("a missing guard is found by simulation, as a trace that the same seed gives again and that is remembered, and the later stages say they were skipped", async () => {
-    const root = copyOfProject("spec/order.md", unguarded);
+    const root = copyOfProject("spec/index.md", unguarded);
     const first = await run(root);
     fs.rmSync(path.join(root, ".spec-cache"), { recursive: true });
     const [again, remembered] = [await run(root), await run(root)];
     const trace = first.said("always", /./);
     assert.equal(trace?.ok, false, first.text);
-    assert.match(trace!.detail, /seed \d+; to simulate again: npx quint run gen\/order\.run\.qnt .* --seed \d+/);
+    assert.match(trace!.detail, /seed \d+; to simulate again: npx quint run gen\/index\.run\.qnt .* --seed \d+/);
     assert.equal(again.said("always", /./)?.detail, trace!.detail, "the same harness gives the same trace");
     assert.equal(remembered.said("always", /./)?.detail, trace!.detail);
     assert.ok(!fs.existsSync(path.join(root, "gen/traces")), "a failing simulation is not run again for the same harness");
     assert.ok(first.said("skipped", /^types, proof, tests and traces: /), first.text);
-    assert.match(first.next, /^always \(spec\/order\.md\) is the first ✗/);
+    assert.match(first.next, /^always \(spec\/index\.md\) is the first ✗/);
   });
 
   test("a rule set that holds in simulation but is not inductive is caught by the proof, and the deleted rule awaits review", async () => {
-    const { failed, said, text } = await run(copyOfProject("spec/order.md", notInductive));
+    const { failed, said, text } = await run(copyOfProject("spec/index.md", notInductive));
     assert.deepEqual(failed, ["proof", "review"], text);
     assert.ok(said("review", /removed or renamed/), text);
   });
 
   test("rules too strict to ever reach a goal are caught by a `sometimes` rule", async () => {
-    const failed = await failedStages("spec/order.md", (s) => s.replace("o.paid + amount <= o.due", "o.paid + amount < o.due"));
+    const failed = await failedStages("spec/index.md", (s) => s.replace("o.paid + amount <= o.due", "o.paid + amount < o.due"));
     assert.ok(failed.includes("sometimes"), failed.join());
   });
 
   test("a guard that never allows its event is caught, although every rule holds of the event trivially", async () => {
     // Cancelling refunds every payment, so a reopen that needs money paid can never happen.
-    const { failed, text, said } = await run(copyOfProject("spec/order.md", (s) => s.replace("canReopen(o: Order): bool = o.status == Cancelled", "canReopen(o: Order): bool = o.status == Cancelled and o.paid > 0")));
+    const { failed, text, said } = await run(copyOfProject("spec/index.md", (s) => s.replace("canReopen(o: Order): bool = o.status == Cancelled", "canReopen(o: Order): bool = o.status == Cancelled and o.paid > 0")));
     assert.ok(failed.includes("sometimes"), text);
     assert.ok(said("sometimes", /reopen in .* never happened: its guard canReopen refused it/), text);
   });
 
   test("a guard that needs values the simulator does not try says which to define", async () => {
-    const { text, said } = await run(copyOfProject("spec/order.md", (s) => s.replace("o.status == Pending and amount > 0 and neverMoreThanPaid", "o.status == Pending and amount > 6 and neverMoreThanPaid")));
+    const { text, said } = await run(copyOfProject("spec/index.md", (s) => s.replace("o.status == Pending and amount > 0 and neverMoreThanPaid", "o.status == Pending and amount > 6 and neverMoreThanPaid")));
     assert.ok(said("sometimes", /takeBack in .* never happened: .*define amountValues/), text);
     assert.ok(!/\bpay in .* never happened/.test(text), text);
   });
@@ -257,14 +279,14 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
 
   test("prose edited without the model is flagged for review, and accept records it only while every other stage passes", async () => {
     const reworded = (s: string) => s.replace("Every unit costs the same", "Each unit has one price");
-    const root = copyOfProject("spec/order.md", reworded);
+    const root = copyOfProject("spec/index.md", reworded);
     assert.deepEqual((await run(root)).failed, ["review"]);
     assert.deepEqual((await run(root, "reviews")).failed, []);
-    assert.deepEqual((await run(copyOfProject("spec/order.md", (s) => unguarded(reworded(s))), "reviews")).failed, ["always", "review"]);
+    assert.deepEqual((await run(copyOfProject("spec/index.md", (s) => unguarded(reworded(s))), "reviews")).failed, ["always", "review"]);
   });
 
   test("a rule with no formal half is flagged", async () => {
-    const failed = await failedStages("spec/order.md", (s) => s + "\n### Refunds arrive within three days\n\nNot yet modelled.\n");
+    const failed = await failedStages("spec/index.md", (s) => s + "\n### Refunds arrive within three days\n\nNot yet modelled.\n");
     assert.deepEqual(failed, ["review"]);
   });
 
@@ -278,10 +300,11 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       ["parameter that collides with the harness's state variable", (s) => s.replace(/\bamount\b/g, "state")],
       ["duplicate rule heading", (s) => s.replace("### An order can be cancelled", "### A pending order can be cancelled, refunding every payment")],
     ];
-    for (const [what, edit] of refused) assert.deepEqual(await failedStages("spec/order.md", edit), ["model"], what);
+    for (const [what, edit] of refused) assert.deepEqual(await failedStages("spec/index.md", edit), ["model"], what);
   });
 
-  test("names and constructs that would be translated wrongly are refused", async () => {
+  test("names, constructs, sample sets and shapes that would be translated wrongly are refused, and a constant named like a rule is not", async () => {
+    const sampled = "type S = { n: int }\npure val initial: S = { n: 0 }\npure def canAdd(s: S, amount: int): bool = amount > 0\npure def add(s: S, amount: int): S = { n: s.n + amount }";
     const refused: [string, string, RegExp][] = [
       ["a type named like a generated one", "type Event = { n: int }\npure val initial: Event = { n: 0 }", /cannot be used as a name/],
       ["a definition named like a JavaScript global", "pure val initial: int = 0\npure def Number(n: int): int = n", /cannot be used as a name/],
@@ -289,23 +312,30 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       ["a variant field called tag", "type P = A({ tag: int }) | B\npure val initial: int = 0\npure def tick(n: int): int = n", /cannot be called `tag`/],
       ["a match binder used as a whole value", "type N = { n: int }\ntype P = A(N) | B\npure val initial: int = 0\npure def g(r: N): int = r.n\npure def f(p: P): int = match p { | A(x) => g(x) | _ => 0 }\npure def tick(n: int): int = n", /is what a match arm carries/],
       ["state declared by hand", "pure val initial: int = 0\nvar n: int", /only types, imports, `pure val` and `pure def` belong in a spec/],
+      ["a rule written as a `pure val`", "pure val initial: int = 0\npure val alwaysNever = false", /is a `pure def` with parameters/],
+      ["a sample of the wrong type", 'pure val amountValues = Set("bad")\n' + sampled, /amountValues.*holds.*parameter amount/],
+      ["an unused sample set", "pure val typoValues = Set(1)\n" + sampled, /no parameter is named typo/],
+      ["a sample set used at runtime", "pure val amountValues = Set(1)\n" + sampled + "\npure def total(k: int): int = amountValues.size()", /amountValues.*(simulat|runtime|sample)/],
+      ["identical record shapes", "type A = { n: int }\ntype B = { n: int }\npure def convert(a: A): B = { n: a.n }", /have the same fields/],
+      ["a definition with no parameters", "pure def one(): int = 1", /parameter/],
+      ["two declarations on one line", "pure val first = 1 pure val second = 2", /declaration|own line|rule/],
+      ["an initial state without a transition", "pure val initial: int = 0", /transition/],
+      ["a set of records", "type A = { n: int }\npure def count(xs: Set[A]): int = xs.size()", /set|Set/],
+      ["a map into records", "pure def records(xs: Set[int]): Set[{ n: int }] = xs.map(x => { n: x })", /set|Set|record/],
+      ["== on values that hold a set", "type A = { s: Set[int] }\npure def same(a: A, b: A): bool = a == b", /a set is a sequence/],
+      ["a map keyed by booleans", "pure def flags(k: bool): bool -> int = Map(k -> 1)", /keys must be/],
+      ...["fairOn", "fairEnabled", "arguments", "implements"].map((name): [string, string, RegExp] =>
+        [`reserved generated name ${name}`, `pure def ${name}(n: int): int = n`, /cannot be used as a name/]),
     ];
-    for (const [what, quint, message] of refused) {
-      const { said, text } = await run(oneRule("t", "A rule", quint));
-      assert.equal(said("model", message)?.ok, false, `${what}\n${text}`);
-    }
-  });
-
-  test("a rule written as a `pure val` is refused rather than generated as a constant, and a constant named alike is not", async () => {
-    const { said, text } = await run(oneRule("t", "A rule", "pure val initial: int = 0\npure val alwaysNever = false"));
-    assert.equal(said("model", /is a `pure def` with parameters/)?.ok, false, text);
-    const constant = await run(oneRule("t", "A rule", "pure val stepLimit = 3\npure def lawPositive(k: int): bool = stepLimit > 0"));
+    const [constant, ...results] = await Promise.all(["pure val stepLimit = 3\npure def lawPositive(k: int): bool = stepLimit > 0", ...refused.map(([, quint]) => quint)]
+      .map((quint) => run(oneRule("t", "A rule", quint))));
+    refused.forEach(([what, , message], i) => assert.equal(results[i].said("model", message)?.ok, false, `${what}\n${results[i].text}`));
     assert.ok(!constant.failed.includes("model"), constant.text);
   });
 
   test("a comment or string left open at the end of a quint block is refused, so prose can never become model", async () => {
     // Prose is tangled as `// …`; inside an open block comment, `// */ code` would be code that no review or cache key sees as such.
-    const { said, text } = await run(copyOfProject("spec/order.md", (s) => s.replace("pure val unitPrice = 5", "pure val unitPrice = 5\n/*")));
+    const { said, text } = await run(copyOfProject("spec/index.md", (s) => s.replace("pure val unitPrice = 5", "pure val unitPrice = 5\n/*")));
     assert.equal(said("model", /a comment is still open at the end of this quint block/)?.ok, false, text);
   });
 
@@ -335,12 +365,10 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const quint = "pure val initial: int = 0\npure def up(n: int): int = n + 1\npure def canUp(n: int): bool = n < 5\npure def alwaysBelowThree(n: int): bool = n < 3\npure def sometimesFour(n: int): bool = n == 4";
     const { failed, text } = await run(oneRule("t", "Counting", quint));
     assert.ok(failed.includes("always"), text);
-    assert.ok(!failed.includes("sometimes") || failed.includes("always"), text);
+    assert.ok(!failed.includes("sometimes"), text);
   });
 
   test("hand-written code that changes what it is checked against is refused or flagged", async () => {
-    const reexport = await failedStages("src/ledger.ts", (s) => s + '\nexport * from "./app.ts";\n');
-    assert.ok(reexport.includes("proof"), reexport.join());
     const { said, text } = await run(copyOfProject("src/ledger.ts", (s) => s.replace(/(\/\/@ ensures)/, "//@ requires true\n$1")));
     assert.ok(said("proof", /^src-ledger\.ts: .*under 2 \/\/@ requires/), text);
   });
@@ -357,67 +385,60 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
   });
 
   test("Markdown the tools would read differently from a viewer is refused or read as a viewer does", async () => {
-    const cr = await failedStages("spec/order.md", (s) => s.replace("Every unit costs the same", "Every unit costs the same\rpure val sneaky = 1"));
+    const cr = await failedStages("spec/index.md", (s) => s.replace("Every unit costs the same", "Every unit costs the same\rpure val sneaky = 1"));
     assert.deepEqual(cr, ["model"]);
     // A fence with an info string does not close a quint block, so what follows is still Quint (and here not valid Quint).
-    const fence = await failedStages("spec/order.md", (s) => s.replace("pure val unitPrice = 5", "pure val unitPrice = 5\n```text\nnot quint"));
+    const fence = await failedStages("spec/index.md", (s) => s.replace("pure val unitPrice = 5", "pure val unitPrice = 5\n```text\nnot quint"));
     assert.ok(fence.includes("model"), fence.join());
   });
 
   test("duplicate story headings are rejected instead of sharing review state", async () => {
-    const text = `# Duplicate\n\n## Story\n\n### First\n\n${F}quint\npure val first = 1\n${F}\n\n## Story\n\n### Second\n\n${F}quint\npure val second = 2\n${F}\n`;
+    const text = ruleSpec("pure val first = 1", "First", "Duplicate") + ruleSpec("pure val second = 2", "Second").replace(/^# T\n/, "");
     const { said, text: result } = await run(scratch({ "spec/duplicate.md": text }));
     assert.equal(said("model", /duplicate story/)?.ok, false, result);
   });
 
   test("a story whose title starts another story's title still needs rules of its own", async () => {
     const story = "\n## Story: Wrap\n\n> As a shopper, I want my order wrapped.\n\n## Story: Wrap / gifts\n\n### Gifts are wrapped\n\n```quint\npure def lawWrapped(n: int): bool = true\n```\n";
-    const { said, text } = await run(copyOfProject("spec/order.md", (s) => s + story));
+    const { failed, said, text } = await run(copyOfProject("spec/index.md", (s) => s + story));
+    assert.deepEqual(failed, ["review"], text);
     assert.ok(said("review", /  Story: Wrap\n\s+story has no rules/), text);
   });
 
   test("a machine whose state holds a library's type can be imported under a name", async () => {
-    const spec = (title: string, quint: string) => `# ${title}\n\n## Story\n\n### ${title}\n\n${F}quint\n${quint}\n${F}\n`;
     const root = scratch({
-      "spec/lib.md": spec("Library", "type T = { n: int }\npure def lawZeroIsZero(k: int): bool = k * 0 == 0"),
-      "spec/mach.md": spec("Machine", 'import lib.* from "./lib"\ntype St = { t: T }\npure val initial: St = { t: { n: 0 } }\npure def bump(s: St): St = { t: { n: s.t.n + 1 } }'),
-      "spec/sys.md": spec("System", 'import mach as M from "./mach"\ntype Sys = { a: M::St }\npure val initial: Sys = { a: M::initial }\npure def go(s: Sys): Sys = { a: M::bump(s.a) }'),
+      "spec/lib.md": ruleSpec("type T = { n: int }\npure def lawZeroIsZero(k: int): bool = k * 0 == 0", "Library", "Library"),
+      "spec/mach.md": ruleSpec('import lib.* from "./lib"\ntype St = { t: T }\npure val initial: St = { t: { n: 0 } }\npure def bump(s: St): St = { t: { n: s.t.n + 1 } }', "Machine", "Machine"),
+      "spec/sys.md": ruleSpec('import mach as M from "./mach"\ntype Sys = { a: M::St }\npure val initial: Sys = { a: M::initial }\npure def go(s: Sys): Sys = { a: M::bump(s.a) }', "System", "System"),
     });
     const { failed, said, text } = await run(root);
     assert.deepEqual(failed, ["review"], text);
     assert.ok(said("proof", /^sys\.ts: all \d+ obligations proved/), text);
   });
 
-  test("simulator sample sets match real parameters and stay outside generated code", async () => {
-    const base = "type S = { n: int }\npure val initial: S = { n: 0 }\npure def canAdd(s: S, amount: int): bool = amount > 0\npure def add(s: S, amount: int): S = { n: s.n + amount }";
-    const cases: [string, string, RegExp][] = [
-      ["a sample of the wrong type", 'pure val amountValues = Set("bad")\n' + base, /amountValues.*holds.*parameter amount/],
-      ["an unused sample set", "pure val typoValues = Set(1)\n" + base, /no parameter is named typo/],
-      ["a sample set used at runtime", "pure val amountValues = Set(1)\n" + base + "\npure def total(k: int): int = amountValues.size()", /amountValues.*(simulat|runtime|sample)/],
-    ];
-    const results = await Promise.all(cases.map(([, quint]) => run(oneRule("sample", "Samples", quint))));
-    cases.forEach(([what, , message], i) => assert.equal(results[i].said("model", message)?.ok, false, `${what}\n${results[i].text}`));
-  });
-
-  test("event weights and fairness name real events and stay outside generated code; a weight repeats its event in the simulator's choice", async () => {
+  test("event weights, fairness and bounds name real events and rules and stay outside generated code; a weight repeats its event in the simulator's choice", async () => {
     const base = "type S = { n: int }\npure val initial: S = { n: 0 }\npure def add(s: S, k: int): S = { n: s.n + k }\npure def leadsToSome(s: S, later: S): bool = later.n >= s.n\n";
     const model = (quint: string) => { const root = oneRule("w", "Weights", base + quint); return gen(root, parseSpec(root, "spec/w.md")); };
     const cases: [string, RegExp][] = [
       ["pure val weight_nope = 2", /weight_nope .*no transition named nope/],
       ["pure val weight_add = 0", /weight_add .*a whole number from 1 to 100/],
       ['pure val fair_add = "always"', /fair_add .*"weak"/],
+      ["pure val within_nope = 2", /within_nope .*no leadsTo rule named nope/],
+      ["pure val within_leadsToSome = 0", /within_leadsToSome .*a whole number from 1 to 100/],
+      ["pure val within_leadsToSome = 101", /within_leadsToSome .*a whole number from 1 to 100/],
       ["pure def leadsToOne(s: S): bool = true", /leadsToOne: a `leadsTo` rule takes a state and a later state/],
     ];
     for (const [quint, message] of cases) await assert.rejects(model(quint), message, quint);
-    const weighted = await model('pure val weight_add = 3\npure val fair_add = "weak"');
+    const weighted = await model('pure val weight_add = 3\npure val fair_add = "weak"\npure val within_leadsToSome = 2');
     assert.match(weighted.harness, /action step = any \{ add, add, add \}/);
-    assert.doesNotMatch(weighted.ts, /weight_|fair_/);
+    assert.deepEqual(weighted.within, new Map([["leadsToSome", 2]]));
+    assert.doesNotMatch(weighted.ts + weighted.harness, /weight_|fair_|within_/);
     const lone = oneRule("f", "Fair", 'type S = { n: int }\npure val initial: S = { n: 0 }\npure def add(s: S): S = { n: s.n + 1 }\npure val fair_add = "weak"');
     await assert.rejects(gen(lone, parseSpec(lone, "spec/f.md")), /fairness matters only to `leadsTo` rules/);
   });
 
   test("a `leadsTo` rule is broken by a fair run that stops or loops, until the events it waits on are fair; std/net is imported, simulated and proved beside the spec", async () => {
-    const ping = (edit: (s: string) => string = (s) => s) => fixtures(["ping"], (f) => { f["spec/ping.md"] = edit(f["spec/ping.md"]); f["spec/ping.proof.dfy"] = read("vibespec/fixtures/ping.proof.dfy"); });
+    const ping = (edit: (s: string) => string = (s) => s) => fixtures(["ping"], (f) => { f["spec/ping.md"] = edit(f["spec/ping.md"]); });
     const [ok, weak, unfair] = await Promise.all([
       run(ping()),
       // A copy lost and sent again for ever is a fair loop unless delivery is strongly fair.
@@ -428,22 +449,33 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.deepEqual(ok.failed, ["review"], ok.text);
     assert.ok(ok.said("always", /no fair run that stops or loops in \d+ of them breaks a `leadsTo` rule \([1-9]\d* loops found\)/), ok.text);
     assert.ok(ok.said("proof", /^net\.ts: all \d+ obligations proved/), ok.text);
-    assert.ok(!ok.said("review", /std\/net\.md/), ok.text);
+    assert.ok(!ok.said("review", /^std\/net\.md:/), ok.text);
     assert.ok(weak.said("always", /a fair run breaks "Story: Ask until answered \/ A question asked is answered".*may repeat its loop for ever[\s\S]*the run goes round from here/), weak.text);
     assert.ok(unfair.said("always", /a fair run breaks .*may stop at the last state, since no fair event is possible there/), unfair.text);
   });
 
-  test("unsupported or ambiguous shapes are refused before TypeScript chooses a different meaning", async () => {
-    const cases: [string, string, RegExp][] = [
-      ["identical record shapes", "type A = { n: int }\ntype B = { n: int }\npure def convert(a: A): B = { n: a.n }", /have the same fields/],
-      ["a definition with no parameters", "pure def one(): int = 1", /parameter/],
-      ["two declarations on one line", "pure val first = 1 pure val second = 2", /declaration|own line|rule/],
-      ["an initial state without a transition", "pure val initial: int = 0", /transition/],
-      ["a set of records", "type A = { n: int }\npure def count(xs: Set[A]): int = xs.size()", /set|Set/],
-      ["a map into records", "pure def records(xs: Set[int]): Set[{ n: int }] = xs.map(x => { n: x })", /set|Set|record/],
-    ];
-    const results = await Promise.all(cases.map(([, quint]) => run(oneRule("shape", "Shapes", quint))));
-    cases.forEach(([what, , message], i) => assert.equal(results[i].said("model", message)?.ok, false, `${what}\n${results[i].text}`));
+  test("a `leadsTo` rule with a bound is broken by a run that takes that many events without meeting it", async () => {
+    const serve = (tick: string) => oneRule("serve", "Served at once", [
+      "type S = { asked: bool, served: bool, n: int }",
+      "pure val initial: S = { asked: false, served: false, n: 0 }",
+      "pure def canAsk(s: S): bool = not(s.asked)",
+      "pure def ask(s: S): S = { ...s, asked: true }",
+      "pure def canServe(s: S): bool = s.asked and not(s.served)",
+      "pure def serve(s: S): S = { ...s, served: true }",
+      tick,
+      "pure def tick(s: S): S = { ...s, n: s.n + 1 }",
+      "pure def leadsToServed(s: S, later: S): bool = s.asked implies later.served",
+      'pure val fair_serve = "weak"',
+      "pure val within_leadsToServed = 1",
+    ].join("\n"));
+    // A clock that may tick between a question and its answer delays the answer past the bound.
+    const [ok, late] = await Promise.all([run(serve("pure def canTick(s: S): bool = s.served or not(s.asked)")), run(serve(""))]);
+    assert.equal(ok.said("always", /no rule broken/)?.ok, true, ok.text);
+    assert.ok(late.said("always", /a run breaks "Story \/ Served at once" \(spec\/serve\.md:5\) within its bound \(`within_leadsToServed = 1`\)[\s\S]*ask .*<- leadsToServed is owed from here\n.*tick .*<- the bound runs out here/), late.text);
+    const longer = (delay: number) => oneRule("longer", "A bounded wait", `pure val initial: int = 0\npure def tick(n: int): int = n + 1\npure def leadsToAhead(n: int, later: int): bool = later >= n + ${delay}\npure val fair_tick = "weak"\npure val within_leadsToAhead = 21`);
+    const [onTime, tooLate] = await Promise.all([run(longer(21)), run(longer(22))]);
+    assert.deepEqual(onTime.failed, ["review"], onTime.text);
+    assert.ok(tooLate.said("always", /within its bound \(`within_leadsToAhead = 21`\)/), tooLate.text);
   });
 
   test("nested set samples stay bounded and an inner lambda may shadow a match binder", async () => {
@@ -475,13 +507,8 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
   });
 
   test("a quint block indented inside a list is still part of the model", async () => {
-    const failed = await failedStages("spec/order.md", (s) => s + "\n### Nothing is ever fine\n\n- because:\n\n  ```quint\n  pure def alwaysBogus(o: Order): bool = false\n  ```\n");
+    const failed = await failedStages("spec/index.md", (s) => s + "\n### Nothing is ever fine\n\n- because:\n\n  ```quint\n  pure def alwaysBogus(o: Order): bool = false\n  ```\n");
     assert.ok(failed.includes("always"), failed.join());
-  });
-
-  test("a story with no rules is flagged for translation", async () => {
-    const failed = await failedStages("spec/order.md", (s) => s + "\n## Story: Gift wrap\n\n> As a shopper, I want my order wrapped.\n");
-    assert.deepEqual(failed, ["review"]);
   });
 
   test("lists, nested helpers, an imported library, laws, step rules and the proof ledger work together", async () => {
@@ -493,9 +520,8 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     // Once the unproved obligations are recorded, only the review is left.
     // Hand-written code proved against the shop says that it rests on what is simulated only there.
     const recorded = shop((f) => { f["src/count.ts"] = 'import { type Cart } from "../gen/shop.ts";\n//@ pure\nexport function count(c: Cart): number {\n  //@ ensures \\result === c.count\n  return c.count;\n}\n'; });
-    const recording = await check(recorded, "unproved");
-    const ledger = recording.results.find((r) => r.stage === "proof" && /^spec\/lock\.json: [1-9]\d* added, 0 removed$/.test(r.summary));
-    assert.match(ledger?.detail ?? "", /^    \+ shop\.ts: /m, recording.results.map(show).join("\n"));
+    const recording = await run(recorded, "unproved");
+    assert.match(recording.said("proof", /^spec\/lock\.json: [1-9]\d* added, 0 removed\n/)?.detail ?? "", /^    \+ shop\.ts: /m, recording.text);
     const accepted = await run(recorded);
     assert.deepEqual(accepted.failed, ["review"], accepted.text);
     assert.ok(accepted.said("proof", /^src-count\.ts: all 1 obligations proved for all states and inputs, assuming the obligations that are simulated only \([^)]*\d+ of shop\.ts\)/), accepted.text);
@@ -510,7 +536,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.equal(wrongStep.said("always", /^a step breaks/)?.ok, false, wrongStep.text);
     const wrongLaw = await run(shop((f) => { f["spec/lib.md"] = f["spec/lib.md"].replace("total(List(n)) == n", "total(List(n)) == n + 1"); }));
     assert.equal(wrongLaw.said("always", /^the law .* is false for \{"n":/)?.ok, false, wrongLaw.text);
-    const importsMachine = await run(shop((f) => { f["spec/other.md"] = `# Other\n\n## Group\n\n### Uses a machine\n\n${F}quint\nimport shop.* from "./shop"\npure val two = 2\n${F}\n`; }));
+    const importsMachine = await run(shop((f) => { f["spec/other.md"] = ruleSpec('import shop.* from "./shop"\npure val two = 2', "Uses a machine", "Other", "Group"); }));
     assert.ok(importsMachine.said("model", /is imported under a name/), importsMachine.text);
     const circle = await run(shop((f) => { f["spec/lib.md"] = f["spec/lib.md"].replace("pure def total", 'import shop.* from "./shop"\npure def total'); }));
     assert.ok(circle.said("model", /import each other in a circle/), circle.text);
@@ -545,6 +571,27 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const { failed, said, text } = await run(fixtures(["account", "bank"]));
     assert.deepEqual(failed, ["review"], text);
     assert.ok(said("model", /^spec\/bank\.md: 2 transitions, 1 always, 1 step, 1 sometimes/), text);
+  });
+
+  test("a machine is simulated with the sample sets of the specs it imports", async () => {
+    // Every amount the account offers is more than the bank's current account holds, so nothing can ever be saved.
+    const { failed, said, text } = await run(fixtures(["account", "bank"], (f) => { f["spec/account.md"] = f["spec/account.md"].replace("type Account", "pure val amountValues = Set(7)\ntype Account"); }));
+    assert.ok(failed.includes("sometimes"), text);
+    assert.ok(said("sometimes", /\bsave in .* never happened/), text);
+  });
+
+  test("tables keyed by integers and variants, getOr, nthOr, removeAt, structural == and a mapped append are simulated, replayed and proved", async () => {
+    const root = fixtures(["hall"]);
+    const { failed, said, text } = await run(root);
+    assert.deepEqual(failed, ["review"], text);
+    assert.ok(said("proof", /^hall\.ts: all \d+ obligations proved/), text);
+    const hall = await import(path.join(root, "gen/hall.ts"));
+    // A seat equal to a booked one, though another object, is booked already.
+    const booked = hall.step(hall.initial, { type: "book", row: 1, kind: "Adult" });
+    assert.equal(hall.enabled(booked, { type: "book", row: 1, kind: "Adult" }), false);
+    assert.deepEqual(hall.parseState(booked), { booked: [{ row: 1, kind: "Adult" }], byRow: { 1: 1 }, byKind: { Adult: 1 } });
+    for (const x of [{ ...booked, byRow: { "01": 1 } }, { ...booked, byRow: { $1: 1 } }, { ...booked, byKind: { Senior: 1 } }])
+      assert.equal(hall.parseState(x), undefined, JSON.stringify(x));
   });
 
   test("one machine uses another under a name, keeps its rules, and adds rules about the pair", async () => {
@@ -584,8 +631,8 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
 
   test("replay notices TypeScript that disagrees with Quint, in a step or in a definition", async () => {
     const root = copyOfProject();
-    const model = await gen(root, parseSpec(root, "spec/order.md"));
-    const domain = await import(path.join(root, "gen/order.ts"));
+    const model = await gen(root, parseSpec(root, "spec/index.md"));
+    const domain = await import(path.join(root, "gen/index.ts"));
     const trace = [{ state: domain.initial }, ...[{ type: "addItem", qty: 1 }, { type: "submit" }, { type: "pay", amount: 2 }]
       .map((event, i, all) => ({ event, state: all.slice(0, i + 1).reduce(domain.step, domain.initial) }))];
     replay(domain, trace);
@@ -606,13 +653,13 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
 
   test("a proof cannot be forged from inside the project", async () => {
     const withFile = (file: string, text: string) => {
-      const root = copyOfProject("spec/order.md", notInductive);
+      const root = copyOfProject("spec/index.md", notInductive);
       fs.writeFileSync(path.join(root, file), text);
       return root;
     };
-    const unproved = /^order\.ts: \d+ of \d+ obligations not proved/;
+    const unproved = /^index\.ts: \d+ of \d+ obligations not proved/;
     // A file in src/ named after the spec does not take the place of the spec's own proof.
-    const namesake = await run(withFile("src/order.ts", "//@ pure\nexport function one(): number {\n  return 1;\n}\n"));
+    const namesake = await run(withFile("src/index.ts", ONE));
     assert.ok(namesake.said("proof", unproved), namesake.text);
     // A LemmaScript configuration in the project cannot point the proof at files someone could edit.
     const configured = await run(withFile("lemmascript.json", `{"proof-dir":"proofs"}`));
@@ -621,39 +668,41 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const tsconfigured = withFile("tsconfig.json", `{"compilerOptions":{"noLib":true,"types":["missing"]},"files":["missing.ts"]}`);
     const ownConfig = await run(tsconfigured);
     assert.ok(ownConfig.said("proof", unproved), ownConfig.text);
-    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(tsconfigured, "gen/proof/order/tsconfig.json"), "utf8")).files, ["order.ts"]);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(tsconfigured, "gen/proof/index/tsconfig.json"), "utf8")).files, ["index.ts"]);
     // An annotation that asks the prover for trust is refused wherever it sits on the line.
     const sneaky = await run(copyOfProject("src/ledger.ts", (s) => s.replace("return order.due - order.paid;", "/* x */ //@ assume false\n  return order.paid - order.due;")));
     assert.ok(sneaky.said("proof", /`\/\/@ assume` is not allowed/), sneaky.text);
     // So is an import of anything but a generated module, however it is indented, or of a look-alike of one.
-    const lying = await run(copyOfProject("src/ledger.ts", (s) => s.replace("\n/** Rebuild", '\n  import { owed } from "/tmp/lies.ts";\n/** Rebuild')));
+    const lying = await run(copyOfProject("src/ledger.ts", (s) => s.replace("\nexport function replay", '\n  import { owed } from "/tmp/lies.ts";\nexport function replay')));
     assert.ok(lying.said("proof", /may only import generated modules/), lying.text);
-    assert.deepEqual(await failedStages("src/ledger.ts", (s) => s.replace('"../gen/order.ts"', '"./order.ts"')), ["types", "proof", "tests"]);
+    const lookalike = copyOfProject("src/ledger.ts", (s) => s.replace('"../gen/index.ts"', '"./index.ts"'));
+    fs.writeFileSync(path.join(lookalike, "src/index.ts"), 'export * from "../gen/index.ts";\n');
+    const disguised = await run(lookalike);
+    assert.deepEqual(disguised.failed, ["proof"], disguised.text);
+    assert.ok(disguised.said("proof", /may only import generated modules/), disguised.text);
   });
 
   test("a law that needs induction is proved by a proof file, and only then offered to the spec that imports it", async () => {
-    const highestProof = "// The fold keeps the larger of the two.\nlemma lawTheHighestIsAtLeastTheStart_ensures(xs: seq<int>, start: int)\n  ensures (lawTheHighestIsAtLeastTheStart(xs, start) == true)\n{\n  ProofLib.FoldLeftMax((top: int, x: int) => (if (x > top) then x else top), start, xs);\n}\n";
-    const ticketProof = "lemma issue_ensures(d: Desk)\n  ensures (inv(d) ==> alwaysTheLastNumberIsNotNegative(issue(d)))\n{\n  highest_lawTheHighestIsAtLeastTheStart_ensures(d.issued, d.last);\n}\n";
-    const project = (files: Record<string, string>) => fixtures(["highest", "ticket"], (f) => Object.assign(f, files));
+    const project = (edit: (f: Record<string, string>) => void = () => {}) => fixtures(["highest", "ticket"], edit);
     // Without a proof file the law is not proved, and a proof file that belongs to nothing is pointed out.
-    const bare = await run(project({ "spec/typo.proof.dfy": "" }));
+    const bare = await run(project((f) => { delete f["spec/highest.proof.dfy"]; delete f["spec/ticket.proof.dfy"]; f["spec/typo.proof.dfy"] = ""; }));
     assert.equal(bare.said("proof", /^highest\.ts: 1 of 1 obligations not proved/)?.ok, false, bare.text);
     assert.equal(bare.said("proof", /^spec\/typo\.proof\.dfy belongs to no proof unit/)?.ok, false, bare.text);
     // With both proof files, everything proves, and the final Dafny is there to read.
-    const root = project({ "spec/highest.proof.dfy": highestProof, "spec/ticket.proof.dfy": ticketProof });
+    const root = project();
     const proved = await run(root);
     assert.deepEqual(proved.failed, ["review"], proved.text);
     assert.ok(proved.said("proof", /^ticket\.ts: all 3 obligations proved/), proved.text);
     assert.match(fs.readFileSync(path.join(root, "gen/proof/ticket/ticket.dfy"), "utf8"), /lemma \{:axiom\} highest_lawTheHighestIsAtLeastTheStart_ensures/);
     // A law its own unit does not prove is not offered.
-    const unoffered = await run(project({ "spec/ticket.proof.dfy": ticketProof }));
+    const unoffered = await run(project((f) => { delete f["spec/highest.proof.dfy"]; }));
     assert.equal(unoffered.said("proof", /^ticket\.ts: Dafny could not check it[\s\S]*unresolved identifier: highest_lawTheHighestIsAtLeastTheStart_ensures/)?.ok, false, unoffered.text);
     // A proof file that asks for trust is refused, with its file and line.
-    const trusting = await run(project({ "spec/highest.proof.dfy": highestProof.replace("ProofLib.FoldLeftMax", "assume false;\n  ProofLib.FoldLeftMax") }));
-    assert.equal(trusting.said("proof", /spec\/highest\.proof\.dfy:5: `assume` is not allowed/)?.ok, false, trusting.text);
+    const trusting = await run(project((f) => { f["spec/highest.proof.dfy"] = f["spec/highest.proof.dfy"].replace("ProofLib.FoldLeftMax", "assume false;\n  ProofLib.FoldLeftMax"); }));
+    assert.equal(trusting.said("proof", /spec\/highest\.proof\.dfy:4: `assume` is not allowed/)?.ok, false, trusting.text);
   });
 
-  test("a proof file may only add lemmas, and only bodies to the generated ones", () => {
+  test("a proof file may only add lemmas, and only bodies to the generated ones; a body is the brace group that ends a lemma, after a complete header", () => {
     const refused: [string, string, RegExp][] = [
       ["a block comment", "lemma A() { /* } */ }", /block comments are not allowed/],
       ["an @-attribute", "@Axiom\nlemma A() {}", /p\.dfy:1: `@` is not allowed/],
@@ -674,15 +723,20 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       ["a lemma declared twice", "lemma A() {}\nlemma A() {}", /declared twice/],
       ["a carriage return that would end a comment early", "lemma A() { // note\rassume false;\n}", /line breaks other than/],
       ["a string that is not closed", 'lemma A() { var s := "x; }', /not closed/],
+      ["a NUL character", "lemma A() { }\0", /p\.dfy:1: NUL characters are not allowed/],
+      ["decreases with a set display", "lemma Bad() ensures false decreases {0}\nlemma B() { Bad(); }", /p\.dfy:1: lemma Bad has no body/],
+      ["ensures with a set display", "lemma Bad(x: int) ensures x in {1}", /p\.dfy:1: lemma Bad has no body/],
+      ["a multiset display", "lemma Bad(x: int) ensures x in multiset{1}", /p\.dfy:1: lemma Bad has no body/],
+      ["a body followed by more", "lemma A() { } ensures false", /p\.dfy:1: lemma A has no body/],
     ];
     for (const [what, text, message] of refused) assert.throws(() => parseProofFile(text, "p.dfy"), message, what);
+    assert.equal(parseProofFile("lemma Ok(s: set<int>) ensures s == {} ==> |s| == 0 ensures 1 in {1} { assert true; }", "p.dfy")[0].body.trim(), "assert true;");
     assert.equal(parseProofFile("// a comment\nlemma A(xs: seq<int>)\n  ensures forall i {:trigger xs[i]} :: 0 <= i < |xs| ==> xs[i] == xs[i]\n{\n  reveal F();\n  calc { 1; 1; }\n  forall i | 0 <= i < |xs| ensures xs[i] == xs[i] {}\n  assert true by { var x := 1; if x > 0 { } match xs { case _ => } }\n}\n", "p.dfy").length, 1);
 
-    const gen = "function f(x: int): int\n{\n  x\n}\n\nlemma f_ensures(x: int)\n  ensures (f(x) >= x)\n{\n}\n";
-    const spliced = (text: string) => splice(gen, { proof: { file: "p.dfy", text }, axioms: [] }).dfy;
+    const spliced = (text: string) => splice(GENERATED_F, { proof: { file: "p.dfy", text }, axioms: [] }).dfy;
     // A body goes inside the generated lemma; a helper is appended; nothing generated changes.
     const out = spliced("lemma f_ensures(x: int)\n  ensures (f(x) >= x)   // spacing and comments do not matter\n{\n  Helper(x);\n}\nlemma Helper(x: int) ensures f(x) == x { }\n");
-    assert.ok(out.startsWith(gen.replace("{\n}\n", "{\n  Helper(x);\n}\n")), out);
+    assert.ok(out.startsWith(GENERATED_F.replace("{\n}\n", "{\n  Helper(x);\n}\n")), out);
     assert.match(out, /lemma Helper\(x: int\)/);
     // A header that no longer matches the generated one is stale.
     assert.throws(() => spliced("lemma f_ensures(x: int)\n  requires x > 0\n  ensures (f(x) >= x)\n{\n}\n"), /p\.dfy:1: lemma f_ensures does not repeat its generated header, so it is refused as stale/);
@@ -690,7 +744,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.throws(() => spliced("lemma f(x: int) { }"), /p\.dfy:1: lemma f: the name is already declared/);
     assert.throws(() => spliced("lemma ProofLib() { }"), /the name is already declared/);
     // Of the library, only what the proof file calls goes in, with everything that uses in turn.
-    const withLib = splice(gen, { proof: { file: "p.dfy", text: "lemma H(xs: seq<int>) { ProofLib.FilterMember((x: int) => x > 0, xs, 1); }\n" }, axioms: [], lib: read("vibespec/proof/lib.dfy") }).dfy;
+    const withLib = splice(GENERATED_F, { proof: { file: "p.dfy", text: "lemma H(xs: seq<int>) { ProofLib.FilterMember((x: int) => x > 0, xs, 1); }\n" }, axioms: [], lib: read("vibespec/proof/lib.dfy") }).dfy;
     assert.deepEqual([...withLib.slice(withLib.indexOf("module ProofLib")).matchAll(/^\s*(?:ghost )?(?:lemma|function|predicate) (\w+)/gm)].map((m) => m[1]), ["Filter", "FilterNil", "FilterCons", "FilterMember"]);
   });
 
@@ -707,8 +761,12 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
   });
 
   test("verified code in a subdirectory of src is proved too", async () => {
-    const failed = await failedStages("src/deep/owed.ts", () => 'import { type Order } from "../../gen/order.ts";\n//@ pure\nexport function owed(o: Order): number {\n  //@ ensures \\result > 0\n  return o.due - o.paid;\n}\n');
+    const root = copyOfProject("src/deep/owed.ts", () => 'import { type Order } from "../../gen/index.ts";\n//@ pure\nexport function owed(o: Order): number {\n  //@ ensures \\result > 0\n  return o.due - o.paid;\n}\n');
+    const { failed } = await run(root);
     assert.deepEqual(failed, ["proof", "review"]); // and its contract is new
+    fs.renameSync(path.join(root, "src/deep/owed.ts"), path.join(root, "src/deep/source.txt"));
+    fs.symlinkSync("source.txt", path.join(root, "src/deep/owed.ts"));
+    assert.deepEqual((await run(root)).failed, ["proof", "review"]);
   });
 
   test("hand-written logic that breaks its contract is caught by the proof", async () => {
@@ -717,13 +775,13 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
   });
 
   test("moving a line break so that a comment swallows half a guard is a change to the model", async () => {
-    const failed = await failedStages("spec/order.md", (s) => s.replace("pure def canAddItem(o: Order, qty: int): bool =\n  o.status == Draft and qty > 0 and o.units + qty <= maxUnits",
+    const failed = await failedStages("spec/index.md", (s) => s.replace("pure def canAddItem(o: Order, qty: int): bool =\n  o.status == Draft and qty > 0 and o.units + qty <= maxUnits",
       "pure def canAddItem(o: Order, qty: int): bool =\n  o.status == Draft and qty > 0 // and o.units + qty <= maxUnits"));
     assert.ok(failed.includes("review"), failed.join());
   });
 
   test("a comment in the Quint is reviewed, but the model it annotates is not simulated again", async () => {
-    const root = copyOfProject("spec/order.md", (s) => s.replace("pure val unitPrice = 5", "pure val unitPrice = 5 /* euros */ // per unit"));
+    const root = copyOfProject("spec/index.md", (s) => s.replace("pure val unitPrice = 5", "pure val unitPrice = 5 /* euros */ // per unit"));
     const { failed, text } = await run(root);
     assert.deepEqual(failed, ["review"], text);
     assert.ok(!fs.existsSync(path.join(root, "gen/traces")), text);
@@ -744,13 +802,13 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.equal(fs.readFileSync(path.join(root, "CLAUDE.md"), "utf8"), "My existing instructions.\n\n@AGENTS.md\n");
     assert.equal(fs.readFileSync(agents, "utf8"), expected);
     assert.deepEqual(init(root), []);
-    fs.writeFileSync(agents, "before\r\n<!-- onespec:start -->\r\nold instructions\r\n<!-- onespec:end -->\r\nafter\r\n");
+    fs.writeFileSync(agents, "before\r\n<!-- vibespec:start -->\r\nold instructions\r\n<!-- vibespec:end -->\r\nafter\r\n");
     init(root);
     assert.equal(fs.readFileSync(agents, "utf8"), `before\r\n<!-- vibespec:start -->\r\n${read("AGENTS.md").trim().replace(/\r?\n/g, "\r\n")}\r\n<!-- vibespec:end -->\r\nafter\r\n`);
     assert.deepEqual(init(root), []);
     for (const invalid of [
       "<!-- vibespec:start -->\nincomplete\n",
-      "<!-- vibespec:start -->\n<!-- onespec:end -->\n",
+      "<!-- vibespec:end -->\n<!-- vibespec:start -->\n",
       "<!-- vibespec:start -->\n<!-- vibespec:end -->\n<!-- vibespec:start -->\n<!-- vibespec:end -->\n",
     ]) {
       fs.writeFileSync(agents, invalid);
@@ -798,8 +856,8 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       [{ "spec/index.md": "[Outside](../outside.md)\n", "outside.md": "" }, /stay within spec/],
       [{ "spec/index.md": "[Outside](..%2Foutside.md)\n", "outside.md": "" }, /stay within spec/],
       [{ "spec/index.md": "", "spec/room.md": "", "spec/room/index.md": "" }, /same module name/],
-      [{ "spec/index.md": "", "spec/a/index.md": `# A\n### Import\n${F}quint\nimport b.* from "../b"\n${F}\n`,
-        "spec/b/index.md": `# B\n### Import\n${F}quint\nimport a.* from "../a"\n${F}\n` }, /circle/],
+      [{ "spec/index.md": "", "spec/a/index.md": ruleSpec('import b.* from "../b"', "Import", "A"),
+        "spec/b/index.md": ruleSpec('import a.* from "../a"', "Import", "B") }, /circle/],
     ];
     for (const [files, error] of cases) assert.throws(() => readSpecs(scratch(files)), error);
     const root = scratch({ "spec/index.md": "", "outside.md": "" });
@@ -860,13 +918,13 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.deepEqual(again.failed, ["tests"], again.text);
     assert.ok(again.said("tests", /a test script cannot run spec check or accept: the check already runs the tests/), again.text);
     fs.writeFileSync(path.join(root, "package.json"), "{}");
-    const cite = (heading: string) => `// spec/order.md, ${JSON.stringify(heading)}\n`;
+    const cite = (heading: string) => `// spec/index.md, ${JSON.stringify(heading)}\n`;
     const cites = ["Story: Check out", "Only a non-empty draft can be submitted", "Refunds are instant"].map(cite).join("");
     fs.mkdirSync(path.join(root, "test/journeys"), { recursive: true });
     fs.writeFileSync(path.join(root, "test/journeys/checkout.test.ts"), `import { test } from "node:test";\n${cites}test("a journey", () => {});\n`);
     const { failed, text, said } = await run(root);
     assert.deepEqual(failed, ["tests"], text);
-    assert.ok(said("tests", /^1 citations[\s\S]*test\/journeys\/checkout\.test\.ts:4 {2}spec\/order\.md, "Refunds are instant"$/), text);
+    assert.ok(said("tests", /^1 citations[\s\S]*test\/journeys\/checkout\.test\.ts:4 {2}spec\/index\.md, "Refunds are instant"$/), text);
     assert.ok(said("tests", /^pass\n$/), text);
   });
 
@@ -875,12 +933,19 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     fs.mkdirSync(path.join(root, "gen"), { recursive: true });
     fs.writeFileSync(path.join(root, "gen/renamed.ts"), "export const stale = true;\n");
     await check(root);
-    assert.deepEqual(fs.readdirSync(path.join(root, "gen")).filter((f) => f.endsWith(".ts")), ["order.ts"]);
+    assert.deepEqual(fs.readdirSync(path.join(root, "gen")).filter((f) => f.endsWith(".ts")).sort(), ["_conformance.ts", "index.conformance.ts", "index.ts"]);
   });
 
   test("the studio publishes a spec with its origins, checks it, and refuses remote or concurrent writes", async () => {
     const root = fixtures(["door"]);
-    const studio = await startStudio({ projects: [{ id: ".", name: "Door", root }], port: 0, agents: {} });
+    fs.copyFileSync(path.join(EXAMPLE, "tsconfig.json"), path.join(root, "tsconfig.json"));
+    fs.symlinkSync(nodeModules, path.join(root, "node_modules"), "dir");
+    for (const dir of ["src/components.ts", "test/journey.test.ts", "spec/facts.proof.dfy"])
+      fs.mkdirSync(path.join(root, dir), { recursive: true });
+    const studio = await startStudio({ projects: [{ id: ".", name: "Door", root }], port: 0, agents: {
+      ledgerEdit: { label: "Ledger writer", command: () => [process.execPath, ["-e", "require('node:fs').appendFileSync('spec/lock.json', '\\n')"]] },
+      invalidState: { label: "State writer", command: () => [process.execPath, ["-e", "const fs = require('node:fs'); fs.rmSync('.studio', { recursive: true }); fs.writeFileSync('.studio', 'invalid')"]] },
+    } });
     const url = studio.url.replace("localhost", "127.0.0.1");
     const post = (route: string, body: unknown, headers: Record<string, string> = {}) => fetch(`${url}/api/${route}`, {
       method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body),
@@ -918,13 +983,9 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       const concurrent = await Promise.all([post("publish", body), post("spec", { name: "parallel" })]);
       for (const response of concurrent) assert.equal(response.status, 400, await response.text());
       assert.ok(!fs.existsSync(path.join(root, "spec/parallel.md")));
-      let current = await (await fetch(`${url}/api/project`)).json();
-      while (Object.values(current.jobs ?? {}).some((job: any) => job.status === "running")) {
-        await new Promise((resolve) => setTimeout(resolve, 50));
-        current = await (await fetch(`${url}/api/project`)).json();
-      }
+      const current = await waitForCheck(url);
       assert.equal(current.jobs?.check?.status, "failed");
-      assert.equal(current.check?.next.includes("npm run accept"), true);
+      assert.equal(current.check?.next.includes("npm run accept"), true, JSON.stringify(current.check));
       const created = await post("spec", { name: "nested/child" });
       assert.equal(created.status, 200, await created.clone().text());
       assert.equal((await created.json()).file, "spec/nested/child/index.md");
@@ -937,18 +998,10 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       fs.symlinkSync(path.join(root, "outside.md"), path.join(root, "spec/escape.md"));
       assert.equal((await post("publish", { files: [{ file: "spec/escape.md", base: null, text: "" }], origins: [] })).status, 400);
       assert.equal(fs.existsSync(path.join(root, "outside.md")), false);
-      fs.rmSync(path.join(root, "spec/escape.md"));
+      fs.unlinkSync(path.join(root, "spec/escape.md"));
       const linked = await post("publish", { files: [{ file: "spec/index.md", base: null, text: "[Child](./nested/child/)\n" }], origins: [] });
       assert.equal(linked.status, 200, await linked.clone().text());
-      const waitForCheck = async () => {
-        let snap = await (await fetch(`${url}/api/project`)).json();
-        while (Object.values(snap.jobs ?? {}).some((job: any) => job.status === "running")) {
-          await new Promise((resolve) => setTimeout(resolve, 50));
-          snap = await (await fetch(`${url}/api/project`)).json();
-        }
-        return snap;
-      };
-      const nested = await waitForCheck();
+      const nested = await waitForCheck(url);
       assert.deepEqual(nested.specs.map((s: { file: string }) => s.file), ["spec/index.md", "spec/door.md", "spec/nested/child/index.md"]);
       const index = nested.specs.find((s: { file: string }) => s.file === "spec/index.md");
       const childIndex = nested.specs.find((s: { file: string }) => s.file === child.file);
@@ -961,8 +1014,33 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       assert.ok(manifestAfterDelete.changes.some((c: { kind: string; spec: string }) => c.kind === "spec" && c.spec === "spec/index.md"));
       assert.equal(fs.existsSync(path.join(root, child.file)), false);
       assert.equal(fs.readFileSync(path.join(root, "spec/lock.json"), "utf8"), ledger);
-      const final = await waitForCheck();
+      const final = await waitForCheck(url);
       assert.ok(final.check.results.some((r: Result) => r.stage === "review" && /removed spec/.test(r.summary)));
+      assert.equal((await post("agent", { agent: "ledgerEdit" })).status, 200);
+      const editedLedger = await waitForCheck(url);
+      assert.equal(editedLedger.jobs.agent.status, "failed");
+      assert.match(editedLedger.jobs.agent.log.join("\n"), /spec\/lock.json: not marked synced/);
+      assert.ok(fs.existsSync(path.join(root, ".studio/manifest.json")));
+      const events = await fetch(`${url}/api/events`, { signal: AbortSignal.timeout(30_000) });
+      const reader = events.body!.getReader();
+      try {
+        assert.equal((await post("agent", { agent: "invalidState" })).status, 200);
+        let text = "", finished = false;
+        while (!finished) {
+          const { value, done } = await reader.read();
+          assert.equal(done, false);
+          text += new TextDecoder().decode(value);
+          const frames = text.split("\n\n");
+          text = frames.pop()!;
+          for (const frame of frames.filter((f) => f.startsWith("event: job\n"))) {
+            const job = JSON.parse(frame.split("\ndata: ")[1]).jobs.agent;
+            if (job.label !== "State writer" || !job.finished) continue;
+            assert.equal(job.status, "failed");
+            assert.match(job.log.join("\n"), /ENOTDIR/);
+            finished = true;
+          }
+        }
+      } finally { await reader.cancel(); }
     } finally {
       await studio.close();
     }
@@ -1011,11 +1089,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
             method: "POST", headers: { "content-type": "application/json" }, body: "{}",
           });
           assert.equal(checked.status, 200);
-          let state = await (await fetch(`${url}/api/project`)).json();
-          while (state.jobs.check.status === "running") {
-            await new Promise((resolve) => setTimeout(resolve, 50));
-            state = await (await fetch(`${url}/api/project`)).json();
-          }
+          const state = await waitForCheck(url);
           assert.ok(state.check.results.every((r: Result) => r.ok || r.stage === "review"));
           assert.ok(fs.existsSync(path.join(external, "gen/index.ts")));
           assert.ok(!fs.existsSync(path.join(repo, "gen")));
@@ -1048,7 +1122,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
   });
 
   test("changing an imported definition invalidates model and simulation results", async () => {
-    const wrap = (text: string) => `# Library\n\n## Values\n\n### Price\n\n${F}quint\n${text}\n${F}\n`;
+    const wrap = (quint: string) => ruleSpec(quint, "Price", "Library", "Values");
     const root = scratch({
       "spec/lib.md": wrap("pure val price = 1"),
       "spec/use.md": wrap('import lib.* from "./lib"\npure def lawPrice(k: int): bool = price == 1'),
@@ -1061,10 +1135,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
   });
 
   test("proof caching follows library changes and compiler failure waits for proof completion", async () => {
-    const root = fixtures(["highest"], (f) => {
-      f["package.json"] = '{"type":"module"}';
-      f["spec/highest.proof.dfy"] = "lemma lawTheHighestIsAtLeastTheStart_ensures(xs: seq<int>, start: int)\n  ensures (lawTheHighestIsAtLeastTheStart(xs, start) == true)\n{\n  ProofLib.FoldLeftMax((top: int, x: int) => (if (x > top) then x else top), start, xs);\n}\n";
-    });
+    const root = fixtures(["highest"], (f) => { f["package.json"] = '{"type":"module"}'; });
     fs.cpSync(path.join(project, "vibespec"), path.join(root, "vibespec"), {
       recursive: true, filter: (from) => from !== path.join(project, "vibespec/examples"),
     });
@@ -1105,14 +1176,13 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const root = copyOfProject();
     const edit = (file: string, change: (s: string) => string) => fs.writeFileSync(path.join(root, file), change(fs.readFileSync(path.join(root, file), "utf8")));
     assert.deepEqual(pendingItems(root), []);
-    const original = read("spec/order.md");
-    edit("spec/order.md", (s) => s.replace("so that I can buy\n> several things in one go.", "so that I can buy\n> many things at once."));
+    const original = read("spec/index.md", EXAMPLE);
+    edit("spec/index.md", (s) => s.replace("so that I can buy\n> several things in one go.", "so that I can buy\n> many things at once."));
     assert.deepEqual(pendingItems(root), ["Story: Fill a draft: story changed"]);
-    edit("spec/order.md", () => original.replace("pure val unitPrice = 5", "pure val unitPrice = 7"));
+    edit("spec/index.md", () => original.replace("pure val unitPrice = 5", "pure val unitPrice = 7"));
     const moved = pendingItems(root);
     assert.ok(moved.includes("Domain / Unit price and order size: model changed"), moved.join("\n"));
-    assert.ok(moved.includes("Story: Fill a draft / Items can only be added to a draft: model changed through unitPrice, maxUnits (Domain / Unit price and order size)")
-      || moved.includes("Story: Fill a draft / Items can only be added to a draft: model changed through maxUnits, unitPrice (Domain / Unit price and order size)"), moved.join("\n"));
+    assert.ok(moved.includes("Story: Fill a draft / Items can only be added to a draft: model changed through maxUnits, unitPrice (Domain / Unit price and order size)"), moved.join("\n"));
     assert.ok(moved.includes("Story: Fill a draft / The amount due is always the price of the units: model changed through unitPrice (Domain / Unit price and order size)"), moved.join("\n"));
     assert.ok(!moved.some((m) => m.startsWith("Story: Check out / A payment never exceeds the balance")), "a rule that does not use the price is not flagged");
 
@@ -1127,7 +1197,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const contract = () => pendingContracts(root).map((p) => `${p.where}: ${p.status}`);
     assert.deepEqual(contract(), []);
     edit("src/ledger.ts", (s) => s.replace("  //@ ensures \\result >= 0\n", ""));
-    fs.writeFileSync(path.join(root, "src/extra.ts"), "//@ pure\nexport function one(): number {\n  //@ ensures \\result === 1\n  return 1;\n}\n");
+    fs.writeFileSync(path.join(root, "src/extra.ts"), ONE);
     assert.deepEqual(contract(), ["src/extra.ts: new contract", "src/ledger.ts: contract changed"]);
     acceptContracts(root);
     edit("src/ledger.ts", (s) => s.replace(/^.*\/\/@.*\n/gm, ""));
@@ -1136,7 +1206,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
   });
 
   test("a namespaced dependency remains reviewed when a local definition has the same name", () => {
-    const wrap = (text: string) => `# Names\n\n## Rules\n\n### Identity\n\n${F}quint\n${text}\n${F}\n`;
+    const wrap = (quint: string) => ruleSpec(quint, "Identity", "Names", "Rules");
     const root = scratch({
       "spec/lib.md": wrap("pure def identity(n: int): int = n"),
       "spec/use.md": wrap('import lib as L from "./lib"\npure def identity(n: int): int = 0\npure def lawIdentity(n: int): bool = L::identity(n) == n'),
@@ -1147,8 +1217,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
   });
 
   test("a comment cannot hide an imported rule's dependency from review", () => {
-    const wrap = (text: string) => `# Names\n\n## Rules\n\n### Imported\n\n${F}quint\n${text}\n${F}\n`;
-    const lib = wrap("pure def value(n: int): int = n + 1");
+    const lib = ruleSpec("pure def value(n: int): int = n + 1", "Imported", "Names", "Rules");
     const use = `# Use\n\n## Rules\n\n### Local\n\n${F}quint\nimport lib.* from "./lib"\n/*\npure def value(n: int): int = 0\n*/\npure def other(n: int): int = n\n${F}\n\n### Uses imported value\n\n${F}quint\npure def lawValue(n: int): bool = value(n) > n\n${F}\n`;
     const root = scratch({ "spec/lib.md": lib, "spec/use.md": use });
     for (const spec of readSpecs(root)) acceptReviews(root, spec);
@@ -1157,23 +1226,21 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
   });
 
   test("source edited by a test cannot be accepted with a proof of its earlier contents", async () => {
-    const source = "//@ pure\nexport function one(): number {\n  //@ ensures \\result === 1\n  return 1;\n}\n";
-    const changed = source.replace("return 1", "return 2");
+    const changed = ONE.replace("return 1", "return 2");
     const root = fixtures(["door"], (f) => {
-      f["src/count.ts"] = source;
+      f["src/count.ts"] = ONE;
       f["test/change.test.ts"] = `import fs from "node:fs";\nimport { test } from "node:test";\ntest("an editor changes source", () => fs.writeFileSync("src/count.ts", ${JSON.stringify(changed)}));\n`;
     });
     for (const spec of readSpecs(root)) acceptReviews(root, spec);
     acceptContracts(root);
     const ledger = fs.readFileSync(path.join(root, "spec/lock.json"), "utf8");
     const result = await run(root, "reviews");
-    assert.ok(result.failed.length > 0, result.text);
-    assert.match(result.text, /source.*changed|changed.*source|changed during|changed while/i);
+    assert.equal(result.said("review", /^sources changed while the check ran; nothing was accepted/)?.ok, false, result.text);
     assert.equal(fs.readFileSync(path.join(root, "spec/lock.json"), "utf8"), ledger);
   });
 
   test("moving an unchanged contract to another function requires review", () => {
-    const text = "//@ pure\nexport function one(): number {\n  //@ ensures \\result === 1\n  return 1;\n}\n//@ pure\nexport function two(): number {\n  return 2;\n}\n";
+    const text = `${ONE}//@ pure\nexport function two(): number {\n  return 2;\n}\n`;
     const root = scratch({ "src/count.ts": text });
     fs.mkdirSync(path.join(root, "spec"));
     acceptContracts(root);
@@ -1183,7 +1250,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
 
   test("accept records a changed story and a changed contract, after which nothing is left to reconcile", async () => {
     const root = copyOfProject("src/ledger.ts", (s) => s.replace("  //@ ensures order.status === \"Paid\" ==> \\result === 0\n", ""));
-    fs.writeFileSync(path.join(root, "spec/order.md"), read("spec/order.md").replace("> get my money back.", "> get all my money back."));
+    fs.writeFileSync(path.join(root, "spec/index.md"), read("spec/index.md", EXAMPLE).replace("> get my money back.", "> get all my money back."));
     const before = await run(root);
     assert.deepEqual(before.failed, ["review"], before.text);
     assert.ok(before.said("review", /story changed/) && before.said("review", /src\/ledger\.ts\n\s+contract changed/), before.text);
@@ -1283,17 +1350,10 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     let output = "";
     watcher.stdout.on("data", (chunk) => { output += chunk; });
     watcher.stderr.on("data", (chunk) => { output += chunk; });
-    const waitFor = async (ready: () => boolean) => {
-      const until = Date.now() + 120_000;
-      while (!ready()) {
-        assert.equal(watcher.exitCode, null, output);
-        assert.ok(Date.now() < until, output);
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
-    };
+    const waitFor = (ready: () => boolean) => until(() => { assert.equal(watcher.exitCode, null, output); return ready(); }, () => output);
     try {
       await waitFor(() => output.includes("watching spec/"));
-      fs.writeFileSync(path.join(watchedRoot, "spec/index.md"), `# Watched\n\n## Story\n\n### Value\n\n${F}quint\npure val watchedValue = 1\n${F}\n`);
+      fs.writeFileSync(path.join(watchedRoot, "spec/index.md"), ruleSpec("pure val watchedValue = 1", "Value", "Watched"));
       const generated = path.join(watchedRoot, "gen/index.ts");
       await waitFor(() => fs.existsSync(generated) && fs.readFileSync(generated, "utf8").includes("export const watchedValue"));
       await waitFor(() => (output.match(/watching spec\//g)?.length ?? 0) >= 2);
@@ -1327,27 +1387,13 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const spliced = (body: string) => splice(gen, { proof: { file: "p.dfy", text: `${header}${body}\n}\n` }, axioms: [], lib }).dfy;
     // Std.Ordinal.TimesIncreasingOnLeft is a false {:axiom}; dafny audit reports it only against the library's own file.
     assert.throws(() => spliced("  Std.Ordinal.TimesIncreasingOnLeft(0, 0, 0);"), /p\.dfy:4: `Std\.Ordinal\.TimesIncreasingOnLeft` is not allowed[^\n]*\(Std\.Collections\.Seq\.All\)/);
-    assert.throws(() => spliced("  ProofLib.Seq.LemmaFlattenConcat<int>([], []);"), /`ProofLib\.Seq\.LemmaFlattenConcat` is not a lemma or function of tools\/proof\/lib\.dfy/);
+    assert.throws(() => spliced("  ProofLib.Seq.LemmaFlattenConcat<int>([], []);"), /`ProofLib\.Seq\.LemmaFlattenConcat` is not a lemma or function of vibespec\/proof\/lib\.dfy/);
     assert.throws(() => spliced("  assert (xs).Std.Ordinal == 0;"), /`Std` may only begin a name/);
     assert.ok(spliced("  assert Std.Collections.Seq.All(xs, (x: int) => x > 0) == f(xs);\n  ProofLib.FilterNil((x: int) => true, []);").includes("ProofLib.FilterNil"));
   });
 
-  test("a lemma's body is the brace group that ends it, after a complete header; a set display is never a body", () => {
-    const noBody: [string, string][] = [
-      ["decreases with a set display", "lemma Bad() ensures false decreases {0}\nlemma B() { Bad(); }"],
-      ["ensures with a set display", "lemma Bad(x: int) ensures x in {1}"],
-      ["a multiset display", "lemma Bad(x: int) ensures x in multiset{1}"],
-      ["a body followed by more", "lemma A() { } ensures false"],
-    ];
-    for (const [what, text] of noBody) assert.throws(() => parseProofFile(text, "p.dfy"), /p\.dfy:1: lemma \w+ has no body/, what);
-    const [lemma] = parseProofFile("lemma Ok(s: set<int>) ensures s == {} ==> |s| == 0 ensures 1 in {1} { assert true; }", "p.dfy");
-    assert.equal(lemma.body.trim(), "assert true;");
-    assert.throws(() => parseProofFile("lemma A() { }\0", "p.dfy"), /p\.dfy:1: NUL characters are not allowed/);
-  });
-
   test("a failure is charged to the definition it is in, by where the tools put each line, not by reading the text back", () => {
-    const gen = "function f(x: int): int\n{\n  x\n}\n\nlemma f_ensures(x: int)\n  ensures (f(x) >= x)\n{\n}\n";
-    const { dfy, regions } = splice(gen, { proof: { file: "p.dfy", text: "lemma\nLiar()\n  ensures false\n{\n}\nlemma f_ensures(x: int)\n  ensures (f(x) >= x)\n{\n  Liar();\n}\n" }, axioms: [] });
+    const { dfy, regions } = splice(GENERATED_F, { proof: { file: "p.dfy", text: "lemma\nLiar()\n  ensures false\n{\n}\nlemma f_ensures(x: int)\n  ensures (f(x) >= x)\n{\n  Liar();\n}\n" }, axioms: [] });
     const lines = dfy.split("\n");
     const liar = lines.indexOf("Liar()");
     assert.deepEqual(regions[liar], { def: "Liar", generated: false });
@@ -1355,7 +1401,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const out = (summary: string, ...messages: string[]) => `${messages.join("\n")}\n\nDafny program verifier finished with ${summary}\n`;
     const failure = `t.dfy(${liar + 4},0): Error: a postcondition could not be proved on this return path\nt.dfy(${liar + 2},10): Related location: this is the postcondition that could not be proved`;
     assert.match([...readVerdict(out("3 verified, 1 error", failure), dfy, "t.dfy", regions).errors].join("\n"), /^Liar \(t\.dfy:\d+\) does not verify: false; a lemma that is not generated must prove$/);
-    const runtime = splice(gen, { axioms: [] }, "t.dfy", new Set(["f_ensures"]));
+    const runtime = splice(GENERATED_F, { axioms: [] }, "t.dfy", new Set(["f_ensures"]));
     const at = runtime.dfy.split("\n").findIndex((line) => line.includes("ensures (f(x)")) + 1;
     const rejected = readVerdict(out("1 verified, 1 error", `t.dfy(${at + 1},0): Error: a postcondition could not be proved on this return path`, `t.dfy(${at},0): Related location: this is the postcondition that could not be proved`), runtime.dfy, "t.dfy", runtime.regions);
     assert.equal(rejected.unproved.size, 0);
@@ -1460,23 +1506,25 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       ["a Unicode line break in a comment", "export const x = 1; // \u2028 hidden", /line break/],
     ];
     for (const [what, code, message] of refused) assert.throws(() => checkVerifiedSource("src/x.ts", `//@ backend dafny\n${code}\n`), message, what);
-    checkVerifiedSource("src/ledger.ts", read("src/ledger.ts"));
+    checkVerifiedSource("src/ledger.ts", read("src/ledger.ts", EXAMPLE));
     checkVerifiedSource("src/x.ts", '//@ backend dafny\n// What the //@ lines promise.\nimport { type C, inv } from "../gen/c.ts";\nexport type D = C;\nexport interface E { c: C }\nconst limit = 3;\n//@ pure\nexport function f(c: C): boolean {\n  //@ ensures \\result === inv(c)\n  return inv(c) && limit > 0 || inv(c);\n}\n');
+    checkVerifiedSource("src/x.ts", "//@ backend dafny\nexport function f(x: number): number { //@ requires x > 0\n  let i = 0; //@ type nat\n  return x + i;\n}\n");
   });
 
-  test("verified code that renames an import, or annotations in a file that is not .ts, fail the proof", async () => {
-    const renamed = copyOfProject("src/guard.ts", () => '//@ backend dafny\nimport { canSubmit as canCancel, type Order } from "../gen/order.ts";\n//@ pure\nexport function cancellable(o: Order): boolean {\n  //@ ensures \\result === (o.status === "Pending")\n  return canCancel(o);\n}\n');
+  test("verified code that renames an import or re-exports, or annotations in a file that is not .ts, fail the proof", async () => {
+    const renamed = copyOfProject("src/guard.ts", () => '//@ backend dafny\nimport { canSubmit as canCancel, type Order } from "../gen/index.ts";\n//@ pure\nexport function cancellable(o: Order): boolean {\n  //@ ensures \\result === (o.status === "Pending")\n  return canCancel(o);\n}\n');
     const module = copyOfProject("src/dec.mts", () => "//@ backend dafny\nexport function dec(x: number): number {\n  //@ ensures \\result > x\n  return x - 1;\n}\n");
-    const [r, m] = await Promise.all([run(renamed), run(module)]);
+    const reexport = copyOfProject("src/ledger.ts", (s) => s + '\nexport * from "./app.ts";\n');
+    const [r, m, x] = await Promise.all([run(renamed), run(module), run(reexport)]);
     assert.equal(r.said("proof", /src\/guard\.ts:2: `canSubmit as canCancel`: verified code may not rename what it imports/)?.ok, false, r.text);
     assert.equal(m.said("proof", /src\/dec\.mts: `\/\/@` appears in it, but only \.ts files under src\/ are proved/)?.ok, false, m.text);
+    assert.equal(x.said("proof", /src\/ledger\.ts.*may hold only imports, functions with a body/)?.ok, false, x.text);
   });
 
   test("hand-written code is not simulated, so none of its obligations can be accepted as simulated only", async () => {
     const root = fixtures(["door"], (f) => { f["src/inc.ts"] = "//@ backend dafny\n//@ pure\nexport function inc(x: number): number {\n  //@ ensures \\result === x\n  return x + 1;\n}\n"; });
-    const { results } = await check(root, "unproved");
-    const text = results.map(show).join("\n");
-    const inc = results.find((r) => r.stage === "proof" && r.summary.startsWith("src-inc.ts: 1 of 1 obligations not proved"));
+    const { said, text } = await run(root, "unproved");
+    const inc = said("proof", /^src-inc\.ts: 1 of 1 obligations not proved/);
     assert.equal(inc?.ok, false, text);
     assert.match(inc!.summary, /Hand-written code is not simulated, so they must be proved/);
     assert.doesNotMatch(inc!.summary, /accept -- unproved/);

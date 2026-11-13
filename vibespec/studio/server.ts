@@ -6,9 +6,9 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
-import { newSpec, parseSpec, pending, readSpecs, type Result } from "../spec.ts";
+import { newSpec, parseSpec, pending, pendingKey, readSpecs, type Lock, type Result } from "../spec.ts";
 import { specFiles, specName } from "../parse.ts";
-import { projectRoot } from "../util.ts";
+import { filesUnder, projectRoot } from "../util.ts";
 import { manifestOf, nodesOf, parseDoc, promptFor, type Ids, type Manifest } from "./doc.ts";
 
 /** The `spec` command beside this file, as source or as built. */
@@ -84,6 +84,12 @@ function skillPath(root: string): string {
   }
 }
 
+/** The review ledgers and Studio state belong to the tools, not the sync agent. */
+function ownedFiles(root: string): Record<string, string> {
+  return Object.fromEntries([...filesUnder(root, "spec").filter((f) => f.endsWith("lock.json")), ...filesUnder(root, ".studio")]
+    .map((f) => [f, hash(fs.readFileSync(path.join(root, f), "utf8"))]));
+}
+
 const installed = new Map<string, boolean>();
 const onPath = (program: string) => {
   if (!installed.has(program)) installed.set(program, spawnSync(process.platform === "win32" ? "where" : "which", [program]).status === 0);
@@ -99,8 +105,8 @@ function snapshot(live: Live, agents: Record<string, Agent>) {
   let problem: string | undefined;
   try {
     const specs = readSpecs(root);
-    review = Object.fromEntries(specs.map((s) => [s.file, Object.fromEntries(pending(root, s, specs).map((p) => [
-      p.story ? `## ${p.story.title}` : p.rule?.key ?? p.where.split("  ")[1], p.status + (p.note ?? "")]))]));
+    const locks = new Map<string, Lock>();
+    review = Object.fromEntries(specs.map((s) => [s.file, Object.fromEntries(pending(root, s, specs, locks).map((p) => [pendingKey(p), p.status + (p.note ?? "")]))]));
   } catch (e) {
     problem = (e as Error).message;
   }
@@ -192,7 +198,10 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
       job.finished = Date.now();
       if (job.status === "running") job.status = code === 0 ? "passed" : "failed";
       job.child = undefined;
-      try { done(job, out); } catch (e) { job.log.push(`✗ ${(e as Error).message}`); }
+      try { done(job, out); } catch (e) {
+        if (job.status !== "stopped") job.status = "failed";
+        job.log.push(`✗ ${(e as Error).message}`);
+      }
       jobChanged(live);
     });
     jobChanged(live);
@@ -331,7 +340,11 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
           const agent = agents[body.agent];
           if (!agent) return send(res, 400, { error: `no agent ${body.agent}` });
           const check = checkCommand(root);
+          const owned = ownedFiles(root);
           startJob(live, "agent", agent.label, agent.command({ root, check }), promptFor(readJson<Manifest>(manifestFile(root)), { skill: skillPath(root), check }), readable, (job) => {
+            const now = ownedFiles(root);
+            const touched = [...new Set([...Object.keys(owned), ...Object.keys(now)])].filter((f) => owned[f] !== now[f]);
+            if (touched.length) { job.status = "failed"; job.log.push(`✗ the agent changed ${touched.join(", ")}: not marked synced`); }
             // What the agent did is the new baseline; the check then shows what is left.
             if (job.status !== "passed") return;
             markSynced(root);

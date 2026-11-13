@@ -91,9 +91,9 @@ pure def isPast(h: List[List[Todo]], v: int, todos: List[Todo]): bool =
 
 ## Story: Edit together, online or not
 
-> As one of two people sharing a list, I want my edits to reach the server
-> whenever I am online, and to be sent again until the server has answered,
-> so that nothing I do is lost on a bad connection.
+> As one of two people sharing a list, I want to queue edits while offline
+> and retry the oldest unanswered edit while online, so that a bad connection
+> does not erase the edits I have queued.
 
 ### Only a tab's oldest queued edit can be on its way unanswered
 
@@ -219,11 +219,12 @@ pure def forge(sys: System, who: str, seq: int, op: Op): System =
     net: sys.net.append({ kind: Forged, client: who, seq: seq, op: op, version: 0, todos: List() }) }
 ```
 
-## Story: Everyone ends up seeing the same list
+## Story: The tabs can synchronize with the server
 
-> As one of two people sharing a list, I want to see a list the server
-> really had, never a mix of versions, and once the network is quiet I want
-> to see the same list as the other person.
+> As one of two people sharing a list, I want my confirmed copy to be a list
+> the server really had, with my queued edits shown over it. I want a
+> successful synchronization in which both people finish their edits and
+> see the server's current list.
 
 ### The server and both tabs keep their own rules
 
@@ -269,7 +270,11 @@ pure def alwaysEveryCopyIsTheListAtItsVersion(sys: System): bool =
     and sys.net.every(m => isRequest(m) or isPast(sys.history, m.version, m.todos))
 ```
 
-### Once both tabs have edited and heard every answer, they see the same list as the server
+### Both tabs can finish their edits and agree with the server
+
+This is a reachable outcome. The network may lose messages, and no fairness
+assumption requires retries or pushes to arrive, so eventual agreement is
+not guaranteed.
 
 ```quint
 pure def sometimesBothTabsAgree(sys: System): bool = and {

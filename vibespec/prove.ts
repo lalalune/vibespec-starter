@@ -12,12 +12,12 @@
 // failing postcondition assumes it, so every obligation of such a lemma is
 // counted as not proved too.
 
+import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { SENDER } from "./gen/classify.ts";
-import { bin, exec, run } from "./run.ts";
-export { exec, run } from "./run.ts";
+import { NEEDS_DAFNY, bin, exec, run } from "./run.ts";
 
 /** The library of general lemmas that proof files call as ProofLib.<Name>. */
 export const LIB_FILE = path.join(import.meta.dirname, "proof", "lib.dfy");
@@ -72,6 +72,19 @@ export function solver(): Promise<{ path: string; version: string }> {
     }
     throw new Error("the proof stage needs the Z3 solver bundled with Dafny or on the PATH");
   })();
+}
+
+/** The version of Dafny on the PATH, read once and without blocking, or why it could not be read. */
+let dafny: Promise<{ version?: string; problem?: string }> | undefined;
+export function dafnyVersion(): Promise<{ version?: string; problem?: string }> {
+  return (dafny ??= new Promise((resolve) => {
+    execFile("dafny", ["--version"], { encoding: "utf8", timeout: 60_000 }, (error, stdout, stderr) => {
+      const version = !error ? (stdout ?? "").match(/\d+\.\d+\.\d+/)?.[0] : undefined;
+      const problem = !version ? `Dafny could not be run (${(error && !stdout && !stderr ? error.message : undefined) ?? (`${stdout ?? ""}${stderr ?? ""}`.trim().split("\n")[0] || error?.message || "it printed no version")})`
+        : !version.startsWith("4.11.") ? `this is Dafny ${version}, and LemmaScript targets Dafny 4.11.x` : undefined;
+      resolve({ version, problem: problem && `${problem}: ${NEEDS_DAFNY} (see README, "Getting started")` });
+    });
+  }));
 }
 
 // --- proof files ---------------------------------------------------------------
@@ -657,11 +670,17 @@ function helperNames(root: string): Promise<ReadonlySet<string>> {
   })();
 }
 
+/** Where a unit's proof is written: its directory, Dafny's full output, and the final Dafny. */
+export function proofPaths(unit: string) {
+  const base = unit.replace(/\.ts$/, "");
+  return { dir: `gen/proof/${base}`, log: `gen/proof/${base}.log`, dfy: `gen/proof/${base}/${base}.dfy` };
+}
+
 /** Prove one unit in a directory of its own, so that nothing left over from another run or project can vouch for it. */
 export async function prove(root: string, u: Unit, offered: { proof?: { file: string; text: string }; lib?: string; laws: string[] }): Promise<Proof> {
-  const dir = path.join(root, "gen/proof", u.unit.replace(/\.ts$/, ""));
-  const base = u.unit.replace(/\.ts$/, "");
-  const file = `${base}.dfy`;
+  const where = proofPaths(u.unit);
+  const dir = path.join(root, where.dir);
+  const file = path.basename(where.dfy);
   fs.rmSync(dir, { recursive: true, force: true });
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, u.unit), u.text);
@@ -690,7 +709,7 @@ export async function prove(root: string, u: Unit, offered: { proof?: { file: st
   const axiomNames = new Set(axioms.map((a) => a.match(/^lemma \{:axiom\} (\w+)/)![1]));
   let spliced: Spliced;
   try {
-    spliced = splice(gen, { proof: offered.proof, lib: offered.proof && offered.lib, axioms, stepBody: u.transitions && stepBody(gen, u.transitions) }, `gen/proof/${base}/${file}`, prelude);
+    spliced = splice(gen, { proof: offered.proof, lib: offered.proof && offered.lib, axioms, stepBody: u.transitions && stepBody(gen, u.transitions) }, where.dfy, prelude);
   } catch (e) {
     return result([(e as Error).message], generated.out);
   }
@@ -735,7 +754,7 @@ export async function prove(root: string, u: Unit, offered: { proof?: { file: st
     for (let i = start + 1; i < lines.length && lines[i] !== "{" && spliced.regions[i].def === def; i++) {
       const m = lines[i].match(/^\s*ensures\s+(.*)$/);
       const k = m && `${def.replace(/_ensures$/, "")}: ${m[1].trim()}`;
-      if (k && !v.unproved.has(k)) { v.unproved.set(k, def); resting[k] = on; }
+      if (k) { v.unproved.set(k, def); resting[k] = on; }
     }
   }
   const { findings, log: auditLog } = audited;

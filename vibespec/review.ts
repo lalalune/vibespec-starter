@@ -38,7 +38,7 @@ function writeReviewLock(root: string, lock: ReviewLock) {
 }
 /** Prose may be re-wrapped without becoming a different sentence. Code may not: a line break can end a comment. */
 const proseFingerprint = (prose: string) => short(prose.replace(/\s+/g, " ").trim());
-export const fingerprint = (r: Rule): [string, string] => [proseFingerprint(r.prose), short(r.code.split("\n").map((l) => l.trimEnd()).join("\n").trim())];
+const fingerprint = (r: Rule): [string, string] => [proseFingerprint(r.prose), short(r.code.split("\n").map((l) => l.trimEnd()).join("\n").trim())];
 /** A story is recorded under its heading, which no rule's key can be. */
 const storyKey = (s: Story) => `## ${s.title}`;
 /** Story titles are unique (see parseSpec), so a story's rules are the ones filed under its title. */
@@ -136,7 +136,7 @@ const ASKS = {
 };
 export const showPending = (p: Pending) => `${p.where}\n      ${p.status}${p.note ?? ""}: ${ASKS[p.status]}`;
 
-type Lock = Record<string, string[]>;
+export type Lock = Record<string, string[]>;
 /** A spec's ledger. `locks` remembers the ones read, for a caller that reads many in a row while none of them changes. */
 const readLock = (root: string, spec: Spec, locks?: Map<string, Lock>): Lock => {
   const known = locks?.get(spec.file);
@@ -147,6 +147,9 @@ const readLock = (root: string, spec: Spec, locks?: Map<string, Lock>): Lock => 
   locks?.set(spec.file, lock);
   return lock;
 };
+
+/** The ledger key an item to reconcile is recorded under. */
+export const pendingKey = (p: Pending) => p.rule?.key ?? (p.story ? storyKey(p.story) : p.where.includes("  ") ? p.where.slice(p.where.indexOf("  ") + 2) : "@document");
 
 /**
  * Stories and rules to reconcile since `accept`. A rule's model is its own Quint and that of every rule it relies

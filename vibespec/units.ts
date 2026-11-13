@@ -5,11 +5,12 @@ import ts from "typescript";
 import { generate, type Model, type Origin } from "./gen.ts";
 import { writeConformance } from "./conform.ts";
 import { fail } from "./gen/types.ts";
-import { run, type Unit } from "./prove.ts";
-import { originalColumn, readSpecs, type Spec } from "./parse.ts";
+import type { Unit } from "./prove.ts";
+import { run } from "./run.ts";
+import { importedMeanings, originalColumn, type Spec } from "./parse.ts";
 import { defines } from "./review.ts";
 import { entry, recall, store, type Memory } from "./cache.ts";
-import { plainText, readSrc, type SrcFile } from "./util.ts";
+import { filesUnder, plainText, readSrc, type SrcFile } from "./util.ts";
 
 const ANNOTATIONS = ["backend", "pure", "requires", "ensures", "invariant", "decreases", "type", "ghost", "assert"];
 
@@ -58,26 +59,6 @@ export function generated(root: string, spec: Spec, ir: any, models: Map<string,
 }
 
 /**
- * Tangle, typecheck and generate one spec. `models` holds the specs it imports,
- * already generated, and receives this one. Throws with a message that points
- * into the spec.
- */
-export async function gen(root: string, spec: Spec, models = new Map<string, Model>()): Promise<Model> {
-  const dir = genDir(root);
-  const out = path.join(dir, `${spec.name}.ir.json`);
-  fs.writeFileSync(path.join(dir, `${spec.name}.qnt`), spec.qnt);
-  const typed = await run("quint", ["typecheck", "--out", out, `gen/${spec.name}.qnt`], root);
-  const ir = fs.existsSync(out) ? JSON.parse(fs.readFileSync(out, "utf8")) : { errors: [] };
-  fs.rmSync(out, { force: true });
-  if (!typed.ok) throw typeErrors(spec, ir, typed.out, readSpecs(root));
-  return generated(root, spec, ir, models);
-}
-
-/** The Quint of a spec's imports, theirs first, as far as a cache key may depend on it. */
-const importedMeaning = (spec: Spec, specs: Spec[]): string =>
-  spec.imports.map((n) => { const dep = specs.find((x) => x.name === n)!; return importedMeaning(dep, specs) + dep.meaning; }).join("");
-
-/**
  * Quint's typed IR of every spec, typechecked all at once and without blocking, or remembered: it depends only on the
  * Quint of the spec and of what it imports. Each promise rejects with the errors of its spec. gen/<name>.qnt is written
  * for every spec, since the simulation harness imports it.
@@ -87,7 +68,7 @@ export function typecheckAll(memory: Memory, specs: Spec[]): Map<string, Promise
   for (const spec of specs) fs.writeFileSync(path.join(dir, `${spec.name}.qnt`), spec.qnt);
   return new Map(specs.map((spec) => {
     const ir = (async () => {
-      const at = await entry(memory.root, "model", [importedMeaning(spec, specs), spec.meaning]);
+      const at = await entry(memory.root, "model", [importedMeanings(spec, specs), spec.meaning]);
       const known = recall<any>(memory, at);
       if (known !== undefined) return known;
       const out = path.join(dir, `${spec.name}.ir.json`);
@@ -168,7 +149,7 @@ export async function proofUnits(root: string, models: Model[], srcFiles: SrcFil
     const beside = (docs: boolean) => d ? [...needs(byName.get(d)!).map((n) => asDependency(n, docs)), withoutObligations(withoutImports(byName.get(d)!.render("", docs)).kept)] : [];
     units.push({
       requires: used.filter((k) => k === "requires").length,
-      unit: `src-${f.replaceAll(path.sep, "-")}`,
+      unit: `src-${f.replaceAll("/", "-")}`,
       text: [...beside(true), `// ---- src/${f} ----`, kept].join("\n"),
       // The hand-written code exactly as it is: only what the tools generated is read without its citations.
       meaning: [...beside(false), `// ---- src/${f} ----`, kept].join("\n"),
@@ -219,12 +200,11 @@ export function checkVerifiedSource(file: string, code: string) {
     if (!lineComments.some(([from, to]) => from <= m.index && m.index < to)) refuse(m.index, "`//@` here is not in a `//` comment (it is in a block comment or a string), so it is not an annotation; remove it or make it one");
 }
 
+/** Every proof file of the project. */
+export const proofFiles = (root: string) => ["spec", "src"].flatMap((dir) => filesUnder(root, dir)).filter((f) => f.endsWith(".proof.dfy"));
+
 /** Proof files that belong to no unit: a typo, or a source file that is no longer proved. */
-export function strayProofFiles(root: string, units: Unit[]): string[] {
-  const found = ["spec", "src"].flatMap((dir) => fs.existsSync(path.join(root, dir))
-    ? (fs.readdirSync(path.join(root, dir), { recursive: true }) as string[]).filter((f) => f.endsWith(".proof.dfy")).map((f) => path.join(dir, f).split(path.sep).join("/")) : []);
-  return found.filter((f) => !units.some((u) => u.proofFile === f));
-}
+export const strayProofFiles = (root: string, units: Unit[]) => proofFiles(root).filter((f) => !units.some((u) => u.proofFile === f));
 
 /**
  * Obligations that hold in simulation but that Dafny cannot prove on its own,

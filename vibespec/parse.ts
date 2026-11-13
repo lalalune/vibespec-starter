@@ -21,6 +21,9 @@ const importSources = new WeakMap<Spec, SpecImport[]>();
  * what a cache key may depend on. `tangled` is `qnt` before the list helpers were expanded, to map Quint's columns back.
  */
 export interface Spec { name: string; file: string; preamble: string; references: SpecReference[]; links: string[]; rules: Rule[]; stories: Story[]; imports: string[]; uses: Import[]; qnt: string; tangled: string; meaning: string; builtins?: string[] }
+/** The Quint of a spec's imports, theirs first, as far as a cache key may depend on it. */
+export const importedMeanings = (spec: Spec, specs: Spec[]): string =>
+  spec.imports.map((n) => { const dep = specs.find((x) => x.name === n)!; return importedMeanings(dep, specs) + dep.meaning; }).join("");
 
 /** The specs that ship with the tools (std/net.md); a spec imports one as it would one of its own. */
 const PACKAGE = import.meta.dirname;

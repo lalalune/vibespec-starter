@@ -3,8 +3,8 @@
 The frontend: one browser tab. It keeps the last copy of the list the server
 confirmed, the version of that copy, and a queue of the user's edits that the
 server has not answered yet. What the user sees is the queue applied over the
-confirmed copy, so an edit shows at once, online or not. The React page uses
-`step` from this spec as its reducer: every user action and every message
+confirmed copy, so an edit shows at once, online or not. The browser page uses
+`step` from this spec to update its state: every user action and every message
 from the server is an event.
 
 ## Domain
@@ -24,10 +24,8 @@ type Client = {
 }
 ```
 
-The to-do and the edit are written out in full rather than as `Todo` and
-`Op`, because the system spec imports this one under a name, and the tools
-can only follow a type of an imported machine back to that machine's own
-types. They are the same types.
+The inline to-do and edit records have the same fields and types as `Todo`
+and `Op`, so the client shares their data shape with the server and system.
 
 ### A new client is online, has seen version 0 and has nothing queued
 
@@ -186,13 +184,16 @@ pure def sometimesRefused(c: Client): bool = c.refusals >= 1
 ## Story: Other specs can rely on the client's rules
 
 > As the author of a spec that runs clients inside a larger system, I want
-> the client's rules stated as laws, so that my proofs can use them rather
-> than prove them again.
+> the client's state invariants stated as laws, so that my proofs can use
+> them rather than prove them again.
 
 ### Queueing an edit or hearing an answer keeps every rule of the client
 
-What is proved about the transitions of a spec cannot be called from a spec
-that imports it; a law can.
+For these laws, the client's rules are its four state invariants: queued
+edits have valid distinct numbers, and the edit count and confirmed version
+are nonnegative. Step and reachability rules are checked separately. What
+is proved about the transitions of a spec cannot be called from a spec that
+imports it; a law can.
 
 ```quint
 pure val cValues =

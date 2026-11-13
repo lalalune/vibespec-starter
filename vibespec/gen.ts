@@ -9,14 +9,15 @@
 // name is spelled. The rest is in gen/: types.ts (everything decided by a type),
 // print.ts (expressions), classify.ts (which definition is a transition, a guard
 // or a rule), typescript.ts and harness.ts (the two outputs).
-import { classify, type Law, type Param, type StepRule, type Transition } from "./gen/classify.ts";
-import { harness, type Eval, type Fairness } from "./gen/harness.ts";
+import { classify, ROLES, type Param, type Roles } from "./gen/classify.ts";
+import { harness, HARNESS, type Eval, type Fairness } from "./gen/harness.ts";
 import { BUILTIN, printer } from "./gen/print.ts";
-import { typescript } from "./gen/typescript.ts";
+import { EMITTED, HELPERS, typescript } from "./gen/typescript.ts";
 import { fail, typeOfIn, typeWalks, type Json } from "./gen/types.ts";
 import type { ComparisonShape } from "./conformance.ts";
+export { LIST_HELPERS } from "./gen/print.ts";
 
-export interface Model {
+export interface Model extends Roles {
   name: string;
   /** The source in the project, or std/ for a spec shipped with the tools. */
   source: string;
@@ -27,19 +28,10 @@ export interface Model {
    * (Scope.proof in gen/print.ts).
    */
   render: (prefix: string, docs?: boolean) => string;
-  stateType: Json | undefined; // undefined for a library: definitions and laws, no state machine
-  transitions: Transition[];
-  always: string[];
-  sometimes: string[];
-  steps: StepRule[];
-  leadsTo: string[];
-  laws: Law[];
   /** Events the spec declares fair (`fair_<event>`), each "weak" or "strong". */
   fair: Map<string, Fairness>;
-  /** The type of who sends events (the transitions' `by`), if they say. */
-  sender: Json | undefined;
-  /** What transitions with output return, `{ state, out }`, and the type of `out`. */
-  output: { type: Json; out: Json } | undefined;
+  /** `leadsTo` rules that must also be met within a number of events (`within_<rule>`). */
+  within: Map<string, number>;
   evals: Eval[];
   /** Definitions the simulator cannot evaluate on their own, because it has no values for a parameter. */
   uncompared: string[];
@@ -60,29 +52,15 @@ export interface Model {
 /** Where a definition came from in the spec, for doc comments and ordering. */
 export interface Origin { rule: string; line: number }
 
-/**
- * `every`, `some`, `includes` and `listMap` are not Quint: the tangler expands
- * them into Quint's built-in `foldl` (see expandListHelpers in spec.ts), marking
- * the accumulator with one of these prefixes so that they come out here as the
- * native array methods. They cannot be Quint definitions that take a lambda,
- * because Quint evaluates such a definition wrongly when it is used inside its
- * own argument, as in `tasks.some(t => t.parents.some(...))`.
- */
-export const LIST_HELPERS: Record<string, { init: string; step: (acc: string, body: string) => string }> = {
-  every: { init: "true", step: (acc, body) => `${acc} and (${body})` },
-  some: { init: "false", step: (acc, body) => `${acc} or (${body})` },
-  listMap: { init: "List()", step: (acc, body) => `${acc}.append(${body})` },
-  includes: { init: "false", step: (acc, body) => `${acc} or ${body}` },
-};
-
 /** Names a spec may not bind: the generated code, the harness or the proof library (ProofLib) use them, or TypeScript reserves them. */
-const TAKEN = new Set(`
-  init step probe inv enabled parseEvent parseState parseSender initialHolds Event current event raw state prev moved last outcome emitted lawsHold Out Nothing ProofLib
-  Number Math Object Array JSON Record Set Map String Boolean Symbol Error undefined NaN Infinity globalThis
+const TAKEN = new Set([...EMITTED, ...HARNESS, ...`
+  ProofLib Number Math Object Array JSON Record Set Map String Boolean Symbol Error undefined NaN Infinity globalThis
   break case catch class const continue debugger default delete do else enum export extends false finally for function
   if import in instanceof new null return super switch this throw true try typeof var void while with yield let static await
-`.split(/\s+/).filter(Boolean));
-const GENERATED = /^(eval|quotient|remainder|exact|equal|lookup\d+|std|set|Out)_|^x\d+$|__\d+$/;
+  eval arguments implements interface package private protected public
+`.split(/\s+/).filter(Boolean)]);
+const RULE_OR_GUARD = new RegExp(`^(${[...ROLES, "can"].join("|")})[A-Z]`);
+const GENERATED = new RegExp(`^(${[...HELPERS, "eval", "Out", "std", "set"].join("|")})_|^x\\d+$|__\\d+$`);
 
 export function generate(ir: Json, name: string, source: string, origin: (def: string) => Origin | undefined, deps: Map<string, Model>): Model {
   const decls: Json[] = (ir.modules.find((m: Json) => m.name === name) ?? fail(`module ${name} not found`)).declarations;
@@ -121,9 +99,10 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
   const isSampleSet = (d: Json) => d.qualifier === "pureval" && d.name.endsWith("Values") && inferred(d.id)?.kind === "set";
   const ownSamples = defs.filter(isSampleSet).map((d) => ({ name: d.name as string, elem: inferred(d.id)!.elem as Json }));
   const sampleSets = new Set([...ownSamples.map((s) => s.name), ...links.flatMap((l) => l.exports.samples.map((s) => qualify(l.alias, s.name)))]);
-  // `weight_<event>` and `fair_<event>` tell the simulator how often to try an event and which events a run cannot
-  // put off for ever (AGENTS.md, "What goes in the Quint blocks"); like sample sets, they never reach TypeScript.
-  const settings = defs.filter((d) => d.qualifier === "pureval" && /^(weight|fair)_/.test(d.name));
+  // `weight_<event>`, `fair_<event>` and `within_<rule>` tell the simulator how often to try an event, which events a run
+  // cannot put off for ever and how soon a `leadsTo` rule is met (AGENTS.md, "What goes in the Quint blocks"); like
+  // sample sets, they never reach TypeScript.
+  const settings = defs.filter((d) => d.qualifier === "pureval" && /^(weight|fair|within)_/.test(d.name));
   const code = defs.filter((d) => !isSampleSet(d) && !settings.includes(d));
   const localNames = new Set(code.map((d) => d.name as string));
   const beneath = (m: string): string[] => [m, ...deps.get(m)!.imports.flatMap(beneath)];
@@ -175,17 +154,20 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
   const funs = code.filter((d) => d.qualifier === "puredef").sort(bySpecOrder);
   for (const d of funs) if (d.expr.kind !== "lambda") fail(`${d.name}: a \`pure def\` takes parameters; for a constant write \`pure val ${d.name} = …\``);
   // A rule must be a definition: as a `pure val` it would be generated as a constant and never checked.
-  for (const v of vals) if (/^(always|sometimes|step|leadsTo|law|can)[A-Z]/.test(v.name) && typeOf(v.id).kind === "bool") fail(`${v.name}: a rule or guard is a \`pure def\` with parameters (AGENTS.md, "What goes in the Quint blocks"), not a \`pure val\`; if it is a constant, name it otherwise`);
+  for (const v of vals) if (RULE_OR_GUARD.test(v.name) && typeOf(v.id).kind === "bool") fail(`${v.name}: a rule or guard is a \`pure def\` with parameters (AGENTS.md, "What goes in the Quint blocks"), not a \`pure val\`; if it is a constant, name it otherwise`);
   const initial = vals.find((d) => d.name === "initial");
   const roles = classify(funs, initial && typeOf(initial.id), sig, types);
-  const setting = (kind: string, ok: (e: Json) => boolean, want: string) => new Map(settings.filter((d) => d.name.startsWith(`${kind}_`)).map((d) => {
-    const event = d.name.slice(kind.length + 1);
+  const events = roles.transitions.map((t) => t.name);
+  const setting = (kind: string, targets: string[], what: string, ok: (e: Json) => boolean, want: string) => new Map(settings.filter((d) => d.name.startsWith(`${kind}_`)).map((d) => {
+    const target = d.name.slice(kind.length + 1);
     const at = `${d.name} (${source}${origin(d.name) ? `:${origin(d.name)!.line}` : ""})`;
-    if (!roles.transitions.some((t) => t.name === event)) fail(`${at}: there is no transition named ${event}; name it \`${kind}_<transition>\``);
-    return [event, ok(d.expr) ? d.expr.value : fail(`${at}: write ${want}`)];
+    if (!targets.includes(target)) fail(`${at}: there is no ${what} named ${target}; name it \`${kind}_<${what}>\``);
+    return [target, ok(d.expr) ? d.expr.value : fail(`${at}: write ${want}`)];
   }));
-  const weights = setting("weight", (e) => e.kind === "int" && e.value >= 1 && e.value <= 100, "a whole number from 1 to 100: how many times as often as an event of weight 1 the simulator tries it");
-  const fair = setting("fair", (e) => e.kind === "str" && ["weak", "strong"].includes(e.value), '"weak" (taken if it stays possible) or "strong" (taken if it keeps becoming possible)') as Map<string, Fairness>;
+  const count = (e: Json) => e.kind === "int" && e.value >= 1 && e.value <= 100;
+  const weights = setting("weight", events, "transition", count, "a whole number from 1 to 100: how many times as often as an event of weight 1 the simulator tries it");
+  const within = setting("within", roles.leadsTo, "leadsTo rule", count, "a whole number from 1 to 100: the most events a run may take before it meets the rule");
+  const fair = setting("fair", events, "transition", (e) => e.kind === "str" && ["weak", "strong"].includes(e.value), '"weak" (taken if it stays possible) or "strong" (taken if it keeps becoming possible)') as Map<string, Fairness>;
   if (fair.size && !roles.leadsTo.length) fail(`${[...fair.keys()].map((e) => `fair_${e}`).join(", ")}: fairness matters only to \`leadsTo\` rules, and the spec has none`);
 
   // --- TypeScript -------------------------------------------------------------------
@@ -201,25 +183,24 @@ export function generate(ir: Json, name: string, source: string, origin: (def: s
     ...links.map(importLine),
     ...typeOnly.map((m) => `import { ${[...new Set(typedefs.filter((d) => d.module === m).map((d) => d.base as string))].map((b) => `type ${b} as ${m}_${b}`).join(", ")} } from "./${m}.ts";`),
   ];
-  /** The module's TypeScript with its own top-level names under a prefix, and the helper functions it turned out to need. */
-  const render = (prefix: string, docs = true, proof = true): { text: string; helpers: string[] } => {
+  /** The module's TypeScript with its own top-level names under a prefix. */
+  const render = (prefix: string, docs = true, proof = true): string => {
     const local = (n: string) => prefix + n;
     const helper = (which: string) => local(`${which}_${name}`);
     // A definition from another module is spelled <module>_<name>, however it was imported.
     const ref = (n: string) => (localNames.has(n) ? local(n) : cameFrom.has(n) ? `${cameFrom.get(n)}_${n.split("::").pop()}` : n);
     const scoped = typeWalks(typedefs, name, prefix);
     const print = printer({ types: scoped, inferred, ref, helper, bind, variants, definitions: new Set([...localNames, ...cameFrom.keys()]), sampleSets, proof });
-    const text = typescript({ header, typedefs: [...localTypedefs].sort(bySpecOrder), vals, funs, sig, typeOf, doc: docs ? doc : () => "", local }, roles, scoped, print, helper);
-    return { text, helpers: [...[...print.helpers].map(helper), ...print.lookups.map((_, i) => helper(`lookup${i}`))] };
+    return typescript({ header, typedefs: [...localTypedefs].sort(bySpecOrder), vals, funs, sig, typeOf, doc: docs ? doc : () => "", local }, roles, scoped, print, helper);
   };
-  const own = render("", true, false);
+  const ts = render("", true, false);
 
   const run = harness(name, source, [...imports, ...typeOnly], funs, sig, samples, roles, types, { weights, fair });
   return {
-    name, source, imports, ...roles, fair, evals: run.evals, uncompared: run.uncompared, harness: run.text,
-    ts: own.text, render: (prefix, docs) => render(prefix, docs).text, decode: types.decode, canon: types.canon,
+    name, source, imports, ...roles, fair, within, evals: run.evals, uncompared: run.uncompared, harness: run.text,
+    ts, render, decode: types.decode, canon: types.canon,
     shape: roles.stateType ? types.comparison(roles.stateType) : undefined,
     outputShape: roles.output ? types.comparison(roles.output.out) : undefined,
-    exports: { types: localTypedefs.map((d) => d.name as string), values: [...localNames, ...own.helpers], variants: localVariants, typedefs: localTypedefs, visible: typedefs, samples: ownSamples },
+    exports: { types: localTypedefs.map((d) => d.name as string), values: [...localNames], variants: localVariants, typedefs: localTypedefs, visible: typedefs, samples: ownSamples },
   };
 }
