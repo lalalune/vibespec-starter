@@ -10,8 +10,9 @@ const RETRY_MS = 1000;
 /** Wait `ms`, or less if `signal` aborts. */
 function pause(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((done) => {
-    const timer = setTimeout(done, ms);
-    signal.addEventListener("abort", () => { clearTimeout(timer); done(); }, { once: true });
+    const stop = () => { clearTimeout(timer); signal.removeEventListener("abort", stop); done(); };
+    const timer = setTimeout(stop, ms);
+    signal.addEventListener("abort", stop);
   });
 }
 
