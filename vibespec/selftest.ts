@@ -315,6 +315,8 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
       ["an initial state without a transition", "pure val initial: int = 0", /transition/],
       ["a set of records", "type A = { n: int }\npure def count(xs: Set[A]): int = xs.size()", /set|Set/],
       ["a map into records", "pure def records(xs: Set[int]): Set[{ n: int }] = xs.map(x => { n: x })", /set|Set|record/],
+      ["== on values that hold a set", "type A = { s: Set[int] }\npure def same(a: A, b: A): bool = a == b", /a set is a sequence/],
+      ["a map keyed by booleans", "pure def flags(k: bool): bool -> int = Map(k -> 1)", /keys must be/],
     ];
     const [constant, ...results] = await Promise.all(["pure val stepLimit = 3\npure def lawPositive(k: int): bool = stepLimit > 0", ...refused.map(([, quint]) => quint)]
       .map((quint) => run(oneRule("t", "A rule", quint))));
