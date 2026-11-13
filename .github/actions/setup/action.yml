@@ -26,6 +26,18 @@ runs:
           tasks-${{ runner.os }}-${{ github.job }}-
     - run: pnpm install --frozen-lockfile
       shell: bash
+    # Quint's first-run downloader uses the unauthenticated GitHub API.
+    # Fetch its pinned release directly before concurrent checks need it.
+    - name: Install Quint evaluator
+      run: |
+        evaluator_version=$(node -p "require('@informalsystems/quint/dist/src/rust/binaryManager.js').QUINT_EVALUATOR_VERSION")
+        evaluator_dir="$HOME/.quint/rust-evaluator-$evaluator_version"
+        if [ ! -x "$evaluator_dir/quint_evaluator" ]; then
+          mkdir -p "$evaluator_dir"
+          curl --fail --location --retry 3 "https://github.com/quint-co/quint/releases/download/evaluator/$evaluator_version/quint_evaluator-x86_64-unknown-linux-gnu.tar.gz" | tar -xz -C "$evaluator_dir"
+        fi
+        "$evaluator_dir/quint_evaluator" --help
+      shell: bash
     # Studio's journeys and every test:browser drive a real Chromium.
     - run: pnpm exec playwright install --with-deps chromium
       shell: bash
