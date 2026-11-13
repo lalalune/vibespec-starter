@@ -5,7 +5,7 @@ model, with links to child specs wherever an area needs its own directory.
 `gen/` is derived from it. Keep the spec true to what the user wants and
 `pnpm check` green.
 
-**Read this file in full before doing any work.**
+**Read this file and [README.md](README.md) in full before doing any work.**
 The spec format, naming rules and everything the tools accept are in
 [Spec reference](#spec-reference) below.
 
