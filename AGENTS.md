@@ -38,7 +38,7 @@ The person signs off with `npm run accept`.
 | `npm run accept` | The user's sign-off on reconciled rules. Not yours to run |
 | `npm run accept -- unproved` | The user's decision to accept obligations as simulated only. Not yours to run |
 | `SPEC_QUICK=1 npm run check` | Simulate a tenth as much, for fast iteration on a large spec; say so in your report, since `npm run accept` simulates in full |
-| `SPEC_NO_CACHE=1 npm run check` | Everything afresh, with new random traces; for CI, not for iterating |
+| `SPEC_NO_CACHE=1 npm run check` | Everything afresh, nothing remembered; for CI, not for iterating. Traces are seeded from what is simulated, so a run repeats exactly; `SPEC_SEED=<n>` tries other traces |
 
 Where to look: Dafny's full output for a unit is `gen/proof/<unit>.log` and
 what it verified is `gen/proof/<unit>/<unit>.dfy`; simulated traces are in

@@ -66,6 +66,8 @@ ranked by value within each section.
   concurrent cases no longer start a hundred simulators at once.
 - `toolchainId` cached its string but still ran `dafny --version` and hashed
   every tool file on each call.
+- `SPEC_QUICK=1` simulates a tenth as much while iterating (`accept` never
+  does), and `npm run watch` re-checks on every change in one warm process.
 
 **Agents**
 
@@ -88,7 +90,7 @@ ranked by value within each section.
 
 ### Correctness and maintainability
 
-1. **Split `tools/spec.ts`** (about 750 lines, eight concerns) into
+1. **Split `tools/spec.ts`** (about 1,300 lines, eight concerns) into
    `util.ts` (`run`, `findUp`, `sha`, `indent`, `fail`, `filesUnder`),
    `parse.ts`, `review.ts`, `cache.ts`, `simulate.ts` and `units.ts`, leaving
    `check` orchestration, `init` and the CLI. Deduplicate on the way: `fail`
@@ -110,16 +112,17 @@ ranked by value within each section.
 
 ### Speed
 
+`docs/research-report.md` has the measured list (items P1–P20); the largest
+are caching the `quint typecheck` IR (most of every warm check), sampling
+list parameters independently, running guard-coverage searches concurrently,
+and isolating proof assertions only where a definition fails. Also:
+
 1. Start typechecking and proving a spec as soon as its own simulation
    passes, instead of after every spec's (results discarded if a later spec
    breaks).
 2. Cache proofs per obligation (hash each `_ensures` lemma with what it
    reaches) and verify only changed ones with `--filter-symbol`.
-3. A quick simulation profile for iterating (`SPEC_QUICK=1`, a tenth of the
-   samples), never used by `accept` or CI.
-4. `spec watch`: one process that keeps the compiler and IR loaded and
-   re-runs only what changed.
-5. Selftest: a shared content-addressed cache directory for cases that only
+3. Selftest: a shared content-addressed cache directory for cases that only
    change prose or review state.
 
 ### Language, for larger and client/server applications

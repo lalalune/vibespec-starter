@@ -30,9 +30,10 @@ needed: the tools detect what is out of step and you make the translations.
 2. Resolve the **first** failing stage using the table below, by editing
    `spec/*.md` (and `src/` or `test/` only when `types` or `tests` asks for it).
 3. Run `npm run check` again. Repeat until the only `✗` lines are `review`
-   items saying `new`, `prose changed`, `model changed` or `prose and model
-   both changed`, and `proof` items listing obligations that you could not
-   prove (see below).
+   items other than `story has no rules` and `not formalized` (those two are
+   yours to fix; every other review item waits for the user's sign-off once
+   you have checked it as the table says), and `proof` items listing
+   obligations that you could not prove (see below).
 4. Stop and report (see "When you stop"). Do not accept anything.
 
 Give up and report after five rounds on the same failure.
@@ -40,8 +41,10 @@ Give up and report after five rounds on the same failure.
 The check remembers what passed, keyed on what each spec and proof means:
 editing prose costs nothing, and editing one spec re-checks only it and the
 specs that import it. Do not set `SPEC_NO_CACHE=1` while iterating; the
-user's `npm run accept` always checks afresh. In a package of its own, such
-as `examples/dashboard`, run the check from that directory.
+user's `npm run accept` always checks afresh. `SPEC_QUICK=1` simulates a
+tenth as much for a fast first pass on a large spec; run once without it
+before you stop. In this repository's examples, run `npm run check:dashboard`
+or `npm run check:fullstack` from the root.
 
 ## What each failure asks of you
 
@@ -53,6 +56,10 @@ as `examples/dashboard`, run the check from that directory.
 | `review` … **model changed** | Model → rule. Someone edited the Quint. Rewrite the sentence so that a reader of the prose alone is not misled. |
 | `review` … **prose and model both changed**, or **new** | Read both halves and make sure they moved to the same place. |
 | `review` … **removed or renamed** | Check that no story still depends on the rule. |
+| `review` … **model changed through** *names* | Your rule's own Quint did not change; a definition it relies on did (the names and rules are listed). Check the rule still means what its sentence says with the new definition; change the prose only if it no longer does. |
+| `review` … "(what it relies on was not recorded before)" | Nothing changed: the ledger predates dependency tracking. Leave the rule alone and list it for the user's `npm run accept`. |
+| `review` … **new story** or **story changed** | Story → rules. Read the story's text and the rules listed under it, and add or change rules until they say everything the story asks for. |
+| `review` … **new contract**, **contract changed** or **contract removed** | The `//@` lines of a file under `src/` changed. Check they say what the code must guarantee (a weaker `ensures` or a new `requires` changes what callers can rely on) and list the file for the user's sign-off. |
 | `model` | Fix at the reported `spec/…:line:col`. CONTRIBUTING.md lists what Quint is supported and which names are refused. |
 | `always` with a trace | Model → rule. The trace reaches a state that breaks the named rule; its last lines name the event and its guard. Decide whether the user would want that trace forbidden. If so, write the **reason** as a new rule and guard, such as "a payment may not exceed the balance". Only if you cannot find the reason, use the fallback the report offers: refuse the event when its result would break the rule. If the trace is fine and the `always` rule is wrong, fix the rule and say so. |
 | `always` … "the law … is false for" | The law or the function is wrong for those arguments. Fix whichever does not say what the prose says. |

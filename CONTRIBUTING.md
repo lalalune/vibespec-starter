@@ -385,8 +385,10 @@ a package. To hand the generated code to yet another package, compile
   Simulation runs overlap. `SPEC_QUICK=1` simulates a tenth as much while
   iterating on a large spec; the result says so, and `accept` always
   simulates in full. Set
-  `SPEC_NO_CACHE=1` to run everything afresh, which also gives the simulator
-  new random traces. `accept` always runs afresh.
+  `SPEC_NO_CACHE=1` to run everything afresh; `accept` always does. The
+  simulator's seed is derived from what it simulates, so the same spec gives
+  the same traces and a counterexample can be had again; set `SPEC_SEED=<n>`
+  to try other traces.
 - **Three levels of assurance**, reported per obligation: proved for all
   inputs; simulated and accepted; and the shell, which is tested.
 - **The spec covers the rules, not the plumbing.** The dashboard example

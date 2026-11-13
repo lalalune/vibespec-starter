@@ -128,7 +128,7 @@ also edit by hand, a chat app carries commands and notifications, and a web
 dashboard shows the state. Its names and data are made up. It has three
 specs: a library of arithmetic with laws, one project's sheet with guarded
 dashboard edits and unguarded hand edits, and the registry of projects. It
-has 24 transitions, 15 `always` and `step` rules and 11 laws.
+has 24 transitions, 17 `always` and `step` rules and 11 laws.
 
 Everything holds in simulation. Not every obligation is proved for all
 inputs; those that hold only in simulation are listed in the example's
