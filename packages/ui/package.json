@@ -11,8 +11,8 @@
     "gen": "node ../../vibestack/stories/cli.ts gen --check",
     "storybook": "storybook dev --no-open",
     "build": "storybook build",
-    "test": "vitest run --project dom",
-    "test:browser": "vitest run --project browser",
+    "test": "vitest run",
+    "test:browser": "vitest run -c vitest.browser.config.ts",
     "typecheck": "tsc --noEmit -p ."
   },
   "peerDependencies": {

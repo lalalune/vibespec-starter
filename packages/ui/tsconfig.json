@@ -12,5 +12,5 @@
     "lib": ["es2023", "dom", "dom.iterable"],
     "skipLibCheck": true
   },
-  "include": ["src", "test", "vite.config.ts", ".storybook"]
+  "include": ["src", "test", "vite.config.ts", "vitest.config.ts", "vitest.browser.config.ts", ".storybook"]
 }

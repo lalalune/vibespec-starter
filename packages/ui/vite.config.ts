@@ -1,16 +1,5 @@
 import tailwindcss from "@tailwindcss/vite";
-import { playwright } from "@vitest/browser-playwright";
-import { defineConfig } from "vitest/config";
+import { defineConfig } from "vite";
 
-export default defineConfig({
-  plugins: [tailwindcss()],
-  test: {
-    projects: [
-      { extends: true, test: { name: "dom", environment: "happy-dom", pool: "threads", include: ["test/**/*.test.tsx", "generated/stories/stories.test.tsx"] } },
-      {
-        extends: true,
-        test: { name: "browser", include: ["generated/stories/stories.browser.test.tsx"], browser: { enabled: true, headless: true, provider: playwright(), instances: [{ browser: "chromium" }] } },
-      },
-    ],
-  },
-});
+// What Storybook builds with; the tests share it through vitest.config.ts.
+export default defineConfig({ plugins: [tailwindcss()] });
