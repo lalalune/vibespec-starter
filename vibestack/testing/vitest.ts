@@ -1,7 +1,8 @@
-// The one Vitest configuration of every package (AGENTS.md, "Tests"; "Building, running and testing").
+// The Vitest configuration packages share (AGENTS.md, "Tests"; "Building, running and testing").
 import { playwright } from "@vitest/browser-playwright";
 import vibelang from "vibelang-vite";
 import { defineConfig } from "vitest/config";
+import type { PluginOption } from "vite";
 
 export interface Project {
   /** The package directory: `import.meta.dirname` of its vitest.config.ts. */
@@ -13,16 +14,20 @@ export interface Project {
   /** Also run what generate.ts wrote to `.cache/generated/tests`. */
   generated?: boolean;
   tests?: string[];
+  // The browser tests, where they are not BROWSER.
+  browserTests?: string[];
+  /** Vite plugins the tests' sources need, such as Tailwind's. */
+  plugins?: PluginOption[];
 }
 
 const BROWSER = "test/**/*.browser.test.tsx";
 
-export const project = ({ root, environment = "happy-dom", browser = false, generated = false, tests = ["test/**/*.test.{ts,tsx,vibe}"] }: Project) => defineConfig({
+export const project = ({ root, environment = "happy-dom", browser = false, generated = false, tests = ["test/**/*.test.{ts,tsx,vibe}"], browserTests = [BROWSER], plugins = [] }: Project) => defineConfig({
   root,
-  plugins: [vibelang()],
+  plugins: [vibelang(), ...plugins],
   test: {
-    include: browser ? [BROWSER] : [...tests, ...generated ? [".cache/generated/tests/**/*.test.ts"] : []],
-    exclude: ["**/node_modules/**", ...browser ? [] : [BROWSER]],
+    include: browser ? browserTests : [...tests, ...generated ? [".cache/generated/tests/**/*.test.ts"] : []],
+    exclude: ["**/node_modules/**", ...browser ? [] : browserTests],
     environment,
     // A failure repeats: fixed order, no retry that could hide a flaky test. Property seeds are FUZZ_SEED (properties.ts).
     sequence: { shuffle: false, seed: 1 },
