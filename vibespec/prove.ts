@@ -698,7 +698,7 @@ export async function prove(root: string, u: Unit, offered: { proof?: { file: st
     for (let i = start + 1; i < lines.length && lines[i] !== "{" && spliced.regions[i].def === def; i++) {
       const m = lines[i].match(/^\s*ensures\s+(.*)$/);
       const k = m && `${def.replace(/_ensures$/, "")}: ${m[1].trim()}`;
-      if (k && !v.unproved.has(k)) { v.unproved.set(k, def); resting[k] = on; }
+      if (k) { v.unproved.set(k, def); resting[k] = on; }
     }
   }
   const { findings, log: auditLog } = audited;
