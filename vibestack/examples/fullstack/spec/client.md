@@ -117,6 +117,10 @@ pure def alwaysTheEditCountIsNotNegative(c: Client): bool = c.made >= 0
 
 ### A tab can go offline and back online, and queue edits while offline
 
+Whether an edit is allowed never depends on being online: offline, each of
+the four edits is allowed exactly when it would be online, and it joins the
+queue of a client that stays offline.
+
 ```quint
 pure def canGoOffline(c: Client): bool = c.online
 pure def goOffline(c: Client): Client = { ...c, online: false }
@@ -124,6 +128,20 @@ pure def canGoOnline(c: Client): bool = not(c.online)
 pure def goOnline(c: Client): Client = { ...c, online: true }
 
 pure def sometimesQueuedWhileOffline(c: Client): bool = not(c.online) and c.pending.length() >= 2
+
+pure def lawAnEditIsAllowedOfflineExactlyWhenOnline(c: Client, id: str, title: str, done: bool): bool =
+  val off = { ...c, online: false }
+  val on = { ...c, online: true }
+  and {
+    canCreate(off, id, title) iff canCreate(on, id, title),
+    canSetDone(off, id, done) iff canSetDone(on, id, done),
+    canRename(off, id, title) iff canRename(on, id, title),
+    canRemove(off, id) iff canRemove(on, id),
+  }
+
+pure def lawAnOfflineEditJoinsTheQueue(c: Client, op: Op): bool =
+  val after = queue(op, { ...c, online: false })
+  not(after.online) and after.pending.length() == c.pending.length() + 1
 ```
 
 ## Story: Hear back from the server
@@ -181,6 +199,15 @@ pure def receiveRefusal(c: Client, seq: int, version: int, todos: List[Todo]): C
 
 pure def canReceiveSnapshot(c: Client, version: int, todos: List[Todo]): bool = c.online
 pure def receiveSnapshot(c: Client, version: int, todos: List[Todo]): Client = catchUp(version, todos, c)
+```
+
+### A copy of the list leaves the queue alone
+
+Only an answer takes an edit out of the queue.
+
+```quint
+pure def stepASnapshotLeavesTheQueueAlone(before: Client, via: str, after: Client): bool =
+  via == "receiveSnapshot" implies after.pending == before.pending
 ```
 
 ### A client can catch up after editing, and can be told of a refusal

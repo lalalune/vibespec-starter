@@ -85,6 +85,7 @@ lemma create_ensures(c: Client, id: string, title: string)
   ensures (inv(c) ==> canCreate(c, id, title) ==> alwaysTheEditCountIsNotNegative(create(c, id, title)))
   ensures (inv(c) ==> canCreate(c, id, title) ==> alwaysTheConfirmedVersionIsNotNegative(create(c, id, title)))
   ensures (inv(c) ==> canCreate(c, id, title) ==> stepTheConfirmedVersionNeverGoesBack(c, create(c, id, title)))
+  ensures (inv(c) ==> canCreate(c, id, title) ==> stepASnapshotLeavesTheQueueAlone(c, "create", create(c, id, title)))
 {
   if inv(c) { QueueKeeps(todo_Op("create", id, title, false), c); }
 }
@@ -95,6 +96,7 @@ lemma setDone_ensures(c: Client, id: string, done: bool)
   ensures (inv(c) ==> canSetDone(c, id, done) ==> alwaysTheEditCountIsNotNegative(setDone(c, id, done)))
   ensures (inv(c) ==> canSetDone(c, id, done) ==> alwaysTheConfirmedVersionIsNotNegative(setDone(c, id, done)))
   ensures (inv(c) ==> canSetDone(c, id, done) ==> stepTheConfirmedVersionNeverGoesBack(c, setDone(c, id, done)))
+  ensures (inv(c) ==> canSetDone(c, id, done) ==> stepASnapshotLeavesTheQueueAlone(c, "setDone", setDone(c, id, done)))
 {
   if inv(c) { QueueKeeps(todo_Op("done", id, "", done), c); }
 }
@@ -105,6 +107,7 @@ lemma rename_ensures(c: Client, id: string, title: string)
   ensures (inv(c) ==> canRename(c, id, title) ==> alwaysTheEditCountIsNotNegative(rename(c, id, title)))
   ensures (inv(c) ==> canRename(c, id, title) ==> alwaysTheConfirmedVersionIsNotNegative(rename(c, id, title)))
   ensures (inv(c) ==> canRename(c, id, title) ==> stepTheConfirmedVersionNeverGoesBack(c, rename(c, id, title)))
+  ensures (inv(c) ==> canRename(c, id, title) ==> stepASnapshotLeavesTheQueueAlone(c, "rename", rename(c, id, title)))
 {
   if inv(c) { QueueKeeps(todo_Op("rename", id, title, false), c); }
 }
@@ -115,6 +118,7 @@ lemma remove_ensures(c: Client, id: string)
   ensures (inv(c) ==> canRemove(c, id) ==> alwaysTheEditCountIsNotNegative(remove(c, id)))
   ensures (inv(c) ==> canRemove(c, id) ==> alwaysTheConfirmedVersionIsNotNegative(remove(c, id)))
   ensures (inv(c) ==> canRemove(c, id) ==> stepTheConfirmedVersionNeverGoesBack(c, remove(c, id)))
+  ensures (inv(c) ==> canRemove(c, id) ==> stepASnapshotLeavesTheQueueAlone(c, "remove", remove(c, id)))
 {
   if inv(c) { QueueKeeps(todo_Op("remove", id, "", false), c); }
 }
@@ -125,6 +129,7 @@ lemma receiveAck_ensures(c: Client, seq_: int, version: int, todos: seq<todo_Tod
   ensures (inv(c) ==> canReceiveAck(c, seq_, version, todos) ==> alwaysTheEditCountIsNotNegative(receiveAck(c, seq_, version, todos)))
   ensures (inv(c) ==> canReceiveAck(c, seq_, version, todos) ==> alwaysTheConfirmedVersionIsNotNegative(receiveAck(c, seq_, version, todos)))
   ensures (inv(c) ==> canReceiveAck(c, seq_, version, todos) ==> stepTheConfirmedVersionNeverGoesBack(c, receiveAck(c, seq_, version, todos)))
+  ensures (inv(c) ==> canReceiveAck(c, seq_, version, todos) ==> stepASnapshotLeavesTheQueueAlone(c, "receiveAck", receiveAck(c, seq_, version, todos)))
 {
   if inv(c) { FilterKeeps(c, receiveAck(c, seq_, version, todos), seq_); }
 }
@@ -135,6 +140,7 @@ lemma receiveRefusal_ensures(c: Client, seq_: int, version: int, todos: seq<todo
   ensures (inv(c) ==> canReceiveRefusal(c, seq_, version, todos) ==> alwaysTheEditCountIsNotNegative(receiveRefusal(c, seq_, version, todos)))
   ensures (inv(c) ==> canReceiveRefusal(c, seq_, version, todos) ==> alwaysTheConfirmedVersionIsNotNegative(receiveRefusal(c, seq_, version, todos)))
   ensures (inv(c) ==> canReceiveRefusal(c, seq_, version, todos) ==> stepTheConfirmedVersionNeverGoesBack(c, receiveRefusal(c, seq_, version, todos)))
+  ensures (inv(c) ==> canReceiveRefusal(c, seq_, version, todos) ==> stepASnapshotLeavesTheQueueAlone(c, "receiveRefusal", receiveRefusal(c, seq_, version, todos)))
 {
   if inv(c) { FilterKeeps(c, receiveRefusal(c, seq_, version, todos), seq_); }
 }

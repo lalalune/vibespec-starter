@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { parseSpec, readSpecs, specName, type Spec } from "../../parse.ts";
 import { dependencies } from "../../review.ts";
-import { danglingCitations, filesUnder } from "../../util.ts";
+import { codeDirs, danglingCitations, filesUnder } from "../../util.ts";
 import { itemsOf, nodeId, nodesOfOutline, outlineOf, SIGN } from "./markdown.ts";
 
 // --- identity: which node of the baseline a node of the current specs is -----------------------------
@@ -172,10 +172,10 @@ export function manifestOf(root: string, baseline: Record<string, string>, curre
   };
   for (const s of specs) if (edited.includes(s.file)) visit(s, "edited");
   const modules = new Set(regenerate.map((r) => r.gen.slice(4)).concat(Object.keys(baseline).filter((f) => !(f in current)).map((f) => `${specName(f)}.ts`)));
-  const code = ["src", "test"].flatMap((dir) => filesUnder(root, dir))
+  const code = codeDirs(root).flatMap((dir) => [`${dir}src`, `${dir}test`]).flatMap((dir) => filesUnder(root, dir))
     .filter((f) => /\.[cm]?tsx?$/.test(f) && [...modules].some((m) => fs.readFileSync(path.join(root, f), "utf8").includes(`gen/${m}`)));
   let citations: string[] = [];
-  try { citations = danglingCitations(root, specs); } catch { /* no code to read */ }
+  try { citations = codeDirs(root).flatMap((dir) => danglingCitations(root, specs, dir)); } catch { /* no code to read */ }
   return { published: new Date().toISOString(), changes, regenerate, code, citations };
 }
 

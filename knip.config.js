@@ -7,6 +7,7 @@
 //   root @vitest/browser                    loaded by Vitest's browser mode, beside @vitest/browser-playwright
 //   root @effect/platform-node, vibelang-runtime  imported by compiled .vibe output; `spec init` reads their pins here
 //   tailwindcss (ui, design-system, studio, apps)  resolved by @tailwindcss/vite and the lint plugin from CSS
+//   apps vitest                             run by the `test` script an application adds with its first test (apps/app/README.md)
 //   design-system eslint, eslint-plugin-better-tailwindcss, typescript-eslint  loaded by name in vibestack/design/test/design.test.ts
 import vibelang from "vibelang/knip"
 
@@ -84,7 +85,8 @@ export default {
         "test/**/*.{ts,tsx,vibe,vibex}"
       ],
       "ignoreDependencies": [
-        "tailwindcss"
+        "tailwindcss",
+        "vitest"
       ]
     }
   }

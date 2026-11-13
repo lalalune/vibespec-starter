@@ -100,21 +100,21 @@ applications and packages beside Studio; the examples stand alone.
    pnpm dev
    ```
 
-3. In `spec/index.md`, give your application a title and add its first story:
+3. In `spec/index.md`, say what the product is for. In `spec/app/index.md`,
+   the requirements of the application in `apps/app`, add its first story:
    who it is for, what they need to do, and why. You can write it in Studio
    or edit the Markdown file directly.
 4. Ask the coding agent to sync. It writes the rules and Quint, runs the
    checks, and reports what needs your review.
-5. Build your application in `src/`: its shell in VibeLang, its interface in
-   React, both on the generated code in `gen/`. Follow
+5. Build your application in `apps/app/src/`: its shell in VibeLang, its
+   interface in React, both on the generated code in `apps/app/gen/`. Follow
    [Build your project](#build-your-project).
 
 ## Studio
 
 ```bash
 pnpm dev                                # Studio on this project, and every app's dev server
-pnpm studio apps/web                    # Studio alone, on one project
-pnpm studio vibestack/examples/order    # an example, or any directory with spec/
+pnpm studio vibestack/examples/order    # Studio alone, on an example or any directory with spec/
 ```
 
 Studio opens in the browser and is where you build the application: you
@@ -148,8 +148,11 @@ pnpm --filter vibestack-studio test           # its journeys only, Playwright in
 
 A `##` heading is a story, a `###` heading is a rule, and a `quint` block
 under a rule states its formal meaning. Write the prose; the agent can write
-the rules and their Quint. `pnpm new` fills an empty `spec/index.md` with
-a small scaffold to replace.
+the rules and their Quint. The repository has one spec tree: `spec/index.md`
+introduces the product and links to each area, and `spec/<name>/` holds the
+requirements of the package `apps/<name>` or `packages/<name>`
+([one spec tree](AGENTS.md#one-spec-tree)). `pnpm new <name>` writes
+`spec/<name>/index.md` with a small scaffold to replace.
 
 ### 2. Sync and check
 
@@ -172,11 +175,12 @@ on each pull request and push; what is headed for `main`, and every push to
 
 ### 3. Build on the generated code
 
-`pnpm check` generates your types, guards and transitions in `gen/`.
-For a state machine, import its Effect adapter into your shell:
+`pnpm check`, at the root, generates your types, guards and transitions in
+`gen/`, and those of `spec/app/` in `apps/app/gen/` as well. For a state
+machine, import its Effect adapter into your shell:
 
 ```vibe
-import { Machine, machine, apply, decodeEvent, decodeState } from "../gen/index.effect.vibe"
+import { Machine, machine, apply, decodeEvent, decodeState } from "../gen/app.effect.vibe"
 ```
 
 `Machine` holds the state and changes it only by an event the rules allow:
@@ -186,7 +190,7 @@ on `apply`, and passes what it loads through `decodeState`. If the spec uses
 a sender parameter named `by`, authenticate that sender in your shell and
 pass it separately ([the VibeLang shell](AGENTS.md#the-vibelang-shell)).
 
-Put HTTP, storage and other I/O in `src/` as VibeLang, the interface as
+Put HTTP, storage and other I/O in the package's `src/` as VibeLang, the interface as
 React components that read the state and send events through hooks over
 `Machine`, and whole-journey tests in `test/`. Keep pure logic in the spec
 wherever Quint can express it. Logic that needs TypeScript, such as a loop,
@@ -220,7 +224,8 @@ Before committing your application's starting point:
    `vibestack/examples/` except `order/`: `pnpm selftest` builds its scratch
    projects from it, so it stays, with the `demo` and `examples` scripts and
    the `examples` job in `.github/workflows/ci.yml`, which then check only
-   it. Start your application from `apps/web`. Update the package name, description and
+   it. Start your application from `apps/app` and its requirements from
+   `spec/app/index.md`. Update the package name, description and
    repository links for your project.
 2. **Keep the toolchain guide with the toolchain.** Move this README to
    `vibestack/README.md`, update its relative links, and keep the template

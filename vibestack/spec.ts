@@ -12,9 +12,9 @@ import { run } from "./run.ts";
 import { readSpecs, badSpecName, specFiles, specName, importedMeanings, isStd, located, type Spec } from "./parse.ts";
 import { contracts, pending, pendingKey, pendingContracts, acceptAllReviews, pendingSpecs, migrateLocks, moved, showPending, ledgerFile, readLedger, writeLedger, type Pending, type Accepted, type Lock } from "./review.ts";
 import { entry, remembered, collectGarbage, type Memory } from "./cache.ts";
-import { generated, typecheckAll, proofUnits, proofFiles, strayProofFiles } from "./units.ts";
+import { generated, mirrorGen, typecheckAll, proofUnits, proofFiles, strayProofFiles } from "./units.ts";
 import { SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, LASSO_TRACES, STEPS, DEPTHS, SEARCHED, simulate, search, firstBreak, lasso, showTrace, replay, standIn } from "./simulate.ts";
-import { sha, indent, packageScripts, tests, readSrc, projectRoot, allDone, nodeRunsVibelang, type SrcFile } from "./util.ts";
+import { sha, indent, packageScripts, tests, readSrc, codeDirs, codeDirOf, projectRoot, allDone, nodeRunsVibelang, type Reported, type SrcFile } from "./util.ts";
 
 export { readSpecs, parseSpec, expandListHelpers, type Spec, type Rule, type Story } from "./parse.ts";
 export { pending, pendingKey, pendingContracts, acceptReviews, acceptContracts, dependencies, type Lock, type Pending } from "./review.ts";
@@ -91,8 +91,10 @@ function lockProject(root: string): () => void {
  * check or accept runs in a project at a time; another is refused.
  */
 export async function check(root: string, accept: false | "reviews" | "unproved" = false, log: (result: Result) => void = () => {}): Promise<{ ok: boolean; results: Result[]; next: string }> {
-  // The tests stage names the project whose tests it runs: checking that project again from them would wait on its lock.
-  if (process.env.SPEC_TESTS === fs.realpathSync(root)) throw new Error("a test script cannot run spec check or accept: the check already runs the tests");
+  // The tests stage names the project that is checking: checking it again from its tests, or from an owner's, which are
+  // below it, would wait on its lock or rewrite the gen/ those tests read.
+  const fromTests = process.env.SPEC_TESTS ? path.relative(process.env.SPEC_TESTS, fs.realpathSync(root)) : undefined;
+  if (fromTests !== undefined && fromTests.split(path.sep)[0] !== ".." && !path.isAbsolute(fromTests)) throw new Error("a test script cannot run spec check or accept: the check already runs the tests");
   const release = lockProject(root);
   try {
     const results: Result[] = [];
@@ -296,6 +298,11 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
     const notRun = (["sometimes", "replay"] as const).filter((s) => !ran.has(s) && (s !== "sometimes" || model.sometimes.length));
     if (notRun.length && said.some((r) => !r.ok)) skip(`${notRun.join(" and ")} of ${spec.file}`, "simulation stopped at the failure above");
   }
+  mirrorGen(root, specs);
+  const dirs = codeDirs(root);
+  /** A result about an owner's code names its package; the root's own reads as it always has. */
+  const within = (dir: string, [ok, stage, summary, detail, where]: Reported): Reported =>
+    dir ? [ok, stage, `${dir.slice(0, -1)}: ${summary}`, detail, dir.slice(0, -1)] : [ok, stage, summary, detail, where];
 
   if (!allOk) skip("types, proof, tests and traces", "a stage above failed, and their failures would only restate it");
   if (allOk) {
@@ -397,25 +404,25 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
     }
     // The typecheck runs while the proofs do; it is reported first.
     // VibeLang's compiler checks `.vibe`, `.ts` and `.tsx` as one program.
-    const typecheck = fs.existsSync(path.join(root, "tsconfig.json")) ? run("vibelang", ["--noEmit", "-p", "."], root) : undefined;
+    // Each of the root and the owners is a program of its own, checked against its own gen/.
+    const typechecks = dirs.map(async (dir) => fs.existsSync(path.join(root, dir, "tsconfig.json")) ? run("vibelang", ["--noEmit", "-p", "."], path.join(root, dir)) : undefined);
     const proofsDone = provingAll();
     // A missing or unexecutable compiler must not release the project lock while proofs still write into gen/.
-    const [typesResult] = await Promise.allSettled([typecheck]);
-    if (typecheck) {
-      if (!nodeRunsVibelang()) report(false, "types", `VibeLang runs its sources on Node ^22.22.3 or >=24.11.1, and this is ${process.version}; update Node (.nvmrc names the version)`);
-      if (typesResult.status === "rejected") report(false, "types", "the VibeLang compiler could not run", indent(String(typesResult.reason)));
+    const typesResults = await Promise.allSettled(typechecks);
+    if (typesResults.some((r) => r.status === "rejected" || r.value) && !nodeRunsVibelang()) report(false, "types", `VibeLang runs its sources on Node ^22.22.3 or >=24.11.1, and this is ${process.version}; update Node (.nvmrc names the version)`);
+    for (const [i, dir] of dirs.entries()) {
+      const result = typesResults[i];
+      const types = (ok: boolean, summary: string, detail = "") => report(...within(dir, [ok, "types", summary, detail, "src/ and test/"]));
+      if (result.status === "rejected") types(false, "the VibeLang compiler could not run", indent(String(result.reason)));
+      else if (result.value) types(result.value.ok, result.value.ok ? "application typechecks against the generated contract" : "application does not fit the generated contract", indent(result.value.out.trim()));
       else {
-        const tsc = typesResult.value!;
-        report(tsc.ok, "types", tsc.ok ? "application typechecks against the generated contract" : "application does not fit the generated contract", indent(tsc.out.trim()), "src/ and test/");
+        const code = ["src", "test"].filter((d) => fs.existsSync(path.join(root, dir, d)));
+        types(!code.length, code.length ? `${code.join(" and ")} exist but there is no tsconfig.json, so nothing checks them against the generated contract; run \`spec init\` to add one` : "skipped: there is no tsconfig.json and no src/ or test/");
       }
-    } else {
-      const code = ["src", "test"].filter((d) => fs.existsSync(path.join(root, d)));
-      report(!code.length, "types", code.length ? `${code.join(" and ")} exist but there is no tsconfig.json, so nothing checks them against the generated contract; run \`spec init\` to add one` : "skipped: there is no tsconfig.json and no src/ or test/");
     }
     for (const r of await proofsDone) report(...r);
-    const scripts = packageScripts(root);
-    for (const r of await tests(root, specs, scripts)) report(...r);
-    for (const r of await conformance(root, machines, scripts)) report(...r);
+    for (const dir of dirs) for (const r of await tests(root, dir, specs)) report(...within(dir, r));
+    for (const dir of dirs) for (const r of await conformance(path.join(root, dir), machines, packageScripts(path.join(root, dir)))) report(...within(dir, r));
     if (proofsRan) collectGarbage(memory);
   }
   fs.rmSync(loaded, { recursive: true, force: true });
@@ -461,11 +468,16 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
   }
   if (removedSpecs.length) report(record, "review", record ? "removed specs recorded as reconciled" : `${removedSpecs.length} removed spec(s) to reconcile, ${why}`,
     removedSpecs.map((p) => "    " + showPending(p)).join("\n"));
-  const proved = contracts(root, srcFiles).size;
-  if (record && contractsToDo.length) {
-    report(true, "review", `src/: recorded as reconciled: ${contractsToDo.map((t) => t.where).join("; ")}`, "", "src/");
-  } else if (contractsToDo.length) report(false, "review", `src/: ${contractsToDo.length} contract(s) to reconcile, ${why}`, items(contractsToDo, "The contracts, in full"), "src/");
-  else if (proved) report(true, "review", `src/: the //@ contracts of all ${proved} proved files reconciled`, "", "src/");
+  // Contracts are reviewed package by package; one whose package is gone is still listed, under where it was.
+  const proved = [...contracts(root, srcFiles).keys()];
+  for (const dir of new Set([...dirs, ...contractsToDo.map((t) => codeDirOf(t.where))])) {
+    const src = `${dir}src/`;
+    const todo = contractsToDo.filter((t) => codeDirOf(t.where) === dir);
+    const all = proved.filter((file) => codeDirOf(file) === dir).length;
+    if (record && todo.length) report(true, "review", `${src}: recorded as reconciled: ${todo.map((t) => t.where).join("; ")}`, "", src);
+    else if (todo.length) report(false, "review", `${src}: ${todo.length} contract(s) to reconcile, ${why}`, items(todo, "The contracts, in full"), src);
+    else if (all) report(true, "review", `${src}: the //@ contracts of all ${all} proved files reconciled`, "", src);
+  }
   return allOk;
 }
 
@@ -649,7 +661,7 @@ const isMain = (): boolean => {
 const USAGE = "usage: spec check [<directory>] [--json] | watch [<directory>] | gen [<directory>] [--if-valid] | accept [<directory>] [unproved] | new [<path>] | init [<directory>] | migrate [<directory>] | studio [<directory>] [--port <n>] | tests [<directory>] | stories gen [--watch] [--check] | tokens build|check|apply";
 
 /**
- * Check, then check again whenever spec/, src/, test/ or tsconfig.json changes. One process stays warm between runs
+ * Check, then check again whenever spec/, tsconfig.json, or src/ or test/ of the root or of an owner changes. One process stays warm between runs
  * (the compiler, the toolchain's fingerprint and the cache are already loaded), edits that arrive during a run start
  * one more run after it, and what is unchanged comes from the cache as in any check.
  */
@@ -664,9 +676,10 @@ async function watch(root: string) {
       again = false;
       const started = Date.now();
       console.log(`\n--- ${new Date().toLocaleTimeString()} ---`);
+      attach(); // a package that came to own part of the spec tree is watched from the next run
       try {
         const { next } = await check(root, false, (r) => console.log(show(r)));
-        console.log(`\nnext: ${next}\n(${((Date.now() - started) / 1000).toFixed(1)}s; watching spec/, src/, test/ and tsconfig.json; Ctrl-C to stop)`);
+        console.log(`\nnext: ${next}\n(${((Date.now() - started) / 1000).toFixed(1)}s; watching spec/, src/ and test/, here and in the packages the spec names, and tsconfig.json; Ctrl-C to stop)`);
       } catch (e) {
         console.error((e as Error).message);
       }
@@ -683,8 +696,9 @@ async function watch(root: string) {
   const watched = new Map<string, { watcher: fs.FSWatcher; ino: number }>();
   const inode = (dir: string) => { try { return fs.statSync(path.join(root, dir)).ino; } catch { return undefined; } };
   const attach = () => {
-    for (const dir of ["spec", "src", "test"]) {
-      const ino = inode(dir);
+    const dirs = ["spec", ...codeDirs(root).flatMap((dir) => [`${dir}src`, `${dir}test`])];
+    for (const dir of new Set([...dirs, ...watched.keys()])) {
+      const ino = dirs.includes(dir) ? inode(dir) : undefined;
       const had = watched.get(dir);
       if (had && had.ino === ino) continue;
       if (had) { had.watcher.close(); watched.delete(dir); }
@@ -725,6 +739,7 @@ if (isMain()) {
         const typed = typecheckAll({ root, fresh: false, used: new Set() }, specs);
         const models = new Map<string, Model>();
         for (const s of specs) generated(root, s, await typed.get(s.name)!, models);
+        mirrorGen(root, specs);
       } catch (e) {
         if (!args.length) throw e;
         console.log(`note: gen/ was not generated, because a spec is not valid yet (${(e as Error).message.split("\n")[0]}); \`pnpm check\` says why`);

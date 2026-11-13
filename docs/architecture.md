@@ -8,8 +8,8 @@ is the map.
 
 | Layer | Lives in | Owned by | Never |
 |---|---|---|---|
-| Source model | `spec/**/*.md`: stories, rules, Quint | a person, who signs off with `pnpm accept` | a second model of the same state |
-| Generated contract | `gen/<name>.ts`, `gen/<name>.effect.vibe`, `gen/<name>.conformance.ts` | `spec gen`; gitignored | edited by hand, imported from another package's `gen/` |
+| Source model | `spec/**/*.md` at the repository root, one tree for every package: stories, rules, Quint | a person, who signs off with `pnpm accept` | a second model of the same state |
+| Generated contract | `gen/<name>.ts`, `gen/<name>.effect.vibe`, `gen/<name>.conformance.ts`: every module in the root's `gen/`; those of `spec/<name>/`, and what they import, also in the `gen/` of `apps/<name>` or `packages/<name>` | `spec gen` and `spec check` at the root; gitignored | edited by hand, imported from another package's `gen/` |
 | Verified logic Quint cannot express | `src/**/*.ts` with `//@` contracts | hand-written, proved by Dafny | I/O, classes, libraries |
 | Shell: effects, services, I/O | `src/**/*.vibe` on Effect 4 | hand-written VibeLang | rules restated; state the spec owns |
 | Boundary schemas | `src/**/*.schema.ts` (Effect Schema) | hand-written | types repeated beside them |
@@ -50,8 +50,7 @@ are rewritten only when their bytes differ, and are removed when their source
 is. Turborepo skips whole `gen`, `build`, `typecheck`, `test`, `test:browser`
 and lint tasks whose inputs it has seen (`turbo.json`). It never skips
 `check`, which runs the real application in its `traces` stage, nor the
-examples, which install from the network. CI generates `apps/web`'s tests
-twice and compares.
+examples, which install from the network.
 
 **Seeds and budgets.** Simulation is seeded from what it simulates. Property
 tests take `FUZZ_SEED` (default 1) and `FUZZ_RUNS` (default 100), which is
@@ -96,7 +95,10 @@ Asynchronous Effect programs are tested, not proved. Each `proof` line of
 ## Packages and boundaries
 
 `apps/*` deploy; `packages/*` are shared by them; `vibestack/` is the tools;
-`vibestack/examples/*` stand alone. ESLint (`eslint.config.js`) refuses an
+`vibestack/examples/*` stand alone. The root's `check` is also the check of
+each package a directory of `spec/` names (AGENTS.md, "One spec tree"); a
+package with a `spec/` of its own, as Studio and each example have, is a
+project of its own. ESLint (`eslint.config.js`) refuses an
 import of another package beyond its `exports`, React in domain and tool
 code, and a second state, UI or test framework. Knip reports unused files,
 exports and dependencies, reading `.vibe` through VibeLang's compiler; Madge
@@ -108,7 +110,7 @@ read. What each excludes, and why, is at the top of `knip.config.js` and in
 
 | When | Runs |
 |---|---|
-| every pull request and push | build, types, tests, browser tests, every `check`, ESLint, Stylelint, Knip, Madge; `apps/web`'s tests generated twice and compared |
+| every pull request and push | build, types, tests, browser tests, every `check`, ESLint, Stylelint, Knip, Madge |
 | pull request into `main`; push to `develop` or `main` | the same with 1000 runs per property, and the examples and `pnpm selftest` |
 | nightly | tests and `check`s with 20000 runs and a new seed |
 

@@ -34,7 +34,7 @@
         "95e4bd0a0914"
       ],
       "Story: Keep a shared list of things to do / Applying an edit changes only the to-do it names": [
-        "3f684f744b39",
+        "af08bd6450a1",
         "b1f5d09de9a1",
         "95e4bd0a0914"
       ],
@@ -83,12 +83,12 @@
         "e3b0c44298fc"
       ],
       "Domain / A client holds a confirmed copy, its version, and a queue of unanswered edits": [
-        "71994ec1c5c1",
+        "f795f868d477",
         "524e799e1a30",
         "f56cd8e43735"
       ],
       "Domain / A new client is online, has seen version 0 and has nothing queued": [
-        "0f668b7a3c02",
+        "e3b0c44298fc",
         "78aef2525933",
         "9147756354c0"
       ],
@@ -169,7 +169,7 @@
         "e3b0c44298fc"
       ],
       "Domain / The server holds the list, its version and a log of every request it answered": [
-        "e1c72db6dd49",
+        "e0ba43e6b426",
         "aa99e659601b",
         "f56cd8e43735"
       ],
@@ -191,7 +191,7 @@
         "fd804be3214b"
       ],
       "Story: Change the list over HTTP / A new request whose edit makes sense is applied, raising the version by one": [
-        "f8a5a2b7176e",
+        "e3b0c44298fc",
         "5242047162ed",
         "0544078422d8"
       ],
@@ -282,7 +282,7 @@
         "1b9d3916d367"
       ],
       "Story: Edit together, online or not / A user edit is queued in the tab, and sent at once if the tab is online and has nothing else queued": [
-        "fe5673766dc0",
+        "e3b0c44298fc",
         "4c916c56849b",
         "8b5ce3a160dc"
       ],
@@ -305,7 +305,7 @@
         "23751467738a"
       ],
       "Story: The server answers every request once / An online tab takes any answer off the network": [
-        "f40f2aaf64ce",
+        "e3b0c44298fc",
         "149105938aa7",
         "62c1827d3837"
       ],
@@ -384,7 +384,7 @@
         "9f9e7c435894"
       ],
       "Story: Editing alone is never refused / A lone user's edit is never refused": [
-        "5fdb186ec1b7",
+        "b35cbba29dc9",
         "6ba8f54893d5",
         "031c10f913d8"
       ],
@@ -404,7 +404,7 @@
         "031c10f913d8"
       ],
       "Story: Editing alone is never refused / A lone user's tab keeps in step with the server": [
-        "ac48f1accc6c",
+        "53c21938ca98",
         "a6f17ac3243d",
         "0539cac9a82f"
       ]

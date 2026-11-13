@@ -268,6 +268,16 @@ pure def alwaysTheHistoryEndsWithTheCurrentList(sys: System): bool =
     and sameTodos(pastAt(sys.history, sys.server.version), sys.server.todos)
 ```
 
+### The history only grows: a step leaves it as it was or adds one list at its end
+
+So the list recorded for an earlier version never changes.
+
+```quint
+pure def stepTheHistoryOnlyGrows(before: System, after: System): bool =
+  after.history == before.history
+    or after.history == before.history.append(pastAt(after.history, before.history.length()))
+```
+
 ### A tab's confirmed copy is the list exactly as it was at the version the tab has seen
 
 The same holds for every copy on the network.
@@ -297,9 +307,26 @@ pure def sometimesBothTabsAgree(sys: System): bool = and {
 
 ### A tab can queue edits while offline, and an edit can be refused
 
+A tab's edit is allowed offline exactly when it would be online. Offline, it
+joins the tab's queue and nothing is sent. The simulator tries this on the
+initial system and on one with an edit already queued.
+
 ```quint
 pure def sometimesQueuedOffline(sys: System): bool = not(sys.a.online) and sys.a.pending.length() >= 2
 pure def sometimesARefusedEdit(sys: System): bool = sys.a.refusals + sys.b.refusals >= 1
+
+pure val sysValues = Set(initial).union(Set({ ...initial, a: C::create(C::initial, "x", "milk") }))
+
+pure def lawATabCanQueueAnEditWhileOffline(sys: System, who: str, op: Op): bool =
+  val c = clientOf(sys, who)
+  val off = withClient(who, { ...c, online: false }, sys)
+  val after = act(off, who, op)
+  and {
+    canAct(off, who, op) iff canAct(withClient(who, { ...c, online: true }, sys), who, op),
+    clientOf(after, who).pending.length() == c.pending.length() + 1,
+    not(clientOf(after, who).online),
+    after.net == sys.net,
+  }
 ```
 
 ## Story: Nobody can answer for my edits
