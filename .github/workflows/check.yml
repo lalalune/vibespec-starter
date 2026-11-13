@@ -8,10 +8,6 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        project: [".", "vibespec/examples/dashboard", "vibespec/examples/assistant", "vibespec/examples/fullstack"]
     steps:
       - uses: actions/checkout@v4
       # Dafny's action installs Node 16 for itself, so Node 24 must come after it.
@@ -23,13 +19,12 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: node "$GITHUB_WORKSPACE/vibespec/spec.ts" check
-        working-directory: ${{ matrix.project }}
+      - run: npm run check
       - if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: proof-${{ strategy.job-index }}
-          path: ${{ matrix.project }}/gen/proof/
+          name: proof
+          path: gen/proof/
           if-no-files-found: ignore
 
   selftest:
