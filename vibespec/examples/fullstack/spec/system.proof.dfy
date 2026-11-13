@@ -223,9 +223,7 @@ lemma ReplayAppend(todos: seq<todo_Todo>, ps: seq<client_Pending>, p: client_Pen
   ensures replay(todos, ps + [p]) == todo_applyOp(replay(todos, ps), p.op)
   decreases |ps|
 {
-  if |ps| > 0 {
-    ReplayAppend(todo_applyOp(todos, ps[0].op), ps[1..], p);
-  }
+  ProofLib.FoldLeftAppend((acc: seq<todo_Todo>, p: client_Pending) => todo_applyOp(acc, p.op), todos, ps, p);
 }
 
 lemma PlanAppend(plan: Plan, ps: seq<client_Pending>, item: client_Pending)
@@ -234,10 +232,7 @@ lemma PlanAppend(plan: Plan, ps: seq<client_Pending>, item: client_Pending)
       Plan((before.ok && todo_opAllowed(before.todos, item.op)), todo_applyOp(before.todos, item.op)))
   decreases |ps|
 {
-  if |ps| > 0 {
-    var f := (acc: Plan, p: client_Pending) => Plan((acc.ok && todo_opAllowed(acc.todos, p.op)), todo_applyOp(acc.todos, p.op));
-    PlanAppend(f(plan, ps[0]), ps[1..], item);
-  }
+  ProofLib.FoldLeftAppend((acc: Plan, p: client_Pending) => Plan((acc.ok && todo_opAllowed(acc.todos, p.op)), todo_applyOp(acc.todos, p.op)), plan, ps, item);
 }
 
 lemma goOffline_ensures(sys: System, who: string)

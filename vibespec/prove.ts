@@ -29,7 +29,8 @@ const LIB_MODULE = "ProofLib";
  * proof file's text must never be read back as one of Dafny's own messages.
  */
 const RESOURCE_LIMIT = 30_000_000;
-const DAFNY_FLAGS = ["--isolate-assertions", "--error-limit", "0", "--resource-limit", String(RESOURCE_LIMIT), "--show-snippets:false"];
+// run.ts shares the machine's slots between units; each verifier consumes one.
+const DAFNY_FLAGS = ["--cores", "1", "--isolate-assertions", "--error-limit", "0", "--resource-limit", String(RESOURCE_LIMIT), "--show-snippets:false"];
 const TIME_LIMIT = 600;
 /** Flags for every Dafny command on a unit's file. */
 const dafnyFlags = (dfy: string) => [...(dfy.includes("Std.") ? ["--standard-libraries"] : []), "--unicode-char:true"];

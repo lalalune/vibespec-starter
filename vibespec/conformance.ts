@@ -75,6 +75,7 @@ export async function check<S, E, V>(oracle: Oracle<S, E>, found: Found<E>, driv
       const raw = await driver.observe(key);
       const problem = compareObservation(oracle, found, oracle.initial, raw, view);
       if (problem) return `initial ${key}: ${problem}`;
+      model.set(key, oracle.initial);
     }
     for (const [i, [key, sent]] of trace.entries()) {
       const at = `event ${i + 1}, ${key} ${show(sent)}`;
