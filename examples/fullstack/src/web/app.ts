@@ -35,7 +35,7 @@ function page(React: ReactLike, base: string, name: string) {
     const [c, dispatch] = React.useReducer<Client, Action>(reducer, initial);
     const [draft, setDraft] = React.useState("");
     const [retry, setRetry] = React.useState(0);
-    const sent = React.useRef(new Set<number>());
+    const inFlight = React.useRef<number | undefined>(undefined);
 
     // Pushes from the server, for as long as the page is open.
     React.useEffect(() => {
@@ -44,19 +44,20 @@ function page(React: ReactLike, base: string, name: string) {
       return () => stop.abort();
     }, []);
 
-    // Send every queued edit that is not on its way yet. Offline, nothing is
-    // sent, and coming back online sends the whole queue again.
+    // Send the oldest queued edit, one request at a time (spec/system.md:
+    // "Only a tab's oldest queued edit can be on its way unanswered"). Its
+    // answer takes it out of the queue, and the next one goes out. Sending
+    // the whole queue at once would let the network reorder the user's own
+    // edits. Offline, nothing is sent; a failed request is tried again later.
     React.useEffect(() => {
-      if (!c.online) { sent.current.clear(); return; }
-      for (const p of c.pending) {
-        if (sent.current.has(p.seq)) continue;
-        sent.current.add(p.seq);
-        void sendEdit(base, name, p).then((answer) => {
-          if (answer) return dispatch(answer);
-          sent.current.delete(p.seq);
-          setTimeout(() => setRetry(retry + 1), 2000);
-        });
-      }
+      const p = c.pending[0];
+      if (!c.online || !p || inFlight.current !== undefined) return;
+      inFlight.current = p.seq;
+      void sendEdit(base, name, p).then((answer) => {
+        inFlight.current = undefined;
+        if (answer) return dispatch(answer);
+        setTimeout(() => setRetry(Date.now()), 2000);
+      });
     }, [c, retry]);
 
     const goOnline = async () => {

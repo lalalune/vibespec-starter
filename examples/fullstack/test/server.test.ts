@@ -45,6 +45,22 @@ test("removing leaves a tombstone, so the id cannot be created again", async () 
   assert.deepEqual(again.body.todos.map((t) => [t.id, t.deleted]), [["ann-1", true]]);
 });
 
+test("a request that reuses a number for another edit is refused, not taken for a retry", async () => {
+  // Someone squats on dan's first number with an edit of their own.
+  assert.equal((await post({ type: "create", client: "dan", seq: 1, id: "dan-x", title: "forged" })).body.ok, true);
+  const real = await post({ type: "create", client: "dan", seq: 1, id: "dan-1", title: "milk" });
+  assert.equal(real.body.ok, false);
+  assert.ok(!real.body.todos.some((t) => t.id === "dan-1"));
+  // The squatter's own retry is still a retry.
+  assert.equal((await post({ type: "create", client: "dan", seq: 1, id: "dan-x", title: "forged" })).body.ok, true);
+});
+
+test("a client cannot ask the server to refuse a request", async () => {
+  const refuse = { type: "refuse", client: "eve", seq: 1, op: { kind: "create", id: "eve-1", title: "milk", done: false } };
+  assert.equal((await post(refuse)).status, 400);
+  assert.equal((await post({ type: "create", client: "eve", seq: 1, id: "eve-1", title: "milk" })).body.ok, true);
+});
+
 test("malformed input is rejected before it reaches the machine", async () => {
   assert.equal((await post({ type: "create", client: "ann", seq: 1.5, id: "x", title: "y" })).status, 400);
   assert.equal((await post({ type: "explode" })).status, 400);
@@ -55,7 +71,7 @@ test("malformed input is rejected before it reaches the machine", async () => {
 test("the snapshot is the server's list and version", async () => {
   const s = (await (await fetch(`${base}/api/snapshot`)).json()) as { version: number; todos: unknown[] };
   assert.equal(s.version, store.state.version);
-  assert.equal(s.todos.length, 1);
+  assert.equal(s.todos.length, 3);
 });
 
 test("the frontend is served as JavaScript, with its types removed", async () => {

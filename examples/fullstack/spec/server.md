@@ -3,18 +3,21 @@
 The backend: one shared list of to-dos behind an HTTP API. Every request
 names the client that sent it and that client's sequence number for it, so a
 request that arrives twice, because the client retried after a lost reply,
-is recognised. The server answers each request once and remembers the
-answer. Every change to the list raises the version by one; clients use the
+is recognised, provided it carries the same edit. The server answers each
+request once and remembers the answer and the edit it answered. Every change to the list raises the version by one; clients use the
 version to tell an old copy of the list from a newer one.
 
 ## Domain
 
 ### The server holds the list, its version and a log of every request it answered
 
+Each entry of the log records the edit the request carried, so that a later
+request with the same number can be told apart from a retry.
+
 ```quint
 import todo.* from "./todo"
 
-type Answered = { client: str, seq: int, version: int, ok: bool }
+type Answered = { client: str, seq: int, op: { kind: str, id: str, title: str, done: bool }, ok: bool }
 type Server = {
   todos: List[{ id: str, title: str, done: bool, deleted: bool }],
   version: int,
@@ -22,10 +25,11 @@ type Server = {
 }
 ```
 
-The to-do record is written out in full rather than as `Todo`, because the
+The to-do and edit records are written out in full rather than as `Todo`
+and `Op`, because the
 system spec imports this one under a name, and the tools can only follow a
-type of an imported machine back to that machine's own types. It is the same
-type as `Todo`.
+type of an imported machine back to that machine's own types. They are the
+same types as `Todo` and `Op`.
 
 ### A new server has an empty list at version 0
 
@@ -50,15 +54,17 @@ pure val seqValues = Set(1, 2, 3)
 
 ### A request is answered only once
 
-A request the log already holds is not applied again; the shell repeats the
-answer the log records.
+A request the log already holds is not applied again. It is a retry only if
+it carries the edit the log records for its client and number: the shell
+answers it as accepted only if that edit was accepted, and refuses a request
+that reuses a number for a different edit.
 
 ```quint
 pure def answered(s: Server, client: str, seq: int): bool =
   s.log.some(h => h.client == client and h.seq == seq)
 
-pure def accepted(s: Server, client: str, seq: int): bool =
-  s.log.some(h => h.client == client and h.seq == seq and h.ok)
+pure def acceptedAs(s: Server, client: str, seq: int, op: Op): bool =
+  s.log.some(h => h.client == client and h.seq == seq and h.ok and sameOp(h.op, op))
 ```
 
 ### A new request whose edit makes sense is applied, raising the version by one
@@ -69,7 +75,7 @@ pure def allows(s: Server, client: str, seq: int, op: Op): bool =
 
 pure def commit(client: str, s: Server, seq: int, op: Op): Server =
   val v = s.version + 1
-  { todos: applyOp(s.todos, op), version: v, log: s.log.append({ client: client, seq: seq, version: v, ok: true }) }
+  { todos: applyOp(s.todos, op), version: v, log: s.log.append({ client: client, seq: seq, op: op, ok: true }) }
 
 pure def canCreate(s: Server, client: str, seq: int, id: str, title: str): bool =
   allows(s, client, seq, { kind: "create", id: id, title: title, done: false })
@@ -92,15 +98,16 @@ pure def remove(s: Server, client: str, seq: int, id: str): Server =
   commit(client, s, seq, { kind: "remove", id: id, title: "", done: false })
 ```
 
-### A new request can be refused, which is logged and changes nothing else
+### A new request can be refused, which is logged with its edit and changes nothing else
 
 The shell refuses a request whose edit does not make sense, such as ticking
-off a to-do another client has just removed.
+off a to-do another client has just removed. Refusing is the server's own
+decision: a client cannot ask for it.
 
 ```quint
-pure def canRefuse(s: Server, client: str, seq: int): bool = not(answered(s, client, seq))
-pure def refuse(s: Server, client: str, seq: int): Server =
-  { ...s, log: s.log.append({ client: client, seq: seq, version: s.version, ok: false }) }
+pure def canRefuse(s: Server, client: str, seq: int, op: Op): bool = not(answered(s, client, seq))
+pure def refuse(s: Server, client: str, seq: int, op: Op): Server =
+  { ...s, log: s.log.append({ client: client, seq: seq, op: op, ok: false }) }
 ```
 
 ### The version counts the changes
@@ -129,7 +136,7 @@ pure def stepEachRequestRaisesTheVersionByAtMostOne(before: Server, after: Serve
 
 ```quint
 pure def sometimesTwoClientsChangedIt(s: Server): bool =
-  accepted(s, "a", 1) and s.log.some(h => h.client == "b" and h.ok)
+  s.log.some(h => h.client == "a" and h.ok) and s.log.some(h => h.client == "b" and h.ok)
 
 pure def sometimesARefusal(s: Server): bool = s.log.some(h => not(h.ok)) and s.version >= 1
 ```
@@ -172,7 +179,7 @@ pure val sValues =
   Set(initial).union(Set({
     todos: List({ id: "x", title: "milk", done: false, deleted: false }),
     version: 1,
-    log: List({ client: "a", seq: 1, version: 1, ok: true }),
+    log: List({ client: "a", seq: 1, op: { kind: "create", id: "x", title: "milk", done: false }, ok: true }),
   }))
 pure val opValues =
   Set({ kind: "create", id: "y", title: "eggs", done: false })
@@ -185,6 +192,6 @@ pure def rulesHold(s: Server): bool =
 pure def lawACommitKeepsTheRules(s: Server, client: str, seq: int, op: Op): bool =
   (rulesHold(s) and allows(s, client, seq, op)) implies rulesHold(commit(client, s, seq, op))
 
-pure def lawARefusalKeepsTheRules(s: Server, client: str, seq: int): bool =
-  (rulesHold(s) and canRefuse(s, client, seq)) implies rulesHold(refuse(s, client, seq))
+pure def lawARefusalKeepsTheRules(s: Server, client: str, seq: int, op: Op): bool =
+  (rulesHold(s) and canRefuse(s, client, seq, op)) implies rulesHold(refuse(s, client, seq, op))
 ```

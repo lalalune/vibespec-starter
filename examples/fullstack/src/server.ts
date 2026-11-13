@@ -1,6 +1,7 @@
 // The backend: the unverified shell around the generated server machine
 // (gen/server.ts). It parses requests, applies the ones the rules allow, logs
-// and refuses the rest, repeats the logged answer to a retried request, and
+// and refuses the rest, repeats the logged answer to a retried request (the
+// same number and the same edit), and
 // pushes every change to the open tabs. It also serves the frontend, turning
 // its TypeScript into JavaScript by removing the types, so there is no
 // bundler and no build step.
@@ -8,13 +9,19 @@ import fs from "node:fs";
 import http from "node:http";
 import { stripTypeScriptTypes } from "node:module";
 import path from "node:path";
-import { type Server, accepted, answered, enabled, initial, inv, parseEvent, step } from "../gen/server.ts";
-import type { Answer, Snapshot } from "./protocol.ts";
+import { type Server, acceptedAs, answered, enabled, initial, inv, parseEvent, step } from "../gen/server.ts";
+import { type Answer, type Snapshot, opOf } from "./protocol.ts";
 
 /** The server machine and the tabs listening for changes. */
 export class TodoStore {
   state: Server = initial;
   private listeners = new Set<(s: Snapshot) => void>();
+
+  constructor() {
+    // Every transition is proved to keep the rules, so they are checked once,
+    // of the state the server starts in, and not on every request.
+    if (!inv(this.state)) throw new Error("the server's initial state breaks its rules");
+  }
 
   snapshot(): Snapshot {
     return { version: this.state.version, todos: this.state.todos };
@@ -28,26 +35,28 @@ export class TodoStore {
   /**
    * Answer one request. `input` may come straight from the network; it is
    * parsed into an event of the server machine first. Returns undefined for
-   * input that is not a request at all.
+   * input that is not a request at all, and for `refuse`, which only the
+   * server decides.
    */
   handle(input: unknown): Answer | undefined {
     const event = parseEvent(input);
-    if (!event) return undefined;
+    if (!event || event.type === "refuse") return undefined;
     const { client, seq } = event;
-    // A retry: the log holds the first answer, and nothing is applied again.
-    if (answered(this.state, client, seq)) return this.answer(accepted(this.state, client, seq), seq);
-    if (event.type !== "refuse" && enabled(this.state, event)) {
+    const op = opOf(event);
+    // A number answered before: nothing is applied again. Only a retry of the
+    // accepted edit is told it was accepted; another edit under that number is refused.
+    if (answered(this.state, client, seq)) return this.answer(acceptedAs(this.state, client, seq, op), seq);
+    if (enabled(this.state, event)) {
       this.state = step(this.state, event);
       const snapshot = this.snapshot();
       for (const listener of this.listeners) listener(snapshot);
       return this.answer(true, seq);
     }
-    this.state = step(this.state, { type: "refuse", client, seq });
+    this.state = step(this.state, { type: "refuse", client, seq, op });
     return this.answer(false, seq);
   }
 
   private answer(ok: boolean, seq: number): Answer {
-    if (!inv(this.state)) throw new Error("the server broke its rules"); // proved impossible; checked anyway
     return { ok, seq, ...this.snapshot() };
   }
 }

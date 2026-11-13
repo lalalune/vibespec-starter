@@ -100,7 +100,7 @@ lemma CommitKeeps(s: Server, client: string, seq_: int, op: todo_Op)
   ensures stepNoToDoIsForgotten(s, commit(client, s, seq_, op))
 {
   var after := commit(client, s, seq_, op);
-  var x := Answered(client, seq_, s.version + 1, true);
+  var x := Answered(client, seq_, op, true);
   VersionBridge(s);
   VersionBridge(after);
   ProofLib.FilterAppend((h: Answered) => h.ok, s.log, x);
@@ -172,25 +172,25 @@ lemma remove_ensures(s: Server, client: string, seq_: int, id: string)
   }
 }
 
-lemma refuse_ensures(s: Server, client: string, seq_: int)
-  ensures (inv(s) ==> canRefuse(s, client, seq_) ==> alwaysTheVersionCountsTheChanges(refuse(s, client, seq_)))
-  ensures (inv(s) ==> canRefuse(s, client, seq_) ==> alwaysNoRequestIsAnsweredTwice(refuse(s, client, seq_)))
-  ensures (inv(s) ==> canRefuse(s, client, seq_) ==> alwaysIdsAreUnique(refuse(s, client, seq_)))
-  ensures (inv(s) ==> canRefuse(s, client, seq_) ==> stepEachRequestRaisesTheVersionByAtMostOne(s, refuse(s, client, seq_)))
-  ensures (inv(s) ==> canRefuse(s, client, seq_) ==> stepNoToDoIsForgotten(s, refuse(s, client, seq_)))
+lemma refuse_ensures(s: Server, client: string, seq_: int, op: todo_Op)
+  ensures (inv(s) ==> canRefuse(s, client, seq_, op) ==> alwaysTheVersionCountsTheChanges(refuse(s, client, seq_, op)))
+  ensures (inv(s) ==> canRefuse(s, client, seq_, op) ==> alwaysNoRequestIsAnsweredTwice(refuse(s, client, seq_, op)))
+  ensures (inv(s) ==> canRefuse(s, client, seq_, op) ==> alwaysIdsAreUnique(refuse(s, client, seq_, op)))
+  ensures (inv(s) ==> canRefuse(s, client, seq_, op) ==> stepEachRequestRaisesTheVersionByAtMostOne(s, refuse(s, client, seq_, op)))
+  ensures (inv(s) ==> canRefuse(s, client, seq_, op) ==> stepNoToDoIsForgotten(s, refuse(s, client, seq_, op)))
 {
-  if inv(s) && canRefuse(s, client, seq_) { RefuseKeeps(s, client, seq_); }
+  if inv(s) && canRefuse(s, client, seq_, op) { RefuseKeeps(s, client, seq_, op); }
 }
 
-lemma RefuseKeeps(s: Server, client: string, seq_: int)
-  requires inv(s) && canRefuse(s, client, seq_)
-  ensures alwaysTheVersionCountsTheChanges(refuse(s, client, seq_))
-  ensures alwaysNoRequestIsAnsweredTwice(refuse(s, client, seq_))
-  ensures alwaysIdsAreUnique(refuse(s, client, seq_))
-  ensures stepNoToDoIsForgotten(s, refuse(s, client, seq_))
+lemma RefuseKeeps(s: Server, client: string, seq_: int, op: todo_Op)
+  requires inv(s) && canRefuse(s, client, seq_, op)
+  ensures alwaysTheVersionCountsTheChanges(refuse(s, client, seq_, op))
+  ensures alwaysNoRequestIsAnsweredTwice(refuse(s, client, seq_, op))
+  ensures alwaysIdsAreUnique(refuse(s, client, seq_, op))
+  ensures stepNoToDoIsForgotten(s, refuse(s, client, seq_, op))
 {
-  var after := refuse(s, client, seq_);
-  var x := Answered(client, seq_, s.version, false);
+  var after := refuse(s, client, seq_, op);
+  var x := Answered(client, seq_, op, false);
   VersionBridge(s);
   VersionBridge(after);
   ProofLib.FilterAppend((h: Answered) => h.ok, s.log, x);
@@ -209,8 +209,8 @@ lemma lawACommitKeepsTheRules_ensures(s: Server, client: string, seq_: int, op: 
   if rulesHold(s) && allows(s, client, seq_, op) { CommitKeeps(s, client, seq_, op); }
 }
 
-lemma lawARefusalKeepsTheRules_ensures(s: Server, client: string, seq_: int)
-  ensures (lawARefusalKeepsTheRules(s, client, seq_) == true)
+lemma lawARefusalKeepsTheRules_ensures(s: Server, client: string, seq_: int, op: todo_Op)
+  ensures (lawARefusalKeepsTheRules(s, client, seq_, op) == true)
 {
-  if rulesHold(s) && canRefuse(s, client, seq_) { RefuseKeeps(s, client, seq_); }
+  if rulesHold(s) && canRefuse(s, client, seq_, op) { RefuseKeeps(s, client, seq_, op); }
 }

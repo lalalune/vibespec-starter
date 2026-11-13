@@ -64,3 +64,25 @@ test("two tabs, one of them offline for a while, end up with the server's list",
     server.close();
   }
 });
+
+test("a lone user's queued edits reach the server in order, and none is refused", async () => {
+  const server = createServer(new TodoStore());
+  await new Promise<void>((done) => server.listen(0, done));
+  const base = `http://localhost:${(server.address() as AddressInfo).port}`;
+  const a = new Tab(base, "a");
+  try {
+    a.goOffline();
+    const milk = newId("a", a.state);
+    await a.edit({ kind: "create", id: milk, title: "milk", done: false });
+    await a.edit({ kind: "done", id: milk, title: "", done: true });
+    await a.edit({ kind: "rename", id: milk, title: "oat milk", done: false });
+    await a.goOnline();
+    assert.equal(a.state.pending.length, 0);
+    assert.equal(a.state.refusals, 0);
+    assert.deepEqual(view(a.state).map((t) => [t.title, t.done]), [["oat milk", true]]);
+  } finally {
+    a.close();
+    server.closeAllConnections();
+    server.close();
+  }
+});

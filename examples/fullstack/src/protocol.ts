@@ -1,9 +1,13 @@
 // The wire format shared by the backend (src/server.ts) and the frontend
-// (src/web/). A request is an event of the generated server machine; an
-// answer and a push carry the list and its version, which the generated
-// client machine takes as `receiveAck`, `receiveRefusal` or `receiveSnapshot`.
+// (src/web/). A request is an event of the generated server machine other
+// than `refuse`, which is the server's own decision; an answer and a push
+// carry the list and its version, which the generated client machine takes as
+// `receiveAck`, `receiveRefusal` or `receiveSnapshot`.
 import type { Op, Todo } from "../gen/todo.ts";
-import type { Event as Request } from "../gen/server.ts";
+import type { Event } from "../gen/server.ts";
+
+/** What a client may ask the server to do: every event but `refuse`. */
+export type Request = Exclude<Event, { type: "refuse" }>;
 
 /** The server's answer to one request: was it applied, and the list as it now is. */
 export interface Answer { ok: boolean; seq: number; version: number; todos: Todo[] }
@@ -20,4 +24,14 @@ export function toRequest(client: string, seq: number, op: Op): Request | undefi
     case "remove": return { type: "remove", client, seq, id: op.id };
   }
   return undefined;
+}
+
+/** The edit a request asks for, as the server's log records it. */
+export function opOf(r: Request): Op {
+  switch (r.type) {
+    case "create": return { kind: "create", id: r.id, title: r.title, done: false };
+    case "setDone": return { kind: "done", id: r.id, title: "", done: r.done };
+    case "rename": return { kind: "rename", id: r.id, title: r.title, done: false };
+    case "remove": return { kind: "remove", id: r.id, title: "", done: false };
+  }
 }

@@ -118,6 +118,13 @@ pure def sameTodos(xs: List[Todo], ys: List[Todo]): bool =
     and xs.foldl(start, (acc, t) => { ok: acc.ok and sameAt(ys, acc.i, t), i: acc.i + 1 }).ok
 ```
 
+### Two edits are the same when they agree field by field
+
+```quint
+pure def sameOp(a: Op, b: Op): bool =
+  a.kind == b.kind and a.id == b.id and a.title == b.title and a.done == b.done
+```
+
 ## Story: Edits survive being sent twice
 
 > As someone on a bad connection, I want an edit that reaches the server twice

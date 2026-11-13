@@ -17,9 +17,9 @@ build step) and Dafny on the path. The page loads React 18 from esm.sh.
 | Path | Kind | What it covers |
 |---|---|---|
 | `spec/todo.md` | library, 4 laws | A to-do, the four edits, when an edit makes sense, how it is applied, list equality |
-| `spec/server.md` | state machine, 5 transitions | The backend: one request per edit, each request answered once, version = number of changes, ids never reused |
+| `spec/server.md` | state machine, 5 transitions | The backend: one request per edit, each request answered once and recognised as a retry only with the same edit, version = number of changes, ids never reused |
 | `spec/client.md` | state machine, 9 transitions | One tab: confirmed copy + queue of unanswered edits, optimistic view, offline, answers and pushes |
-| `spec/system.md` | state machine, 8 transitions | Server + tabs `a` and `b` + a network that loses, repeats and reorders; a ghost history of every version |
+| `spec/system.md` | state machine, 9 transitions | Server + tabs `a` and `b` + a network that loses, repeats and reorders + anyone forging requests in a tab's name; a ghost history of every version |
 | `spec/*.proof.dfy` | proofs | Everything Dafny could not prove alone (uniqueness under append/filter/map, fold lemmas, the system rules) |
 | `src/server.ts`, `src/main.ts` | backend shell, tested | `node:http`: `POST /api/events`, `GET /api/snapshot`, `GET /api/stream` (server-sent pushes), and the frontend's files |
 | `src/protocol.ts` | shared shell | Wire format; a queued edit as a server event |
@@ -31,17 +31,25 @@ build step) and Dafny on the path. The page loads React 18 from esm.sh.
 ## How the halves fit
 
 - **Backend.** `TodoStore.handle` passes the request body through
-  `parseEvent` of `gen/server.ts`. A request the log already holds gets the
-  logged answer again; a new one is applied with `step` if `enabled` says
-  so, and otherwise refused with the machine's `refuse` event, which is
-  logged too. Every change is pushed to the open tabs.
+  `parseEvent` of `gen/server.ts`, and answers 400 to `refuse`, which only
+  the server may decide. A request whose client and number the log already
+  holds is not applied again: it is told it was accepted only if the log
+  accepted that same edit (`acceptedAs`), so a request that reuses a number
+  for another edit is refused rather than taken for a retry. A new request is
+  applied with `step` if `enabled` says so, and otherwise refused with the
+  machine's `refuse` event, which is logged too. Every change is pushed to
+  the open tabs. The rules are checked once, of the initial state; every
+  transition is proved to keep them.
 - **Frontend.** The page's state is a `Client` and its reducer is `step` from
   `gen/client.ts`. Clicks dispatch `create`/`setDone`/`rename`/`remove`;
   answers dispatch `receiveAck`/`receiveRefusal`; pushes dispatch
   `receiveSnapshot`. Buttons are enabled by the generated guards
-  (`canCreate`, …). The page sends every queued edit that is not yet on its
-  way, and when it comes back online it sends the whole queue again; the
-  server's log makes the repeats harmless.
+  (`canCreate`, …). The page keeps one request in flight: it sends the
+  oldest queued edit, and the next once that one is answered, also after
+  coming back online. Sending the whole queue at once would let the network
+  reorder a user's own edits, so that ticking off a to-do could arrive
+  before creating it and be refused; the system spec now proves that a user
+  editing alone is never refused.
 - **Ids.** A tab names a new to-do `<tab>-<n>`, so it can create and edit
   to-dos offline. Removing leaves a tombstone, so an id is never reused.
 

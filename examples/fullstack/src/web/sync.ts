@@ -78,9 +78,8 @@ export class Tab {
     this.state = step(this.state, e);
   }
 
-  /** A user edit: queued at once, and sent if the tab is online. */
+  /** A user edit: queued at once, and sent if the tab is online and has nothing else queued. */
   async edit(op: Op): Promise<void> {
-    const before = this.state.made;
     const e: Event | undefined =
       op.kind === "create" ? { type: "create", id: op.id, title: op.title }
       : op.kind === "done" ? { type: "setDone", id: op.id, done: op.done }
@@ -88,23 +87,31 @@ export class Tab {
       : op.kind === "remove" ? { type: "remove", id: op.id }
       : undefined;
     if (e) this.dispatch(e);
-    const queued = this.state.pending.find((p) => p.seq === before + 1);
-    if (queued && this.state.online) await this.send(queued);
+    if (this.state.pending.length === 1) await this.flush();
   }
 
-  async send(p: Pending): Promise<void> {
+  /** Send one queued edit and take in the answer. Returns false if the network failed. */
+  async send(p: Pending): Promise<boolean> {
     const answer = await sendEdit(this.base, this.name, p);
     if (answer) this.dispatch(answer);
+    return answer !== undefined;
+  }
+
+  /** Send the queue oldest first, one request at a time, as the page does. */
+  async flush(): Promise<void> {
+    for (let p = this.state.pending[0]; this.state.online && p; p = this.state.pending[0]) {
+      if (!(await this.send(p))) return;
+    }
   }
 
   goOffline(): void {
     this.dispatch({ type: "goOffline" });
   }
 
-  /** Back online: send the whole queue again and catch up. */
+  /** Back online: send the queue, oldest first, and catch up. */
   async goOnline(): Promise<void> {
     this.dispatch({ type: "goOnline" });
-    for (const p of [...this.state.pending]) await this.send(p);
+    await this.flush();
     this.dispatch(await fetchSnapshot(this.base));
   }
 

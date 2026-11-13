@@ -4,7 +4,8 @@ The whole application: the server, two browser tabs, and the network between
 them. Each part is the machine its own spec defines, used here under a name
 (`S` for the server, `C` for a client); this spec adds the network and the
 rules that only the whole system can state. The network may lose, repeat
-and reorder messages, and a tab may go offline at any time.
+and reorder messages, a tab may go offline at any time, and anyone may send
+the server a request in a tab's name.
 
 ## Domain
 
@@ -13,37 +14,44 @@ and reorder messages, and a tab may go offline at any time.
 A client sends a request carrying one of its queued edits. The server
 answers the sender with an acknowledgement or a refusal, and tells the other
 client when the list changed. Every answer carries the list and its version.
-`client` is the sender of a request and the receiver of everything else.
+`client` is the sender of a request and the receiver of everything else. A
+forged request names a client but was sent by someone else, who gets the
+answer: HTTP answers on the connection the request came in on.
 
 ```quint
 import server as S from "./server"
 import client as C from "./client"
 import todo.* from "./todo"
 
-type MsgKind = Request | Ack | Refusal | Push
+type MsgKind = Request | Forged | Ack | Refusal | Push
 type Msg = { kind: MsgKind, client: str, seq: int, op: Op, version: int, todos: List[Todo] }
 type Cut = { out: List[Msg], k: int }
 ```
 
 ### The system holds the server, clients a and b, the messages in flight, and the history of the list
 
-`history` is not part of the running application: it records the list as it
-was at every version, so that rules can say which version a copy is.
+`history` and `forged` are not part of the running application: one records
+the list as it was at every version, so that rules can say which version a
+copy is, and the other counts the forged requests sent.
 
 ```quint
-type System = { server: S::Server, a: C::Client, b: C::Client, net: List[Msg], history: List[List[Todo]] }
+type System = {
+  server: S::Server, a: C::Client, b: C::Client, net: List[Msg], history: List[List[Todo]], forged: int,
+}
 
 pure val initial: System =
-  { server: S::initial, a: C::initial, b: C::initial, net: List(), history: List(List()) }
+  { server: S::initial, a: C::initial, b: C::initial, net: List(), history: List(List()), forged: 0 }
 ```
 
 ### What the simulator tries
 
-Both clients, the first few positions in the network, and five edits.
+Both clients, the first few positions in the network and sequence numbers,
+and five edits.
 
 ```quint
 pure val whoValues = Set("a", "b")
 pure val iValues = Set(0, 1, 2)
+pure val seqValues = Set(0, 1, 2)
 pure val opValues =
   Set({ kind: "create", id: "x", title: "milk", done: false })
     .union(Set({ kind: "create", id: "y", title: "eggs", done: false }))
@@ -67,6 +75,10 @@ pure val uncut: Cut = { out: List(), k: 0 }
 pure def dropAt(net: List[Msg], i: int): List[Msg] =
   net.foldl(uncut, (acc, m) => { out: if (acc.k == i) acc.out else acc.out.append(m), k: acc.k + 1 }).out
 
+pure def isRequest(m: Msg): bool = m.kind == Request or m.kind == Forged
+pure def oldest(c: C::Client): C::Pending =
+  if (c.pending.length() > 0) c.pending.nth(0) else { seq: 0, op: noOp }
+
 pure def request(who: str, p: C::Pending): Msg =
   { kind: Request, client: who, seq: p.seq, op: p.op, version: 0, todos: List() }
 pure def answer(kind: MsgKind, who: str, seq: int, s: S::Server): Msg =
@@ -82,18 +94,32 @@ pure def isPast(h: List[List[Todo]], v: int, todos: List[Todo]): bool =
 > whenever I am online, and to be sent again until the server has answered,
 > so that nothing I do is lost on a bad connection.
 
-### A user edit is queued in the tab, and sent at once if the tab is online
+### Only a tab's oldest queued edit can be on its way unanswered
+
+A tab has at most one edit on its way: the next one is sent once the server
+has answered the one before. Sending the whole queue at once would let the
+network reorder a user's own edits, so that ticking off a to-do could reach
+the server before creating it, and be refused.
+
+```quint
+pure def alwaysOnlyTheOldestQueuedEditIsOnItsWay(sys: System): bool =
+  sys.net.every(m => m.kind != Request or S::answered(sys.server, m.client, m.seq)
+    or (clientOf(sys, m.client).pending.length() > 0 and m.seq == oldest(clientOf(sys, m.client)).seq))
+```
+
+### A user edit is queued in the tab, and sent at once if the tab is online and has nothing else queued
 
 ```quint
 pure def canAct(sys: System, who: str, op: Op): bool = opAllowed(C::view(clientOf(sys, who)), op)
 pure def act(sys: System, who: str, op: Op): System =
   val c = clientOf(sys, who)
   val queued = C::queue(op, c)
-  val sent = if (c.online) sys.net.append(request(who, { seq: queued.made, op: op })) else sys.net
+  val sent =
+    if (c.online and c.pending.length() == 0) sys.net.append(request(who, { seq: queued.made, op: op })) else sys.net
   withClient(who, queued, { ...sys, net: sent })
 ```
 
-### A tab can go offline, and sends its whole queue again when it comes back
+### A tab can go offline, and sends its oldest queued edit when it comes back
 
 ```quint
 pure def canGoOffline(sys: System, who: str): bool = C::canGoOffline(clientOf(sys, who))
@@ -102,18 +128,20 @@ pure def goOffline(sys: System, who: str): System = withClient(who, C::goOffline
 pure def canGoOnline(sys: System, who: str): bool = C::canGoOnline(clientOf(sys, who))
 pure def goOnline(sys: System, who: str): System =
   val c = clientOf(sys, who)
-  withClient(who, C::goOnline(c), { ...sys, net: sys.net.concat(c.pending.listMap(p => request(who, p))) })
+  val sent = if (c.pending.length() > 0) sys.net.append(request(who, oldest(c))) else sys.net
+  withClient(who, C::goOnline(c), { ...sys, net: sent })
 ```
 
-### An online tab may send any queued edit again
+### An online tab may send its oldest queued edit again at any time
+
+That is how the next edit goes out after an answer, and how a lost request
+or answer is made up for.
 
 ```quint
-pure def canResend(sys: System, who: str, i: int): bool =
-  clientOf(sys, who).online and i >= 0 and i < clientOf(sys, who).pending.length()
-pure def queuedAt(c: C::Client, i: int): C::Pending =
-  if (i >= 0 and i < c.pending.length()) c.pending.nth(i) else { seq: 0, op: noOp }
-pure def resend(sys: System, who: str, i: int): System =
-  { ...sys, net: sys.net.append(request(who, queuedAt(clientOf(sys, who), i))) }
+pure def canResend(sys: System, who: str): bool =
+  clientOf(sys, who).online and clientOf(sys, who).pending.length() > 0
+pure def resend(sys: System, who: str): System =
+  { ...sys, net: sys.net.append(request(who, oldest(clientOf(sys, who)))) }
 ```
 
 ## Story: The server answers every request once
@@ -124,23 +152,29 @@ pure def resend(sys: System, who: str, i: int): System =
 
 ### The server takes any request off the network and answers it
 
-A request it has answered before gets the same kind of answer again. A new
-request is applied if its edit makes sense and refused otherwise. A change
-is pushed to the other tab.
+A request with a number it has answered before is acknowledged again only
+if it carries the edit that was accepted under that number, and refused
+otherwise. A new request is applied if its edit makes sense and refused
+otherwise. A change is pushed to the other tab. The answer to a forged
+request goes to whoever forged it, not onto the network.
 
 ```quint
+pure def reply(m: Msg, a: Msg, net: List[Msg]): List[Msg] = if (m.kind == Request) net.append(a) else net
+
 pure def repeatAnswer(m: Msg, rest: List[Msg], sys: System): System =
-  { ...sys, net: rest.append(answer(if (S::accepted(sys.server, m.client, m.seq)) Ack else Refusal, m.client, m.seq, sys.server)) }
+  val kind = if (S::acceptedAs(sys.server, m.client, m.seq, m.op)) Ack else Refusal
+  { ...sys, net: reply(m, answer(kind, m.client, m.seq, sys.server), rest) }
 
 pure def applyRequest(m: Msg, rest: List[Msg], sys: System): System =
   val s = S::commit(m.client, sys.server, m.seq, m.op)
   { ...sys, server: s, history: sys.history.append(s.todos),
-    net: rest.append(answer(Ack, m.client, m.seq, s)).append(answer(Push, other(m.client), 0, s)) }
+    net: reply(m, answer(Ack, m.client, m.seq, s), rest).append(answer(Push, other(m.client), 0, s)) }
 
 pure def refuseRequest(m: Msg, rest: List[Msg], sys: System): System =
-  { ...sys, server: S::refuse(sys.server, m.client, m.seq), net: rest.append(answer(Refusal, m.client, m.seq, sys.server)) }
+  { ...sys, server: S::refuse(sys.server, m.client, m.seq, m.op),
+    net: reply(m, answer(Refusal, m.client, m.seq, sys.server), rest) }
 
-pure def canServe(sys: System, i: int): bool = msgAt(sys.net, i).kind == Request and i >= 0 and i < sys.net.length()
+pure def canServe(sys: System, i: int): bool = isRequest(msgAt(sys.net, i)) and i >= 0 and i < sys.net.length()
 pure def serve(sys: System, i: int): System =
   val m = msgAt(sys.net, i)
   val rest = dropAt(sys.net, i)
@@ -173,6 +207,15 @@ pure def lose(sys: System, i: int): System = { ...sys, net: dropAt(sys.net, i) }
 
 pure def canDuplicate(sys: System, i: int): bool = i >= 0 and i < sys.net.length()
 pure def duplicate(sys: System, i: int): System = { ...sys, net: sys.net.append(msgAt(sys.net, i)) }
+```
+
+### Anyone may send the server a request in a tab's name
+
+```quint
+pure def canForge(sys: System, who: str, seq: int, op: Op): bool = seq >= 1
+pure def forge(sys: System, who: str, seq: int, op: Op): System =
+  { ...sys, forged: sys.forged + 1,
+    net: sys.net.append({ kind: Forged, client: who, seq: seq, op: op, version: 0, todos: List() }) }
 ```
 
 ## Story: Everyone ends up seeing the same list
@@ -222,7 +265,7 @@ The same holds for every copy on the network.
 pure def alwaysEveryCopyIsTheListAtItsVersion(sys: System): bool =
   isPast(sys.history, sys.a.seen, sys.a.confirmed)
     and isPast(sys.history, sys.b.seen, sys.b.confirmed)
-    and sys.net.every(m => m.kind == Request or isPast(sys.history, m.version, m.todos))
+    and sys.net.every(m => isRequest(m) or isPast(sys.history, m.version, m.todos))
 ```
 
 ### Once both tabs have edited and heard every answer, they see the same list as the server
@@ -242,4 +285,142 @@ pure def sometimesBothTabsAgree(sys: System): bool = and {
 ```quint
 pure def sometimesQueuedOffline(sys: System): bool = not(sys.a.online) and sys.a.pending.length() >= 2
 pure def sometimesARefusedEdit(sys: System): bool = sys.a.refusals + sys.b.refusals >= 1
+```
+
+## Story: Nobody can answer for my edits
+
+> As a user, I want to be told that my edit was saved only if the server
+> really applied it, even when someone else sends requests in my name, so
+> that an acknowledged edit is never silently lost.
+
+### An acknowledgement of a queued edit means the server applied that very edit
+
+```quint
+pure def alwaysAnAcknowledgedEditWasApplied(sys: System): bool =
+  sys.net.every(m => m.kind != Ack
+    or clientOf(sys, m.client).pending.every(p => p.seq != m.seq or S::acceptedAs(sys.server, m.client, p.seq, p.op)))
+```
+
+### A tab's request carries the edit the tab queued under its number
+
+So a request that arrives again is a retry of the same edit, and a request
+in a tab's name with a different edit is not.
+
+```quint
+pure def alwaysARetryIsTheSameEdit(sys: System): bool =
+  sys.net.every(m => m.kind != Request
+    or clientOf(sys, m.client).pending.every(p => p.seq != m.seq or sameOp(p.op, m.op)))
+```
+
+### Every request and answer of a tab belongs to an edit the tab has numbered, and every answer to one the server answered
+
+Discovered by the proof: without it, an answer left on the network could
+carry the number the tab gives its next edit, and acknowledge that edit
+before it was sent.
+
+```quint
+pure def numbered(sys: System, who: str, seq: int): bool =
+  (who == "a" or who == "b") and seq >= 1 and seq <= clientOf(sys, who).made
+
+pure def alwaysEveryMessageBelongsToANumberedEdit(sys: System): bool =
+  sys.net.every(m => m.kind == Forged or m.kind == Push
+    or (numbered(sys, m.client, m.seq) and (m.kind == Request or S::answered(sys.server, m.client, m.seq))))
+```
+
+### A forger can get an edit applied in a tab's name
+
+```quint
+pure def sometimesAForgedEditWasApplied(sys: System): bool = sys.forged >= 1 and sys.server.version >= 1
+```
+
+## Story: Editing alone is never refused
+
+> As someone editing the list on my own, I want none of my edits refused,
+> however bad my connection, because every edit I make makes sense on the
+> list I see.
+
+### A lone user's edit is never refused
+
+A user is alone when the other tab has never made an edit and nobody has
+forged a request.
+
+```quint
+pure def lone(sys: System, who: str): bool = clientOf(sys, other(who)).made == 0 and sys.forged == 0
+
+pure def alwaysALoneUsersEditIsNeverRefused(sys: System): bool =
+  (lone(sys, "a") implies sys.a.refusals == 0) and (lone(sys, "b") implies sys.b.refusals == 0)
+```
+
+### Without forgeries, the server has answered only numbered edits, and of a tab's queued edits only the oldest
+
+Discovered by the proof: it is what lets a new edit, and every edit behind
+the oldest, be sure that no answer is waiting for it.
+
+```quint
+pure def onlyTheOldestAnswered(sys: System, who: str): bool =
+  val c = clientOf(sys, who)
+  c.pending.every(p => p.seq == oldest(c).seq or not(S::answered(sys.server, who, p.seq)))
+
+pure def alwaysWithoutForgeriesOnlyNumberedEditsWereAnswered(sys: System): bool =
+  sys.forged == 0 implies and {
+    sys.server.log.every(h => numbered(sys, h.client, h.seq)),
+    onlyTheOldestAnswered(sys, "a"),
+    onlyTheOldestAnswered(sys, "b"),
+    sys.net.every(m => m.kind != Forged),
+  }
+```
+
+### A tab is told of a change only after the other tab or a forger made an edit
+
+Discovered by the proof: a lone user's tab hears only answers to its own
+edits.
+
+```quint
+pure def alwaysAPushFollowsAnotherEdit(sys: System): bool =
+  sys.net.every(m => m.kind != Push or clientOf(sys, other(m.client)).made >= 1 or sys.forged >= 1)
+```
+
+### A lone user's tab keeps in step with the server
+
+Discovered by the proof: these are what "never refused" rests on. While a
+user is alone, the server has accepted every queued edit it answered, as
+that edit; an acknowledgement of the oldest queued edit carries the current
+version; once the oldest edit is applied, applying it again changes nothing;
+until it is, the tab has seen the current version; a copy newer than the
+tab's is the current list; what the user sees is the server's list with the
+queued edits applied; each edit not yet applied makes sense after the ones
+before it; and no refusal is on its way for a queued edit.
+
+```quint
+type Plan = { ok: bool, todos: List[Todo] }
+
+pure def replay(todos: List[Todo], ps: List[C::Pending]): List[Todo] = ps.foldl(todos, (acc, p) => applyOp(acc, p.op))
+
+pure def allowedInTurn(todos: List[Todo], ps: List[C::Pending]): bool =
+  ps.foldl({ ok: true, todos: todos }, (acc, p) => { ok: acc.ok and opAllowed(acc.todos, p.op), todos: applyOp(acc.todos, p.op) }).ok
+
+pure def oldestAnswered(sys: System, who: str): bool =
+  clientOf(sys, who).pending.length() > 0 and S::answered(sys.server, who, oldest(clientOf(sys, who)).seq)
+
+pure def unapplied(sys: System, who: str): List[C::Pending] =
+  if (oldestAnswered(sys, who)) clientOf(sys, who).pending.tail() else clientOf(sys, who).pending
+
+pure def inStep(sys: System, who: str): bool =
+  val c = clientOf(sys, who)
+  val s = sys.server
+  and {
+    c.pending.every(p => not(S::answered(s, who, p.seq)) or S::acceptedAs(s, who, p.seq, p.op)),
+    sys.net.every(m => m.kind != Ack or m.client != who or c.pending.length() == 0 or m.seq != oldest(c).seq
+      or m.version == s.version),
+    not(oldestAnswered(sys, who)) or sameTodos(applyOp(s.todos, oldest(c).op), s.todos),
+    oldestAnswered(sys, who) or c.seen == s.version,
+    sys.net.every(m => isRequest(m) or m.client != who or m.version <= c.seen or m.version == s.version),
+    sameTodos(C::view(c), replay(s.todos, c.pending)),
+    allowedInTurn(s.todos, unapplied(sys, who)),
+    sys.net.every(m => m.kind != Refusal or m.client != who or not(C::waiting(c, m.seq))),
+    c.refusals == 0,
+  }
+
+pure def alwaysALoneUsersTabKeepsInStepWithTheServer(sys: System): bool =
+  (lone(sys, "a") implies inStep(sys, "a")) and (lone(sys, "b") implies inStep(sys, "b"))
 ```
