@@ -38,7 +38,12 @@ jobs:
         with:
           filters: |
             tools:
-              - "vibespec/**"
+              - "vibespec/*.ts"
+              - "vibespec/gen/**"
+              - "vibespec/proof/**"
+              - "vibespec/fixtures/**"
+              - "vibespec/std/**"
+              - "vibespec/studio/**"
               - "package*.json"
               - ".github/workflows/check.yml"
       - if: steps.changed.outputs.tools == 'true'
