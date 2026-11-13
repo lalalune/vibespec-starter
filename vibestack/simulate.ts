@@ -73,9 +73,9 @@ export function standIn(domain: any, trace: Step[]) {
 
 /**
  * The simulator's seed, derived from what is simulated, so that the same harness always gives the same traces and a
- * counterexample can be had again; and from `FUZZ_SEED` where it is set, so that a nightly run tries other traces.
+ * counterexample can be had again; the fixed test profile gives nightly runs another seed.
  */
-const seedFor = (...what: string[]) => String(parseInt(digest([...what, ...process.env.FUZZ_SEED ? [process.env.FUZZ_SEED] : []].join("\0")).slice(0, 12), 16));
+const seedFor = (seed: number, ...what: string[]) => String(parseInt(digest([String(seed), ...what].join("\0")).slice(0, 12), 16));
 
 /**
  * Quint installs its evaluator the first time it simulates, and runs started together would race to. Until it is
@@ -112,21 +112,21 @@ const MAX_SHARDS = 4;
  * single thread, each with a seed of its own; how it is split depends only on the budget, so the same harness always gives
  * the same traces. When a run breaks the invariant, the command is the one for that run.
  */
-export async function simulate(root: string, model: Model, invariant: string, traces: number, samples: number, step = "step", split = false, steps = STEPS): Promise<{ broken: boolean; traces: Step[][]; again: string }> {
+export async function simulate(root: string, model: Model, invariant: string, traces: number, samples: number, step = "step", split = false, steps = STEPS, seed = 1): Promise<{ broken: boolean; traces: Step[][]; again: string }> {
   const dir = path.join(root, "gen/traces", `${model.name}.${invariant}.${step}`);
   fs.rmSync(dir, { recursive: true, force: true });
   const shards = !split ? 1 : Math.max(1, Math.min(MAX_SHARDS, Math.floor(samples / SHARD_SAMPLES)));
   const runs = Array.from({ length: shards }, async (_, k) => {
     const out = shards === 1 ? dir : path.join(dir, String(k));
     fs.mkdirSync(out, { recursive: true });
-    const seed = seedFor(model.harness, invariant, step, String(samples), String(steps), ...(shards === 1 ? [] : [`${k} of ${shards}`]));
+    const derivedSeed = seedFor(seed, model.harness, invariant, step, String(samples), String(steps), ...(shards === 1 ? [] : [`${k} of ${shards}`]));
     const args = ["run", `gen/${model.name}.run.qnt`, "--main", `${model.name}_run`, "--step", step, "--invariant", invariant,
-      "--max-samples", String(Math.ceil(samples / shards)), "--max-steps", String(steps), "--mbt", "--seed", seed, ...(shards === 1 ? [] : ["--n-threads", "1"])];
+      "--max-samples", String(Math.ceil(samples / shards)), "--max-steps", String(steps), "--mbt", "--seed", derivedSeed, ...(shards === 1 ? [] : ["--n-threads", "1"])];
     const r = await simulating(root, () => run("quint", [...args, "--n-traces", String(Math.ceil(traces / shards)), "--out-itf", path.join(out, "{seq}.itf.json")], root));
     const broken = r.out.includes("[violation]");
     // In the order Quint wrote them, so that the same simulation always gives the traces in the same order.
     const files = fs.readdirSync(out).filter((f) => f.endsWith(".itf.json")).sort((x, y) => parseInt(x, 10) - parseInt(y, 10) || x.localeCompare(y));
-    const again = `seed ${seed}${process.env.FUZZ_SEED ? ` (FUZZ_SEED=${process.env.FUZZ_SEED})` : ""}; to simulate again: pnpm exec quint ${args.join(" ")}`;
+    const again = `seed ${derivedSeed}; to simulate again: pnpm exec quint ${args.join(" ")}`;
     // Anything other than "held" or "violated", each with a trace, is Quint failing to run.
     if ((!r.ok && !broken) || !files.length) throw new Error(`quint run did not complete (${again}):\n${r.out.trim()}`);
     return { broken, traces: files.map((f) => readTrace(path.join(out, f), model)).filter((t) => t.length), again };
@@ -140,9 +140,9 @@ export async function simulate(root: string, model: Model, invariant: string, tr
  * Look for a state that breaks `invariant`, which is how a goal is shown reachable: in longer traces while none is
  * found, fewer of them as they lengthen, so each depth costs about as many events as `samples` traces of the first.
  */
-export async function search(root: string, model: Model, invariant: string, step = "step", depths = DEPTHS, samples = WITNESS_SAMPLES): ReturnType<typeof simulate> {
+export async function search(root: string, model: Model, invariant: string, step = "step", depths = DEPTHS, samples = WITNESS_SAMPLES, seed = 1): ReturnType<typeof simulate> {
   let run!: Awaited<ReturnType<typeof simulate>>;
-  for (const steps of depths) if ((run = await simulate(root, model, invariant, 1, Math.ceil(samples * STEPS / steps), step, false, steps)).broken) break;
+  for (const steps of depths) if ((run = await simulate(root, model, invariant, 1, Math.ceil(samples * STEPS / steps), step, false, steps, seed)).broken) break;
   return run;
 }
 export const SEARCHED = `${WITNESS_SAMPLES} traces of ${STEPS} events and longer ones up to ${DEPTHS.at(-1)}`;

@@ -4,13 +4,16 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { stripTypeScriptTypes } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { after, describe, test } from "node:test";
+import { Miniflare } from "miniflare";
+import { cacheCredentials, collectGarbage } from "./cache.ts";
 import { LIB_FILE, isolatedCopies, parseProofFile, readVerdict, splice } from "./prove.ts";
 import { exec, run as tool } from "./run.ts";
 import { migrateLocks, pendingSpecs, readLedger, showPending, writeLedger } from "./review.ts";
-import { nodeRunsVibelang, packageScripts } from "./util.ts";
+import { nodeRunsVibelang, packageScripts, testInputs, testReceipt } from "./util.ts";
 import { canonical, check as conformanceCheck, ConformanceError, departure, replay as replayTrace } from "./conformance.ts";
 import { conformance as checkTraces, conformanceFound } from "./conform.ts";
 import { acceptContracts, acceptReviews, check, checkVerifiedSource, danglingCitations, expandListHelpers, generated, init, parseSpec, pending, pendingContracts, readSpecs, replay, show, typecheckAll, type Result, type Spec } from "./spec.ts";
@@ -49,9 +52,18 @@ const fixtures = (names: string[], edit: (files: Record<string, string>) => void
   edit(files);
   return scratch(files);
 };
+/** Scratch copies contain sources; generators and dependencies belong to the scratch build. */
+function copySources(directory: "vibestack" | "packages" | "apps" | "spec", root: string) {
+  const source = path.join(project, directory);
+  fs.cpSync(source, path.join(root, directory), { recursive: true, verbatimSymlinks: true, filter: (from) => {
+    const parts = path.relative(source, from).split(path.sep);
+    return !(directory === "vibestack" && parts[0] === "examples")
+      && !parts.some((part, index) => /^(node_modules|dist|generated|storybook-static|coverage|\.cache|\.spec-cache|\.studio|\.turbo|\.vibe)$/.test(part) || (part === "gen" && !(directory === "vibestack" && index === 0)));
+  } });
+}
 /** `root` with its own copy of the toolchain, and of node_modules only the packages and the executables `tools`. */
 function toolchain(root: string, ...tools: string[]): string {
-  fs.cpSync(path.join(project, "vibestack"), path.join(root, "vibestack"), { recursive: true, filter: (from) => from !== path.join(project, "vibestack/examples") });
+  copySources("vibestack", root);
   const modules = path.join(root, "node_modules");
   fs.mkdirSync(path.join(modules, ".bin"), { recursive: true });
   for (const entry of fs.readdirSync(nodeModules).filter((f) => f !== ".bin"))
@@ -272,18 +284,20 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const [again, remembered] = [await run(root), await run(root)];
     const trace = first.said("always", /./);
     assert.equal(trace?.ok, false, first.text);
-    assert.match(trace!.detail, /seed \d+(?: \(FUZZ_SEED=\d+\))?; to simulate again: pnpm exec quint run gen\/index\.run\.qnt .* --seed \d+/);
+    assert.match(trace!.detail, /seed \d+; to simulate again: pnpm exec quint run gen\/index\.run\.qnt .* --seed \d+/);
     assert.equal(again.said("always", /./)?.detail, trace!.detail, "the same harness gives the same trace");
     assert.equal(remembered.said("always", /./)?.detail, trace!.detail);
     assert.ok(!fs.existsSync(path.join(root, "gen/traces")), "a failing simulation is not run again for the same harness");
     assert.ok(first.said("skipped", /^types, proof, tests and traces: /), first.text);
     assert.match(first.next, /^always \(spec\/index\.md\) is the first ✗/);
-    // FUZZ_SEED, where it is set, is part of the seed and of what is remembered: a nightly run simulates other traces.
-    const fuzzed = await exec(process.execPath, [path.join(project, "vibestack/spec.ts"), "check", "--json"], root, { ...process.env, FUZZ_SEED: "7" });
+    // The nightly profile is part of what is remembered and simulates a different, reproducible set of traces.
+    const fuzzed = await exec(process.execPath, [path.join(project, "vibestack/spec.ts"), "check", "--json", "--nightly"], root);
     const seeded = JSON.parse(fuzzed.stdout).results.find((r: Result) => r.stage === "always").detail;
-    assert.match(seeded, /seed \d+ \(FUZZ_SEED=7\); to simulate again/);
+    assert.match(seeded, /seed \d+; to simulate again/);
     assert.notEqual(seeded.match(/seed (\d+)/)[1], trace!.detail.match(/seed (\d+)/)![1]);
-    assert.equal((await run(root)).said("always", /./)?.detail, trace!.detail, "unset again, the harness's own seed and its remembered result");
+    const repeated = await exec(process.execPath, [path.join(project, "vibestack/spec.ts"), "check", "--json", "--nightly"], root);
+    assert.equal(JSON.parse(repeated.stdout).results.find((r: Result) => r.stage === "always").detail, seeded);
+    assert.equal((await run(root)).said("always", /./)?.detail, trace!.detail, "the normal profile retains its own seed and remembered result");
   });
 
   test("a rule set that holds in simulation but is not inductive is caught by the proof, and the deleted rule awaits review", async () => {
@@ -514,7 +528,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.deepEqual(headed.failed, [], headed.text);
   });
 
-  test("a test pass is remembered until something the tests read changes; in a check Turborepo runs after the tests, they are held to the rules but not run again; a spec that no test or driver checks is a note", async () => {
+  test("a test pass is remembered for its inputs; runner receipts allow reuse but a forged Turbo environment does not; unchecked specs are noted", async () => {
     const ran = path.join(scratch({}), "ran");
     const root = fixtures(["door"], (f) => Object.assign(f, {
       "package.json": JSON.stringify({ scripts: { test: `echo x >> ${JSON.stringify(ran)}` } }),
@@ -533,8 +547,17 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const turbo = await exec(process.execPath, [path.join(project, "vibestack/spec.ts"), "check", "--json"], root, { ...process.env, TURBO_HASH: "1", npm_lifecycle_event: "check" });
     const said = JSON.parse(turbo.stdout).results.filter((r: Result) => r.stage === "tests").map((r: Result) => [r.ok, r.summary]);
     assert.deepEqual(said, [[false, "1 tests cite no story or rule: cite the one each serves, fold it into the journey that does, or propose deleting it"],
-      [true, "note: no test or driver checks spec/door.md; a story that leaves the verified core needs a journey that cites it"], [true, "pass: Turborepo ran the test script just before this check"]]);
-    assert.equal(runs(), 2);
+      [true, "note: no test or driver checks spec/door.md; a story that leaves the verified core needs a journey that cites it"], [true, "pass"]]);
+    assert.equal(runs(), 3, "a Turbo environment value cannot claim that the test script ran");
+    const receipt = testReceipt(root);
+    fs.mkdirSync(path.dirname(receipt), { recursive: true });
+    fs.writeFileSync(receipt, JSON.stringify({ fingerprint: testInputs(root) }));
+    const reused = await run(root);
+    assert.ok(reused.said("tests", /^pass: the test runner recorded success for these inputs\n$/), reused.text);
+    assert.equal(runs(), 3);
+    fs.writeFileSync(path.join(root, "src/door.ts"), "export const door = 3;\n");
+    await run(root);
+    assert.equal(runs(), 4, "a receipt for older source cannot suppress the tests");
   });
 
   test("a rule whose prose or model changed names the code that cites it, for a person to read again", () => {
@@ -1522,6 +1545,98 @@ pure def lawOwn(own: int): bool = shadowOwn(own) == own`));
     assert.ok(!fs.existsSync(path.join(root, ".spec-cache/lock")));
   });
 
+  test("proof and task cache identity follows verifier and compiler bytes rather than installation directories", { skip: process.platform === "win32" }, async () => {
+    const credentials = { apiUrl: "https://trusted-cache.example", writeToken: "test-only-publisher" };
+    const trusted = { TURBO_API: credentials.apiUrl, TURBO_TOKEN: credentials.writeToken };
+    const cases: [NodeJS.ProcessEnv, string[], string | undefined, NodeJS.ProcessEnv][] = [
+      [{}, [], credentials.apiUrl, trusted],
+      [{}, [], undefined, {}],
+      [{}, [], "https://other-cache.example", {}],
+      [{ TURBO_API: "https://other-cache.example" }, [], credentials.apiUrl, { TURBO_API: "https://other-cache.example" }],
+      [{ TURBO_API: credentials.apiUrl }, [], "https://other-cache.example", trusted],
+      [{ TURBO_TOKEN: "explicit" }, [], credentials.apiUrl, { TURBO_TOKEN: "explicit" }],
+      [{ TURBO_TOKEN: "" }, [], credentials.apiUrl, { TURBO_TOKEN: "" }],
+      [{}, ["--token", "explicit"], credentials.apiUrl, {}],
+      [{}, ["--token=explicit"], credentials.apiUrl, {}],
+      [{}, ["--api", "https://other-cache.example"], credentials.apiUrl, {}],
+      [{}, ["--api=https://other-cache.example"], credentials.apiUrl, {}],
+      [{ TURBO_API: "https://other-cache.example" }, ["--api", credentials.apiUrl], undefined, trusted],
+      [{}, ["--api=https://other-cache.example", `--api=${credentials.apiUrl}`], undefined, trusted],
+      [{}, [`--api=${credentials.apiUrl}`, "--api=https://other-cache.example"], undefined, {}],
+      [{}, ["--", "--api=https://other-cache.example"], credentials.apiUrl, trusted],
+    ];
+    for (const [env, args, declared, expected] of cases) assert.deepEqual(cacheCredentials(env, args, declared, credentials), expected, JSON.stringify({ env, args, declared }));
+    const root = scratch({});
+    const names = ["first", "moved", "changed", "assemblies"];
+    for (const name of names) {
+      const directory = path.join(root, name);
+      fs.mkdirSync(directory);
+      fs.writeFileSync(path.join(directory, "dafny"), "#!/bin/sh\nprintf '4.11.0\\n'\n", { mode: 0o755 });
+      fs.writeFileSync(path.join(directory, "z3"), `#!/bin/sh\n${name === "changed" ? "# a different solver build\n" : ""}printf 'Z3 version 4.12.1\\n'\n`, { mode: 0o755 });
+      fs.writeFileSync(path.join(directory, "Dafny.dll"), name === "assemblies" ? "another verifier" : "the verifier");
+      fs.writeFileSync(path.join(directory, "System.Private.CoreLib.dll"), "the self-contained runtime");
+    }
+    const script = `const { entry, toolchainFingerprint } = await import(${JSON.stringify(path.join(project, "vibestack/cache.ts"))}); console.log(JSON.stringify({ proof: (await entry(".", "prove", ["same obligation"])).name, task: await toolchainFingerprint() }));`;
+    const keys = await Promise.all(names.map(async (name) => {
+      const result = await exec(process.execPath, ["--input-type=module", "--eval", script], root,
+        { ...process.env, PATH: `${path.join(root, name)}${path.delimiter}${process.env.PATH ?? ""}` });
+      assert.equal(result.status, 0, result.stderr);
+      return JSON.parse(result.stdout);
+    }));
+    assert.deepEqual(keys[0], keys[1], "moving the same tools preserves proof and task results");
+    for (const other of keys.slice(2)) {
+      assert.notEqual(keys[0].proof, other.proof, "different verifier bytes invalidate a proof even at the same version");
+      assert.notDeepEqual(keys[0].task, other.task, "different verifier bytes invalidate a task even at the same version");
+    }
+    assert.match(keys[0].task.node.digest, /^[a-f0-9]{64}$/);
+    assert.match(keys[0].task.vibelang.digest, /^[a-f0-9]{64}$/);
+  });
+
+  test("the shared task cache restores artifacts and metadata and refuses unauthorized or oversized writes", async () => {
+    const reader = "reader-".padEnd(48, "r"), writer = "writer-".padEnd(48, "w");
+    const cache = new Miniflare({ telemetry: { enabled: false }, cf: false, enableDevRegistry: false, logRequests: false, workers: [{ config: {
+      name: "cache", compatibilityDate: "2026-11-13",
+      manifest: { mainModule: "cache.mjs", modules: { "cache.mjs": { type: "esm", contents: stripTypeScriptTypes(read("vibestack/remote-cache.ts")) } } },
+      env: {
+        CACHE_BUCKET: { type: "r2", name: "artifacts" },
+        CACHE_READ_TOKEN: { type: "text", value: reader }, CACHE_WRITE_TOKEN: { type: "text", value: writer },
+      },
+    } }] });
+    try {
+      const hash = "0123456789abcdef", payload = "artifact bytes";
+      const request = (method: string, target: string, token = reader, body?: string | Uint8Array<ArrayBuffer>, headers: Record<string, string> = {}) =>
+        cache.dispatchFetch(`https://cache.test/v8/artifacts/${target}`, {
+          method, headers: { Authorization: `Bearer ${token}`, ...headers }, ...(body === undefined ? {} : { body }),
+        });
+      for (const token of ["", "wrong-".padEnd(48, "x")]) assert.equal((await request("GET", "status", token)).status, 401);
+      let response = await request("PUT", hash, writer, payload, { "Content-Length": String(payload.length), "x-artifact-duration": "42", "x-artifact-tag": "c2lnbmF0dXJl", "x-artifact-sha": "1".repeat(40) });
+      assert.equal(response.status, 200, await response.text());
+      response = await request("GET", hash);
+      assert.equal(response.status, 200);
+      assert.equal(await response.text(), payload);
+      assert.deepEqual(["x-artifact-duration", "x-artifact-tag", "x-artifact-sha"].map((header) => response.headers.get(header)), ["42", "c2lnbmF0dXJl", "1".repeat(40)]);
+      response = await request("HEAD", hash);
+      assert.equal(response.status, 200);
+      assert.equal(await response.text(), "");
+      assert.equal(response.headers.get("content-length"), String(payload.length));
+      assert.equal((await request("GET", "f".repeat(16))).status, 404);
+      assert.equal((await request("PUT", "e".repeat(16), reader, "x", { "Content-Length": "1" })).status, 403);
+      assert.equal((await request("GET", "not-a-hash")).status, 400);
+      response = await request("PUT", "d".repeat(16), writer, new Uint8Array(64 * 1024 * 1024 + 1));
+      assert.equal(response.status, 413, await response.text());
+      assert.equal((await request("POST", "events", reader, "private telemetry")).status, 200);
+      response = await cache.dispatchFetch("https://cache.test/v8/artifacts", {
+        method: "POST", headers: { Authorization: `Bearer ${reader}` }, body: JSON.stringify({ hashes: [hash, "f".repeat(16)] }),
+      });
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), { [hash]: { size: payload.length, taskDurationMs: 42, tag: "c2lnbmF0dXJl" }, ["f".repeat(16)]: null });
+      const { CACHE_BUCKET: bucket } = await cache.getBindings<{ CACHE_BUCKET: { list(): Promise<{ objects: { key: string }[] }> } }>();
+      assert.deepEqual((await bucket.list()).objects.map((object) => object.key), [`lalalune/vibestack/${hash}`]);
+    } finally {
+      await cache.dispose();
+    }
+  });
+
   test("a story's text, a definition a rule relies on, here or in an imported spec, and a src contract are each reviewed", () => {
     const root = copyOfProject();
     const edit = (file: string, change: (s: string) => string) => fs.writeFileSync(path.join(root, file), change(fs.readFileSync(path.join(root, file), "utf8")));
@@ -1605,7 +1720,7 @@ pure def lawOwn(own: int): bool = shadowOwn(own) == own`));
     assert.ok(after.said("proof", /^src-ledger\.ts: all 3 obligations proved/), after.text);
   });
 
-  test("a second check in the same project is refused, a lock left by a process that ended is taken over, and unused cache entries go", async () => {
+  test("a second check is refused, stale locks are taken over, and cache retention preserves recent branches within its budget", async () => {
     const root = fixtures(["door"]);
     const lock = path.join(root, ".spec-cache/lock");
     fs.mkdirSync(path.dirname(lock), { recursive: true });
@@ -1614,19 +1729,46 @@ pure def lawOwn(own: int): bool = shadowOwn(own) == own`));
     fs.writeFileSync(lock, `${spawnSync(process.execPath, ["-e", ""]).pid}\n`);
     const unused = path.join(root, ".spec-cache/000000000000000000000000.json");
     fs.writeFileSync(unused, "{}");
+    const recent = path.join(root, `.spec-cache/prove-${"1".repeat(24)}.json`);
+    const expired = path.join(root, `.spec-cache/prove-${"2".repeat(24)}.json`);
+    fs.writeFileSync(recent, "{}");
+    fs.writeFileSync(expired, "{}");
+    const old = new Date(Date.now() - 31 * 24 * 60 * 60 * 1000);
+    fs.utimesSync(expired, old, old);
     const { failed, text } = await run(root);
     assert.deepEqual(failed, ["review"], text);
     assert.ok(!fs.existsSync(lock), "the lock is released");
-    assert.ok(!fs.existsSync(unused), "a cache entry the run did not use is deleted");
+    assert.ok(!fs.existsSync(unused), "an unrecognized cache entry is deleted");
+    assert.ok(!fs.existsSync(expired), "an unused entry past retention is deleted");
+    assert.ok(fs.existsSync(recent), "a recent entry from another branch remains reusable");
     assert.ok(fs.readdirSync(path.dirname(lock)).length > 0, "the entries it used are kept");
+    const newer = path.join(root, `.spec-cache/prove-${"3".repeat(24)}.json`);
+    fs.writeFileSync(newer, "{}");
+    const file = fs.openSync(recent, "r+");
+    fs.ftruncateSync(file, 256 * 2 ** 20);
+    fs.closeSync(file);
+    const earlier = new Date(Date.now() - 60_000);
+    fs.utimesSync(recent, earlier, earlier);
+    const current = new Set(fs.readdirSync(path.dirname(lock)).filter((name) => name !== path.basename(recent) && name !== path.basename(newer)));
+    collectGarbage({ root, fresh: false, used: current });
+    assert.ok(!fs.existsSync(recent), "the oldest unused entry is evicted to fit the byte budget");
+    assert.ok(fs.existsSync(newer), "a newer alternative remains after the budget is satisfied");
+    for (const name of current) assert.ok(fs.existsSync(path.join(path.dirname(lock), name)), "this check's entries are never evicted");
   });
 
   test("a rebuilt packaged command can generate a project from the repository root", async () => {
     const root = oneRule("packaged", "A packaged value", "pure val answer = 42");
-    const copy = toolchain(scratch({ "package.json": read("package.json"), "tsconfig.build.json": read("tsconfig.build.json"), "tsconfig.base.json": read("tsconfig.base.json") }), "quint", "lsc", "vibelang");
+    const inputs = ["package.json", "tsconfig.json", "tsconfig.build.json", "tsconfig.base.json", "turbo.json", "pnpm-workspace.yaml", "pnpm-lock.yaml", ".nvmrc"];
+    const copy = scratch(Object.fromEntries(inputs.map((file) => [file, read(file)])));
     // Studio's page is built from the workspace packages it shares with every interface.
-    fs.cpSync(path.join(project, "packages"), path.join(copy, "packages"), { recursive: true, verbatimSymlinks: true });
-    const built = await exec(process.platform === "win32" ? "pnpm.cmd" : "pnpm", ["run", "build"], copy);
+    for (const directory of ["vibestack", "packages", "apps", "spec"] as const) copySources(directory, copy);
+    assert.equal(read("vibestack/gen/typescript.ts", copy), read("vibestack/gen/typescript.ts"));
+    for (const directory of ["vibestack/studio", ...fs.readdirSync(path.join(copy, "packages")).map((name) => `packages/${name}`)])
+      for (const output of ["gen", "dist", "generated", "node_modules", ".spec-cache", ".cache", ".vibe", ".turbo", "storybook-static"])
+        assert.ok(!fs.existsSync(path.join(copy, directory, output)), `${directory}/${output} is produced by the scratch build`);
+    const dependencies = await exec(process.platform === "win32" ? "pnpm.cmd" : "pnpm", ["install", "--offline", "--frozen-lockfile", "--ignore-scripts"], copy);
+    assert.equal(dependencies.status, 0, dependencies.stdout + dependencies.stderr);
+    const built = await exec(process.platform === "win32" ? "pnpm.cmd" : "pnpm", ["run", "build"], copy, { ...process.env, TURBO_CACHE: "local:rw" });
     assert.equal(built.status, 0, built.stdout + built.stderr);
     const script = path.join(copy, "dist/spec.js");
     fs.chmodSync(script, 0o755);

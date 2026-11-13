@@ -11,50 +11,91 @@
     "vibestack/testing/**",
     "vibestack/stories/**",
     "vibestack/design/**",
-    "!vibestack/**/{node_modules,.cache}/**"
+    "!vibestack/**/{node_modules,.cache}/**",
+    ".cache/toolchain.json"
   ],
-  "globalEnv": ["CI"],
   "tasks": {
     "gen": {
-      "outputs": ["gen/**", "generated/**"]
+      "outputs": [
+        "gen/**",
+        "generated/**"
+      ]
     },
     "build": {
-      "dependsOn": ["gen", "//#gen", "^build"],
-      "outputs": ["dist/**", "generated/**"]
+      "dependsOn": [
+        "gen",
+        "//#gen",
+        "^build"
+      ],
+      "outputs": [
+        "dist/**",
+        "generated/**",
+        "storybook-static/**"
+      ]
     },
     "typecheck": {
-      "dependsOn": ["gen", "//#gen", "^build"],
-      "outputs": []
+      "dependsOn": [
+        "gen",
+        "//#gen",
+        "^build"
+      ],
+      "outputs": [
+        ".vibe/declarations/**"
+      ]
     },
     "test": {
-      "dependsOn": ["gen", "//#gen", "^build"],
-      "env": ["FUZZ_RUNS", "FUZZ_SEED"],
-      "outputs": []
+      "dependsOn": [
+        "gen",
+        "//#gen",
+        "^build"
+      ],
+      "outputs": [
+        ".cache/test-result-*.json"
+      ]
     },
     "test:browser": {
-      "dependsOn": ["gen", "//#gen", "^build"],
+      "dependsOn": [
+        "gen",
+        "//#gen",
+        "^build"
+      ],
       "outputs": []
     },
     "check": {
-      "dependsOn": ["build", "typecheck", "test", "test:browser"],
-      "passThroughEnv": ["FUZZ_RUNS", "FUZZ_SEED"],
+      "dependsOn": [
+        "build",
+        "typecheck",
+        "test",
+        "test:browser"
+      ],
       "cache": false
     },
     "vibestack-studio#check": {
-      "dependsOn": ["build", "typecheck", "test", "test:browser", "//#build"],
-      "passThroughEnv": ["FUZZ_RUNS", "FUZZ_SEED"],
+      "dependsOn": [
+        "build",
+        "typecheck",
+        "test",
+        "test:browser",
+        "//#build"
+      ],
       "cache": false
     },
     "//#gen": {
-      "inputs": ["spec/**", "apps/*/package.json", "packages/*/package.json", "package.json"],
-      "outputs": ["gen/**", "apps/*/gen/**", "packages/*/gen/**"]
+      "inputs": [
+        "spec/**",
+        "apps/*/package.json",
+        "packages/*/package.json",
+        "package.json"
+      ],
+      "outputs": [
+        "gen/**",
+        "apps/*/gen/**",
+        "packages/*/gen/**"
+      ]
     },
     "//#build": {
       "dependsOn": [
-        "vibestack-studio#build",
-        "vibestack-studio#typecheck",
-        "vibestack-studio#test",
-        "vibestack-studio#test:browser"
+        "vibestack-studio#build"
       ],
       "inputs": [
         "vibestack/**",
@@ -65,10 +106,14 @@
         "tsconfig.json",
         "tsconfig.build.json"
       ],
-      "outputs": ["dist/**"]
+      "outputs": [
+        "dist/**"
+      ]
     },
     "//#typecheck": {
-      "dependsOn": ["//#gen"],
+      "dependsOn": [
+        "//#gen"
+      ],
       "inputs": [
         "vibestack/**",
         "!vibestack/examples/**",
@@ -83,8 +128,9 @@
       "outputs": []
     },
     "//#test": {
-      "dependsOn": ["//#gen"],
-      "env": ["FUZZ_RUNS", "FUZZ_SEED"],
+      "dependsOn": [
+        "//#gen"
+      ],
       "inputs": [
         "vibestack/**",
         "!vibestack/examples/**",
@@ -99,10 +145,14 @@
         "packages/design-system/tokens.json",
         "packages/design-system/design.md"
       ],
-      "outputs": []
+      "outputs": [
+        ".cache/test-result-*.json"
+      ]
     },
     "//#selftest": {
-      "dependsOn": ["//#build"],
+      "dependsOn": [
+        "//#build"
+      ],
       "inputs": [
         "vibestack/**",
         "!vibestack/examples/{assistant,dashboard,fullstack}/**",
@@ -129,11 +179,13 @@
         "@repo/app#test",
         "@repo/app#test:browser"
       ],
-      "cache": false,
-      "passThroughEnv": ["FUZZ_RUNS", "FUZZ_SEED"]
+      "cache": false
     },
     "//#lint:js": {
-      "dependsOn": ["@repo/design-system#build", "@repo/app#typecheck"],
+      "dependsOn": [
+        "@repo/design-system#build",
+        "@repo/app#typecheck"
+      ],
       "inputs": [
         "apps/**",
         "packages/**",
@@ -192,6 +244,35 @@
     "//#studio": {
       "cache": false,
       "persistent": true
+    },
+    "vibestack-studio#test": {
+      "dependsOn": [
+        "gen",
+        "//#gen",
+        "^build",
+        "//#build"
+      ],
+      "outputs": [
+        ".cache/test-result-*.json"
+      ]
+    },
+    "@repo/design-system#build": {
+      "dependsOn": [
+        "gen",
+        "//#gen",
+        "^build"
+      ],
+      "outputs": [
+        "generated/**",
+        "design.md"
+      ]
     }
+  },
+  "remoteCache": {
+    "apiUrl": "https://vibestack-turbo-cache.shawmakesmagic.workers.dev",
+    "enabled": true,
+    "timeout": 10,
+    "uploadTimeout": 60,
+    "teamSlug": "vibestack"
   }
 }

@@ -5,7 +5,9 @@ import fs from "node:fs";
 import path from "node:path";
 import vibelang from "vibelang-vite";
 import { defineConfig } from "vitest/config";
+import type { Reporter } from "vitest/node";
 import type { PluginOption } from "vite";
+import { testInputs, testReceipt } from "../util.ts";
 
 export interface Project {
   /** The package directory: `import.meta.dirname` of its vitest.config.ts. */
@@ -24,19 +26,51 @@ const BROWSER = ["test/**/*.browser.test.{ts,tsx,vibe}", "generated/stories/stor
 
 /** The package's tests, and those generate.ts derives from its schemas and contracts, written first (its `main`). */
 export const project = ({ root, tests = TESTS, plugins = [] }: Project) =>
-  defineConfig(async () => {
+  defineConfig(async ({ mode }) => {
     // Only a package with something to derive from, or with tests derived before, pays for the generator.
     if (fs.existsSync(path.join(root, GENERATED)) || fs.globSync("src/**/*.{schema,contract}.{ts,vibe}", { cwd: root }).length)
       await (await import("./generate.ts")).main(root);
     const browser = fs.globSync(BROWSER, { cwd: root }).length > 0;
+    const selected = mode === "nightly" ? "nightly" : "normal", receipt = testReceipt(root, selected);
+    let fingerprint: string | undefined, complete = false;
+    const scheduled = new Set<string>();
+    const record: Reporter = {
+      onInit(ctx) {
+        const config = ctx.config;
+        if ((mode !== "test" && mode !== "nightly") || config.project.some((name) => name !== "node" && name !== "!browser")) return;
+        fs.rmSync(receipt, { force: true });
+        if (config.allowOnly || config.watch || config.filters?.length || config.testNamePattern || config.related?.length || config.changed
+          || config.shard || config.cliExclude?.length || config.tagsFilter?.length) return;
+        fingerprint = testInputs(root, selected);
+      },
+      onTestRunStart(specifications) {
+        complete = fingerprint !== undefined && specifications.every((specification) => specification.project.name === "node"
+          && !specification.testLines && !specification.testNamePattern && !specification.testIds && !specification.testTagsFilter);
+        for (const specification of specifications) scheduled.add(specification.moduleId);
+      },
+      onTestRunEnd(modules, errors, reason) {
+        if (!complete || reason !== "passed" || errors.length || modules.length !== scheduled.size
+          || modules.some((module) => !module.ok() || !scheduled.has(module.moduleId)) || fingerprint !== testInputs(root, selected)) return;
+        fs.mkdirSync(path.dirname(receipt), { recursive: true });
+        const temporary = `${receipt}.${process.pid}.tmp`;
+        try {
+          fs.writeFileSync(temporary, JSON.stringify({ fingerprint }));
+          fs.renameSync(temporary, receipt);
+        } finally {
+          fs.rmSync(temporary, { force: true });
+        }
+      },
+    };
     return {
       root,
       plugins: [vibelang(), ...plugins],
       test: {
+        reporters: ["default", record],
+        allowOnly: false,
         passWithNoTests: true,
         // `vitest run` leaves Chromium to `test:browser`, whose `--project browser` takes the place of this filter.
         project: ["!browser"],
-        // A failure repeats: fixed order, no retry that could hide a flaky test. Property seeds are FUZZ_SEED (properties.ts).
+        // A failure repeats: fixed order, no retry that could hide a flaky test. Properties use profile.ts.
         sequence: { shuffle: false, seed: 1 },
         retry: 0,
         // A journey fails by its assertions, not by the clock: it starts real servers and databases, and the first

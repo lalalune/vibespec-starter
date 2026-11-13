@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { deterministic, effectDriver, encodesStably, fuzz, holds, idempotent, invariant, inverse, roundTrips } from "../index.ts";
 import { generateTests } from "../generate.ts";
+import { testInputs, testReceipt } from "../../util.ts";
 import { Lamps, lamps } from "./fixture/good/src/lamps.ts";
 import { Shape, Tree, User, UserId } from "./fixture/good/src/user.schema.ts";
 
@@ -39,7 +40,7 @@ describe("properties", () => {
       assert.match(defect(yield* Effect.exit(holds(Schema.Int, wrong))), /Shrunk input: /);
     }));
 
-  it.effect("a property sees FUZZ_RUNS values of seed FUZZ_SEED, except as its options say", () => Effect.gen(function* () {
+  it.effect("a property uses its fixed profile unless the property declares its own samples", () => Effect.gen(function* () {
     const seen = (options?: { runs?: number; seed?: number }) => Effect.gen(function* () {
       const values: number[] = [];
       yield* holds(Schema.Int, (n) => values.push(n) > 0, options);
@@ -52,7 +53,7 @@ describe("properties", () => {
     assert.match(defect(yield* Effect.exit(holds(Schema.Int, (n) => n < 50, { runs: 200 }))), new RegExp(`Seed: ${fuzz.seed}\nRerun: node -e `));
   }));
 
-  it.prop("a property is an it.prop callback under the FUZZ budget", [Schema.Int], ([n]) => idempotent(Math.abs)(n), { arbitrary: fuzz });
+  it.prop("a property is an it.prop callback under the fixed profile", [Schema.Int], ([n]) => idempotent(Math.abs)(n), { arbitrary: fuzz });
 
   it.effect("a falsified property names the seed, the shrunk counterexample and the rerun command", () => Effect.gen(function* () {
     const exit = yield* Effect.exit(holds(Schema.Int, invariant((n: number) => n, (_, out) => out < 50), { runs: 200, seed: 7 }));
@@ -72,11 +73,11 @@ function fixture(name: string, overlay?: string) {
 const tree = (dir: string) => Object.fromEntries(fs.globSync("**/*", { cwd: dir, withFileTypes: true }).filter((f) => f.isFile())
   .map((f) => path.join(f.parentPath, f.name)).sort().map((f) => [path.relative(dir, f), fs.readFileSync(f, "utf8")]));
 /** The package's own test run: `vitest run` on its vitest.config.ts. */
-const vitest = (dir: string, env: Record<string, string> = {}, rerun?: string) => new Promise<{ status: number | null; said: string }>((resolve) => {
-  const options = { env: { ...process.env, FUZZ_SEED: "1", FUZZ_RUNS: "100", NO_COLOR: "1", ...env } };
+const vitest = (dir: string, env: Record<string, string> = {}, rerun?: string, mode = "normal", filters: string[] = []) => new Promise<{ status: number | null; said: string }>((resolve) => {
+  const options = { env: { ...process.env, NO_COLOR: "1", ...env } };
   const child = rerun
     ? spawn(rerun, { ...options, cwd: dir, shell: true })
-    : spawn(process.execPath, [path.join(root, "node_modules/vitest/vitest.mjs"), "run", "--root", dir], options);
+    : spawn(process.execPath, [path.join(root, "node_modules/vitest/vitest.mjs"), "run", "--root", dir, "--mode", mode === "normal" ? "test" : mode, ...filters], options);
   let said = "";
   for (const stream of [child.stdout, child.stderr]) stream.on("data", (data) => { said += data; });
   child.on("close", (status) => resolve({ status, said }));
@@ -105,16 +106,73 @@ describe.concurrent("generated tests", () => {
     const run = await vitest(dir);
     expect(run.said).toMatch(/Tests {2}14 passed \(14\)/);
     expect(run.status).toBe(0);
-    expect((await vitest(dir, { FUZZ_RUNS: "0" })).said).toContain(`FUZZ_RUNS must be a whole number, 1 or more, but is "0"`);
+    const receipt = testReceipt(dir), recorded = JSON.parse(fs.readFileSync(receipt, "utf8"));
+    expect(recorded).toEqual({ fingerprint: testInputs(dir) });
+
+    const artifacts = ["generated/stories/__traces__/journey.trace.zip", "test/__screenshots__/journey.png"];
+    for (const artifact of artifacts) {
+      const file = path.join(dir, artifact);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, "temporary browser artifact");
+    }
+    expect(testInputs(dir)).toBe(recorded.fingerprint);
+    for (const artifact of artifacts) fs.appendFileSync(path.join(dir, artifact), "changed");
+    expect(testInputs(dir)).toBe(recorded.fingerprint);
+    for (const artifact of artifacts) fs.rmSync(path.dirname(path.join(dir, artifact)), { recursive: true });
+    expect(testInputs(dir)).toBe(recorded.fingerprint);
+
+    const payload = path.join(dir, "test/fixtures/payload.json");
+    fs.mkdirSync(path.dirname(payload), { recursive: true });
+    fs.writeFileSync(payload, '{"input":1}');
+    const withFixture = testInputs(dir);
+    expect(withFixture).not.toBe(recorded.fingerprint);
+    fs.writeFileSync(payload, '{"input":2}');
+    expect(testInputs(dir)).not.toBe(withFixture);
+    fs.rmSync(payload);
+    expect(testInputs(dir)).toBe(recorded.fingerprint);
 
     // A header carries the hash of what its source says.
     fs.appendFileSync(path.join(dir, "src/math.contract.ts"), "// edited\n");
+    expect(recorded.fingerprint).not.toBe(testInputs(dir));
     expect(await generateTests(dir)).toEqual({ written: files.slice(0, 1), unchanged: files.slice(1), removed: [], skipped });
+    const filtered = await vitest(dir, {}, undefined, "normal", ["--testNamePattern", "clamped"]);
+    expect(filtered.status, filtered.said).toBe(0);
+    expect(fs.existsSync(receipt)).toBe(false);
+    const complete = await vitest(dir);
+    expect(complete.status, complete.said).toBe(0);
+    expect(JSON.parse(fs.readFileSync(receipt, "utf8"))).toEqual({ fingerprint: testInputs(dir) });
+    const exclusive = await vitest(dir, {}, undefined, "normal", ["--allowOnly"]);
+    expect(exclusive.status, exclusive.said).toBe(0);
+    expect(fs.existsSync(receipt)).toBe(false);
+    const otherMode = await vitest(dir, {}, undefined, "production");
+    expect(otherMode.status, otherMode.said).toBe(0);
+    expect(fs.existsSync(receipt)).toBe(false);
 
     fs.rmSync(path.join(dir, "src/math.contract.ts"));
     expect(await generateTests(dir)).toEqual({ written: [], unchanged: files.slice(1), removed: files.slice(0, 1), skipped: skipped.slice(1) });
     expect(Object.keys(tree(out))).toEqual(["manifest.json", ...files.slice(1)]);
     expect(Object.keys(JSON.parse(tree(out)["manifest.json"]).files)).toEqual(files.slice(1));
+  }, 120_000);
+
+  it("runs the fixed normal and nightly sample counts despite obsolete environment overrides", async () => {
+    const dir = fixture("profiles"), tests = path.join(dir, "test");
+    fs.mkdirSync(tests);
+    const library = path.relative(tests, path.join(import.meta.dirname, "../index.ts")).split(path.sep).join("/");
+    fs.writeFileSync(path.join(tests, "profile.test.ts"), `import { expect, it } from "@effect/vitest";
+import { Effect, Schema } from "effect";
+import { fuzz, holds } from ${JSON.stringify(library)};
+
+it.effect("uses the selected profile", () => Effect.gen(function* () {
+  let seen = 0;
+  yield* holds(Schema.Int, () => ++seen > 0);
+  expect({ seen, seed: fuzz.seed }).toEqual(import.meta.env.MODE === "nightly" ? { seen: 20_000, seed: 2 } : { seen: 1_000, seed: 1 });
+}));
+`);
+    for (const mode of ["normal", "nightly"] as const) {
+      const result = await vitest(dir, { FUZZ_RUNS: "0", FUZZ_SEED: "not a seed" }, undefined, mode, ["--testNamePattern", "uses the selected profile"]);
+      expect(result.status, result.said).toBe(0);
+      expect(result.said).toMatch(/Tests {2}1 passed \| 14 skipped \(15\)/);
+    }
   });
 
   it("fail the package's run before any test when a module gets none, and say why", async () => {
@@ -122,6 +180,7 @@ describe.concurrent("generated tests", () => {
     expect((await generateTests(dir)).skipped).toContainEqual({ file: "src/throws.schema.ts", export: "*", reason: "the module does not load: no schema here" });
     const { status, said } = await vitest(dir);
     expect(status).toBe(1);
+    expect(fs.existsSync(testReceipt(dir))).toBe(false);
     expect(said).toContain("generated tests: 1 module gets no test");
     expect(said).toContain("  src/throws.schema.ts: the module does not load: no schema here");
     expect(said).not.toMatch(/Tests {2}\d/);
@@ -132,6 +191,7 @@ describe.concurrent("generated tests", () => {
     fs.rmSync(path.join(dir, "src/throws.schema.ts"));
     const { status, said } = await vitest(dir);
     expect(status).toBe(1);
+    expect(fs.existsSync(testReceipt(dir))).toBe(false);
     expect(said).toMatch(/absolute is invariant[^]*Shrunk input: -1\n[^]*Seed: 1\n\s*Rerun: node -e /);
     expect(said).toMatch(/Tests {2}1 failed \| 14 passed \(15\)/);
     const command = said.match(/^\s*Rerun: (.+)$/m)?.[1];

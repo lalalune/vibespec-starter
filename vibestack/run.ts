@@ -1,5 +1,6 @@
 // Shared bounded execution for the Quint, TypeScript, test and proof stages.
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { availableParallelism } from "node:os";
 import path from "node:path";
@@ -11,6 +12,9 @@ const WINDOWS = process.platform === "win32";
 const OUTPUT_LIMIT = 1 << 28;
 /** How long a tool may run before it is stopped: long enough that only a tool that hangs is stopped. */
 const TOOL_TIMEOUT = 60 * 60 * 1000;
+
+/** The executable's bytes, independent of the directory its installation lives in. */
+export const executableDigest = (file: string): string => createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 
 /** An executable from the toolchain's dependencies, wherever npm put it: beside the tools, or in the project. */
 export function bin(cmd: string, root: string): string {

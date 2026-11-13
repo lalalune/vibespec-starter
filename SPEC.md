@@ -482,7 +482,7 @@ must be refused and change nothing; and with an extra field and fields that
 change when read again, which must do what the clean event does. `options`
 are `view` (what of the state `observe` shows), `keys` (the entities walks
 interleave), `walks` (at most this many; `0` for a slow driver) and `steps`.
-The walks take `FUZZ_RUNS` and `FUZZ_SEED`
+The walks use the fixed normal or nightly profile
 ([budgets](CONTRIBUTING.md#seeds-and-budgets)).
 
 - **A disagreement is saved.** A journey or walk that disagrees is shrunk
@@ -518,8 +518,9 @@ The walks take `FUZZ_RUNS` and `FUZZ_SEED`
 
 ## Checking harder
 
-Simulation is seeded from what it simulates, and from `FUZZ_SEED` where it
-is set, so a run repeats exactly and a nightly run tries other traces. A
+Simulation is seeded from what it simulates and the fixed profile, so a run
+repeats exactly. `pnpm all check -- --nightly` uses the larger nightly profile
+and always checks afresh. A
 failing `always` rule or an unreached `sometimes` goal prints its seed and the
 `pnpm exec quint run` command that replays it.
 

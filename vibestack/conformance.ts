@@ -32,7 +32,7 @@ export interface Options<S, V> {
   /** Entities the walks interleave, so that one leaking into another shows; one key for an application of one. */
   keys?: string[];
   /**
-   * At most this many random walks after the journeys, whatever `FUZZ_RUNS` asks (conform.ts); 0 runs the journeys
+   * At most this many random walks after the journeys, within the fixed profile (conform.ts); 0 runs the journeys
    * only, as a slow driver (a browser) should.
    */
   walks?: number;
