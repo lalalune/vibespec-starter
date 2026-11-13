@@ -11,14 +11,17 @@ lemma create_ensures(s: Tracker, actor: string)
   ensures (inv(s) ==> canCreate(s, actor) ==> alwaysRemindersAreTimely(create(s, actor)))
   ensures (inv(s) ==> canCreate(s, actor) ==> alwaysTheBookkeepingIsSane(create(s, actor)))
   ensures (inv(s) ==> canCreate(s, actor) ==> alwaysTheClockIsNeverNegative(create(s, actor)))
+  ensures (inv(s) ==> canCreate(s, actor) ==> stepADashboardEditIsSignedByAMember(s, create(s, actor)))
   ensures (inv(s) ==> canCreate(s, actor) ==> stepOnlyAHandEditCorrupts(s, create(s, actor)))
   ensures (inv(s) ==> canCreate(s, actor) ==> stepANewNumberIsUnreferenced(s, create(s, actor)))
   ensures (inv(s) ==> canCreate(s, actor) ==> stepTheCounterNeverGoesBack(s, create(s, actor)))
   ensures (inv(s) ==> canCreate(s, actor) ==> stepANumberIsNeverReissued(s, create(s, actor)))
   ensures (inv(s) ==> canCreate(s, actor) ==> stepAFixRemovesAProblem(s, create(s, actor)))
+  ensures (inv(s) ==> canCreate(s, actor) ==> stepAPassSendsWhatItRecords(s, "create", create(s, actor), []))
 {
   if inv(s) && canCreate(s, actor) {
     var s2 := create(s, actor);
+    TSigned(s, s2, actor);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     kernel_lawNextIsAboveTheCounter_ensures(numbersInUse(s), s.lastId);
@@ -62,14 +65,17 @@ lemma setStatus_ensures(s: Tracker, id: int, status: Status, actor: string)
   ensures (inv(s) ==> canSetStatus(s, id, status, actor) ==> alwaysRemindersAreTimely(setStatus(s, id, status, actor)))
   ensures (inv(s) ==> canSetStatus(s, id, status, actor) ==> alwaysTheBookkeepingIsSane(setStatus(s, id, status, actor)))
   ensures (inv(s) ==> canSetStatus(s, id, status, actor) ==> alwaysTheClockIsNeverNegative(setStatus(s, id, status, actor)))
+  ensures (inv(s) ==> canSetStatus(s, id, status, actor) ==> stepADashboardEditIsSignedByAMember(s, setStatus(s, id, status, actor)))
   ensures (inv(s) ==> canSetStatus(s, id, status, actor) ==> stepOnlyAHandEditCorrupts(s, setStatus(s, id, status, actor)))
   ensures (inv(s) ==> canSetStatus(s, id, status, actor) ==> stepANewNumberIsUnreferenced(s, setStatus(s, id, status, actor)))
   ensures (inv(s) ==> canSetStatus(s, id, status, actor) ==> stepTheCounterNeverGoesBack(s, setStatus(s, id, status, actor)))
   ensures (inv(s) ==> canSetStatus(s, id, status, actor) ==> stepANumberIsNeverReissued(s, setStatus(s, id, status, actor)))
   ensures (inv(s) ==> canSetStatus(s, id, status, actor) ==> stepAFixRemovesAProblem(s, setStatus(s, id, status, actor)))
+  ensures (inv(s) ==> canSetStatus(s, id, status, actor) ==> stepAPassSendsWhatItRecords(s, "setStatus", setStatus(s, id, status, actor), []))
 {
   if inv(s) && canSetStatus(s, id, status, actor) {
     var s2 := setStatus(s, id, status, actor);
+    TSigned(s, s2, actor);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
@@ -89,14 +95,17 @@ lemma setDue_ensures(s: Tracker, id: int, due: int, actor: string)
   ensures (inv(s) ==> canSetDue(s, id, due, actor) ==> alwaysRemindersAreTimely(setDue(s, id, due, actor)))
   ensures (inv(s) ==> canSetDue(s, id, due, actor) ==> alwaysTheBookkeepingIsSane(setDue(s, id, due, actor)))
   ensures (inv(s) ==> canSetDue(s, id, due, actor) ==> alwaysTheClockIsNeverNegative(setDue(s, id, due, actor)))
+  ensures (inv(s) ==> canSetDue(s, id, due, actor) ==> stepADashboardEditIsSignedByAMember(s, setDue(s, id, due, actor)))
   ensures (inv(s) ==> canSetDue(s, id, due, actor) ==> stepOnlyAHandEditCorrupts(s, setDue(s, id, due, actor)))
   ensures (inv(s) ==> canSetDue(s, id, due, actor) ==> stepANewNumberIsUnreferenced(s, setDue(s, id, due, actor)))
   ensures (inv(s) ==> canSetDue(s, id, due, actor) ==> stepTheCounterNeverGoesBack(s, setDue(s, id, due, actor)))
   ensures (inv(s) ==> canSetDue(s, id, due, actor) ==> stepANumberIsNeverReissued(s, setDue(s, id, due, actor)))
   ensures (inv(s) ==> canSetDue(s, id, due, actor) ==> stepAFixRemovesAProblem(s, setDue(s, id, due, actor)))
+  ensures (inv(s) ==> canSetDue(s, id, due, actor) ==> stepAPassSendsWhatItRecords(s, "setDue", setDue(s, id, due, actor), []))
 {
   if inv(s) && canSetDue(s, id, due, actor) {
     var s2 := setDue(s, id, due, actor);
+    TSigned(s, s2, actor);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
@@ -116,14 +125,17 @@ lemma addOwner_ensures(s: Tracker, id: int, owner: string, actor: string)
   ensures (inv(s) ==> canAddOwner(s, id, owner, actor) ==> alwaysRemindersAreTimely(addOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canAddOwner(s, id, owner, actor) ==> alwaysTheBookkeepingIsSane(addOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canAddOwner(s, id, owner, actor) ==> alwaysTheClockIsNeverNegative(addOwner(s, id, owner, actor)))
+  ensures (inv(s) ==> canAddOwner(s, id, owner, actor) ==> stepADashboardEditIsSignedByAMember(s, addOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canAddOwner(s, id, owner, actor) ==> stepOnlyAHandEditCorrupts(s, addOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canAddOwner(s, id, owner, actor) ==> stepANewNumberIsUnreferenced(s, addOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canAddOwner(s, id, owner, actor) ==> stepTheCounterNeverGoesBack(s, addOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canAddOwner(s, id, owner, actor) ==> stepANumberIsNeverReissued(s, addOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canAddOwner(s, id, owner, actor) ==> stepAFixRemovesAProblem(s, addOwner(s, id, owner, actor)))
+  ensures (inv(s) ==> canAddOwner(s, id, owner, actor) ==> stepAPassSendsWhatItRecords(s, "addOwner", addOwner(s, id, owner, actor), []))
 {
   if inv(s) && canAddOwner(s, id, owner, actor) {
     var s2 := addOwner(s, id, owner, actor);
+    TSigned(s, s2, actor);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
@@ -150,14 +162,17 @@ lemma removeOwner_ensures(s: Tracker, id: int, owner: string, actor: string)
   ensures (inv(s) ==> canRemoveOwner(s, id, owner, actor) ==> alwaysRemindersAreTimely(removeOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canRemoveOwner(s, id, owner, actor) ==> alwaysTheBookkeepingIsSane(removeOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canRemoveOwner(s, id, owner, actor) ==> alwaysTheClockIsNeverNegative(removeOwner(s, id, owner, actor)))
+  ensures (inv(s) ==> canRemoveOwner(s, id, owner, actor) ==> stepADashboardEditIsSignedByAMember(s, removeOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canRemoveOwner(s, id, owner, actor) ==> stepOnlyAHandEditCorrupts(s, removeOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canRemoveOwner(s, id, owner, actor) ==> stepANewNumberIsUnreferenced(s, removeOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canRemoveOwner(s, id, owner, actor) ==> stepTheCounterNeverGoesBack(s, removeOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canRemoveOwner(s, id, owner, actor) ==> stepANumberIsNeverReissued(s, removeOwner(s, id, owner, actor)))
   ensures (inv(s) ==> canRemoveOwner(s, id, owner, actor) ==> stepAFixRemovesAProblem(s, removeOwner(s, id, owner, actor)))
+  ensures (inv(s) ==> canRemoveOwner(s, id, owner, actor) ==> stepAPassSendsWhatItRecords(s, "removeOwner", removeOwner(s, id, owner, actor), []))
 {
   if inv(s) && canRemoveOwner(s, id, owner, actor) {
     var s2 := removeOwner(s, id, owner, actor);
+    TSigned(s, s2, actor);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
@@ -183,14 +198,17 @@ lemma addParent_ensures(s: Tracker, id: int, other: int, actor: string)
   ensures (inv(s) ==> canAddParent(s, id, other, actor) ==> alwaysRemindersAreTimely(addParent(s, id, other, actor)))
   ensures (inv(s) ==> canAddParent(s, id, other, actor) ==> alwaysTheBookkeepingIsSane(addParent(s, id, other, actor)))
   ensures (inv(s) ==> canAddParent(s, id, other, actor) ==> alwaysTheClockIsNeverNegative(addParent(s, id, other, actor)))
+  ensures (inv(s) ==> canAddParent(s, id, other, actor) ==> stepADashboardEditIsSignedByAMember(s, addParent(s, id, other, actor)))
   ensures (inv(s) ==> canAddParent(s, id, other, actor) ==> stepOnlyAHandEditCorrupts(s, addParent(s, id, other, actor)))
   ensures (inv(s) ==> canAddParent(s, id, other, actor) ==> stepANewNumberIsUnreferenced(s, addParent(s, id, other, actor)))
   ensures (inv(s) ==> canAddParent(s, id, other, actor) ==> stepTheCounterNeverGoesBack(s, addParent(s, id, other, actor)))
   ensures (inv(s) ==> canAddParent(s, id, other, actor) ==> stepANumberIsNeverReissued(s, addParent(s, id, other, actor)))
   ensures (inv(s) ==> canAddParent(s, id, other, actor) ==> stepAFixRemovesAProblem(s, addParent(s, id, other, actor)))
+  ensures (inv(s) ==> canAddParent(s, id, other, actor) ==> stepAPassSendsWhatItRecords(s, "addParent", addParent(s, id, other, actor), []))
 {
   if inv(s) && canAddParent(s, id, other, actor) {
     var s2 := addParent(s, id, other, actor);
+    TSigned(s, s2, actor);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
@@ -214,14 +232,17 @@ lemma removeParent_ensures(s: Tracker, id: int, other: int, actor: string)
   ensures (inv(s) ==> canRemoveParent(s, id, other, actor) ==> alwaysRemindersAreTimely(removeParent(s, id, other, actor)))
   ensures (inv(s) ==> canRemoveParent(s, id, other, actor) ==> alwaysTheBookkeepingIsSane(removeParent(s, id, other, actor)))
   ensures (inv(s) ==> canRemoveParent(s, id, other, actor) ==> alwaysTheClockIsNeverNegative(removeParent(s, id, other, actor)))
+  ensures (inv(s) ==> canRemoveParent(s, id, other, actor) ==> stepADashboardEditIsSignedByAMember(s, removeParent(s, id, other, actor)))
   ensures (inv(s) ==> canRemoveParent(s, id, other, actor) ==> stepOnlyAHandEditCorrupts(s, removeParent(s, id, other, actor)))
   ensures (inv(s) ==> canRemoveParent(s, id, other, actor) ==> stepANewNumberIsUnreferenced(s, removeParent(s, id, other, actor)))
   ensures (inv(s) ==> canRemoveParent(s, id, other, actor) ==> stepTheCounterNeverGoesBack(s, removeParent(s, id, other, actor)))
   ensures (inv(s) ==> canRemoveParent(s, id, other, actor) ==> stepANumberIsNeverReissued(s, removeParent(s, id, other, actor)))
   ensures (inv(s) ==> canRemoveParent(s, id, other, actor) ==> stepAFixRemovesAProblem(s, removeParent(s, id, other, actor)))
+  ensures (inv(s) ==> canRemoveParent(s, id, other, actor) ==> stepAPassSendsWhatItRecords(s, "removeParent", removeParent(s, id, other, actor), []))
 {
   if inv(s) && canRemoveParent(s, id, other, actor) {
     var s2 := removeParent(s, id, other, actor);
+    TSigned(s, s2, actor);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
@@ -245,14 +266,17 @@ lemma relate_ensures(s: Tracker, id: int, other: int, actor: string)
   ensures (inv(s) ==> canRelate(s, id, other, actor) ==> alwaysRemindersAreTimely(relate(s, id, other, actor)))
   ensures (inv(s) ==> canRelate(s, id, other, actor) ==> alwaysTheBookkeepingIsSane(relate(s, id, other, actor)))
   ensures (inv(s) ==> canRelate(s, id, other, actor) ==> alwaysTheClockIsNeverNegative(relate(s, id, other, actor)))
+  ensures (inv(s) ==> canRelate(s, id, other, actor) ==> stepADashboardEditIsSignedByAMember(s, relate(s, id, other, actor)))
   ensures (inv(s) ==> canRelate(s, id, other, actor) ==> stepOnlyAHandEditCorrupts(s, relate(s, id, other, actor)))
   ensures (inv(s) ==> canRelate(s, id, other, actor) ==> stepANewNumberIsUnreferenced(s, relate(s, id, other, actor)))
   ensures (inv(s) ==> canRelate(s, id, other, actor) ==> stepTheCounterNeverGoesBack(s, relate(s, id, other, actor)))
   ensures (inv(s) ==> canRelate(s, id, other, actor) ==> stepANumberIsNeverReissued(s, relate(s, id, other, actor)))
   ensures (inv(s) ==> canRelate(s, id, other, actor) ==> stepAFixRemovesAProblem(s, relate(s, id, other, actor)))
+  ensures (inv(s) ==> canRelate(s, id, other, actor) ==> stepAPassSendsWhatItRecords(s, "relate", relate(s, id, other, actor), []))
 {
   if inv(s) && canRelate(s, id, other, actor) {
     var s2 := relate(s, id, other, actor);
+    TSigned(s, s2, actor);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
@@ -276,14 +300,17 @@ lemma unrelate_ensures(s: Tracker, id: int, other: int, actor: string)
   ensures (inv(s) ==> canUnrelate(s, id, other, actor) ==> alwaysRemindersAreTimely(unrelate(s, id, other, actor)))
   ensures (inv(s) ==> canUnrelate(s, id, other, actor) ==> alwaysTheBookkeepingIsSane(unrelate(s, id, other, actor)))
   ensures (inv(s) ==> canUnrelate(s, id, other, actor) ==> alwaysTheClockIsNeverNegative(unrelate(s, id, other, actor)))
+  ensures (inv(s) ==> canUnrelate(s, id, other, actor) ==> stepADashboardEditIsSignedByAMember(s, unrelate(s, id, other, actor)))
   ensures (inv(s) ==> canUnrelate(s, id, other, actor) ==> stepOnlyAHandEditCorrupts(s, unrelate(s, id, other, actor)))
   ensures (inv(s) ==> canUnrelate(s, id, other, actor) ==> stepANewNumberIsUnreferenced(s, unrelate(s, id, other, actor)))
   ensures (inv(s) ==> canUnrelate(s, id, other, actor) ==> stepTheCounterNeverGoesBack(s, unrelate(s, id, other, actor)))
   ensures (inv(s) ==> canUnrelate(s, id, other, actor) ==> stepANumberIsNeverReissued(s, unrelate(s, id, other, actor)))
   ensures (inv(s) ==> canUnrelate(s, id, other, actor) ==> stepAFixRemovesAProblem(s, unrelate(s, id, other, actor)))
+  ensures (inv(s) ==> canUnrelate(s, id, other, actor) ==> stepAPassSendsWhatItRecords(s, "unrelate", unrelate(s, id, other, actor), []))
 {
   if inv(s) && canUnrelate(s, id, other, actor) {
     var s2 := unrelate(s, id, other, actor);
+    TSigned(s, s2, actor);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
@@ -307,11 +334,13 @@ lemma deleteTask_ensures(s: Tracker, id: int, actor: string)
   ensures (inv(s) ==> canDeleteTask(s, id, actor) ==> alwaysRemindersAreTimely(deleteTask(s, id, actor)))
   ensures (inv(s) ==> canDeleteTask(s, id, actor) ==> alwaysTheBookkeepingIsSane(deleteTask(s, id, actor)))
   ensures (inv(s) ==> canDeleteTask(s, id, actor) ==> alwaysTheClockIsNeverNegative(deleteTask(s, id, actor)))
+  ensures (inv(s) ==> canDeleteTask(s, id, actor) ==> stepADashboardEditIsSignedByAMember(s, deleteTask(s, id, actor)))
   ensures (inv(s) ==> canDeleteTask(s, id, actor) ==> stepOnlyAHandEditCorrupts(s, deleteTask(s, id, actor)))
   ensures (inv(s) ==> canDeleteTask(s, id, actor) ==> stepANewNumberIsUnreferenced(s, deleteTask(s, id, actor)))
   ensures (inv(s) ==> canDeleteTask(s, id, actor) ==> stepTheCounterNeverGoesBack(s, deleteTask(s, id, actor)))
   ensures (inv(s) ==> canDeleteTask(s, id, actor) ==> stepANumberIsNeverReissued(s, deleteTask(s, id, actor)))
   ensures (inv(s) ==> canDeleteTask(s, id, actor) ==> stepAFixRemovesAProblem(s, deleteTask(s, id, actor)))
+  ensures (inv(s) ==> canDeleteTask(s, id, actor) ==> stepAPassSendsWhatItRecords(s, "deleteTask", deleteTask(s, id, actor), []))
 {
   if inv(s) && canDeleteTask(s, id, actor) {
     var s2 := deleteTask(s, id, actor);
@@ -335,6 +364,11 @@ lemma deleteTask_ensures(s: Tracker, id: int, actor: string)
     {
       assert kept[j] in s.tasks;
     }
+    forall j | 0 <= j < |s2.tasks|
+      ensures keepsItsSignature(s, s2.tasks[j])
+    {
+      assert kept[j] in s.tasks;
+    }
     TOldNumbers(s, s2);
     forall j | 0 <= j < |s2.tasks|
       ensures exists i :: 0 <= i < |s.tasks| && forall q :: q in problemsOf(s2, s2.tasks[j]) ==> q in problemsOf(s, s.tasks[i])
@@ -355,14 +389,17 @@ lemma renameOwner_ensures(s: Tracker, owner: string, name: string, actor: string
   ensures (inv(s) ==> canRenameOwner(s, owner, name, actor) ==> alwaysRemindersAreTimely(renameOwner(s, owner, name, actor)))
   ensures (inv(s) ==> canRenameOwner(s, owner, name, actor) ==> alwaysTheBookkeepingIsSane(renameOwner(s, owner, name, actor)))
   ensures (inv(s) ==> canRenameOwner(s, owner, name, actor) ==> alwaysTheClockIsNeverNegative(renameOwner(s, owner, name, actor)))
+  ensures (inv(s) ==> canRenameOwner(s, owner, name, actor) ==> stepADashboardEditIsSignedByAMember(s, renameOwner(s, owner, name, actor)))
   ensures (inv(s) ==> canRenameOwner(s, owner, name, actor) ==> stepOnlyAHandEditCorrupts(s, renameOwner(s, owner, name, actor)))
   ensures (inv(s) ==> canRenameOwner(s, owner, name, actor) ==> stepANewNumberIsUnreferenced(s, renameOwner(s, owner, name, actor)))
   ensures (inv(s) ==> canRenameOwner(s, owner, name, actor) ==> stepTheCounterNeverGoesBack(s, renameOwner(s, owner, name, actor)))
   ensures (inv(s) ==> canRenameOwner(s, owner, name, actor) ==> stepANumberIsNeverReissued(s, renameOwner(s, owner, name, actor)))
   ensures (inv(s) ==> canRenameOwner(s, owner, name, actor) ==> stepAFixRemovesAProblem(s, renameOwner(s, owner, name, actor)))
+  ensures (inv(s) ==> canRenameOwner(s, owner, name, actor) ==> stepAPassSendsWhatItRecords(s, "renameOwner", renameOwner(s, owner, name, actor), []))
 {
   if inv(s) && canRenameOwner(s, owner, name, actor) {
     var s2 := renameOwner(s, owner, name, actor);
+    TSigned(s, s2, actor);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
@@ -396,14 +433,17 @@ lemma deleteOwner_ensures(s: Tracker, owner: string, actor: string)
   ensures (inv(s) ==> canDeleteOwner(s, owner, actor) ==> alwaysRemindersAreTimely(deleteOwner(s, owner, actor)))
   ensures (inv(s) ==> canDeleteOwner(s, owner, actor) ==> alwaysTheBookkeepingIsSane(deleteOwner(s, owner, actor)))
   ensures (inv(s) ==> canDeleteOwner(s, owner, actor) ==> alwaysTheClockIsNeverNegative(deleteOwner(s, owner, actor)))
+  ensures (inv(s) ==> canDeleteOwner(s, owner, actor) ==> stepADashboardEditIsSignedByAMember(s, deleteOwner(s, owner, actor)))
   ensures (inv(s) ==> canDeleteOwner(s, owner, actor) ==> stepOnlyAHandEditCorrupts(s, deleteOwner(s, owner, actor)))
   ensures (inv(s) ==> canDeleteOwner(s, owner, actor) ==> stepANewNumberIsUnreferenced(s, deleteOwner(s, owner, actor)))
   ensures (inv(s) ==> canDeleteOwner(s, owner, actor) ==> stepTheCounterNeverGoesBack(s, deleteOwner(s, owner, actor)))
   ensures (inv(s) ==> canDeleteOwner(s, owner, actor) ==> stepANumberIsNeverReissued(s, deleteOwner(s, owner, actor)))
   ensures (inv(s) ==> canDeleteOwner(s, owner, actor) ==> stepAFixRemovesAProblem(s, deleteOwner(s, owner, actor)))
+  ensures (inv(s) ==> canDeleteOwner(s, owner, actor) ==> stepAPassSendsWhatItRecords(s, "deleteOwner", deleteOwner(s, owner, actor), []))
 {
   if inv(s) && canDeleteOwner(s, owner, actor) {
     var s2 := deleteOwner(s, owner, actor);
+    TSigned(s, s2, actor);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
@@ -428,11 +468,13 @@ lemma handAddOwner_ensures(s: Tracker, id: int, name: string)
   ensures (inv(s) ==> canHandAddOwner(s, id, name) ==> alwaysRemindersAreTimely(handAddOwner(s, id, name)))
   ensures (inv(s) ==> canHandAddOwner(s, id, name) ==> alwaysTheBookkeepingIsSane(handAddOwner(s, id, name)))
   ensures (inv(s) ==> canHandAddOwner(s, id, name) ==> alwaysTheClockIsNeverNegative(handAddOwner(s, id, name)))
+  ensures (inv(s) ==> canHandAddOwner(s, id, name) ==> stepADashboardEditIsSignedByAMember(s, handAddOwner(s, id, name)))
   ensures (inv(s) ==> canHandAddOwner(s, id, name) ==> stepOnlyAHandEditCorrupts(s, handAddOwner(s, id, name)))
   ensures (inv(s) ==> canHandAddOwner(s, id, name) ==> stepANewNumberIsUnreferenced(s, handAddOwner(s, id, name)))
   ensures (inv(s) ==> canHandAddOwner(s, id, name) ==> stepTheCounterNeverGoesBack(s, handAddOwner(s, id, name)))
   ensures (inv(s) ==> canHandAddOwner(s, id, name) ==> stepANumberIsNeverReissued(s, handAddOwner(s, id, name)))
   ensures (inv(s) ==> canHandAddOwner(s, id, name) ==> stepAFixRemovesAProblem(s, handAddOwner(s, id, name)))
+  ensures (inv(s) ==> canHandAddOwner(s, id, name) ==> stepAPassSendsWhatItRecords(s, "handAddOwner", handAddOwner(s, id, name), []))
 {
   if inv(s) && canHandAddOwner(s, id, name) {
     var s2 := handAddOwner(s, id, name);
@@ -453,11 +495,13 @@ lemma handAddParent_ensures(s: Tracker, id: int, other: int)
   ensures (inv(s) ==> canHandAddParent(s, id, other) ==> alwaysRemindersAreTimely(handAddParent(s, id, other)))
   ensures (inv(s) ==> canHandAddParent(s, id, other) ==> alwaysTheBookkeepingIsSane(handAddParent(s, id, other)))
   ensures (inv(s) ==> canHandAddParent(s, id, other) ==> alwaysTheClockIsNeverNegative(handAddParent(s, id, other)))
+  ensures (inv(s) ==> canHandAddParent(s, id, other) ==> stepADashboardEditIsSignedByAMember(s, handAddParent(s, id, other)))
   ensures (inv(s) ==> canHandAddParent(s, id, other) ==> stepOnlyAHandEditCorrupts(s, handAddParent(s, id, other)))
   ensures (inv(s) ==> canHandAddParent(s, id, other) ==> stepANewNumberIsUnreferenced(s, handAddParent(s, id, other)))
   ensures (inv(s) ==> canHandAddParent(s, id, other) ==> stepTheCounterNeverGoesBack(s, handAddParent(s, id, other)))
   ensures (inv(s) ==> canHandAddParent(s, id, other) ==> stepANumberIsNeverReissued(s, handAddParent(s, id, other)))
   ensures (inv(s) ==> canHandAddParent(s, id, other) ==> stepAFixRemovesAProblem(s, handAddParent(s, id, other)))
+  ensures (inv(s) ==> canHandAddParent(s, id, other) ==> stepAPassSendsWhatItRecords(s, "handAddParent", handAddParent(s, id, other), []))
 {
   if inv(s) && canHandAddParent(s, id, other) {
     var s2 := handAddParent(s, id, other);
@@ -478,11 +522,13 @@ lemma handAddRelated_ensures(s: Tracker, id: int, other: int)
   ensures (inv(s) ==> canHandAddRelated(s, id, other) ==> alwaysRemindersAreTimely(handAddRelated(s, id, other)))
   ensures (inv(s) ==> canHandAddRelated(s, id, other) ==> alwaysTheBookkeepingIsSane(handAddRelated(s, id, other)))
   ensures (inv(s) ==> canHandAddRelated(s, id, other) ==> alwaysTheClockIsNeverNegative(handAddRelated(s, id, other)))
+  ensures (inv(s) ==> canHandAddRelated(s, id, other) ==> stepADashboardEditIsSignedByAMember(s, handAddRelated(s, id, other)))
   ensures (inv(s) ==> canHandAddRelated(s, id, other) ==> stepOnlyAHandEditCorrupts(s, handAddRelated(s, id, other)))
   ensures (inv(s) ==> canHandAddRelated(s, id, other) ==> stepANewNumberIsUnreferenced(s, handAddRelated(s, id, other)))
   ensures (inv(s) ==> canHandAddRelated(s, id, other) ==> stepTheCounterNeverGoesBack(s, handAddRelated(s, id, other)))
   ensures (inv(s) ==> canHandAddRelated(s, id, other) ==> stepANumberIsNeverReissued(s, handAddRelated(s, id, other)))
   ensures (inv(s) ==> canHandAddRelated(s, id, other) ==> stepAFixRemovesAProblem(s, handAddRelated(s, id, other)))
+  ensures (inv(s) ==> canHandAddRelated(s, id, other) ==> stepAPassSendsWhatItRecords(s, "handAddRelated", handAddRelated(s, id, other), []))
 {
   if inv(s) && canHandAddRelated(s, id, other) {
     var s2 := handAddRelated(s, id, other);
@@ -503,11 +549,13 @@ lemma handDeleteTask_ensures(s: Tracker, id: int)
   ensures (inv(s) ==> canHandDeleteTask(s, id) ==> alwaysRemindersAreTimely(handDeleteTask(s, id)))
   ensures (inv(s) ==> canHandDeleteTask(s, id) ==> alwaysTheBookkeepingIsSane(handDeleteTask(s, id)))
   ensures (inv(s) ==> canHandDeleteTask(s, id) ==> alwaysTheClockIsNeverNegative(handDeleteTask(s, id)))
+  ensures (inv(s) ==> canHandDeleteTask(s, id) ==> stepADashboardEditIsSignedByAMember(s, handDeleteTask(s, id)))
   ensures (inv(s) ==> canHandDeleteTask(s, id) ==> stepOnlyAHandEditCorrupts(s, handDeleteTask(s, id)))
   ensures (inv(s) ==> canHandDeleteTask(s, id) ==> stepANewNumberIsUnreferenced(s, handDeleteTask(s, id)))
   ensures (inv(s) ==> canHandDeleteTask(s, id) ==> stepTheCounterNeverGoesBack(s, handDeleteTask(s, id)))
   ensures (inv(s) ==> canHandDeleteTask(s, id) ==> stepANumberIsNeverReissued(s, handDeleteTask(s, id)))
   ensures (inv(s) ==> canHandDeleteTask(s, id) ==> stepAFixRemovesAProblem(s, handDeleteTask(s, id)))
+  ensures (inv(s) ==> canHandDeleteTask(s, id) ==> stepAPassSendsWhatItRecords(s, "handDeleteTask", handDeleteTask(s, id), []))
 {
   if inv(s) && canHandDeleteTask(s, id) {
     var s2 := handDeleteTask(s, id);
@@ -540,11 +588,13 @@ lemma handDeleteOwner_ensures(s: Tracker, owner: string)
   ensures (inv(s) ==> canHandDeleteOwner(s, owner) ==> alwaysRemindersAreTimely(handDeleteOwner(s, owner)))
   ensures (inv(s) ==> canHandDeleteOwner(s, owner) ==> alwaysTheBookkeepingIsSane(handDeleteOwner(s, owner)))
   ensures (inv(s) ==> canHandDeleteOwner(s, owner) ==> alwaysTheClockIsNeverNegative(handDeleteOwner(s, owner)))
+  ensures (inv(s) ==> canHandDeleteOwner(s, owner) ==> stepADashboardEditIsSignedByAMember(s, handDeleteOwner(s, owner)))
   ensures (inv(s) ==> canHandDeleteOwner(s, owner) ==> stepOnlyAHandEditCorrupts(s, handDeleteOwner(s, owner)))
   ensures (inv(s) ==> canHandDeleteOwner(s, owner) ==> stepANewNumberIsUnreferenced(s, handDeleteOwner(s, owner)))
   ensures (inv(s) ==> canHandDeleteOwner(s, owner) ==> stepTheCounterNeverGoesBack(s, handDeleteOwner(s, owner)))
   ensures (inv(s) ==> canHandDeleteOwner(s, owner) ==> stepANumberIsNeverReissued(s, handDeleteOwner(s, owner)))
   ensures (inv(s) ==> canHandDeleteOwner(s, owner) ==> stepAFixRemovesAProblem(s, handDeleteOwner(s, owner)))
+  ensures (inv(s) ==> canHandDeleteOwner(s, owner) ==> stepAPassSendsWhatItRecords(s, "handDeleteOwner", handDeleteOwner(s, owner), []))
 {
   if inv(s) && canHandDeleteOwner(s, owner) {
     var s2 := handDeleteOwner(s, owner);
@@ -562,11 +612,13 @@ lemma fix_ensures(s: Tracker, index: int, actor: string)
   ensures (inv(s) ==> canFix(s, index, actor) ==> alwaysRemindersAreTimely(fix(s, index, actor)))
   ensures (inv(s) ==> canFix(s, index, actor) ==> alwaysTheBookkeepingIsSane(fix(s, index, actor)))
   ensures (inv(s) ==> canFix(s, index, actor) ==> alwaysTheClockIsNeverNegative(fix(s, index, actor)))
+  ensures (inv(s) ==> canFix(s, index, actor) ==> stepADashboardEditIsSignedByAMember(s, fix(s, index, actor)))
   ensures (inv(s) ==> canFix(s, index, actor) ==> stepOnlyAHandEditCorrupts(s, fix(s, index, actor)))
   ensures (inv(s) ==> canFix(s, index, actor) ==> stepANewNumberIsUnreferenced(s, fix(s, index, actor)))
   ensures (inv(s) ==> canFix(s, index, actor) ==> stepTheCounterNeverGoesBack(s, fix(s, index, actor)))
   ensures (inv(s) ==> canFix(s, index, actor) ==> stepANumberIsNeverReissued(s, fix(s, index, actor)))
   ensures (inv(s) ==> canFix(s, index, actor) ==> stepAFixRemovesAProblem(s, fix(s, index, actor)))
+  ensures (inv(s) ==> canFix(s, index, actor) ==> stepAPassSendsWhatItRecords(s, "fix", fix(s, index, actor), []))
 {
   if inv(s) && canFix(s, index, actor) {
     var s2 := fix(s, index, actor);
@@ -594,11 +646,13 @@ lemma tick_ensures(s: Tracker)
   ensures (inv(s) ==> alwaysRemindersAreTimely(tick(s)))
   ensures (inv(s) ==> alwaysTheBookkeepingIsSane(tick(s)))
   ensures (inv(s) ==> alwaysTheClockIsNeverNegative(tick(s)))
+  ensures (inv(s) ==> stepADashboardEditIsSignedByAMember(s, tick(s)))
   ensures (inv(s) ==> stepOnlyAHandEditCorrupts(s, tick(s)))
   ensures (inv(s) ==> stepANewNumberIsUnreferenced(s, tick(s)))
   ensures (inv(s) ==> stepTheCounterNeverGoesBack(s, tick(s)))
   ensures (inv(s) ==> stepANumberIsNeverReissued(s, tick(s)))
   ensures (inv(s) ==> stepAFixRemovesAProblem(s, tick(s)))
+  ensures (inv(s) ==> stepAPassSendsWhatItRecords(s, "tick", tick(s), []))
 {
   if inv(s) {
     var s2 := tick(s);
@@ -609,23 +663,25 @@ lemma tick_ensures(s: Tracker)
 }
 
 lemma notify_ensures(s: Tracker)
-  ensures (inv(s) ==> alwaysTaskNumbersAreUnique(notify(s)))
-  ensures (inv(s) ==> alwaysTheCounterCoversEveryTask(notify(s)))
-  ensures (inv(s) ==> alwaysNoOneIsToldOfTheirOwnEdit(notify(s)))
-  ensures (inv(s) ==> alwaysAnEditIsAnnouncedAfterTheQuietPeriod(notify(s)))
-  ensures (inv(s) ==> alwaysNothingIsSentTwice(notify(s)))
-  ensures (inv(s) ==> alwaysWhatWasSentIsRecorded(notify(s)))
-  ensures (inv(s) ==> alwaysRemindersAreTimely(notify(s)))
-  ensures (inv(s) ==> alwaysTheBookkeepingIsSane(notify(s)))
-  ensures (inv(s) ==> alwaysTheClockIsNeverNegative(notify(s)))
-  ensures (inv(s) ==> stepOnlyAHandEditCorrupts(s, notify(s)))
-  ensures (inv(s) ==> stepANewNumberIsUnreferenced(s, notify(s)))
-  ensures (inv(s) ==> stepTheCounterNeverGoesBack(s, notify(s)))
-  ensures (inv(s) ==> stepANumberIsNeverReissued(s, notify(s)))
-  ensures (inv(s) ==> stepAFixRemovesAProblem(s, notify(s)))
+  ensures (inv(s) ==> alwaysTaskNumbersAreUnique(notify(s).state))
+  ensures (inv(s) ==> alwaysTheCounterCoversEveryTask(notify(s).state))
+  ensures (inv(s) ==> alwaysNoOneIsToldOfTheirOwnEdit(notify(s).state))
+  ensures (inv(s) ==> alwaysAnEditIsAnnouncedAfterTheQuietPeriod(notify(s).state))
+  ensures (inv(s) ==> alwaysNothingIsSentTwice(notify(s).state))
+  ensures (inv(s) ==> alwaysWhatWasSentIsRecorded(notify(s).state))
+  ensures (inv(s) ==> alwaysRemindersAreTimely(notify(s).state))
+  ensures (inv(s) ==> alwaysTheBookkeepingIsSane(notify(s).state))
+  ensures (inv(s) ==> alwaysTheClockIsNeverNegative(notify(s).state))
+  ensures (inv(s) ==> stepADashboardEditIsSignedByAMember(s, notify(s).state))
+  ensures (inv(s) ==> stepOnlyAHandEditCorrupts(s, notify(s).state))
+  ensures (inv(s) ==> stepANewNumberIsUnreferenced(s, notify(s).state))
+  ensures (inv(s) ==> stepTheCounterNeverGoesBack(s, notify(s).state))
+  ensures (inv(s) ==> stepANumberIsNeverReissued(s, notify(s).state))
+  ensures (inv(s) ==> stepAFixRemovesAProblem(s, notify(s).state))
+  ensures (inv(s) ==> stepAPassSendsWhatItRecords(s, "notify", notify(s).state, notify(s).out))
 {
   if inv(s) {
-    var s2 := notify(s);
+    var s2 := notify(s).state;
     TNotifyAnnouncedAndTimely(s);
     TNotifyRecorded(s);
     TNotifyNothingSentTwice(s);
@@ -635,6 +691,24 @@ lemma notify_ensures(s: Tracker)
     TSameIdsOldNumbers(s, s2);
     TSameShapeProblems(s, s2);
     TSubsetNoNewProblem(s, s2);
+  }
+}
+
+// ===== A task edited through the dashboard is signed by a member =====
+
+// A dashboard edit that keeps each task's signature in place, or signs it with a member, satisfies the rule.
+lemma TSigned(s: Tracker, s2: Tracker, actor: string)
+  requires s2.last.App? && actor in s.owners
+  requires forall i :: 0 <= i < |s2.tasks| ==> s2.tasks[i].updatedBy == actor || (i < |s.tasks| && s2.tasks[i].id == s.tasks[i].id && s2.tasks[i].updatedAt == s.tasks[i].updatedAt && s2.tasks[i].updatedBy == s.tasks[i].updatedBy)
+  ensures stepADashboardEditIsSignedByAMember(s, s2)
+{
+  forall t | t in s2.tasks
+    ensures keepsItsSignature(s, t) || isMember(s, t.updatedBy)
+  {
+    var i :| 0 <= i < |s2.tasks| && s2.tasks[i] == t;
+    if t.updatedBy != actor {
+      assert s.tasks[i] in s.tasks;
+    }
   }
 }
 
@@ -949,11 +1023,11 @@ lemma TUniqueIndex(s: Tracker, i: int, j: int)
 // The notes of a pass are announced after the quiet period, not to their editor, and timely, so the rules still hold after it.
 lemma TNotifyAnnouncedAndTimely(s: Tracker)
   requires inv(s)
-  ensures alwaysAnEditIsAnnouncedAfterTheQuietPeriod(notify(s))
-  ensures alwaysNoOneIsToldOfTheirOwnEdit(notify(s))
-  ensures alwaysRemindersAreTimely(notify(s))
+  ensures alwaysAnEditIsAnnouncedAfterTheQuietPeriod(notify(s).state)
+  ensures alwaysNoOneIsToldOfTheirOwnEdit(notify(s).state)
+  ensures alwaysRemindersAreTimely(notify(s).state)
 {
-  var s2 := notify(s);
+  var s2 := notify(s).state;
   var newNotes := Std.Collections.Seq.FoldLeft((acc: seq<Note>, t: Task) => (acc + notesFor(s, t)), [], s.tasks);
   assert s2.sent == s.sent + newNotes;
   forall k | 0 <= k < |s2.sent|
@@ -976,9 +1050,9 @@ lemma TNotifyAnnouncedAndTimely(s: Tracker)
 // Every note of a pass is recorded on its task by the same pass.
 lemma TNotifyRecorded(s: Tracker)
   requires inv(s)
-  ensures alwaysWhatWasSentIsRecorded(notify(s))
+  ensures alwaysWhatWasSentIsRecorded(notify(s).state)
 {
-  var s2 := notify(s);
+  var s2 := notify(s).state;
   var newNotes := Std.Collections.Seq.FoldLeft((acc: seq<Note>, t: Task) => (acc + notesFor(s, t)), [], s.tasks);
   assert s2.sent == s.sent + newNotes;
   forall j | 0 <= j < |s2.tasks|
@@ -1063,9 +1137,9 @@ lemma TNotesForDistinct(s: Tracker, t: Task)
 
 lemma TNotifyNothingSentTwice(s: Tracker)
   requires inv(s)
-  ensures alwaysNothingIsSentTwice(notify(s))
+  ensures alwaysNothingIsSentTwice(notify(s).state)
 {
-  var s2 := notify(s);
+  var s2 := notify(s).state;
   var key := (n: Note) => (n.kind, n.task, n.to, n.version);
   var f := (acc: seq<Note>, t: Task) => (acc + notesFor(s, t));
   var newNotes := Std.Collections.Seq.FoldLeft((acc: seq<Note>, t: Task) => (acc + notesFor(s, t)), [], s.tasks);

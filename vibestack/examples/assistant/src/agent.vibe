@@ -39,6 +39,11 @@ effect function observe() {
   } catch () => loaded
 }
 
+/** The card the person saves, sent as the Person (spec/assistant.md, "Only the person saves a card"). */
+export effect function remember(card: T.SecretCard): void!Rejected!Machine {
+  try (try Machine).send({ type: "saveCard", card }, "Person")
+}
+
 /**
  * What the person said, then the agent's actions until the turn ends or asks the person. It fails with `Rejected`
  * when the rules refuse what the person said.
@@ -49,7 +54,10 @@ export effect function hear(said: Said): Turn!Rejected!(Machine | Model | World)
   const world = try World
   const refused: Refusal[] = []
   try observe()
-  let state = (try machine.send({ type: said }, "Person")).state
+  const heard = try machine.send({ type: said }, "Person")
+  // spec/assistant.md, "What the program carries out": a confirmation submits the payment.
+  for (const carried of heard.out) try world.perform(carried)
+  let state = heard.state
   // spec/assistant.md, "Every choice spends the budget": each pass makes one choice, so there are at most `maxActions`.
   while (state.phase === "Planning") {
     // The model's answer can only become the Agent's choice. Any other answer finishes the turn, which

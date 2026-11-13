@@ -181,6 +181,26 @@ refused unless that person is on the project's team.
 pure def isMember(s: Tracker, actor: str): bool = s.owners.includes(actor)
 ```
 
+### A task edited through the dashboard is signed by a member
+
+After any edit through the dashboard, each task either carries a signature
+(when and by whom it was last updated) that a task of the same number had
+before the edit, or is signed by someone who was on the team before the edit.
+The rule does not say which member signs, nor that only the edited task's
+signature changes: it rules out an edit through the dashboard leaving a task
+signed by someone outside the team. A fix, a hand edit and the notifier are
+not edits through the dashboard. This rule sees only signatures, so deleting
+a task, renaming or removing a person, and a fix are kept to members by their
+guards alone.
+
+```quint
+pure def keepsItsSignature(before: Tracker, t: Task): bool =
+  before.tasks.some(b => b.id == t.id and b.updatedAt == t.updatedAt and b.updatedBy == t.updatedBy)
+
+pure def stepADashboardEditIsSignedByAMember(before: Tracker, after: Tracker): bool =
+  after.last == App implies after.tasks.every(t => keepsItsSignature(before, t) or isMember(before, t.updatedBy))
+```
+
 ### Only a hand edit can make the data worse
 
 An edit made through the dashboard never introduces a problem, even when the
@@ -475,10 +495,23 @@ pure def recorded(t: Task, at: int): Task =
     toldSoon: if (reminder(t, at) == DueSoon) t.toldSoon.append(t.due) else t.toldSoon,
     toldDue: if (reminder(t, at) == DueToday) t.toldDue.append(t.due) else t.toldDue }
 
-pure def notify(s: Tracker): Tracker =
-  { ...s, last: Notifier,
-    sent: s.sent.concat(s.tasks.foldl(List(), (acc, t) => acc.concat(notesFor(s, t)))),
-    tasks: s.tasks.listMap(t => recorded(t, s.now)) }
+type Notified = { state: Tracker, out: List[Note] }
+
+pure def notify(s: Tracker): Notified =
+  val notes = s.tasks.foldl(List(), (acc, t) => acc.concat(notesFor(s, t)))
+  { state: { ...s, last: Notifier, sent: s.sent.concat(notes), tasks: s.tasks.listMap(t => recorded(t, s.now)) }, out: notes }
+```
+
+### A pass sends exactly the notes it records
+
+The notes a pass of the notifier hands to the shell to post are the ones it
+adds to the record of what was sent, in the same order, and no other change
+sends anything. The record is written before anything is posted, so a note
+is recorded as sent whether or not the chat app takes it.
+
+```quint
+pure def stepAPassSendsWhatItRecords(before: Tracker, via: str, after: Tracker, out: List[Note]): bool =
+  after.sent == before.sent.concat(out) and (via == "notify" or out.length() == 0)
 ```
 
 ### No one is told of their own edit
