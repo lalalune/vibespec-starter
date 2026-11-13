@@ -59,7 +59,7 @@ export function typeWalks(typedefs: Json[], module: string, prefix = "") {
     if (t.kind === "list" || t.kind === "set") return `${tsType(t.elem)}[]`;
     if (t.kind === "fun") return resolve(t.arg).kind === "str" ? `Record<string, ${tsType(t.res)}>` : fail("a map's keys must be strings");
     const d = named(t);
-    return d ? typeName(d) : fail(`unsupported type ${t.kind}: name it with \`type\`, or extend tsType in tools/gen/types.ts`);
+    return d ? typeName(d) : fail(`unsupported type ${t.kind}: name it with \`type\`, or extend tsType in vibespec/gen/types.ts`);
   };
   /** The TypeScript declaration of one of the module's own types. */
   const declaration = (d: Json): string => {

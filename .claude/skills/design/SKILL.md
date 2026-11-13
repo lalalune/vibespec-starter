@@ -1,6 +1,6 @@
 ---
 name: design
-description: Design or review anything a person looks at, built from a spec in this repository: a page, screen, component, chart, dashboard, report or CLI output. Use before writing UI code, when choosing a layout or visual direction, and when reviewing UI for clutter, wordiness or missing spec content.
+description: "Design or review anything a person looks at, built from a spec in this repository: a page, screen, component, chart, dashboard, report or CLI output. Use before writing UI code, when choosing a layout or visual direction, and when reviewing UI for clutter, wordiness or missing spec content."
 ---
 
 # Design from the spec
