@@ -120,7 +120,8 @@ pure def ancestors(s: Tracker, id: int): List[int] =
 
 An owner who is not a member of the project; a parent or related task that is
 missing; a task that waits on or is related to itself; a chain of dependencies
-that loops; a related link that the other task does not link back.
+that loops back to the task; a related link that the other task does not link
+back.
 
 ```quint
 type Code = UnknownOwner | UnknownParent | UnknownRelated | SelfParent | SelfRelated | Cycle | OneSided
@@ -361,7 +362,8 @@ and a person may be removed from the team, leaving their name in owners cells.
 Rows are added only through the dashboard. The task number and bookkeeping
 columns (last edit, last announcement, reminders sent) are protected from
 direct edits; when a hand edit to a row arrives, the system records the time,
-and `sheet` as the editor, so no owner counts as its author.
+and `sheet` as the editor, so no owner counts as its author unless a team
+member is named `sheet`.
 
 ```quint
 pure def canHandAddOwner(s: Tracker, id: int, name: str): bool = hasTask(s, id)
@@ -396,7 +398,7 @@ pure def handDeleteOwner(s: Tracker, owner: str): Tracker =
 pure def sometimesTheDataHasAProblem(s: Tracker): bool = problems(s).length() > 0
 ```
 
-### A one-click fix removes its problem and adds none
+### A one-click fix removes a problem and adds none
 
 A fix is picked by its position in the warning list; a position outside the
 list fixes nothing. A loop has no automatic fix, because someone must decide
@@ -515,8 +517,8 @@ pure def lawEachNameIsListedOnce(xs: List[str]): bool =
 
 ### Every note sent is recorded on its task
 
-A note only ever names a task number that has been issued, and while that task
-exists it records the note: an announced edit is no newer than the task's last
+A note only ever names a task number no higher than the last one issued, and
+while that task exists it records the note: an announced edit is no newer than the task's last
 announced version, and a reminder's date is among the dates already reminded
 for, ahead or on the day.
 
