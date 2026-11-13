@@ -11,9 +11,9 @@ export const sha = (...parts: string[]) => digest(JSON.stringify(parts));
 export const short = (text: string) => digest(text).slice(0, 12);
 export const indent = (s: string, by = 6) => s.split("\n").map((l) => " ".repeat(by) + l).join("\n");
 
-/** Files below a project directory, excluding directory entries and symlinks. */
+/** Files and symbolic links below a project directory, excluding directory entries. */
 export const filesUnder = (root: string, dir: string) => !fs.existsSync(path.join(root, dir)) ? []
-  : fs.readdirSync(path.join(root, dir), { recursive: true, withFileTypes: true }).filter((e) => e.isFile())
+  : fs.readdirSync(path.join(root, dir), { recursive: true, withFileTypes: true }).filter((e) => e.isFile() || e.isSymbolicLink())
     .map((e) => path.relative(root, path.join(e.parentPath, e.name)).split(path.sep).join("/")).sort();
 
 /** Resolve a project folder before a command reads or writes its files. */

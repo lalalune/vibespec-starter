@@ -728,8 +728,12 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
   });
 
   test("verified code in a subdirectory of src is proved too", async () => {
-    const failed = await failedStages("src/deep/owed.ts", () => 'import { type Order } from "../../gen/order.ts";\n//@ pure\nexport function owed(o: Order): number {\n  //@ ensures \\result > 0\n  return o.due - o.paid;\n}\n');
+    const root = copyOfProject("src/deep/owed.ts", () => 'import { type Order } from "../../gen/order.ts";\n//@ pure\nexport function owed(o: Order): number {\n  //@ ensures \\result > 0\n  return o.due - o.paid;\n}\n');
+    const { failed } = await run(root);
     assert.deepEqual(failed, ["proof", "review"]); // and its contract is new
+    fs.renameSync(path.join(root, "src/deep/owed.ts"), path.join(root, "src/deep/source.txt"));
+    fs.symlinkSync("source.txt", path.join(root, "src/deep/owed.ts"));
+    assert.deepEqual((await run(root)).failed, ["proof", "review"]);
   });
 
   test("hand-written logic that breaks its contract is caught by the proof", async () => {
