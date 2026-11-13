@@ -11,6 +11,14 @@ export const sha = (...parts: string[]) => digest(JSON.stringify(parts));
 export const short = (text: string) => digest(text).slice(0, 12);
 export const indent = (s: string, by = 6) => s.split("\n").map((l) => " ".repeat(by) + l).join("\n");
 
+/** Resolve a project folder before a command reads or writes its files. */
+export function projectRoot(directory: string, base = process.cwd()): string {
+  const root = path.resolve(base, directory);
+  if (!fs.statSync(root, { throwIfNoEntry: false })?.isDirectory())
+    throw new Error(`${directory}: not an existing project directory`);
+  return fs.realpathSync(root);
+}
+
 /**
  * `text` with `\r\n` read as `\n`, or a refusal naming the file and line if it holds NUL or a line break other than
  * `\n`. Quint, TypeScript, Dafny and these tools do not all agree on where a line ends at `\r`, `\v`, `\f`, U+0085,

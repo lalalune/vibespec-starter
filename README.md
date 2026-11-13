@@ -16,6 +16,7 @@ model in step; you sign off.
 [![check](https://github.com/lalalune/vibespec-starter/actions/workflows/check.yml/badge.svg)](https://github.com/lalalune/vibespec-starter/actions/workflows/check.yml)
 
 [Quick start](#quick-start) ·
+[Examples](#run-and-test-examples) ·
 [Project setup](#set-up-a-new-project) ·
 [Tutorial](#tutorial) ·
 [How it works](#what-npm-run-check-checks) ·
@@ -78,7 +79,7 @@ blank.
 
 1. Click **[Use this template](https://github.com/lalalune/vibespec-starter/generate)**
    to create your own repository, then clone it.
-2. Install and check the template and examples:
+2. Install and check the template:
 
 ```bash
 npm install
@@ -108,6 +109,49 @@ through a scripted session; every `✗` is a rule refusing an event:
 ✗ {"type":"cancel"}              cancel is not allowed for a Paid order
 balance 0
 ```
+
+## Run and test examples
+
+Run these commands from the repository root after `npm install`. Pass the
+project directory, which contains `spec/` and `package.json`, rather than the
+path to an individual Markdown spec.
+
+```bash
+npm run check -- vibespec/examples/order
+npm run gen -- vibespec/examples/order
+npm --prefix vibespec/examples/order run demo
+```
+
+`check` runs the selected project's models, simulation, proofs, typechecking
+and tests. `gen` only rebuilds its generated code. Output and caches stay in
+that project; the root's blank `spec/index.md` is unchanged. Relative paths,
+quoted paths containing spaces and absolute paths all work.
+
+| Example directory | What to run |
+|---|---|
+| `vibespec/examples/order` | The checkout demo above |
+| `vibespec/examples/dashboard` | `npm run check -- vibespec/examples/dashboard` for the task model and notification tests |
+| `vibespec/examples/assistant` | `npm run check -- vibespec/examples/assistant` for the trusted-sender and payment model |
+| `vibespec/examples/fullstack` | Check it, then start the shared to-do app as shown below |
+
+```bash
+npm run check -- vibespec/examples/fullstack
+npm --prefix vibespec/examples/fullstack run start
+```
+
+Open [http://localhost:3000](http://localhost:3000) in two browser windows to
+try the shared list.
+
+To check every bundled example, use the workspace command:
+
+```bash
+npm run check --workspaces --if-present
+```
+
+The same directory argument works with `npm run accept -- <directory>`
+when you are ready to sign off on that project's reviews. To recheck while
+editing, run `npx spec watch <directory>`; stop it with Ctrl-C. Omitting the
+directory keeps each command on the current project.
 
 ## Set up a new project
 
@@ -143,12 +187,26 @@ An empty status means the project is ready for its first feature.
 
 ## Studio
 
-Run `npm run dev` to open the local Studio. Select the order, dashboard,
-assistant or full-stack example, edit its stories and rules, then publish.
-The Studio records the changes, runs checks, and can hand the sync work to
-Claude Code or Codex. Sign-off uses the same `accept` command as the terminal.
+`npm run dev` opens Studio on the root project. To open an example immediately,
+pass its short name or its directory. To work on another application, pass
+that application's directory instead:
 
-`npx spec watch` reruns checks when a spec, source file or test changes.
+```bash
+npm run dev
+npm run dev -- order
+npm run dev -- vibespec/examples/order
+npm run dev -- ../my-app --port 4310
+```
+
+Absolute directories and quoted paths containing spaces work too. Pass the
+project folder, not its `spec/` folder or `spec/index.md`. With no argument,
+Studio still opens the root project and offers the bundled examples in its
+project selector. A supplied folder is selected when Studio opens.
+
+Edit stories and rules, then publish. Studio records the changes, runs checks,
+and can hand the sync work to Claude Code or Codex. Sign-off uses the same
+`accept` command as the terminal. `npx spec watch <directory>` provides the
+same rechecking loop without Studio.
 
 ## Tutorial
 
@@ -386,19 +444,20 @@ npm run accept
 
 | Command | Does |
 |---|---|
-| `npm run dev` | Opens the local Studio for editing, checking and reviewing specs |
-| `npm run check` | Every stage below, for the template and example workspaces; ends each project with a `next:` line |
-| `npx spec check --json` | The current project's check as one JSON object ([shape](AGENTS.md#changing-the-tools)) |
-| `npm run gen` | Generates `gen/` only |
-| `npm run accept` | The user's sign-off: checks afresh and records what `review` lists, [all or nothing](AGENTS.md#review) |
+| `npm run dev -- <example-or-directory>` | Opens Studio on that project; omit the argument for the root |
+| `npm run check -- <directory>` | Every stage below for that project; omit the directory for the current project |
+| `npx spec check <directory> --json` | That project's check as one JSON object ([shape](AGENTS.md#changing-the-tools)) |
+| `npm run gen -- <directory>` | Generates that project's `gen/` only |
+| `npx spec watch <directory>` | Rechecks that project when its spec, source or tests change |
+| `npm run accept -- <directory>` | The user's sign-off: checks afresh and records what `review` lists, [all or nothing](AGENTS.md#review) |
 | `npm run accept -- unproved` | Records the listed obligations as simulated only. The user's decision |
 | `npm run new` / `npm run new -- <path>` | Fills an empty root index or creates a child [starter spec](AGENTS.md#writing-a-spec) |
-| `npx spec migrate` | Consolidates old review ledgers into `spec/lock.json`, preserving their recorded approvals |
+| `npx spec migrate <directory>` | Consolidates that project's old review ledgers into `spec/lock.json`, preserving their recorded approvals |
 | `npm run demo` | A scripted session against the verified core |
 | `npm run check:dashboard` | `check` on `vibespec/examples/dashboard` |
 | `npm run selftest` | Breaks the pipeline one way at a time and checks each break is caught |
 | `npm run build` | Compiles the tools into `dist/`, the packaged `spec` command |
-| `npx spec init` | Sets up another package; see [Using it from another package](AGENTS.md#using-it-from-another-package) |
+| `npx spec init <directory>` | Sets up an existing project folder; see [Using it from another package](AGENTS.md#using-it-from-another-package) |
 
 | Exit code | Means |
 |---|---|

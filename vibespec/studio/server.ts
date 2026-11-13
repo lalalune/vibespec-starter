@@ -8,6 +8,7 @@ import http from "node:http";
 import path from "node:path";
 import { newSpec, parseSpec, pending, readSpecs, type Result } from "../spec.ts";
 import { specFiles, specName } from "../parse.ts";
+import { projectRoot } from "../util.ts";
 import { manifestOf, nodesOf, parseDoc, promptFor, type Ids, type Manifest } from "./doc.ts";
 
 /** The `spec` command beside this file, as source or as built. */
@@ -54,6 +55,7 @@ interface Live {
 const hash = (text: string) => createHash("sha256").update(text).digest("hex").slice(0, 16);
 const studioDir = (root: string) => path.join(root, ".studio");
 const readJson = <T>(file: string): T | undefined => (fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, "utf8")) : undefined);
+const projectName = (root: string) => readJson<{ name?: string }>(path.join(root, "package.json"))?.name ?? path.basename(root);
 const writeJson = (file: string, value: unknown) => {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(value, null, 2) + "\n");
@@ -70,8 +72,7 @@ function specTexts(root: string): Record<string, string> {
 export function projectsOf(repo: string): Project[] {
   const examples = path.join(repo, "vibespec", "examples");
   const found = fs.existsSync(examples) ? fs.readdirSync(examples).sort().filter((d) => fs.existsSync(path.join(examples, d, "spec"))) : [];
-  const name = (dir: string) => readJson<{ name?: string }>(path.join(dir, "package.json"))?.name ?? path.basename(dir);
-  return [{ id: ".", name: name(repo), root: repo }, ...found.map((d) => ({ id: `vibespec/examples/${d}`, name: d, root: path.join(examples, d) }))];
+  return [{ id: ".", name: projectName(repo), root: repo }, ...found.map((d) => ({ id: `vibespec/examples/${d}`, name: d, root: path.join(examples, d) }))];
 }
 
 /** The command a person or agent runs in a project to check it: its own script if it can, else the tools of this repository. */
@@ -387,17 +388,29 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
 }
 
 
-/** `spec studio [<example>] [--port <n>]`: serve the projects under `repo`, show the example if one is named, and open the page. */
+/** `spec studio [<example-or-directory>] [--port <n>]`: select a project and open its page. */
 export async function serve(repo: string, args: string[]) {
+  repo = projectRoot(repo);
   const projects = projectsOf(repo);
-  const example = args[0] === "--port" ? undefined : args[0];
+  const target = args[0] === "--port" ? undefined : args[0];
   const at = args.indexOf("--port");
   const port = at < 0 ? undefined : Number(args[at + 1]);
   if (port !== undefined && !(Number.isInteger(port) && port >= 0 && port < 65536)) throw new Error(`--port ${args[at + 1]}: not a port`);
-  const open = example === undefined ? "." : projects.find((p) => p.id === `vibespec/examples/${example}`)?.id;
-  if (!open) throw new Error(`no example ${example}; there are: ${projects.slice(1).map((p) => p.name).join(", ") || "none"}`);
+  let open = ".";
+  if (target !== undefined) {
+    const example = projects.find((p) => p.id === `vibespec/examples/${target}`);
+    const root = projectRoot(example?.root ?? target, repo);
+    let selected = projects.find((p) => fs.realpathSync(p.root) === root);
+    if (!selected) {
+      const name = projectName(root);
+      selected = { id: root, name: projects.some((p) => p.name === name) ? `${name} (${root})` : name, root };
+      projects.push(selected);
+    }
+    open = selected.id;
+  }
   const studio = await startStudio({ projects, open, port });
   const url = `${studio.url}/?project=${encodeURIComponent(open)}`;
   console.log(`studio: ${url}`);
   if (process.stdout.isTTY) spawn(process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer" : "xdg-open", [url], { stdio: "ignore", detached: true }).on("error", () => {}).unref();
+  return studio;
 }
