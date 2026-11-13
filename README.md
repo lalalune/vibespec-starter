@@ -92,7 +92,8 @@ applications and packages beside Studio; the examples stand alone.
 
 1. Click **[Use this template](https://github.com/lalalune/vibestack/generate)**
    to create your own repository, then clone it and enter its directory.
-2. Install the toolchain and open your project in Studio:
+2. Install the toolchain and start everything: Studio, and every app's own
+   development server:
 
    ```bash
    pnpm install
@@ -111,9 +112,9 @@ applications and packages beside Studio; the examples stand alone.
 ## Studio
 
 ```bash
-pnpm dev                              # this project
-pnpm dev apps/web                     # the starter application
-pnpm dev vibestack/examples/order     # an example, or any directory with spec/
+pnpm dev                                # Studio on this project, and every app's dev server
+pnpm studio apps/web                    # Studio alone, on one project
+pnpm studio vibestack/examples/order    # an example, or any directory with spec/
 ```
 
 Studio opens in the browser and is where you build the application: you
@@ -132,11 +133,11 @@ checks say where the project stands, and the application runs beside it.
 
 Studio is itself a Vibestack app in `vibestack/studio/`, built like any
 other: its rules in `spec/`, its server in VibeLang (`src/server.vibe`) and
-its page in React (`src/page/`). `pnpm dev` rebuilds the page when its
+its page in React (`src/page/`). `pnpm studio` rebuilds the page when its
 source changed. To work on Studio:
 
 ```bash
-pnpm dev vibestack/studio                     # open Studio on its own spec
+pnpm studio vibestack/studio                  # open Studio on its own spec
 pnpm --filter vibestack-studio check          # its specs, proofs and journeys
 pnpm --filter vibestack-studio test           # its journeys only, Playwright included
 ```
@@ -233,7 +234,8 @@ current one. Installed as a package, use `pnpm exec spec <command> [<dir>]`.
 
 | Command | Does |
 |---|---|
-| `pnpm dev [<dir>]` | Opens Studio |
+| `pnpm dev` | Starts Studio on this project and every workspace package's `dev` script, together |
+| `pnpm studio [<dir>]` | Opens Studio alone, on one project |
 | `pnpm check [<dir>] [--json]` | Checks spec, source and tests; ends with a `next:` line ([JSON shape](AGENTS.md#changing-the-tools)) |
 | `pnpm quick` | Types, lint and tests of what changed |
 | `pnpm verify` | Everything CI runs for `main`, in every package and example |
@@ -258,10 +260,10 @@ current one. Installed as a package, use `pnpm exec spec <command> [<dir>]`.
 
 | Project | What it covers | Open in Studio |
 |---|---|---|
-| [Order checkout](vibestack/examples/order/README.md) | Guards, payments, cancellation and a proved event ledger | `pnpm dev vibestack/examples/order` |
-| [Team dashboard](vibestack/examples/dashboard/README.md) | Shared spreadsheets, chat notifications and a project registry | `pnpm dev vibestack/examples/dashboard` |
-| [Shared to-do list](vibestack/examples/fullstack/README.md) | HTTP server, browser client and two tabs over an unreliable network | `pnpm dev vibestack/examples/fullstack` |
-| [Assistant](vibestack/examples/assistant/README.md) | Trusted senders, bounded turns, late replies, confirmation before payment and a secret card | `pnpm dev vibestack/examples/assistant` |
+| [Order checkout](vibestack/examples/order/README.md) | Guards, payments, cancellation and a proved event ledger | `pnpm studio vibestack/examples/order` |
+| [Team dashboard](vibestack/examples/dashboard/README.md) | Shared spreadsheets, chat notifications and a project registry | `pnpm studio vibestack/examples/dashboard` |
+| [Shared to-do list](vibestack/examples/fullstack/README.md) | HTTP server, browser client and two tabs over an unreliable network | `pnpm studio vibestack/examples/fullstack` |
+| [Assistant](vibestack/examples/assistant/README.md) | Trusted senders, bounded turns, late replies, confirmation before payment and a secret card | `pnpm studio vibestack/examples/assistant` |
 
 ## Contributing
 
