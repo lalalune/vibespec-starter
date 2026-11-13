@@ -15,8 +15,11 @@ what the last check found.
 ### A session
 
 `waiting` is how many published changes the agent has not synced yet: the
-length of the manifest. The verdict is what the last finished check found,
-and is unknown while nothing has been checked since the specs last changed.
+length of the manifest. The verdict is what the last finished check found.
+It is unknown while a check runs and once the specs change, until a check
+finishes. A check that was already running when they changed reports on what
+it read; a sign-off checks again before it records anything (`pnpm accept`),
+so nothing unchecked is signed off.
 
 ```quint
 type Job = Idle | Checking | Syncing | SigningOff
@@ -48,6 +51,8 @@ pure val changesValues = Set(0, 1, 3)
 pure def edit(s: Session): Session = { ...s, unpublished: true }
 pure def canDiscard(s: Session): bool = s.unpublished
 pure def discard(s: Session): Session = { ...s, unpublished: false }
+pure def stepEditsLeaveOnlyByPublishOrDiscard(before: Session, via: str, after: Session): bool =
+  (before.unpublished and not(after.unpublished)) implies (via == "publish" or via == "discard")
 ```
 
 ### Only edits can be published, and not while a job runs
@@ -66,6 +71,12 @@ pure def publish(s: Session, changes: int): Session =
 ```quint
 pure def stepPublishingChecks(before: Session, via: str, after: Session): bool =
   via == "publish" implies (after.job == Checking and not(after.unpublished))
+```
+
+### Edits can wait in the page while a check runs
+
+```quint
+pure def sometimesEditingWhileChecking(s: Session): bool = s.unpublished and s.job == Checking
 ```
 
 ### A change to the specs on disk makes the last verdict unknown
@@ -101,7 +112,7 @@ pure def synced(s: Session, ok: bool): Session =
   else { ...s, job: Idle, verdict: Unknown }
 ```
 
-### What is waiting can be marked as synced by hand
+### What is waiting can be marked as synced by hand, when no job runs
 
 For a sync done outside the studio.
 
@@ -122,12 +133,15 @@ pure def stepWaitingGoesDownOnlyBySyncOrUndo(before: Session, via: str, after: S
 
 ### A studio that starts again picks up what was waiting
 
+It does so once, as a fresh session: with no job running and nothing yet
+waiting.
+
 ```quint
 pure def canResume(s: Session, changes: int): bool = s.job == Idle and s.waiting == 0 and changes >= 0
 pure def resume(s: Session, changes: int): Session = { ...s, waiting: changes }
 ```
 
-### A sync can be under way
+### A sync of published changes can be under way
 
 ```quint
 pure def sometimesSyncing(s: Session): bool = s.job == Syncing and s.waiting > 0
@@ -169,6 +183,9 @@ pure def alwaysNoVerdictWhileChecking(s: Session): bool = s.job == Checking impl
 ```
 
 ### A job starts only when none is running
+
+Except that one job's end starts the next: a sync that ends well, and a
+sign-off, each start a check.
 
 ```quint
 pure def stepOneJobAtATime(before: Session, via: str, after: Session): bool =

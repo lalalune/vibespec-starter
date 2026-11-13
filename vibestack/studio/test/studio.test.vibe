@@ -189,7 +189,7 @@ it.live("new and nested specs are published, deleted specs leave their ledger fo
     { file: "spec/nested/child/index.md", base: null, text: "# Child\n" },
   ], origins: [] })
   const nested = try settled()
-  // spec/index.md, "What is waiting can be marked as synced by hand"
+  // spec/index.md, "What is waiting can be marked as synced by hand, when no job runs"
   const marked = [(try post("synced", {})).status, (try project()).session.waiting, (try post("synced", {})).status]
   try check(() => {
     assert.equal(linked.status, 200, linked.text)
