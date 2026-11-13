@@ -55,6 +55,37 @@ Every project built here uses this, and nothing beside it:
 [docs/architecture.md](docs/architecture.md) maps what is generated from what,
 which test is for what, and what each green result means.
 
+### One spec tree
+
+The repository has one spec tree, at its root, and one check of it.
+
+| Path | Is |
+|---|---|
+| `spec/index.md` | the product's requirements: an introduction, and a link to each area |
+| `spec/<name>/` | the requirements of the package `apps/<name>` or `packages/<name>`, its *owner*, when there is one with no `spec/` of its own. Nothing else says so: the name does |
+| `spec/<name>/` with no such package | an area of the root project; its modules stay in the root's `gen/` |
+| a package with its own `spec/` | a project of its own, checked on its own: Studio, each example |
+
+`pnpm check` at the root parses, simulates, proves and reviews the whole tree
+once, against the one ledger `spec/lock.json`, and does for each owner what
+it does for the root's own `src/` and `test/`:
+
+- **`gen/`.** The modules of the owner's specs, and of every spec they
+  import, are also written to `<owner>/gen/` under the names they have in the
+  root's: `spec/app/index.md` is `apps/app/gen/app.ts`, with
+  `app.effect.vibe` and `app.conformance.ts`; `spec/app/cart.md` is
+  `app__cart.ts`; a library `spec/shared/money.md` it imports is
+  `shared__money.ts`. A package imports only from its own `gen/`. `pnpm gen`
+  and `pnpm install` write it too.
+- **Stages.** `types`, `tests` and `traces` run in the owner's directory, on
+  its `tsconfig.json`, `test` script, `test/traces/` and `driver:` scripts;
+  its `//@` files under `src/` are proved and their contracts reviewed. Each
+  result names the package: `apps/app: pass`.
+- **Citations** in an owner's code are written from the root, as everywhere:
+  `// spec/app/index.md, "A rule"`.
+
+An owner has no `check`, `gen` or `accept` script: the root's are its own.
+
 A package states what it offers in `exports`; import a package by name, never
 by a path into its `src/`. Domain code does not import React, and a UI package
 holds no business rules. A shared type lives with the contract that owns it.
@@ -66,7 +97,7 @@ holds no business rules. A shared type lives with the contract that owns it.
 | `pnpm verify` | what CI runs: build, types, tests, browser tests, every `check`, lint, Knip, Madge, the examples |
 | `pnpm all <task>…` | one or more kinds of task in every package: `pnpm all build typecheck test` |
 | `pnpm test:browser` | the browser tests |
-| `pnpm test:models` | `check` in every package with a `spec/`, and in the examples |
+| `pnpm test:models` | every `check`: the root's, which is its owners' too, Studio's, and the examples' |
 | `pnpm lint` | ESLint and Stylelint (`pnpm lint:js`, `pnpm lint:css` for one) |
 | `pnpm analyze` | Knip (unused files, exports, dependencies) and Madge (import cycles) |
 | `pnpm check`, `pnpm gen`, `pnpm build`, `pnpm typecheck`, `pnpm test` | this package's own, here as in every package: at the root, the root project and the tools |
@@ -79,8 +110,10 @@ finer cache in `.spec-cache/`, keyed on the prover's versions too, and runs
 the application again each time.
 
 A package joins by having a script named `gen`, `build`, `typecheck`, `test`,
-`test:browser` or `check`. Its other tasks wait for its `gen`, and its `check`
-for all of them, since `check` rewrites `gen/`. `pnpm lint:js` on its own
+`test:browser` or `check`. Its other tasks wait for its `gen` and the root's,
+and its `check` for all of them, since `check` rewrites `gen/`. The root's
+`check` rewrites its owners' `gen/` too, so it waits for their tasks: name
+each owner's in `//#check` of `turbo.json`, as `@repo/app`'s are. `pnpm lint:js` on its own
 needs what `gen` and `typecheck` write (`gen/`, `.vibe/declarations`); `pnpm
 lint` runs them first.
 
@@ -185,14 +218,16 @@ How `pnpm check` runs them:
   TypeScript, names the story or rule it serves by its heading, on one line:
   `// spec/index.md, "A payment never exceeds the balance"`, or
   `// spec/index.md, "Story: Check out"` for a story; several may share a line,
-  separated by `;`. `check` fails on a
+  separated by `;`. The path is the spec's from the root of the spec tree,
+  in an owner's code too: `// spec/app/index.md, "…"`. `check` fails on a
   citation whose heading the spec no longer has, so a renamed or removed rule
   brings its tests up for review.
-- **Monorepos.** Each package with a `spec/` runs its own `check` and its own
-  tests; run them all from the root with the workspace tool
-  (`pnpm test:models`; one package with `pnpm --filter <name> check`).
-  A journey that crosses packages is tested in the package that owns it,
-  usually the app.
+- **Monorepos.** The root's `check` runs the tests of the root and of each
+  owner ("One spec tree"), each in its own directory; a package with its own
+  `spec/` runs its own `check` and tests (`pnpm test:models` for all;
+  `pnpm --filter <name> check` for one). A test cannot start a check of the
+  project that is running it. A journey that crosses packages is tested in
+  the package that owns it, usually the app.
 
 ## Definition of done
 
@@ -211,8 +246,8 @@ loop is the [`sync` skill](.claude/skills/sync/SKILL.md); the stages of
 
 In the vibestack repository, "the order example" is
 `vibestack/examples/order/spec/index.md` and "the tracker example" is
-`vibestack/examples/dashboard/spec/tracker.md`. The root `spec/index.md` is blank, ready
-for a new application.
+`vibestack/examples/dashboard/spec/tracker.md`. The root `spec/index.md` links to
+`spec/app/index.md`, blank and ready for the application in `apps/app`.
 
 ## Stages of `pnpm check`
 
@@ -251,7 +286,10 @@ slashes replaced by `__`: `spec/index.md` becomes `gen/index.ts`,
 `spec/billing/index.md` becomes `gen/billing.ts`, and
 `spec/billing/payments.md` becomes `gen/billing__payments.ts`. Flat files
 remain supported. Two paths cannot name the same module, so use either
-`spec/billing.md` or `spec/billing/index.md`.
+`spec/billing.md` or `spec/billing/index.md`. In a monorepo, `spec/billing/`
+belongs to the package `apps/billing` or `packages/billing`, which gets these
+modules in its own `gen/` under the same names
+([One spec tree](#one-spec-tree)).
 
 ````markdown
 # Order checkout                         <- title, free text
@@ -557,7 +595,7 @@ is in the [`sync` skill](.claude/skills/sync/SKILL.md).
 | document | `spec/lock.json`, `specs[<path>]["@document"]` | title, introduction and links before the first story, whitespace collapsed | `document changed` |
 | story | `spec/lock.json`, `specs[<path>]["## <title>"]` | its text, whitespace collapsed | `story has no rules`, `new story`, `story changed`, `removed or renamed` |
 | rule | `spec/lock.json`, `specs[<path>][<story> / <heading>]` | 1. its prose, whitespace collapsed<br>2. its Quint<br>3. the Quint of every rule it relies on | `not formalized` (no Quint), `new`, `prose changed`, `model changed`, `model changed through <names> (<rule>)`, `prose and model both changed`, `removed or renamed` |
-| contract | `spec/lock.json`, `contracts["src/<path>.ts"]` | its `//@` lines and the declarations they belong to | `new contract`, `contract changed`, `contract removed` |
+| contract | `spec/lock.json`, `contracts["src/<path>.ts"]`, or `contracts["apps/<name>/src/<path>.ts"]` in an owner | its `//@` lines and the declarations they belong to | `new contract`, `contract changed`, `contract removed` |
 
 ```mermaid
 flowchart LR
@@ -775,6 +813,11 @@ Three ways to run the real application against a state machine's spec:
 | `test/traces/<name>.jsonl` | recorded lines: `{state}` starts, `{event, by?, state?, out?}` steps; at least one state observed | `check`, `traces` |
 | `driver:<name>` script | a program that answers each `{}` (reset) or `{event, by?}` line with one `{state, out?}` line | `check`, `traces`, on the simulated traces |
 
+`<name>` is the module's name in the root's `gen/`, and the paths are the
+package's own: an owner of `spec/app/cart.md` imports
+`gen/app__cart.conformance.ts`, records `test/traces/app__cart.jsonl` and
+names its script `driver:app__cart`, all in `apps/app`.
+
 A `Driver` has `reset`, `dispatch` (returns `"accepted"` or `"refused"`),
 `observe` and, for a spec that emits effects, `observeOutput`.
 
@@ -960,8 +1003,9 @@ event log, write TypeScript under `src/` with
 `vibestack/examples/order/src/ledger.ts` is the worked example.
 
 - Any `.ts` file under `src/` that contains `//@` is proved by
-  `pnpm check`, as the unit `src-<path>`. Its `//@` lines are its
-  contract, reviewed like a rule (see [Review](#review)).
+  `pnpm check`, as the unit `src-<path>`; under an owner's `src/`, as
+  `apps-<name>-src-<path>`, against the module in the owner's `gen/`. Its
+  `//@` lines are its contract, reviewed like a rule (see [Review](#review)).
 - Such a file may import one generated module and nothing else, and only by
   name: no `as`, default or namespace import. Its annotations may mention
   anything that module defines (`inv`, guards, rules), imported or not.
@@ -1028,6 +1072,9 @@ toolchain.
   order and proves each against the *definitions* of what it imports, not
   their proofs, so the cost of a proof grows with the spec, not with
   everything beneath it. Its proof file may call what their units proved.
+- **One tree for every package.** Each application or shared package keeps
+  its specs in `spec/<its name>/` and its code in its own directory; the
+  root's `check` covers them all ([One spec tree](#one-spec-tree)).
 - **Only what changed is checked again.** Each simulation result, a failing
   one too (its seed is fixed), and each passing proof result is kept in
   `.spec-cache/` under a fingerprint of the spec's Quint without its comments,
