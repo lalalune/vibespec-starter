@@ -518,7 +518,8 @@ export function init(root: string, warn: (message: string) => void = (message) =
     const added = Object.entries(scripts).filter(([name]) => !json.scripts?.[name] || (name === "test" && /no test specified/.test(json.scripts.test)));
     if (added.length) json.scripts = { ...json.scripts, ...Object.fromEntries(added) };
     // The VibeLang toolchain at the versions these tools are tested with: its packages move together, and with one Effect.
-    const pins: Record<string, string> = JSON.parse(fs.readFileSync(path.join(pkg, "package.json"), "utf8")).devDependencies;
+    const own = JSON.parse(fs.readFileSync(path.join(pkg, "package.json"), "utf8"));
+    const pins: Record<string, string> = { ...own.dependencies, ...own.devDependencies };
     const has = { ...json.dependencies, ...json.devDependencies };
     const lacking = (names: string[]) => Object.fromEntries(names.filter((n) => !(n in has)).map((n) => [n, pins[n]]));
     const [runtime, tooling] = [lacking(VIBELANG.dependencies), lacking(VIBELANG.devDependencies)];

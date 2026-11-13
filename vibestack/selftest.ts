@@ -893,7 +893,7 @@ export effect function filled(sku: string, qty: number) {
 
   test("init sets a package up for a VibeLang shell: compiler and test runner configuration, scripts, the pinned toolchain with one Effect; what the package already has is kept, and a second run adds nothing", () => {
     const json = (root: string, file: string) => JSON.parse(read(file, root));
-    const pins: Record<string, string> = json(project, "package.json").devDependencies;
+    const pins: Record<string, string> = { ...json(project, "package.json").dependencies, ...json(project, "package.json").devDependencies };
     const pinned = (...names: string[]) => Object.fromEntries(names.map((n) => [n, pins[n]]));
     const [runtime, tooling] = [["effect", "@effect/platform-node", "vibelang-runtime"], ["vibelang", "vibelang-vite", "vite", "vitest", "@effect/vitest", "@types/node"]];
     // VibeLang's packages move together, and with one version of Effect: each is pinned exactly.
@@ -1224,7 +1224,9 @@ export effect function filled(sku: string, qty: number) {
 
   test("a rebuilt packaged command can generate a project from the repository root", async () => {
     const root = oneRule("packaged", "A packaged value", "pure val answer = 42");
-    const copy = toolchain(scratch({ "package.json": read("package.json"), "tsconfig.build.json": read("tsconfig.build.json") }), "quint", "lsc", "tsc");
+    const copy = toolchain(scratch({ "package.json": read("package.json"), "tsconfig.build.json": read("tsconfig.build.json") }), "quint", "lsc", "vibelang");
+    // Studio's page is built from the workspace packages it shares with every interface.
+    fs.cpSync(path.join(project, "packages"), path.join(copy, "packages"), { recursive: true, verbatimSymlinks: true });
     const built = await exec(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "build"], copy);
     assert.equal(built.status, 0, built.stdout + built.stderr);
     const script = path.join(copy, "dist/spec.js");

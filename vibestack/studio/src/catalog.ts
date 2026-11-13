@@ -1,5 +1,5 @@
-// The component catalog `vibestack/stories/cli.ts gen` writes (vibestack/stories/meta.ts declares the same shape),
-// as the server (project.ts) collects it and the Components view (page/Components.tsx) shows it.
+// A component catalog, as `vibestack/stories/cli.ts gen` writes it (vibestack/stories/meta.ts): read by ./project.ts,
+// shown by ./page/Components.tsx.
 export interface ComponentIndex {
   version: 1;
   storybook: { url?: string };

@@ -5,7 +5,7 @@ import { useState } from "react";
 import { Input, cn } from "@repo/ui";
 import { S, select } from "./studio.ts";
 import { Code } from "./text.tsx";
-import type { ComponentIndex, Component, Prop } from "../catalog.ts";
+import type { Component, ComponentIndex, Prop } from "../catalog.ts";
 
 type Arg = string | number | boolean;
 
