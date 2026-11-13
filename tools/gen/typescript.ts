@@ -20,8 +20,11 @@ export interface Source {
 
 export function typescript({ header, typedefs, vals, funs, sig, typeOf, doc, local: L }: Source, roles: Roles, types: Types, print: Printer, helper: (which: string) => string): string {
   const { tsType, declaration, wellFormed, copy } = types;
-  const { transitions, always, steps, laws, sender } = roles;
+  const { transitions, always, steps, laws, sender, output } = roles;
   const state = roles.stateType && tsType(roles.stateType);
+  // Where some transition has output, `step` returns it beside the state, and a transition without output outputs nothing.
+  const nothing = output && `([] as ${tsType(output.out)})`;
+  const outputs = (s: string) => (output ? `{ state: ${s}, out: ${nothing} }` : s);
   // Who sent an event is never part of it: the program passes it to `enabled` and `step` from what it trusts.
   const carried = (t: Transition) => t.params.filter((p) => p.name !== SENDER);
   const by = sender ? `, ${SENDER}: ${tsType(sender)}` : "";
@@ -47,9 +50,10 @@ export function typescript({ header, typedefs, vals, funs, sig, typeOf, doc, loc
     // One `ensures` per rule, so a failed proof names the rule that the transition breaks. The transition has no
     // precondition: its guarantees are conditional instead, so that a guard may itself look at the transition's result.
     const given = t && `(${L("inv")}(${params[0].name})${t.guard ? ` && ${L(t.guard)}(${[params[0].name, ...t.guardParams].join(", ")})` : ""}) ==> `;
+    const after = t?.emits ? "\\result.state" : "\\result";
     const contract = t ? [
-      ...always.map((a) => `  //@ ensures ${given}${L(a)}(\\result)`),
-      ...steps.map((r) => `  //@ ensures ${given}${L(r.name)}(${[params[0].name, ...(r.via ? [JSON.stringify(t.name)] : []), "\\result"].join(", ")})`),
+      ...always.map((a) => `  //@ ensures ${given}${L(a)}(${after})`),
+      ...steps.map((r) => `  //@ ensures ${given}${L(r.name)}(${[params[0].name, ...(r.via ? [JSON.stringify(t.name)] : []), after, ...(r.out ? [t.emits ? "\\result.out" : "[]"] : [])].join(", ")})`),
     ] : laws.some((l) => l.name === d.name) ? [`  //@ ensures \\result === true`] : [];
     out.push(
       ``,
@@ -76,13 +80,13 @@ export function typescript({ header, typedefs, vals, funs, sig, typeOf, doc, loc
     `  return false;`,
     `}`,
     ``,
-    `/** Apply an event${sender ? ` from \`${SENDER}\`, whom the program knows from what it trusts, never from the event` : ""}. An event the rules do not allow leaves the state unchanged. */`,
+    `/** Apply an event${sender ? ` from \`${SENDER}\`, whom the program knows from what it trusts, never from the event` : ""}. An event the rules do not allow leaves the state unchanged${output ? "; the result holds the state and what the event output" : ""}. */`,
     `//@ pure`,
-    `export function ${L("step")}(current: ${state}, event: ${L("Event")}${by}): ${state} {`,
+    `export function ${L("step")}(current: ${state}, event: ${L("Event")}${by}): ${output ? tsType(output.type) : state} {`,
     `  //@ requires ${L("inv")}(current)`,
-    `  //@ ensures ${L("inv")}(\\result)`,
-    ...transitions.map((t) => `  if (${when(t)}${t.guard ? ` && ${admits(t)}` : ""}) return ${applies(t)};`),
-    `  return current;`,
+    `  //@ ensures ${L("inv")}(\\result${output ? ".state" : ""})`,
+    ...transitions.map((t) => `  if (${when(t)}${t.guard ? ` && ${admits(t)}` : ""}) return ${t.emits ? applies(t) : outputs(applies(t))};`),
+    `  return ${outputs("current")};`,
     `}`,
     ``,
     `/**`,
