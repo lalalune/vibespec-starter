@@ -1,8 +1,11 @@
 // The Components view: every React component the story generator found, its generated stories as live previews,
 // and its links to the spec model, source and design document. It reads the catalog `vibestack/stories/cli.ts gen`
 // writes (vibestack/stories/meta.ts declares the same shape), as the server collects it from the project.
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Effect, ManagedRuntime, Stream } from "effect";
 import { Input, cn } from "@repo/ui";
+import { Machine, machine } from "../../gen/components.effect.vibe";
+import { enabled, initial, type Event } from "../../gen/components.ts";
 import { S, select } from "./studio.ts";
 import { Code } from "./text.tsx";
 import type { Component, ComponentIndex, Prop } from "../catalog.ts";
@@ -45,13 +48,30 @@ const Link = ({ onClick, href, children }: { onClick?: () => void; href?: string
 /** A component's model or design document, opened in the Specs view if it is one of the project's specs. */
 const open = (path: string) => { if (S.specs.some((s) => s.file === path)) select(path); };
 
+/** The generated catalog's selected preview. @model spec/components.md */
 export function Components({ index }: { index: ComponentIndex }) {
   const storybook = index.storybook.url || STORYBOOK;
+  const sourceUrl = (file: string) => encodeURI(`vscode://file/${S.snap!.project.root.replaceAll("\\", "/").replace(/^\/+/, "")}/${file}`);
   const [query, setQuery] = useState("");
-  const [component, setComponent] = useState(index.components[0]);
-  const [story, setStory] = useState(component?.stories[0]);
+  const runtimeRef = useRef<ManagedRuntime.ManagedRuntime<Machine, never> | null>(null);
+  const [selection, setSelection] = useState(initial);
   const [edits, setEdits] = useState<Record<string, Arg>>({});
-  const choose = (c: Component, s = c.stories[0]) => { setComponent(c); setStory(s); setEdits({}); };
+  const catalogKey = JSON.stringify(index.components.map((c) => [c.id, c.stories.map((s) => s.id)]));
+  const send = useCallback((event: Event) => runtimeRef.current?.runFork(Effect.flatMap(Effect.service(Machine), (catalog) => catalog.send(event))), []);
+  useEffect(() => {
+    const active = ManagedRuntime.make(machine());
+    runtimeRef.current = active;
+    const updates = active.runFork(Effect.flatMap(Effect.service(Machine), (catalog) => Stream.runForEach(catalog.changes, (next) => Effect.sync(() => { setSelection(next); setEdits({}); }))));
+    return () => { runtimeRef.current = null; updates.interruptUnsafe(); void active.dispose(); };
+  }, []);
+  useEffect(() => {
+    const entries = JSON.parse(catalogKey) as [string, string[]][];
+    send({ type: "load", counts: entries.map(([, stories]) => stories.length), key: catalogKey });
+  }, [catalogKey, send]);
+  const component = index.components[selection.component];
+  const story = component?.stories[selection.story];
+  // spec/components.md, "Choosing a component selects its first story and clears prop overrides"; spec/components.md, "Choosing a story stays within its component and clears prop overrides"
+  const choose = send;
   const found = matching(index, query);
 
   const control = (p: Prop) => {
@@ -65,7 +85,7 @@ export function Components({ index }: { index: ComponentIndex }) {
       </label>);
     if (p.kind === "number" || p.kind === "string") return (
       <label key={p.name} className="flex items-center gap-2">{p.name}
-        <input className={field} type={p.kind === "number" ? "number" : "text"} defaultValue={isArg(current) ? String(current) : ""}
+        <input className={field} type={p.kind === "number" ? "number" : "text"} value={isArg(current) ? String(current) : ""}
           onChange={(e) => set(p.kind === "number" ? Number(e.target.value) : e.target.value)} />
       </label>);
     return null;
@@ -79,7 +99,7 @@ export function Components({ index }: { index: ComponentIndex }) {
           <div key={pkg} className="flex flex-col">
             <h3 className="mt-3 mb-1 text-xs font-medium text-muted-foreground">{pkg}</h3>
             {found.filter((c) => c.package === pkg).map((c) => (
-              <button key={c.id} type="button" aria-current={c === component} onClick={() => choose(c)}
+              <button key={c.id} type="button" aria-current={c === component} disabled={!enabled(selection, { type: "chooseComponent", at: index.components.indexOf(c) })} onClick={() => choose({ type: "chooseComponent", at: index.components.indexOf(c) })}
                 className={cn("rounded-md px-2 py-1 text-left hover:bg-accent", c === component && "bg-accent text-primary")}>{c.name}</button>
             ))}
           </div>
@@ -92,8 +112,8 @@ export function Components({ index }: { index: ComponentIndex }) {
           {component.diagnostics.map((d) => <p key={d} role="alert" className="text-destructive">{d}</p>)}
           {story && <iframe title={`${component.name}: ${story.name}`} src={previewUrl(storybook, story.id, edits)} className="h-70 w-full rounded-lg border border-border bg-card" />}
           <div role="group" aria-label="Stories" className="flex flex-wrap gap-x-4 gap-y-2">
-            {component.stories.map((s) => (
-              <button key={s.id} type="button" aria-pressed={s === story} onClick={() => choose(component, s)}
+            {component.stories.map((s, at) => (
+              <button key={s.id} type="button" aria-pressed={s === story} disabled={!enabled(selection, { type: "chooseStory", at })} onClick={() => choose({ type: "chooseStory", at })}
                 className={cn("rounded-md px-2 py-1 hover:bg-accent", s === story && "bg-accent text-primary")}>{s.name}</button>
             ))}
           </div>
@@ -113,8 +133,8 @@ export function Components({ index }: { index: ComponentIndex }) {
           {component.model && <Code>{`${component.model.state}\n${component.model.events.join("  ")}`}</Code>}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
             {component.model && <Link onClick={() => open(component.model!.spec)}>{component.model.spec}</Link>}
-            {(component.design ?? []).map((d) => <Link key={d} onClick={() => open(d)}>{d}</Link>)}
-            <Link href={`vscode://file/${S.snap?.project.root}/${component.source.file}:${component.source.line}`}>{`${component.source.file}:${component.source.line}`}</Link>
+            {(component.design ?? []).map((d) => <Link key={d} href={sourceUrl(d.split("#")[0])}>{d}</Link>)}
+            <Link href={sourceUrl(`${component.source.file}:${component.source.line}`)}>{`${component.source.file}:${component.source.line}`}</Link>
           </div>
         </section>
       ) : <p className="text-muted-foreground">No components yet</p>}

@@ -6,8 +6,8 @@ import type { Json, Types } from "./types.ts";
 
 /** The names a module defines beside the spec's, and the locals of what it defines (TAKEN in gen.ts). */
 export const EMITTED = ["Event", "opaque", "inv", "enabled", "step", "parseEvent", "parseState", "parseSender", "initialHolds", "current", "event", "raw"];
-/** Patterns for the helpers a module may carry for itself, each named `<helper>_<module>`. */
-export const HELPERS = ["quotient", "remainder", "exact", "equal", "lookup\\d+"];
+/** Prefixes reserved for runtime helpers and local bindings. */
+export const HELPERS = ["quotient", "remainder", "exact", "equal", "lookup\\d+", "snapshot", "local"];
 
 export interface Source {
   /** The line that opens the file, and one import line per spec this one imports. */
@@ -96,7 +96,7 @@ export function typescript({ header, typedefs, vals, funs, sig, typeOf, doc, loc
       `${doc(d.name)}//@ pure`,
       `export function ${L(d.name)}(${params.map((p) => `${p.name}: ${tsType(p.type)}`).join(", ")}): ${tsType(result)} {`,
       ...contract,
-      ...print.body(d.expr.expr).map((l) => `  ${l}`),
+      ...print.body(d.expr.expr, d.expr.params).map((l) => `  ${l}`),
       `}`,
     );
   }

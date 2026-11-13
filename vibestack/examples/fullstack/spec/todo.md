@@ -100,30 +100,16 @@ pure def applyOp(todos: List[Todo], op: Op): List[Todo] =
 
 ### Two lists of to-dos are the same when they agree position by position
 
-`sameTodo` compares each field explicitly. `sameTodos` compares the list
-lengths and the to-do at each position.
+Structural equality compares every field of the to-dos at each position.
 
 ```quint
-pure def sameTodo(a: Todo, b: Todo): bool =
-  a.id == b.id and a.title == b.title and a.done == b.done and a.deleted == b.deleted
-
-type Walk = { ok: bool, i: int }
-
-pure def sameAt(ys: List[Todo], i: int, t: Todo): bool =
-  i >= 0 and i < ys.length() and sameTodo(ys.nth(i), t)
-
-pure val start: Walk = { ok: true, i: 0 }
-
-pure def sameTodos(xs: List[Todo], ys: List[Todo]): bool =
-  xs.length() == ys.length()
-    and xs.foldl(start, (acc, t) => { ok: acc.ok and sameAt(ys, acc.i, t), i: acc.i + 1 }).ok
+pure def sameTodos(xs: List[Todo], ys: List[Todo]): bool = xs == ys
 ```
 
 ### Two edits are the same when they agree field by field
 
 ```quint
-pure def sameOp(a: Op, b: Op): bool =
-  a.kind == b.kind and a.id == b.id and a.title == b.title and a.done == b.done
+pure def sameOp(a: Op, b: Op): bool = a == b
 ```
 
 ## Story: Edits survive being sent twice
@@ -135,7 +121,7 @@ pure def sameOp(a: Op, b: Op): bool =
 
 ```quint
 pure def lawEditingTwiceIsEditingOnce(t: Todo, change: Op): bool =
-  sameTodo(edit(edit(t, change), change), edit(t, change))
+  edit(edit(t, change), change) == edit(t, change)
 ```
 
 ### Creating a to-do twice adds it once

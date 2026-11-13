@@ -1,7 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { assert, it } from "@effect/vitest"
 import { Machine } from "../gen/assistant.effect.vibe"
-import { hear, remember } from "../src/agent.vibe"
+import { NoAnswer, World, deliver, hear, remember } from "../src/agent.vibe"
 import { durable } from "../src/durable.vibe"
 import { type Scene, scriptedModel, scriptedWorld } from "../src/scripted.vibe"
 
@@ -14,7 +14,15 @@ effect function reopened(file: string) {
 it.effect("take a turn, look up the bill and pay it once, whatever the model says, and survive a restart", () => scoped(effect {
   const fs = try FileSystem.FileSystem
   const file = `${try fs.makeTempDirectoryScoped()}/assistant.json`
-  const scene: Scene = { page: "Lookalike", bills: [], done: [] }
+  const unrelated = `${file}.unrelated`
+  try fs.writeFileString(unrelated, "keep")
+  try fs.symlink(unrelated, `${file}.tmp`)
+  const scene: Scene = { page: "Lookalike", bills: [], done: [], receipts: new Set() }
+  // spec/assistant.md, "Who sends an event": a payload cannot claim to be the person.
+  const spoofed = try effect {
+    provide durable(file) { return try flip((try Machine).receive({ type: "begin", by: "Person" }, "Agent")) }
+  }
+  try Effect.try(() => assert.strictEqual(spoofed._tag, "Rejected"))
   // The first crash comes while request 1 waits for a biller that has not answered.
   const waiting = try effect {
     provide durable(file), scriptedWorld(scene), scriptedModel(["Lookup"]) { return (try hear("begin")).state }
@@ -31,6 +39,13 @@ it.effect("take a turn, look up the bill and pay it once, whatever the model say
   provide durable(file), scriptedWorld(scene), scriptedModel(answers) {
     // spec/assistant.md, "Only the person saves a card"
     try remember("4242")
+    const borrowed = try (try Machine).get()
+    borrowed.card = "changed outside the machine"
+    const retained = try (try Machine).get()
+    const saved = try fs.stat(file)
+    const untouched = try fs.readFileString(unrelated)
+    // spec/assistant.md, "Story: Keep my details safe": only the owner can read the saved card, and saving cannot follow an unrelated link.
+    try Effect.try(() => assert.deepStrictEqual([saved.mode & 0o777, untouched, retained.card], [0o600, "keep", "4242"]))
     // spec/assistant.md, "Only the person confirms a payment, and only while asked": nothing is asked yet.
     const early = try flip(hear("confirm"))
     // spec/assistant.md, "Only the world replies, and only to the request still waiting": the biller's 0 is refused, its 5 taken.
@@ -78,21 +93,73 @@ it.effect("take a turn, look up the bill and pay it once, whatever the model say
   // The second crash: the machine above is gone, and only the file is left.
   // spec/assistant.md, "A restart loses what was in memory and keeps what was saved"; spec/assistant.md, "A bill is charged once, and only when the person confirms"
   const restored = try reopened(file)
+  // spec/assistant.md, "Story: Deliver promised effects after a restart": crash after persisting the payment, then lose the outside service's receipt.
+  const pendingFile = `${file}.pending`
+  const payment: Scene = { page: "Genuine", bills: [], done: [], receipts: new Set() }
+  provide durable(pendingFile) {
+    const assistant = try Machine
+    try assistant.send({ type: "begin" }, "Person")
+    try assistant.send({ type: "choose", choice: "Lookup" }, "Agent")
+    try assistant.send({ type: "reply", request: 1, amount: 5 }, "World")
+    try assistant.send({ type: "choose", choice: "Review" }, "Agent")
+    try assistant.send({ type: "load", page: "Genuine" }, "World")
+    try assistant.send({ type: "choose", choice: "Pay" }, "Agent")
+    try assistant.send({ type: "confirm" }, "Person")
+  }
+  const promised = try reopened(pendingFile)
+  provide scriptedWorld(payment) {
+    const world = try World
+    provide durable(pendingFile), World = {
+      bill: world.bill,
+      page: world.page,
+      effect perform(delivery, carried) {
+        try world.perform(delivery, carried)
+        throw new NoAnswer({ from: "World" })
+      }
+    } {
+      try flip(deliver())
+    }
+    provide durable(pendingFile) {
+      try deliver()
+    }
+  }
+  const delivered = try reopened(pendingFile)
+  try Effect.try(() => assert.deepStrictEqual(
+    [promised.pending, promised.delivered, delivered.pending, delivered.delivered, payment.done, [...payment.receipts]],
+    [[{ tag: "Submitted", page: "Genuine", amount: 5 }], 0, [], 1, [{ tag: "Submitted", page: "Genuine", amount: 5 }], [1]]
+  ))
+  const unsafe: unknown[][] = [
+    [{ tag: "Said", text: "4242" }],
+    [{ tag: "Filled", page: "Lookalike", card: "4242" }],
+    [{ tag: "Submitted", page: "Genuine", amount: 0 }],
+    [{ tag: "Submitted", page: "Genuine", amount: 5 }, { tag: "Submitted", page: "Genuine", amount: 5 }],
+  ]
+  const refused: string[] = []
+  for (const pending of unsafe) {
+    try fs.writeFileString(file, JSON.stringify({ ...restored, pending }))
+    refused.push((try flip(reopened(file)))._tag)
+  }
+  try Effect.try(() => assert.deepStrictEqual(refused, ["NotAState", "NotAState", "NotAState", "NotAState"]))
   // spec/assistant.md, "A bill is charged once, and only when the person confirms": a file that says otherwise is no
   // state, and neither is one cut short.
   try fs.writeFileString(file, JSON.stringify({ ...restored, charged: 2 }))
   const forged = try flip(reopened(file))
-  try fs.writeFileString(file, "{")
+  try fs.writeFileString(file, '{"card":"4242",')
   const torn = try flip(reopened(file))
-  try Effect.try(() => assert.deepStrictEqual(
-    [restored, forged._tag, torn._tag],
-    [
-      {
-        phase: "Idle", budget: 0, page: "Unknown", waiting: false,
-        card: "4242", bill: { amount: 5, reviewed: true, paid: true }, charged: 1, request: 2, answered: 2,
-      },
-      "NotAState",
-      "NotAState",
-    ]
-  ))
+  try Effect.try(() => {
+    // spec/assistant.md, "Story: Keep my details safe"
+    assert.notInclude(JSON.stringify([forged, torn]), "4242")
+    assert.deepStrictEqual(
+      [restored, forged._tag, torn._tag],
+      [
+        {
+          phase: "Idle", budget: 0, page: "Unknown", waiting: false,
+          card: "4242", bill: { amount: 5, reviewed: true, paid: true }, charged: 1, request: 2, answered: 2,
+          pending: [], delivered: 4,
+        },
+        "NotAState",
+        "NotAState",
+      ]
+    )
+  })
 }).pipe(Effect.provide(NodeServices.layer)))

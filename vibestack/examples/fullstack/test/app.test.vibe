@@ -2,12 +2,12 @@
 import { assert, it } from "@effect/vitest"
 import * as NodeServices from "@effect/platform-node/NodeServices"
 import { type Client, machine, view } from "../gen/client.effect.vibe"
-import { Machine, initial } from "../gen/server.effect.vibe"
+import { type Event, Machine, initial } from "../gen/server.effect.vibe"
 import { sameTodos } from "../gen/todo.effect.vibe"
 import type { Op } from "../gen/todo.ts"
 import { NotAStateFile } from "../src/server.vibe"
 import { type Tab, newId, open } from "../src/web/sync.vibe"
-import { Served, dropConnections, post, send, served } from "./served.vibe"
+import { Served, dropConnections, post, send, served, stallNextEvent } from "./served.vibe"
 
 const request = (client: string, seq: number, op: Op) => ({ type: "request", client, seq, op })
 const create = (id: string, title: string): Op => ({ kind: "create", id, title, done: false })
@@ -92,7 +92,33 @@ it.live("change the list over HTTP, and keep it across a restart", () => effect 
           snapshot: [true, 3],
           page: [200, true, true, 404],
         }))
+
+        // spec/server.md, "The server holds the list, its version and a log of every request it answered"
+        const before = try store.get()
+        const borrowed = try store.get()
+        borrowed.version = -1
+        borrowed.log[0]!.op.title = "borrowed read"
+        try Stream.runHead(Stream.tap(store.changes, (state) => sync(() => {
+          state.version = -2
+          state.todos[0]!.title = "borrowed notification"
+        })))
+        const rejected = try Effect.flip(store.send({ type: "request", client: "ann", seq: 1, op: create("ann-1", "milk") }))
+        rejected.state.version = -3
+        const unchanged = try store.get()
+
+        const typed: Event = { type: "request", client: "typed", seq: 1, op: create("typed-1", "typed") }
+        const accepted = try store.send(typed)
+        typed.op.title = "borrowed input"
+        accepted.todos.at(-1)!.title = "borrowed result"
+        const outsideInput = request("outside", 1, create("outside-1", "outside"))
+        const received = try store.receive(outsideInput)
+        outsideInput.op.title = "borrowed outside input"
+        received.log.at(-1)!.op.title = "borrowed outside result"
         saved = try store.get()
+        try Effect.try(() => assert.deepStrictEqual(
+          { unchanged, titles: saved.todos.slice(-2).map((t) => t.title), logged: saved.log.slice(-2).map((r) => r.op.title) },
+          { unchanged: before, titles: ["typed", "outside"], logged: ["typed", "outside"] },
+        ))
       }
 
       // Stopped and started again on the same file: spec/server.md, "The server holds the list, its version and a log of every request it answered";
@@ -184,11 +210,17 @@ it.live("two tabs, one of them offline for a while, end up with the server's lis
 it.live("a lone user's queued edits reach the server in order, and none is refused", () => effect {
   provide Served {
     const a = try openTab("a")
+    const borrowed = try a.get()
+    borrowed.online = false
+    const retained = try a.get()
+    try Effect.try(() => assert.isTrue(retained.online))
     try a.dispatch({ type: "goOffline" })
     const milk = newId("a", try a.get())
     try a.edit({ type: "create", id: milk, title: "milk" })
     try a.edit({ type: "setDone", id: milk, done: true })
     try a.edit({ type: "rename", id: milk, title: "oat milk" })
+    // spec/system.md, "Story: Editing alone is never refused": a stalled response must not hold the queue forever.
+    try sync(stallNextEvent)
     try a.goOnline()
     const c = try a.get()
     try Effect.try(() => assert.deepStrictEqual(

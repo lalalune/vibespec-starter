@@ -11,7 +11,7 @@ import { designSystem } from "./vibestack/design/eslint.ts"
 import { parseTokens } from "./vibestack/design/tokens.ts"
 
 const stack = 'AGENTS.md, "The stack"'
-const monorepo = 'AGENTS.md, "The monorepo"'
+const monorepo = 'SPEC.md, "One spec tree"'
 const banned = ["redux", "react-redux", "zustand", "mobx", "jotai", "recoil", "valtio", "xstate", "vue", "svelte", "jest"]
 const scopes = ["reduxjs", "angular", "xstate", "vue", "sveltejs", "jest"]
 // Each workspace package's `exports` beyond its root: "@repo/design-system/theme.css".

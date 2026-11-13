@@ -49,14 +49,14 @@ describe("properties", () => {
     assert.deepStrictEqual([all.length, some.length, new Set(all).size > 10], [fuzz.runs, 50, true]);
     assert.deepStrictEqual([yield* seen(fuzz), yield* seen({ runs: 50, seed: fuzz.seed })], [all, some]);
     assert.notDeepEqual(yield* seen({ seed: fuzz.seed + 1 }), all);
-    assert.match(defect(yield* Effect.exit(holds(Schema.Int, (n) => n < 50, { runs: 200 }))), new RegExp(`Seed: ${fuzz.seed}\nRerun: FUZZ_SEED=${fuzz.seed} FUZZ_RUNS=200 `));
+    assert.match(defect(yield* Effect.exit(holds(Schema.Int, (n) => n < 50, { runs: 200 }))), new RegExp(`Seed: ${fuzz.seed}\nRerun: node -e `));
   }));
 
   it.prop("a property is an it.prop callback under the FUZZ budget", [Schema.Int], ([n]) => idempotent(Math.abs)(n), { arbitrary: fuzz });
 
   it.effect("a falsified property names the seed, the shrunk counterexample and the rerun command", () => Effect.gen(function* () {
     const exit = yield* Effect.exit(holds(Schema.Int, invariant((n: number) => n, (_, out) => out < 50), { runs: 200, seed: 7 }));
-    assert.match(defect(exit), /Shrunk input: 50\n[^]*Seed: 7\nRerun: FUZZ_SEED=7 FUZZ_RUNS=200 pnpm vitest run .*testing\.test\.ts/);
+    assert.match(defect(exit), /Shrunk input: 50\n[^]*Seed: 7\nRerun: node -e /);
   }));
 });
 
@@ -72,8 +72,11 @@ function fixture(name: string, overlay?: string) {
 const tree = (dir: string) => Object.fromEntries(fs.globSync("**/*", { cwd: dir, withFileTypes: true }).filter((f) => f.isFile())
   .map((f) => path.join(f.parentPath, f.name)).sort().map((f) => [path.relative(dir, f), fs.readFileSync(f, "utf8")]));
 /** The package's own test run: `vitest run` on its vitest.config.ts. */
-const vitest = (dir: string, env: Record<string, string> = {}) => new Promise<{ status: number | null; said: string }>((resolve) => {
-  const child = spawn(process.execPath, [path.join(root, "node_modules/vitest/vitest.mjs"), "run", "--root", dir], { env: { ...process.env, FUZZ_SEED: "1", FUZZ_RUNS: "100", NO_COLOR: "1", ...env } });
+const vitest = (dir: string, env: Record<string, string> = {}, rerun?: string) => new Promise<{ status: number | null; said: string }>((resolve) => {
+  const options = { env: { ...process.env, FUZZ_SEED: "1", FUZZ_RUNS: "100", NO_COLOR: "1", ...env } };
+  const child = rerun
+    ? spawn(rerun, { ...options, cwd: dir, shell: true })
+    : spawn(process.execPath, [path.join(root, "node_modules/vitest/vitest.mjs"), "run", "--root", dir], options);
   let said = "";
   for (const stream of [child.stdout, child.stderr]) stream.on("data", (data) => { said += data; });
   child.on("close", (status) => resolve({ status, said }));
@@ -125,11 +128,16 @@ describe.concurrent("generated tests", () => {
   });
 
   it("fail with the seed and the shrunk counterexample", async () => {
-    const dir = fixture("broken", "broken");
+    const dir = fixture("broken path's", "broken");
     fs.rmSync(path.join(dir, "src/throws.schema.ts"));
     const { status, said } = await vitest(dir);
     expect(status).toBe(1);
-    expect(said).toMatch(/absolute is invariant[^]*Shrunk input: -1\n[^]*Seed: 1\n\s*Rerun: FUZZ_SEED=1 FUZZ_RUNS=100 pnpm vitest run .*src\/abs\.contract\.test\.ts/);
+    expect(said).toMatch(/absolute is invariant[^]*Shrunk input: -1\n[^]*Seed: 1\n\s*Rerun: node -e /);
     expect(said).toMatch(/Tests {2}1 failed \| 14 passed \(15\)/);
+    const command = said.match(/^\s*Rerun: (.+)$/m)?.[1];
+    expect(command).toBeDefined();
+    const rerun = await vitest(dir, {}, command);
+    expect(rerun.status).toBe(1);
+    expect(rerun.said).toContain("Shrunk input: -1");
   });
 });

@@ -1,5 +1,5 @@
 // spec/server.md, "The log tells which requests were answered, and with which edit each was accepted"; spec/server.md, "Every new request is answered by applying its edit if it makes sense and refusing it if not"; spec/client.md, "Story: Hear back from the server"
-import { type Event, type Server, Machine, NotAnEvent, acceptedAs, apply, decodeEvent, decodeState, initial } from "../gen/server.effect.vibe"
+import { type Event, type Server, Machine, NotAnEvent, acceptedAs, apply, decodeEvent, decodeState, initial, parseEvent, parseState } from "../gen/server.effect.vibe"
 import type { Answer, Request, Snapshot } from "./protocol.vibe"
 
 module node {
@@ -69,7 +69,7 @@ export error NotAStateFile { file: string; cause: unknown }
 effect function load(file: string) {
   const fs = try FileSystem.FileSystem
   return effect {
-    if (!(try fs.exists(file))) return initial
+    if (!(try fs.exists(file))) return parseState(initial)!
     const text = try fs.readFileString(file)
     return try decodeState(try Effect.try(() => JSON.parse(text) as unknown))
   } catch effect (cause) => { throw new NotAStateFile({ file, cause }) }
@@ -97,15 +97,18 @@ function stored(file: string) {
     const dir = (try Path.Path).dirname(file)
     const held = try SubscriptionRef.make(try load(file))
     effect function send(event: Event) {
-      return try SubscriptionRef.modifyEffect(held, effect (current) => {
-        const next = try apply(current, event)
-        try orDie(provideService(save(file, dir, next), FileSystem.FileSystem, fs))
-        return [next, next] as const
-      })
+      const input = parseEvent(event)!
+      uninterruptible {
+        return try SubscriptionRef.modifyEffect(held, effect (current) => {
+          const next = try apply(parseState(current)!, input)
+          try orDie(provideService(save(file, dir, next), FileSystem.FileSystem, fs))
+          return [next, parseState(next)!] as const
+        })
+      }
     }
     return {
-      changes: SubscriptionRef.changes(held),
-      get: () => SubscriptionRef.get(held),
+      changes: Stream.map(SubscriptionRef.changes(held), (state) => parseState(state)!),
+      get: () => map(SubscriptionRef.get(held), (state) => parseState(state)!),
       send,
       effect receive(input: unknown) { return try send(try decodeEvent(input)) }
     }

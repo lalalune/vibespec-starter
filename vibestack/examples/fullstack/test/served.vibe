@@ -8,20 +8,33 @@ import type { Answer, Request } from "../src/protocol.vibe"
 import { listening, server } from "../src/server.vibe"
 
 module node {
-  import { type Server, createServer } from "node:http"
+  import { type IncomingMessage, type Server, createServer } from "node:http"
   let served: Server | undefined
+  let stallEvent = false
   /** @throws {never} */
   export function create() {
-    return (served = createServer())
+    stallEvent = false
+    served = createServer()
+    const emit = served.emit.bind(served)
+    served.emit = ((event: string, ...args: unknown[]) => {
+      if (event === "request" && stallEvent && (args[0] as IncomingMessage).url === "/api/events") {
+        stallEvent = false
+        return true
+      }
+      return emit(event, ...args)
+    }) as Server["emit"]
+    return served
   }
+  /** Accept the next edit's connection without answering it, as a stalled server does. */
+  export function stallNextEvent() { stallEvent = true }
   /** Cut every connection to the server, as a network failure does. */
   export function dropConnections() {
     served?.closeAllConnections()
   }
 }
-import { create, dropConnections } from node
+import { create, dropConnections, stallNextEvent } from node
 
-export { dropConnections }
+export { dropConnections, stallNextEvent }
 
 /** The server over the list kept in `file`. */
 export function served(file: string) {

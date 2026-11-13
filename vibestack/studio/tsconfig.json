@@ -7,13 +7,14 @@
       "dom.iterable"
     ],
     "rewriteRelativeImportExtensions": true,
+    "allowArbitraryExtensions": true,
     "types": [
       "node",
       "vite/client"
     ],
     "rootDirs": [
       ".",
-      ".vibe/declarations"
+      ".vibe/declarations/studio"
     ],
     "jsx": "react-jsx"
   },

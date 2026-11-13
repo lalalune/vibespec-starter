@@ -36,4 +36,3 @@ layer(OrderBookMemory, { buildPerTest: true })((it) => {
     ]))
   })
 })
-

@@ -1,6 +1,6 @@
 // The assistant's state kept in one JSON file, so that a crash loses only what spec/assistant.md keeps in memory
 // (spec/assistant.md, "Story: Survive a restart").
-import { apply, decodeEvent, decodeState, initial, Machine, NotAState, type Rejected } from "../gen/assistant.effect.vibe"
+import { apply, decodeEvent, decodeState, initial, Machine, NotAState, parseEvent, parseState, type Rejected } from "../gen/assistant.effect.vibe"
 import type * as T from "../gen/assistant.effect.vibe"
 
 /**
@@ -10,36 +10,44 @@ import type * as T from "../gen/assistant.effect.vibe"
  * before `send` returns; one that cannot be written is a defect, and the state stays as the file has it.
  *
  * It is for one process: nothing locks the file, so two processes that open it overwrite each other's events.
- * What a transition outputs is carried out by the caller after `send` has saved the state, so a crash between the
- * two leaves a payment recorded as charged but never submitted: each effect is delivered at most once.
+ * Pending effects and their delivery counter are saved with the state. `deliver` in agent.vibe retries them with
+ * their original number after a restart; the World confirms each number idempotently before it is removed.
  */
 export effect function opened(file: string) {
   const fs = try FileSystem.FileSystem
+  const path = try Path.Path
   effect function save(state: T.Assistant) {
     try scoped(effect {
-      const temp = try fs.open(`${file}.tmp`, { flag: "w" })
-      try temp.writeAll(new TextEncoder().encode(JSON.stringify(state)))
-      try temp.sync
+      const directory = try fs.makeTempDirectoryScoped({ directory: path.dirname(file), prefix: ".assistant-" })
+      const temporary = path.join(directory, "state.json")
+      try scoped(effect {
+        const temp = try fs.open(temporary, { flag: "wx", mode: 0o600 })
+        try temp.writeAll(new TextEncoder().encode(JSON.stringify(state)))
+        try temp.sync
+      })
+      try fs.rename(temporary, file)
     })
-    try fs.rename(`${file}.tmp`, file)
   }
   const text = (try fs.exists(file)) ? try fs.readFileString(file) : undefined
   const saved = text === undefined
     ? initial
-    : try decodeState(try Effect.try({ try: () => JSON.parse(text), catch: () => new NotAState({ input: text }) }))
+    : try mapError(flatMap(Effect.try(() => JSON.parse(text)), decodeState), () => new NotAState({ input: "saved assistant state" }))
   const restarted = (try apply(saved, { type: "restart" }, "World")).state
   try save(restarted)
   const held = try SubscriptionRef.make(restarted)
   effect function send(event: T.Event, by: T.Actor): T.Chosen!Rejected {
-    return try SubscriptionRef.modifyEffect(held, effect (current) => {
-      const next = try apply(current, event, by)
-      try orDie(save(next.state))
-      return [next, next.state] as const
-    })
+    const input = parseEvent(event)!
+    uninterruptible {
+      return try SubscriptionRef.modifyEffect(held, effect (current) => {
+        const next = try apply(parseState(current)!, input, by)
+        try orDie(save(next.state))
+        return [next, parseState(next.state)!] as const
+      })
+    }
   }
   return {
-    changes: SubscriptionRef.changes(held),
-    get: () => SubscriptionRef.get(held),
+    changes: Stream.map(SubscriptionRef.changes(held), (state) => parseState(state)!),
+    get: () => map(SubscriptionRef.get(held), (state) => parseState(state)!),
     send,
     effect receive(input: unknown, by: T.Actor) { return try send(try decodeEvent(input), by) }
   }

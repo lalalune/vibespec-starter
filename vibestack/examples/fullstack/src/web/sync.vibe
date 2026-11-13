@@ -5,6 +5,7 @@ import type { Request } from "../protocol.vibe"
 
 /** How long a tab waits before it tries the network again. */
 const RETRY = "2 seconds"
+const RESPONSE_TIMEOUT = "10 seconds"
 
 /** The server did not answer, or said something that is no answer. */
 export error Unanswered { cause: unknown }
@@ -44,7 +45,7 @@ export effect function open(base: string, name: string) {
   const held = try Machine
   const sending = try Semaphore.make(1)
   const get = () => held.get()
-  const asked = <A, E>(answer: A!E) => mapError(answer, (cause) => new Unanswered({ cause }))
+  const asked = <A, E>(answer: A!E) => mapError(timeout(answer, RESPONSE_TIMEOUT), (cause) => new Unanswered({ cause }))
 
   effect function dispatch(event: Event) {
     // The machine fails with Rejected, and changes nothing, where the rules do not allow the event.
@@ -79,7 +80,7 @@ export effect function open(base: string, name: string) {
     while (true) {
       const { online, pending: [oldest] } = try get()
       if (!online || oldest === undefined) return
-      send(oldest) catch effect () => { try sleep(RETRY) }
+      asked(send(oldest)) catch effect () => { try sleep(RETRY) }
     }
   })
 
@@ -108,7 +109,7 @@ export effect function open(base: string, name: string) {
     refresh: () => asked(refresh()),
     effect goOnline() {
       try dispatch({ type: "goOnline" })
-      refresh() catch () => undefined
+      asked(refresh()) catch () => undefined
       try flush
     },
     effect listen() {

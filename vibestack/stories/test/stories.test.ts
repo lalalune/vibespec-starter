@@ -126,12 +126,13 @@ it("leaves a story to the hand-written file that has one of its name", () => {
   expect(read("kit-chip.stories.tsx")).not.toContain("export const Default");
 });
 
-it("writes the catalog Studio reads, and tests that run every generated story in a simulated DOM and in a browser", () => {
+it("writes the catalog Studio reads, and tests that run every generated and manual story in a simulated DOM and in a browser", () => {
   const catalog = JSON.parse(read("catalog.json"));
   expect(catalog).toEqual(JSON.parse(JSON.stringify(first.index)));
   expect(Object.keys(catalog)).toEqual(["version", "storybook", "components"]);
   expect(Object.keys(catalog.components[4])).toEqual(["id", "name", "package", "title", "description", "source", "props", "stories", "model", "design", "diagnostics"]);
-  const files = ["chip", "kinds", "many", "meter", "receipt", "tag"].map((name, i) => `import * as s${i} from "./kit-${name}.stories.tsx";`);
+  const files = ["../../src/Chip.stories.tsx", ...["chip", "kinds", "many", "meter", "receipt", "tag"].map((name) => `./kit-${name}.stories.tsx`)]
+    .map((file, i) => `import * as s${i} from "${file}";`);
   expect(read("stories.test.tsx").match(/import \* as .*/g)).toEqual(files);
   expect(read("stories.browser.test.tsx").match(/import \* as .*/g)).toEqual(['import * as a11y from "@storybook/addon-a11y/preview";', ...files]);
 });
@@ -174,4 +175,6 @@ it("rewrites only what a change touches, and removes what a deleted component le
   const gone = run();
   expect(gone).toMatchObject({ removed: ["kit-chip.stories.tsx"], analyzed: 0 });
   expect(gone.index.components.map((c) => c.name)).not.toContain("Chip");
+  expect(read("stories.test.tsx")).not.toContain("Chip.stories.tsx");
+  expect(read("stories.browser.test.tsx")).not.toContain("Chip.stories.tsx");
 });

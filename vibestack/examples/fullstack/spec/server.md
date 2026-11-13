@@ -178,7 +178,9 @@ pure def sometimesATombstone(s: Server): bool = s.todos.some(t => t.deleted)
 
 For this law, the server's rules are its three state invariants: the version
 counts accepted edits, requests are logged once, and to-do ids are unique.
-Step and reachability rules are checked separately.
+Step and reachability rules are checked separately. What is proved about
+imported transitions can be called when their obligations were proved in
+the same run.
 
 ```quint
 pure val sValues =

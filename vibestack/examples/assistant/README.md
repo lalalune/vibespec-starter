@@ -1,7 +1,7 @@
 # Assistant
 
-An illustrative agent turn driving a bill payment, in one spec:
-[spec/assistant.md](spec/assistant.md), and the agent loop around it.
+An illustrative agent turn driving a bill payment, starting at
+[spec/index.md](spec/index.md), and the agent loop around it.
 
 ```sh
 pnpm install --ignore-workspace   # here, after the install at the repository root
@@ -28,6 +28,7 @@ pnpm demo    # generates gen/, and a scripted model pays a bill, then tries what
 | Termination | a budget every choice spends, and `leadsToPlanningEnds` under fair choosing |
 | Requests in flight | a request number, saved |
 | Crash and restart | `restart`, sent by the world, resets what is not saved |
+| Delivery after a crash | a persisted queue and stable delivery numbers; the world applies each number once |
 | The model and the world as adversaries | their choices are event parameters; the simulator tries every sender |
 
 ## The shell
@@ -42,8 +43,9 @@ built on its `Machine` service: every event reaches the state through
 | In `src/agent.vibe` | Is |
 |---|---|
 | `Model` | the model as a service: `choose(seen)` returns an untrusted answer, or fails with `NoAnswer` |
-| `World` | the biller and the browser as a service: `bill(request)`, `page()`, `perform(effect)` |
+| `World` | the biller and the browser as a service: `bill(request)`, `page()`, `perform(delivery, effect)`; retries return the same success without repeating the action |
 | `remember(card)` | the card the person saves, sent as the Person |
+| `deliver()` | drains saved effects oldest first, acknowledging each only after the world confirms it; call it on startup to finish interrupted work |
 | `hear(said)` | what the person said, sent as the Person, and what it output carried out (a confirmation's payment); then the loop: the model's answer offered as the Agent's choice, what that choice output carried out, the page and the biller's answer sent as the World. It returns where the turn stopped and each answer that ended it, and fails with `Rejected` when the rules refuse the person |
 
 An answer of the model that is no choice the rules allow, or no answer at all,
@@ -55,9 +57,10 @@ through Effect's `FileSystem`, and `durable(file)`, the same as a layer:
 opening it reads the file (a missing one is `initial`, one that is no state
 fails with `NotAState`) and applies `restart` from the world; each accepted
 event is written to a temporary file, synced to the disk and renamed before
-`send` returns, one event at a time. The card is saved there too, since the
-spec says it survives a restart. It is for one process: nothing locks the
-file, so two processes would overwrite each other.
+`send` returns, one event at a time. The card, pending effects and last
+acknowledged delivery number are saved there too, since the spec says they
+survive a restart. It is for one process: nothing locks the file, so two
+processes would overwrite each other.
 
 `src/scripted.vibe` is a `Model` and a `World` that follow a script. The demo
 and [the journey](test/assistant.test.vibe) share it: a real model costs
@@ -77,8 +80,14 @@ the spec's journeys, malformed inputs and random walks through `opened(file)`
 on a real file, the effects included, and makes each accepted restart a real
 one: the machine dropped and opened again.
 
-What a transition outputs is carried out after the state that records it is
-saved, and nothing records that it was carried out: a crash between the two
-leaves a payment recorded as charged but never submitted. Effects are delivered
-at most once; the spec does not yet say what should happen instead. The demo keeps its state in memory. There is no live `Model` or
-`World` here.
+Every emitted effect is queued in the same state update that records its
+decision. Delivery uses the next saved number, and only a successful reply
+removes the oldest effect. A crash before the reply retries the same number;
+`World.perform` must implement idempotency for that number within the
+assistant's account. The scripted world demonstrates that contract. A real
+provider must supply the equivalent guarantee; this example has no live
+`Model` or `World`.
+
+Saved files from before the delivery queue was introduced lack its required
+fields and are refused by `decodeState`. No migration can recover an effect
+that the old format never recorded. The demo keeps its state in memory.

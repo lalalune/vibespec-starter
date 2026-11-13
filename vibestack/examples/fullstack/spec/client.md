@@ -231,8 +231,9 @@ pure def sometimesRefused(c: Client): bool = c.refusals >= 1
 For these laws, the client's rules are its four state invariants: queued
 edits have valid distinct numbers, and the edit count and confirmed version
 are nonnegative. Step and reachability rules are checked separately. What
-is proved about the transitions of a spec cannot be called from a spec that
-imports it; a law can.
+is proved about imported transitions can be called when their obligations
+were proved in the same run. These laws also cover helpers such as `queue`,
+which are not transitions.
 
 ```quint
 pure val cValues =

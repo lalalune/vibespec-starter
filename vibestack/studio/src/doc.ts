@@ -171,9 +171,13 @@ export function manifestOf(root: string, baseline: Record<string, string>, curre
     for (const s of specs) if (s.imports.includes(spec.name)) visit(s, `imports ${spec.name}`);
   };
   for (const s of specs) if (edited.includes(s.file)) visit(s, "edited");
-  const modules = new Set(regenerate.map((r) => r.gen.slice(4)).concat(Object.keys(baseline).filter((f) => !(f in current)).map((f) => `${specName(f)}.ts`)));
+  const modules = new Set(regenerate.map((r) => r.gen.slice(4, -3)).concat(Object.keys(baseline).filter((f) => !(f in current)).map(specName)));
   const code = codeDirs(root).flatMap((dir) => [`${dir}src`, `${dir}test`]).flatMap((dir) => filesUnder(root, dir))
-    .filter((f) => /\.[cm]?tsx?$/.test(f) && [...modules].some((m) => fs.readFileSync(path.join(root, f), "utf8").includes(`gen/${m}`)));
+    .filter((f) => {
+      if (!/\.(?:[cm]?tsx?|vibe)$/.test(f)) return false;
+      const text = fs.readFileSync(path.join(root, f), "utf8");
+      return [...modules].some((m) => [".ts", ".effect.vibe", ".conformance.ts"].some((ext) => text.includes(`gen/${m}${ext}`)));
+    });
   let citations: string[] = [];
   try { citations = codeDirs(root).flatMap((dir) => danglingCitations(root, specs, dir)); } catch { /* no code to read */ }
   return { published: new Date().toISOString(), changes, regenerate, code, citations };

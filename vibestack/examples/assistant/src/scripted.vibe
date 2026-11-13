@@ -18,6 +18,7 @@ export interface Scene {
   page: T.Page
   bills: number[]
   readonly done: T.Effect[]
+  readonly receipts: Set<number>
 }
 
 export function scriptedWorld(scene: Scene) {
@@ -28,6 +29,10 @@ export function scriptedWorld(scene: Scene) {
       if (amount === undefined) throw new NoAnswer({ from: "World" })
       return amount
     },
-    perform: (carried) => sync(() => { scene.done.push(carried) })
+    effect perform(delivery, carried) {
+      if (scene.receipts.has(delivery)) return
+      scene.done.push(carried)
+      scene.receipts.add(delivery)
+    }
   })
 }
