@@ -24,9 +24,9 @@
     "lint:js": "eslint . --max-warnings 0",
     "lint:css": "stylelint \"**/*.css\" --allow-empty-input",
     "analyze": "knip && madge --circular vibestack packages apps",
-    "examples": "failed=0; for d in vibestack/examples/*/; do pnpm -C \"$d\" install --frozen-lockfile --ignore-workspace && pnpm -C \"$d\" check || failed=1; done; exit $failed",
+    "examples": "failed=0; for d in vibestack/examples/*/; do pnpm -C \"$d\" install --frozen-lockfile --ignore-workspace && TURBO_HASH= pnpm -C \"$d\" check || failed=1; done; exit $failed",
     "quick": "turbo run typecheck test //#lint:js //#lint:css",
-    "verify": "turbo run build typecheck test test:browser check //#lint:js //#lint:css //#analyze //#examples",
+    "verify": "turbo run build typecheck test test:browser check //#lint:js //#lint:css //#analyze //#selftest",
     "all": "turbo run"
   },
   "version": "0.1.0",
@@ -89,6 +89,17 @@
     "vibelang-vite": "0.0.12",
     "vite": "8.3.5",
     "vitest": "5.1.0"
+  },
+  "peerDependencies": {
+    "@vitest/browser-playwright": "5.1.0",
+    "vibelang-vite": "0.0.12",
+    "vite": "8.3.5",
+    "vitest": "5.1.0"
+  },
+  "peerDependenciesMeta": {
+    "@vitest/browser-playwright": {
+      "optional": true
+    }
   },
   "packageManager": "pnpm@10.24.0",
   "exports": {

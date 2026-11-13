@@ -6,7 +6,7 @@ An illustrative agent turn driving a bill payment, in one spec:
 ```sh
 pnpm install --ignore-workspace   # here, after the install at the repository root
 pnpm check   # model, proofs, types (vibelang --noEmit) and tests
-pnpm test    # the journeys alone: vitest run
+pnpm test    # the journey alone: vitest run
 pnpm build   # vibelang: JavaScript in dist/
 pnpm demo    # generates gen/, and a scripted model pays a bill, then tries what the rules refuse
 ```
@@ -48,7 +48,7 @@ finishes the turn, so a turn makes at most four passes whatever the model
 says.
 
 `src/scripted.vibe` is a `Model` and a `World` that follow a script. The demo
-and [the journeys](test/assistant.test.vibe) share it: a real model costs
+and [the journey](test/assistant.test.vibe) share it: a real model costs
 money, so it is faked at its service. `src/demo.vibe` prints one scripted
 bill payment.
 

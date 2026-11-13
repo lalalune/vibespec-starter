@@ -16,5 +16,8 @@
     "node_modules",
     "vibestack/design/test",
     "vibestack/stories/test"
-  ]
+  ],
+  "vibe": {
+    "sidecarDir": ".vibe/declarations"
+  }
 }

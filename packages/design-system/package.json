@@ -10,14 +10,12 @@
   },
   "scripts": {
     "build": "node ../../vibestack/design/cli.ts build",
-    "check": "node ../../vibestack/design/cli.ts check",
-    "test": "vitest run"
+    "check": "node ../../vibestack/design/cli.ts check"
   },
   "devDependencies": {
     "eslint": "catalog:",
     "eslint-plugin-better-tailwindcss": "catalog:",
     "tailwindcss": "catalog:",
-    "typescript-eslint": "catalog:",
-    "vitest": "catalog:"
+    "typescript-eslint": "catalog:"
   }
 }

@@ -1,38 +1,45 @@
 import { assert, it } from "@effect/vitest"
-import { type Note, Machine, debounce, machine } from "../gen/tracker.effect.vibe"
-import { Chat, messages, send } from "../src/notify.vibe"
+import { Machine, debounce, machine } from "../gen/tracker.effect.vibe"
+import { Chat, send } from "../src/notify.vibe"
 
 const handles = { ana: "@ana", ben: "@ben", cal: "@cal" }
 
-// spec/tracker.md, "Nothing is sent twice"
-it.effect("a name typed twice is told once", () => effect {
+// spec/tracker.md, "Story: Be told what changed and what is due"
+it.effect("be told what changed and what is due, once, on the chat app", () => effect {
   const posted: [string, string][] = []
   provide machine(), Chat = { effect post(handle: string, text: string) { posted.push([handle, text]) } } {
     const tracker = try Machine
+    /** One pass of the notifier after the quiet period, handed to the chat app; how many messages went out. */
+    effect function pass() {
+      for (let i = 0; i < debounce; i++) try tracker.send({ type: "tick" })
+      const before = (try tracker.get()).sent.length
+      return try send((try tracker.send({ type: "notify" })).sent.slice(before), handles)
+    }
+
+    // spec/tracker.md, "Nothing is sent twice": a name typed twice is told once.
     try tracker.send({ type: "create", actor: "ben" })
     try tracker.send({ type: "handAddOwner", id: 1, name: "ana" })
     const typed = try tracker.send({ type: "handAddOwner", id: 1, name: "ana" })
-    try Effect.try(() => assert.deepStrictEqual(typed.tasks[0]!.owners, ["ana", "ana"]))
-    for (let i = 0; i < debounce; i++) try tracker.send({ type: "tick" })
-    const { sent } = try tracker.send({ type: "notify" })
+    const first = try pass()
 
-    const count = try send(sent, handles)
-    try Effect.try(() => assert.strictEqual(count, 1))
-    try Effect.try(() => assert.deepStrictEqual(posted, [["@ana", "✎ #1 changed"]]))
+    // spec/tracker.md, "One pass of the notifier sends everything that is due and records that it was sent":
+    // one message per person, in the order people first appear; a person without a handle, even one named like
+    // what every object has, gets none.
+    try tracker.send({ type: "create", actor: "ana" })
+    for (const owner of ["ana", "ben", "cal"]) try tracker.send({ type: "addOwner", id: 2, owner, actor: "ana" })
+    try tracker.send({ type: "setDue", id: 1, due: 5, actor: "ben" })
+    try tracker.send({ type: "setDue", id: 2, due: 3, actor: "ana" })
+    try tracker.send({ type: "renameOwner", owner: "cal", name: "toString", actor: "ana" })
+    const second = try pass()
+
+    try Effect.try(() => assert.deepStrictEqual({ owners: typed.tasks[0]!.owners, counts: [first, second], posted }, {
+      owners: ["ana", "ana"],
+      counts: [1, 2],
+      posted: [
+        ["@ana", "✎ #1 changed"],
+        ["@ana", "✎ #1 changed\n⏳ #1 due day 5\n⚠ #2 due today"],
+        ["@ben", "✎ #2 changed\n⚠ #2 due today"],
+      ],
+    }))
   }
-})
-
-// spec/tracker.md, "One pass of the notifier sends everything that is due and records that it was sent"
-it.effect("one message per person with a chat handle", () => effect {
-  const notes: Note[] = [
-    { kind: "Update", task: 1, to: "ana", version: 0, at: 3, by: "ben" },
-    { kind: "Soon", task: 2, to: "ben", version: 4, at: 3, by: "" },
-    { kind: "Today", task: 2, to: "ana", version: 1, at: 3, by: "" },
-    { kind: "Update", task: 1, to: "ama", version: 0, at: 3, by: "ben" },
-    { kind: "Update", task: 1, to: "toString", version: 0, at: 3, by: "ben" },
-  ]
-  try Effect.try(() => assert.deepStrictEqual(messages(notes, handles), [
-    { to: "ana", handle: "@ana", text: "✎ #1 changed\n⚠ #2 due today" },
-    { to: "ben", handle: "@ben", text: "⏳ #2 due day 4" },
-  ]))
 })

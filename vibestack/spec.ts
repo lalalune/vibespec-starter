@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Model } from "./gen.ts";
-import { conformance, conformanceFound, writeConformance, type Machine, type Simulated } from "./conform.ts";
+import { conformance, conformanceFound, type Machine, type Simulated } from "./conform.ts";
 import { ensuresOf, LIB_FILE, dafnyVersion, proofPaths, prove, type Offered, type Proof } from "./prove.ts";
 import { run } from "./run.ts";
 import { readSpecs, badSpecName, specFiles, specName, importedMeanings, isStd, located, type Spec } from "./parse.ts";
@@ -14,7 +14,7 @@ import { contracts, pending, pendingKey, pendingContracts, acceptAllReviews, pen
 import { entry, remembered, collectGarbage, type Memory } from "./cache.ts";
 import { generated, mirrorGen, typecheckAll, proofUnits, proofFiles, strayProofFiles } from "./units.ts";
 import { SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, LASSO_TRACES, STEPS, DEPTHS, SEARCHED, simulate, search, firstBreak, lasso, showTrace, replay, standIn } from "./simulate.ts";
-import { sha, indent, packageScripts, tests, readSrc, codeDirs, codeDirOf, projectRoot, allDone, nodeRunsVibelang, type Reported, type SrcFile } from "./util.ts";
+import { sha, indent, packageScripts, tests, VITEST_CONFIG, readSrc, codeDirs, codeDirOf, projectRoot, allDone, nodeRunsVibelang, type Reported, type SrcFile } from "./util.ts";
 
 export { readSpecs, parseSpec, expandListHelpers, type Spec, type Rule, type Story } from "./parse.ts";
 export { pending, pendingKey, pendingContracts, acceptReviews, acceptContracts, dependencies, type Lock, type Pending } from "./review.ts";
@@ -47,6 +47,9 @@ export function nextStep(results: Result[]): string {
       tests: "fix the application or its tests",
       traces: "fix the program where it departs from the spec, or the spec if the program is right",
     };
+    // A counterexample the traces stage saved is replayed first from now on, until one side changes.
+    const saved = first.stage === "traces" && first.detail.match(/Saved as (\S+), which/)?.[1];
+    if (saved) return `${first.stage}${about} is the first ✗: it saved the counterexample ${saved}. Decide which side is wrong: fix the application if the spec says what the user wants, or else the spec; then run \`pnpm check\` again, which replays it first`;
     return `${first.stage}${about} is the first ✗: ${what[first.stage]}, then run \`pnpm check\` again`;
   }
   if (results.every((r) => r.ok)) return "all green";
@@ -165,7 +168,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
     // A spec whose model and harness are unchanged is not simulated again: the seed is part of what is simulated, so a
     // failure comes back the same. Only a simulator that could not run is tried again.
     const simulationSteps = STEPS + Math.max(0, ...model.within.values());
-    const simulated = remembered<{ said: Result[]; tested?: Simulated }>(memory, entry(root, "simulate", [importedMeanings(spec, specs), spec.meaning, model.harness, String([SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, LASSO_TRACES, simulationSteps, ...DEPTHS])]), async () => {
+    const simulated = remembered<{ said: Result[]; tested?: Simulated }>(memory, entry(root, "simulate", [importedMeanings(spec, specs), spec.meaning, spec.rules.map((r) => r.key).join("\n"), model.harness, String([SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, LASSO_TRACES, simulationSteps, ...DEPTHS, ...process.env.FUZZ_SEED ? [`FUZZ_SEED=${process.env.FUZZ_SEED}`] : []])]), async () => {
       const said: Result[] = [];
       let tested: Simulated | undefined;
       const say = (ok: boolean, stage: Result["stage"], summary: string, detail = "") => said.push({ ok, stage, summary, detail });
@@ -289,10 +292,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
   await Promise.allSettled(simulations.map((s) => s.simulated));
   for (const { spec, model, domain, simulated } of simulations) {
     const { said, tested } = await simulated;
-    if (tested) {
-      writeConformance(root, model, tested);
-      machines.set(model.name, { domain, model, found: tested });
-    }
+    if (tested) machines.set(model.name, { domain, model, found: tested });
     for (const r of said) report(r.ok, r.stage, r.summary, r.detail, spec.file);
     const ran = new Set(said.map((r) => r.stage));
     const notRun = (["sometimes", "replay"] as const).filter((s) => !ran.has(s) && (s !== "sometimes" || model.sometimes.length));
@@ -421,7 +421,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
       }
     }
     for (const r of await proofsDone) report(...r);
-    for (const dir of dirs) for (const r of await tests(root, dir, specs)) report(...within(dir, r));
+    for (const dir of dirs) for (const r of await tests(root, dir, specs, (key, ran, keep) => remembered(memory, entry(root, "tests", [dir, key]), ran, keep))) report(...within(dir, r));
     for (const dir of dirs) for (const r of await conformance(path.join(root, dir), machines, packageScripts(path.join(root, dir)))) report(...within(dir, r));
     if (proofsRan) collectGarbage(memory);
   }
@@ -536,8 +536,7 @@ export function init(root: string, warn: (message: string) => void = (message) =
     compilerOptions: { target: "es2023", module: "nodenext", strict: true, skipLibCheck: true, types: ["node"], rootDir: ".", rootDirs: [".", ".vibe/declarations"], outDir: "dist", noEmitOnError: true, rewriteRelativeImportExtensions: true },
     include: ["src", "test", "gen/*.ts", "gen/*.vibe"], vibe: { sidecarDir: ".vibe/declarations" },
   }, null, 2) + "\n");
-  // A journey that starts a real server takes longer than Vitest's five seconds on a busy machine.
-  add("vitest.config.ts", () => `import vibelang from "vibelang-vite";\nimport { defineConfig } from "vitest/config";\n\nexport default defineConfig({ plugins: [vibelang()], test: { include: ["test/**/*.test.vibe"], passWithNoTests: true, testTimeout: 60_000 } });\n`);
+  add("vitest.config.ts", () => VITEST_CONFIG);
   add("spec/index.md", () => "");
   const ignore = path.join(root, ".gitignore");
   const ignored = fs.existsSync(ignore) ? fs.readFileSync(ignore, "utf8") : "";

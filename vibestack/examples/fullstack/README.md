@@ -24,7 +24,8 @@ Needs Node 26+ and Dafny on the path.
 | `spec/*.proof.dfy` | proofs | What Dafny could not prove alone |
 | `src/server.vibe`, `src/main.vibe` | backend shell | `POST /api/events`, `GET /api/snapshot`, `GET /api/stream`, the page's files |
 | `src/protocol.vibe` | shared shell | Wire format |
-| `src/web/sync.vibe` | frontend shell | The `Tab` service: one client machine and its requests, shared with `test/e2e.test.vibe` |
+| `src/web/sync.vibe` | frontend shell | The `Tab` service: one client machine and its requests, shared with `test/app.test.vibe` |
+| `test/drivers/client.ts` | conformance | How `check` reaches a tab: every journey and random walks through `Tab.dispatch`, compared with `spec/client.md` |
 | `src/web/` | page | React: `useTab.ts` gives `components/TodoPage.tsx` the tab's `Client` and its effects |
 | `tokens.json`, `design.md` | design | The page's colors and shapes, as tokens |
 
@@ -68,8 +69,8 @@ its event (`canCreate`, `canSetDone`, `canRename`, `canRemove`, `canGoOffline`,
 | `pnpm stories` | `generated/stories/`: stories of each component in `src/web/components/`, from its props and its `<Name>.meta.tsx`, and a test that mounts each |
 | `pnpm storybook` | Storybook over those stories, regenerated as components change |
 
-`pnpm test` writes the theme and the stories, has Vitest build the page
-(`test/page.ts`), and runs the shell's journeys and the mount of every story.
+`pnpm test` writes the theme and the stories, builds the page, and runs the
+shell's journeys and the mount of every story.
 
 ## Proved, simulated, tested, trusted
 
@@ -78,7 +79,7 @@ its event (`canCreate`, `canSetDone`, `canRename`, `canRemove`, `canGoOffline`,
 - **Simulated**: the `sometimes` rules, among them that both tabs can finish
   their edits and agree with the server despite loss, duplication and reordering.
 - **Tested**: the HTTP shell and two tabs against the real server (`test/`);
-  that every story mounts. No test drives the page in a browser.
+  a tab against `spec/client.md` through its driver; that every story mounts. No test drives the page in a browser.
 - **Trusted**: `src/`, React, Effect, the VibeLang compiler, the generator,
   Dafny and Quint. Convergence is a `sometimes` rule: the model shows it can
   happen, not that it always does.

@@ -12,5 +12,4 @@ export const meta: ComponentMeta<MeterProps> = {
   schema: Schema.Struct({ value: Schema.Int }),
   decorator: (story) => story(),
   play: { "Half full": () => undefined },
-  snapshot: ["Failed"],
 };

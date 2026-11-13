@@ -10,7 +10,8 @@ export interface Story {
   args: Record<string, unknown>;
 }
 /** A story as the generated file writes it: `args` is source text. */
-interface Planned { export: string; args: string; play?: string; snapshot: boolean }
+/** `refuses`: the story renders the component disabled or loading, so its generated `play` checks nothing it was handed fires. */
+interface Planned { export: string; args: string; play?: string; refuses: boolean }
 export interface Plan { id: string; title: string; base: string; samples: number; stories: Planned[]; catalog: Story[]; diagnostics: string[] }
 
 /** Source text standing for a value, such as `fn()`; the catalog leaves it out. */
@@ -75,10 +76,13 @@ export function plan(c: Found, cap: number): Plan {
   if (c.part && !meta && !c.manual) return { ...result, stories: [], catalog: [], diagnostics: [] };
   if (diagnostics.length) return { ...result, stories: [], catalog: [], diagnostics };
 
-  const all: { name: string; kind: Story["kind"]; code: string; shown: Record<string, unknown> }[] = [];
+  const all: { name: string; kind: Story["kind"]; code: string; shown: Record<string, unknown>; refuses: boolean }[] = [];
   const add = (label: string, kind: Story["kind"], set: Record<string, unknown>, from = ["base"], shown: Record<string, unknown> = { ...plain, ...set }) => {
-    const code = `{ ${[...from.map((f) => `...${f}`), ...fields(set)].join(", ")} }`;
-    if (!all.some((s) => s.name === pascal(label))) all.push({ name: pascal(label), kind, code, shown });
+    // A disabled or loading story gets a spy for the click every element can take, unless the type gave one already.
+    const refuses = shown.disabled === true || shown.loading === true;
+    const spied = refuses && !(base.onClick instanceof Code) ? { ...set, onClick: new Code("fn()") } : set;
+    const code = `{ ${[...from.map((f) => `...${f}`), ...fields(spied)].join(", ")} }`;
+    if (!all.some((s) => s.name === pascal(label))) all.push({ name: pascal(label), kind, code, shown, refuses });
   };
   const prop = (...names: string[]) => c.props.find((p) => names.includes(p.name));
 
@@ -116,6 +120,7 @@ export function plan(c: Found, cap: number): Plan {
     for (let i = 0; varied.some((options) => i < options.length); i++) for (const options of varied) if (options[i]) add(options[i][0], "prop", options[i][1]);
   }
 
+  for (const key of meta?.extra ?? []) diagnostics.push(`${c.name}: \`${key}\` is no field of ComponentMeta (vibestack/stories/meta.ts) and is not read; remove it from ${basename(meta!.file)}`);
   for (const key of meta?.play ?? []) if (!all.some((s) => s.name === pascal(key))) diagnostics.push(`${c.name}: \`play\` names "${key}", which is no story of it`);
   const manual = c.manual;
   const kept = all.filter((s) => !manual?.exports.includes(s.name)).slice(0, cap);
@@ -124,7 +129,7 @@ export function plan(c: Found, cap: number): Plan {
   return {
     ...result,
     diagnostics,
-    stories: kept.map((s) => ({ export: s.name, args: s.code, play: meta?.play.find((key) => pascal(key) === s.name), snapshot: !!meta?.snapshot.some((key) => pascal(key) === s.name) })),
+    stories: kept.map((s) => ({ export: s.name, args: s.code, play: meta?.play.find((key) => pascal(key) === s.name), refuses: s.refuses })),
     catalog: [
       ...kept.map((s) => ({ id: storyId(id, s.name), name: startCase(s.name), kind: s.kind, args: s.shown })),
       ...(manual && theirs ? manual.exports.map((name) => ({ id: storyId(sanitize(theirs), name), name: startCase(name), kind: "example" as const, args: {} })) : []),

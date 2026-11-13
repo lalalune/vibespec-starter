@@ -13,10 +13,10 @@ own lock file.
 
 | Command | Does |
 |---|---|
-| `pnpm check` | Everything: model, simulation, proofs, types, the tests below, review |
+| `pnpm check` | Everything: model, simulation, proofs, types, the tests below, the order book against the spec through `test/drivers/index.ts`, review |
 | `pnpm demo` | Generates `gen/` and prints a scripted checkout, run from source |
 | `pnpm build` | `vibelang`: typechecks `.vibe` and `.ts` together and writes JavaScript to `dist/` |
-| `pnpm test` | `vitest run`: the journeys in `test/app.test.vibe`, compiled by `vibelang-vite`. `check` runs it after writing the simulated events its last journey sends; `gen` and `demo` clear them |
+| `pnpm test` | `vitest run`: the journey in `test/app.test.vibe`, compiled by `vibelang-vite` |
 
 | Path | Role |
 |---|---|
@@ -27,7 +27,8 @@ own lock file.
 | `src/ledger.ts` | Event replay and balance, with proved contracts |
 | `src/app.vibe` | The `OrderBook` service: order storage, input decoding and rejection reporting |
 | `src/demo.vibe` | Scripted checkout session |
-| `test/app.test.vibe` | Checkout journeys through the real shell |
+| `test/app.test.vibe` | A checkout journey through the real shell |
+| `test/drivers/index.ts` | How `check` reaches the order book: every journey, malformed inputs and random walks, compared with the spec; a disagreement is saved to `test/counterexamples/index/` and replayed first |
 
 ## VibeLang and TypeScript
 

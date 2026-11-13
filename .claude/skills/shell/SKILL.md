@@ -77,7 +77,9 @@ it.effect("Check out", effect () => {
 ```
 
 - **`machine()` forgets when the process ends.** A shell that stores state
-  writes its own service on `apply` and the decoders.
+  writes its own service on `apply` and the decoders, and a driver that
+  `check` compares with the spec ([AGENTS.md, "Conformance"](../../../AGENTS.md#conformance)):
+  `check` writes one to fill in when `src/` imports `apply`.
 - **Match an event by its `type`**: `match (event.type) { when "pay": …; }`.
   The compiler does not yet check that a `match` on the event itself, or on
   a variant by its `tag`, covers every case.
@@ -106,7 +108,7 @@ components before writing one, and follow the
 | check | `pnpm check` | `types` checks `src/`, `test/` and `gen/` with `vibelang --noEmit -p .` |
 | build | `pnpm build` (`vibelang`) | checks, and writes JavaScript to `dist/`, as `dist/src/…` and `dist/gen/…` |
 | run | `pnpm build && node dist/src/main.js` | runs the built `src/main.vibe` |
-| test | `pnpm test` (`vitest run`) | `test/**/*.test.vibe`, written with `@effect/vitest`; compiled as they load, no build first |
+| test | `pnpm test` (`vitest run`) | `test/**/*.test.vibe`, written with `@effect/vitest`, and the property tests of `src/**/*.schema.*` and `*.contract.*`; compiled as they load, no build first ([AGENTS.md, "Tests"](../../../AGENTS.md#tests)) |
 
 | Needs | |
 |---|---|

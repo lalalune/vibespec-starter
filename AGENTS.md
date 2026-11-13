@@ -36,7 +36,7 @@ Every project built here uses this, and nothing beside it:
 | User interface | React, in `.tsx`, built with Vite | Vue, Svelte, Angular, hand-built DOM |
 | UI state | React hooks over the generated machine's `Machine` service | state kept in a component that the spec owns |
 | Styling | Tailwind CSS v4 with the project's design tokens, shadcn/ui conventions on Radix primitives | hard-coded colors, a second token set, global CSS beyond the token file |
-| Tests | Vitest with `@effect/vitest`, on `test/**/*.test.vibe` | Jest, `node --test` for a new test |
+| Tests | Vitest with `@effect/vitest`, on `test/**/*.test.{vibe,tsx}`; a driver for a shell that keeps a machine's state | Jest, `node --test` for a new test |
 
 - **Every interface is React**: an application's, an example's and Studio's.
 - **Reuse before adding.** Find the component, token or service that exists
@@ -112,7 +112,7 @@ and nothing else would catch it.
 | Earns a test | Never a test |
 |---|---|
 | A whole user journey, or an integration with a real service, through the real shell: input parsing, storage, HTTP, UI wiring | A guard, transition, rule or law the spec already proves, except as a step of a journey |
-| Hand-written code that touches the outside world, through the journey that uses it. Pure logic becomes a `pure def` or gets a `//@` contract instead | Strings, labels, page titles, markup, styles, snapshots |
+| Hand-written code that touches the outside world, through the journey that uses it. Pure logic becomes a `pure def` or gets a `//@` contract instead | Strings, labels, page titles, markup, styles, snapshots and screenshots: no test compares pictures |
 | A shell bug that was found: one more step in the journey it broke | That a function was called; what the `types` stage already checks |
 
 - **Journeys.** A test walks a story end to end, is named after it, and cites
@@ -124,9 +124,11 @@ and nothing else would catch it.
   mode. Fake only a service that costs money, cannot
   be undone, or cannot be run and reset locally; fake it once, at its network
   boundary, shared by every test. No mocks of your own code.
-- **Extend before adding.** A step or assertion in an existing journey before
-  a new test; a new test before a new file. A test that repeats another's
-  setup to assert one more thing belongs inside it.
+- **Search, then extend before adding.** Search the tests for the citation of
+  the story or rule first, and extend the journey that has it: a step or
+  assertion in an existing journey before a new test; a new test before a new
+  file. A test that repeats another's setup to assert one more thing belongs
+  inside it.
 - **Compact.** Shared helpers over repeated setup, one assertion of a whole
   value over one per field, no comment that restates the test's name.
 - **One command.** `pnpm check` runs the package's `test` script, which
@@ -139,24 +141,43 @@ and nothing else would catch it.
   something else, change the assertion and name it and its rule in your
   report. Propose deleting a test; never delete one yourself.
 
-How `pnpm check` runs them:
+How `pnpm check` runs them, in its `tests` stage:
 
-- **Any runner.** It runs the package's `test` script with the package
-  manager named by `packageManager` in `package.json`, or else by the lock file
-  in the package or a directory above it: `node --test`, Vitest, Jest,
-  `bun test` and Playwright all work. Without a `test` script it runs
-  `node --test` on `test/**/*.test.ts`. The exit code decides; a failure shows
-  the runner's summary of failures, or its last 80 lines.
-- **VibeLang.** A package's `test` script is `vitest run`, on
-  `test/**/*.test.vibe` ([shell skill](.claude/skills/shell/SKILL.md)).
+- **The run.** It runs the package's `test` script in the package's directory,
+  with the package manager `packageManager` or the nearest lock file names.
+  The exit code decides; a failure shows the runner's list of failures, at
+  most 200 lines of it. A pass is remembered until something the tests read
+  changes, and a `check` that Turborepo runs straight after the package's
+  `test` task does not run the script again.
+- **One configuration.** The `test` script is `vitest run`, on
+  `project({ root: import.meta.dirname })` from `vibestack/testing/vitest`, as
+  `spec init` writes it; a package with `test/` and no `test` script gets
+  both from `check`. It runs `test/**/*.test.{ts,tsx,vibe}` in Node (a test
+  that needs a DOM says `// @vitest-environment happy-dom`), and
+  `*.browser.test.*` in Chromium, by `vitest run --project browser` (the
+  `test:browser` script). Before each run it writes the
+  [generated property tests](docs/architecture.md#which-test-for-what) of
+  every `src/**/*.schema.*` and `src/**/*.contract.*`; a module that yields
+  none fails the run, with why. A package with no tests passes.
 - **Citations.** A test, or a shell file in `src/`, in VibeLang or
   TypeScript, names the story or rule it serves by its heading, on one line:
   `// spec/index.md, "A payment never exceeds the balance"`, or
   `// spec/index.md, "Story: Check out"` for a story; several may share a line,
   separated by `;`. The path is the spec's from the root of the spec tree,
-  in an owner's code too: `// spec/app/index.md, "…"`. `check` fails on a
-  citation whose heading the spec no longer has, so a renamed or removed rule
-  brings its tests up for review.
+  in an owner's code too: `// spec/app/index.md, "…"`. Each `it` or `test`
+  needs one: on its line or in it, on the `describe` or layer around it, or
+  in the file's header. `check` fails on an uncited test, and on a citation
+  whose heading the spec no longer has, so a renamed or removed rule brings
+  its tests up for review; `review` lists the code that cites a changed rule.
+- **Past the generated code.** A test that reaches nothing but `gen/` and
+  test libraries, through the helpers of its own file, fails: it restates
+  what the spec proves. Route it through `src/`, or propose deleting it.
+- **Drivers are not tests.** `test/drivers/` is run by the `traces` stage
+  ([Conformance](#conformance)), and imports `gen/` as types only; `check`
+  fails on a driver that imports its code.
+- **Notes**, never failures: two test files for one runner and language, a
+  test file of 15,000 lines, and a spec of the package that no test cites and
+  no driver, trace or `driver:` script checks.
 - **Monorepos.** The root's `check` runs the tests of the root and of each
   owner ("One spec tree"), each in its own directory; a package with its own
   `spec/` runs its own `check` and tests (`pnpm test:models` for all;
@@ -169,7 +190,8 @@ How `pnpm check` runs them:
 - `pnpm check` is where step 3 of the sync skill's loop stops: what is
   left waits on the user.
 - In the vibestack repository, if you changed `vibestack/`, `pnpm selftest`
-  passes, with a new case for each new kind of mistake the change catches.
+  passes, with a new case for each new kind of mistake the change catches,
+  and each new kind of `✗` has its row in the sync skill.
 - What you wrote has had its passes under "Writing code".
 - Your summary follows "When you stop" in the sync skill.
 
@@ -182,7 +204,8 @@ loop is the [`sync` skill](.claude/skills/sync/SKILL.md); the stages of
 In the vibestack repository, "the order example" is
 `vibestack/examples/order/spec/index.md` and "the tracker example" is
 `vibestack/examples/dashboard/spec/tracker.md`. The root `spec/index.md` links to
-`spec/app/index.md`, blank and ready for the application in `apps/app`.
+`spec/app/index.md`, the hello world in `apps/app` that uses one of each thing
+Vibestack offers (`apps/app/README.md`), to be replaced by your application.
 
 ## Stages of `pnpm check`
 
@@ -197,8 +220,8 @@ with the reason.
 | `replay` | the generated TypeScript agrees with Quint on the simulated traces | as `sometimes` |
 | `types` | the `vibelang` compiler checks `src/`, the tests and `gen/` ([shell skill](.claude/skills/shell/SKILL.md)) | a stage above failed; without a `tsconfig.json` it passes as skipped only when there is no `src/` or `test/` |
 | `proof` | Dafny proves each unit's obligations, or `spec/lock.json` records them as simulated only | a stage above failed |
-| `tests` | the package's [tests](#tests) pass, and their citations name a story or rule the spec has | a stage above failed |
-| `traces` | recorded traces and `driver:` programs agree with the spec ([Conformance](#conformance)) | a stage above failed |
+| `tests` | the package's [tests](#tests) pass, each cites a story or rule the spec has and reaches past `gen/`, and its drivers import `gen/` as types only | a stage above failed |
+| `traces` | the application, through its drivers, `driver:` programs and recorded traces, agrees with the spec ([Conformance](#conformance)) | a stage above failed |
 | `review` | every story, rule and contract changed since `spec/lock.json` was accepted ([Review](#review)) | never |
 
 ## Writing a spec
@@ -363,12 +386,13 @@ it does for the root's own `src/` and `test/`:
 - **`gen/`.** The modules of the owner's specs, and of every spec they
   import, are also written to `<owner>/gen/` under the names they have in the
   root's: `spec/app/index.md` is `apps/app/gen/app.ts`, with
-  `app.effect.vibe` and `app.conformance.ts`; `spec/app/cart.md` is
+  `app.effect.vibe` and `app.conformance.ts` (its driver's types); `spec/app/cart.md` is
   `app__cart.ts`; a library `spec/shared/money.md` it imports is
   `shared__money.ts`. A package imports only from its own `gen/`. `pnpm gen`
   and `pnpm install` write it too.
 - **Stages.** `types`, `tests` and `traces` run in the owner's directory, on
-  its `tsconfig.json`, `test` script, `test/traces/` and `driver:` scripts;
+  its `tsconfig.json`, `test` script, `test/drivers/`, `test/traces/` and
+  `driver:` scripts;
   its `//@` files under `src/` are proved and their contracts reviewed. Each
   result names the package: `apps/app: pass`.
 - **Citations** in an owner's code are written from the root, as everywhere:
@@ -623,27 +647,47 @@ line.
 
 ### Conformance
 
-Three ways to run the real application against a state machine's spec:
+The `traces` stage runs the real application against each state machine's
+spec, in the package whose code it is, with the events the simulator found.
+`gen/<name>.ts` is the oracle; the application is reached three ways:
 
-| | How | Checked by |
+| | Is | Runs |
 |---|---|---|
-| `gen/<name>.conformance.ts` | `conformance(driver, options)` in a test: a journey per `sometimes` rule, then random walks | the test |
-| `test/traces/<name>.jsonl` | recorded lines: `{state}` starts, `{event, by?, state?, out?}` steps; at least one state observed | `check`, `traces` |
-| `driver:<name>` script | a program that answers each `{}` (reset) or `{event, by?}` line with one `{state, out?}` line | `check`, `traces`, on the simulated traces |
+| `test/drivers/<name>.ts` | exports `driver` and, if it chooses, `options`, typed by `gen/<name>.conformance.ts`; imports `gen/` as types only | in a Node of its own that runs VibeLang: the saved counterexamples, a journey to each `sometimes` rule, malformed inputs, then random walks |
+| `test/traces/<name>.jsonl` | recorded lines: `{state}` starts, `{event, by?, state?, out?}` steps; at least one state observed | compared line by line |
+| `driver:<name>` script | a program, in any language, that answers each `{}` (reset) or `{event, by?}` line with one `{state, out?}` line | on the simulated traces |
 
 `<name>` is the module's name in the root's `gen/`, and the paths are the
-package's own: an owner of `spec/app/cart.md` imports
-`gen/app__cart.conformance.ts`, records `test/traces/app__cart.jsonl` and
-names its script `driver:app__cart`, all in `apps/app`.
+package's own: an owner of `spec/app/cart.md` writes
+`test/drivers/app__cart.ts` on `gen/app__cart.conformance.ts`, records
+`test/traces/app__cart.jsonl` or names its script `driver:app__cart`, all in
+`apps/app`. `vibestack/examples/order/test/drivers/index.ts` is a worked
+driver; `effectDriver` from `vibestack/testing` builds one from a `Layer`.
 
-A `Driver` has `reset`, `dispatch` (returns `"accepted"` or `"refused"`),
-`observe` and, for a spec that emits effects, `observeOutput`.
+A `Driver` has `reset`, `dispatch` (sends an event through the
+application's own entry point and returns `"accepted"` or `"refused"`),
+`observe` and, for a spec that emits effects, `observeOutput`. With
+`receive(key, raw, by?)`, which sends an untrusted value through the
+decoding `dispatch` skips, the check also sends each kind of event with an
+unknown type, a field of `1.5` or `2^53`, or a field missing, each of which
+must be refused and change nothing; and with an extra field and fields that
+change when read again, which must do what the clean event does. `options`
+are `view` (what of the state `observe` shows), `keys` (the entities walks
+interleave), `walks` (at most this many; `0` for a slow driver) and `steps`.
+The walks take `FUZZ_RUNS` and `FUZZ_SEED`
+([budgets](docs/architecture.md#seeds-and-budgets)).
 
-A disagreement throws `ConformanceError`: its `trace` is the shrunk list of
-`[key, event]` pairs that shows it, `seed` the seed of its walks and `origin`
-the journey or walk that found it. Save the trace as a counterexample;
-`replay(driver, trace)`, from the same module, runs exactly it again, and
-`conformance(driver, { seed })` repeats the walks.
+- **A disagreement is saved.** A journey or walk that disagrees is shrunk
+  and written to `test/counterexamples/<name>/<hash>.json`, which every
+  later run replays first. Decide which side is wrong, fix it, and commit the
+  file: it is a regression test. A saved trace with an event the spec no
+  longer has fails with "the spec has outgrown" it: bring it up to date, or
+  delete it.
+- **A shell that keeps state gets a driver.** When the package's `src/`
+  imports `apply` from `gen/<name>.effect.vibe`, it keeps the machine's
+  state itself, and `check` writes a `test/drivers/<name>.ts` that fails
+  until its `reset`, `dispatch` and `observe` are filled in. It never
+  replaces a driver. A shell on the generated `machine()` needs none.
 
 ## Large applications
 
@@ -666,7 +710,8 @@ the journey or walk that found it. Save the trace as a counterexample;
 
 ## Checking harder
 
-Simulation is seeded from what it simulates, so a run repeats exactly. A
+Simulation is seeded from what it simulates, and from `FUZZ_SEED` where it
+is set, so a run repeats exactly and a nightly run tries other traces. A
 failing `always` rule or an unreached `sometimes` goal prints its seed and the
 `pnpm exec quint run` command that replays it.
 

@@ -15,8 +15,9 @@ Read AGENTS.md in full first, once per session.
    and rules, and a contract's `//@` lines; for a **new** rule, read it in the
    spec. The last line, `next:`, names what to do first.
 2. Resolve what `next:` names, using the table below, by editing `spec/**/*.md`
-   (and `src/` or the tests only when `types` or `tests` asks for it, or when
-   a story you formalized leaves the verified core: then extend its journey,
+   (and `src/`, the tests or a driver only when `types`, `tests` or `traces`
+   asks for it, or when a story you formalized leaves the verified core: then
+   search the tests for its citation and extend the journey that has it,
    AGENTS.md "Tests").
 3. Run `pnpm check` again. Repeat until the only `✗` lines are `review`
    items other than **story has no rules** and **not formalized**, and `proof`
@@ -40,9 +41,11 @@ Give up and report after five rounds on the same failure.
 | `review` … **new** | Read the rule's prose and Quint in the spec and make sure they say the same. |
 | `review` … **removed or renamed** | A rule: check that no story still depends on it. A story: check that its rules moved with it or went too. |
 | `review` … **new contract** or **contract changed** | Read the `//@` lines printed under `src/`. Check they say what the code must do, and no less than the rules it serves. |
+| `review` … **cited by** `file:line` | The rule's meaning moved, and that test or shell line cites it. Read each again against the rule as it is now; change an assertion only where the rule now asks for something else, and name it in your report. |
 | `review` … **contract removed** | A `src/` file lost its last `//@` or was deleted. Check that nothing still relies on what it proved. |
 | `model` | Fix at the reported `spec/…:line:col`. AGENTS.md lists what Quint is supported and which names are refused. |
 | `always` with a trace | Model → rule. The trace reaches a state that breaks the named rule; its last lines name the event and its guard. Decide whether the user would want that trace forbidden. If so, write the **reason** as a new rule and guard, such as "a payment may not exceed the balance". Only if you cannot find the reason, use the fallback the report offers: refuse the event when its result would break the rule. If the trace is fine and the `always` rule is wrong, fix the rule and say so. |
+| `always` … `(FUZZ_SEED=…)` | A nightly run's seed found it. Treat it as any other trace; the printed command repeats it. |
 | `always` … "the law … is false for" | The law or the function is wrong for those arguments. Fix whichever does not say what the prose says. |
 | `always` … "the simulator could not run" | A definition failed while being evaluated: usually a list index out of range, a missing map key or a division by zero. Guard it in the definition that uses it. |
 | `sometimes` not reached | A guard is too strict, a transition is missing, or the goal needs values the simulator does not try (define `<param>Values`). |
@@ -58,8 +61,19 @@ Give up and report after five rounds on the same failure.
 | `proof` … "the proof stage needs Dafny 4.11 on the PATH" | Dafny is missing or not 4.11.x. Tell the user; do not work around it. |
 | `proof`, a `src-…` unit | Fix the hand-written code, its `//@` annotation, or its proof file. The full output is in `gen/proof/<unit>.log`. |
 | `tests` … citations name no story or rule | Cite the story or rule by its heading as the spec now has it. If it was removed, the test that cites it is yours to review: does any rule still ask for what it checks? |
+| `tests` … **cite no story or rule** | Cite the story or rule each listed test serves: on the test, on the `describe` or layer around it, or in the file's header. If it serves none, fold what it checks into the journey that does, or propose deleting it. |
+| `tests` … **touch only generated code** | The test checks what the spec proves. Route it through the `src/` code a user's input reaches, as a step of the journey it belongs to, or propose deleting it. An import added only to pass is a workaround. |
+| `tests` … **a driver imports gen/ as types only** | The listed `test/drivers/` line imports the oracle it is compared with. Reach the application through its own entry point, and import from `gen/` with `import type` only. |
+| `tests` … "generated tests: … no test" | A `src/**/*.schema.*` or `*.contract.*` module yields no property test; the lines say why. Make it export an Effect Schema whose values can be generated, or a `contract({ … })` that declares a property; or rename it if it is neither. |
+| `tests` ✓ "test/ had nothing to run it: added …" | Not a failure: `check` gave the package the `test` script and Vitest configuration `spec init` writes. Keep them; install if Vitest is missing. |
+| `tests` ✓ `note:` … consolidate | Two test files for one runner and language, or one of 15,000 lines: merge them, extending journeys rather than repeating setup, when you next work there. List it in your report. |
+| `tests` ✓ `note:` no test or driver checks … | A story of that spec that leaves the verified core needs a journey that cites it, and a shell that keeps the machine's state a driver. If none does, say so in your report. |
 | `tests` … fail | Fix the application in `src/`. Change an assertion only where the spec now asks for something else, and name the assertion and its rule in your report. A test that only restates what the spec proves, or breaks AGENTS.md "Tests", you propose for deletion in your report; never delete one to make it pass. |
-| `traces` … departs from the spec | The application in `src/` (or its driver) disagrees with the spec on the printed trace. Fix the application; if the spec is what is wrong, change the rule and say so. Never edit a recorded trace to pass. |
+| `traces` … **the program departs from the spec** | The application in `src/` disagrees with the spec on the printed trace or probe. A probe of a malformed input means the shell takes input without `decodeEvent`, or keeps what it read without copying it. Fix the application; if the spec is what is wrong, change the rule and say so. Never edit a recorded trace or a saved counterexample to pass. |
+| `traces` … **saved the counterexample** `test/counterexamples/…` | A journey or walk disagreed, and its shrunk trace is now replayed first on every run. Decide which side is wrong: the application, if the spec says what the user wants; else the rule, and say so. Keep the file and list it in your report: it is a regression test. |
+| `traces` … **the run did not get as far as comparing** … "fill in reset, dispatch and observe" | `check` wrote this driver because `src/` keeps the machine's state. Write `reset`, `dispatch` and `observe` on the application's own entry point (AGENTS.md, "Conformance"), and `receive` if the shell decodes untrusted input. |
+| `traces` … **the run did not get as far as comparing** … "the spec has outgrown" | A saved counterexample sends an event the spec no longer has. Rewrite its events to what the spec now calls them, or delete the file if what it caught is gone, and say which in your report. |
+| `traces` … **the run did not get as far as comparing**, otherwise | The driver could not run: it threw, exports no `driver`, did not finish, or is named after no state machine, or `FUZZ_RUNS` or `FUZZ_SEED` is not a whole number. The lines under it say which; fix that. |
 | "another check or accept is running" | Wait for that process and run again. If it no longer exists, delete the lock file the message names. |
 
 ## Rules for what you write
@@ -86,7 +100,9 @@ Tell the user, in this order:
 4. **Proved by hand**: proof files you wrote or changed, and which
    obligations they prove.
 5. **Tests**: journeys added or extended, each with what it covers that the
-   checks cannot, and tests you propose to delete.
+   checks cannot (search the tests for a rule's citation before adding one:
+   extend the journey that has it), drivers written, counterexamples saved
+   and which side you fixed, and tests you propose to delete.
 6. **Not proved**: obligations that hold in simulation only, if any, each
    with why you could not prove it.
 7. **Could not formalize**: anything in a story you left out, and why.

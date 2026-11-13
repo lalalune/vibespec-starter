@@ -1,13 +1,18 @@
-// Conformance adapters: generated test helpers and real JSONL/program traces share conformance.ts.
+// The traces stage (AGENTS.md, "Conformance"): each package's drivers, `driver:` programs and recorded traces, run
+// against its specs with the events the simulator found. conformance.ts does the comparing for all three.
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
-import { compareObservation, departure, transition, type Found, type Line, type Oracle, type Sent } from "./conformance.ts";
+import { pathToFileURL } from "node:url";
+import { check, compareObservation, ConformanceError, departure, replay, transition, type Found, type Line, type Oracle, type Sent } from "./conformance.ts";
 import type { Model } from "./gen.ts";
 import { heading, type Spec } from "./parse.ts";
 import type { Step } from "./simulate.ts";
-import { indent, type Reported } from "./util.ts";
+import { exec } from "./run.ts";
+import { filesUnder, indent, type Reported } from "./util.ts";
 
 export type Simulated = Found<any> & { traces: Sent<any>[][] };
 export interface Machine { domain: Oracle<any, any>; model: Model; found: Simulated }
@@ -36,28 +41,24 @@ export function conformanceFound(model: Model, spec: Spec, traces: Step[][], wit
   };
 }
 
-/** Write the typed helper before typechecking, then fill it with simulation results before running tests. */
-export function writeConformance(root: string, model: Model, found?: Found<any>) {
+/** gen/<name>.conformance.ts: the types a test/drivers/<name>.ts is written to, over a copy of conformance.ts. */
+export function writeConformance(root: string, model: Model) {
   if (!model.stateType || !model.transitions.length) return;
   const dir = path.join(root, "gen");
   fs.copyFileSync(path.join(import.meta.dirname, "conformance.ts"), path.join(dir, "_conformance.ts"));
-  const data: Found<any> = found ?? { spec: model.name, source: model.source, sender: !!model.sender, events: [], journeys: [], shape: model.shape!, outputShape: model.outputShape };
-  const { traces: _, ...publicData } = data;
   fs.writeFileSync(path.join(dir, `${model.name}.conformance.ts`), [
-    `// Generated from ${model.source}; do not edit.`,
-    `import * as oracle from "./${model.name}.ts";`,
-    `import { check, replay as replayTrace, type Driver, type Found, type Options, type Trace } from "./_conformance.ts";`,
-    `export { ConformanceError } from "./_conformance.ts";`,
+    `// Generated from ${model.source}; do not edit. What test/drivers/${model.name}.ts exports, as \`driver\` and \`options\`.`,
+    `import type * as oracle from "./${model.name}.ts";`,
+    `import type { Driver as Reaching, Options as Choosing } from "./_conformance.ts";`,
     `type State = typeof oracle.initial;`,
     `type Event = Parameters<typeof oracle.step>[1];`,
-    `export const found: Found<Event> = ${JSON.stringify(publicData)};`,
-    `export const conformance = <V = State>(driver: Driver<Event, V>, options?: Options<State, V>) => check(oracle, found, driver, options);`,
-    `export const replay = <V = State>(driver: Driver<Event, V>, trace: Trace<Event>, options?: Options<State, V>) => replayTrace(oracle, found, driver, trace, options);`,
+    `export type Driver<V = State> = Reaching<Event, V>;`,
+    `export type Options<V = State> = Choosing<State, V>;`,
     "",
   ].join("\n"));
 }
 
-const TRACES = "test/traces";
+const TRACES = "test/traces", DRIVERS = "test/drivers", COUNTEREXAMPLES = "test/counterexamples";
 const ANSWER_WITHIN = 10_000;
 
 /** A real program, one JSON answer for each reset/event request. */
@@ -120,12 +121,109 @@ async function drive(root: string, machine: Machine, command: string): Promise<s
   } finally { await program.end(); }
 }
 
-/** Every configured trace and program is run afresh; outside service state is not part of a source-code cache key. */
+/** `FUZZ_RUNS` or `FUZZ_SEED`, a whole number of at least `least`, or `fallback` where it is not set. */
+function budget(name: string, fallback: number, least: number) {
+  const text = process.env[name] || String(fallback), n = Number(text);
+  if (!/^\d+$/.test(text) || !Number.isSafeInteger(n) || n < least) throw new Error(`${name} must be a whole number, ${least} or more, but is ${JSON.stringify(text)}`);
+  return n;
+}
+
+/**
+ * The machines whose Effect adapter `apply` the package's `src/` imports: a shell that keeps the machine's state
+ * itself, which only a driver compares with the spec. The generated `machine()` needs none: it is the spec's own.
+ */
+function shelled(root: string): Set<string> {
+  const names = new Set<string>();
+  for (const file of filesUnder(root, "src").filter((f) => /\.(?:[mc]?tsx?|vibex?)$/.test(f)))
+    for (const [, imported, name] of fs.readFileSync(path.join(root, file), "utf8").matchAll(/\bimport\s*\{([^}]*)\}\s*from\s*["'][^"']*\bgen\/(\w+)\.effect\.vibe["']/g))
+      if (imported.split(",").some((part) => /^apply\b/.test(part.trim()))) names.add(name);
+  return names;
+}
+
+/** What `check` writes where a shell has no driver yet: a driver that fails until a person fills it in. */
+const stub = (name: string, model: Model) => `// The driver of ${model.source}: how \`pnpm check\` reaches the application to compare it with the spec
+// (AGENTS.md, "Conformance"). Written by \`spec check\` because src/ keeps the machine's state; fill it in. It imports
+// gen/ as types only: the spec is the oracle it is compared with.
+import type { Driver } from "../../gen/${name}.conformance.ts";
+
+const todo = (): never => { throw new Error("${DRIVERS}/${name}.ts: fill in reset, dispatch and observe"); };
+
+export const driver: Driver = {
+  /** Start from a fresh application: empty storage, nothing created. */
+  reset: todo,
+  /** Send the event for the entity \`key\` through the application's own entry point: "accepted" or "refused". */
+  dispatch: todo,
+  /** What the application now holds for \`key\`, read back through its own storage or interface. */
+  observe: todo,
+};
+`;
+
+/**
+ * Run `test/drivers/<name>.ts` of the package `root` in a Node of its own that runs VibeLang (`main` below), and say
+ * what it found: every saved counterexample, then the journeys, the probes and the walks.
+ */
+async function driven(root: string, name: string, machine: Machine): Promise<{ problem?: string; summary?: string }> {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "spec-driver-")), found = path.join(dir, "found.json");
+  fs.writeFileSync(found, JSON.stringify(machine.found));
+  const r = await exec(process.execPath, ["--import", "vibelang/register", import.meta.filename, name, found], root).finally(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const said = r.stdout.trimEnd().split("\n").at(-1) ?? "";
+  let verdict: { problem?: string; summary?: string } | undefined;
+  try { verdict = JSON.parse(said); } catch { /* not the last line it writes, so the driver never finished */ }
+  return verdict ?? { problem: `${DRIVERS}/${name}.ts did not finish${r.stopped ? `: ${r.stopped}` : ""}\n${`${r.stdout}${r.stderr}`.trim().split("\n").slice(-40).join("\n")}` };
+}
+
+/** In the driver's own Node, in its package: replay what was saved, then check; a new disagreement is saved. */
+async function main(name: string, foundFile: string) {
+  const root = process.cwd(), saved = `${COUNTEREXAMPLES}/${name}`;
+  const found: Found<any> = JSON.parse(fs.readFileSync(foundFile, "utf8"));
+  const oracle: Oracle<any, any> = await import(pathToFileURL(path.join(root, "gen", `${name}.ts`)).href);
+  const { driver, options = {} } = await import(pathToFileURL(path.join(root, DRIVERS, `${name}.ts`)).href);
+  if (!driver) throw new Error(`${DRIVERS}/${name}.ts exports no \`driver\``);
+  const seed = budget("FUZZ_SEED", 1, 0), walks = Math.min(options.walks ?? Infinity, budget("FUZZ_RUNS", 1, 1));
+  try {
+    const files = fs.existsSync(path.join(root, saved)) ? fs.readdirSync(path.join(root, saved)).filter((f) => f.endsWith(".json")).sort() : [];
+    for (const file of files) await replay(oracle, found, driver, JSON.parse(fs.readFileSync(path.join(root, saved, file), "utf8")).trace, options, `${saved}/${file}`);
+    const { journeys, probes } = await check(oracle, found, driver, { ...options, seed, walks });
+    const parts = [[files.length, "saved counterexamples"], [journeys, "journeys"], [probes, "malformed inputs"], [walks, `walks of seed ${seed}`]].filter(([n]) => n);
+    return parts.map((p) => p.join(" ")).join(", ");
+  } catch (error) {
+    if (!(error instanceof ConformanceError) || error.origin === "replay") throw error;
+    const file = `${saved}/${createHash("sha256").update(JSON.stringify(error.trace)).digest("hex").slice(0, 12)}.json`;
+    fs.mkdirSync(path.join(root, saved), { recursive: true });
+    fs.writeFileSync(path.join(root, file), `${JSON.stringify({ origin: error.origin, seed, trace: error.trace }, null, 2)}\n`);
+    throw new Error(`${error.message}\nSeed: ${seed}\nSaved as ${file}, which is replayed first from now on.`, { cause: error });
+  } finally {
+    await driver[Symbol.asyncDispose]?.();
+  }
+}
+
+if (import.meta.main) {
+  const verdict = await main(process.argv[2], process.argv[3]).then((summary) => ({ summary }), (error) => ({ problem: error instanceof Error ? error.message : String(error) }));
+  // The last line is the verdict, whatever the driver wrote; a driver may leave a server or a timer running.
+  process.stdout.write(`\n${JSON.stringify(verdict)}\n`, () => process.exit());
+}
+
+/**
+ * Every driver, configured program and recorded trace of the package `root`, run afresh: outside service state is not
+ * part of a source-code cache key. A shell with no driver gets one to fill in.
+ */
 export async function conformance(root: string, machines: Map<string, Machine>, scripts: Record<string, string>): Promise<Reported<"traces">[]> {
   const results: Reported<"traces">[] = [];
   const add = (where: string, machine: Machine | undefined, problem: string | undefined, subject: string) => results.push([!problem, "traces",
-    `${where}: ${problem ? "the program departs from the spec" : `${subject} agree with ${machine!.model.source}${machine!.found.outputShape ? "; effects checked where out is reported" : ""}`}`,
+    `${where}: ${problem ? /^(?:conformance to|trace|line) /.test(problem) ? "the program departs from the spec" : "the run did not get as far as comparing" : `${subject} agree with ${machine!.model.source}${machine!.found.outputShape ? "; effects checked where out is reported" : ""}`}`,
     problem ? indent(problem) : "", where]);
+  for (const name of shelled(root)) {
+    const file = path.join(root, DRIVERS, `${name}.ts`), model = machines.get(name)?.model;
+    if (model && !fs.existsSync(file)) {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, stub(name, model));
+    }
+  }
+  for (const file of filesUnder(root, DRIVERS).filter((f) => /^test\/drivers\/\w+\.ts$/.test(f))) {
+    const name = path.basename(file, ".ts"), machine = machines.get(name);
+    const { problem, summary } = machine ? await driven(root, name, machine) : { problem: "no state-machine spec has this name" };
+    add(file, machine, problem, summary!);
+  }
   const dir = path.join(root, TRACES);
   for (const file of fs.existsSync(dir) ? fs.readdirSync(dir).filter((file) => file.endsWith(".jsonl")).sort() : []) {
     const machine = machines.get(file.split(".")[0]);

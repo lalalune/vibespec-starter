@@ -101,13 +101,14 @@ applications and packages beside Studio; the examples stand alone.
    ```
 
 3. In `spec/index.md`, say what the product is for. In `spec/app/index.md`,
-   the requirements of the application in `apps/app`, add its first story:
-   who it is for, what they need to do, and why. You can write it in Studio
+   the requirements of the application in `apps/app`, replace the hello world
+   story with your first: who it is for, what they need to do, and why. You can write it in Studio
    or edit the Markdown file directly.
 4. Ask the coding agent to sync. It writes the rules and Quint, runs the
    checks, and reports what needs your review.
 5. Build your application in `apps/app/src/`: its shell in VibeLang, its
-   interface in React, both on the generated code in `apps/app/gen/`. Follow
+   interface in React, both on the generated code in `apps/app/gen/`, in place
+   of the hello world, which has one of each ([apps/app](apps/app/README.md)). Follow
    [Build your project](#build-your-project).
 
 ## Studio
@@ -185,11 +186,13 @@ import { Machine, machine, apply, decodeEvent, decodeState } from "../gen/app.ef
 `NotAnEvent` or `Rejected`. A shell that stores state builds its own service
 on `apply`, and passes what it loads through `decodeState`. If the spec uses
 a sender parameter named `by`, authenticate that sender in your shell and
-pass it separately ([the VibeLang shell](AGENTS.md#the-vibelang-shell)).
+pass it separately ([the `shell` skill](.claude/skills/shell/SKILL.md)).
 
 Put HTTP, storage and other I/O in the package's `src/` as VibeLang, the interface as
 React components that read the state and send events through hooks over
-`Machine`, and whole-journey tests in `test/`. Keep pure logic in the spec
+`Machine`, and whole-journey tests in `test/`. A shell that keeps the
+machine's state gets a [driver](AGENTS.md#conformance) in `test/drivers/`,
+through which `check` compares it with the spec. Keep pure logic in the spec
 wherever Quint can express it. Logic that needs TypeScript, such as a loop,
 carries [LemmaScript](https://github.com/midspiral/LemmaScript) contracts and
 is proved too. When the spec changes, the `types` stage points at application
@@ -241,16 +244,16 @@ current one. Installed as a package, use `pnpm exec spec <command> [<dir>]`.
 |---|---|
 | `pnpm dev` | Starts Studio on this project and every workspace package's `dev` script, together |
 | `pnpm studio [<dir>]` | Opens Studio alone, on one project |
-| `pnpm check [<dir>] [--json]` | Checks spec, source and tests; ends with a `next:` line ([JSON shape](AGENTS.md#changing-the-tools)) |
+| `pnpm check [<dir>] [--json]` | Checks spec, source and tests; ends with a `next:` line ([JSON shape](CONTRIBUTING.md#changing-the-tools)) |
 | `pnpm quick` | Types, lint and tests of what changed |
-| `pnpm verify` | Everything CI runs for `main`, in every package and example |
+| `pnpm verify` | Everything CI runs, in every package; `pnpm examples` checks the examples |
 | `pnpm gen [<dir>]` | Generates `gen/` only |
 | `node vibestack/spec.ts watch [<dir>]` | Rechecks when a spec, source file or test changes |
 | `pnpm accept [<dir>]` | The user's sign-off: checks afresh and records what `review` lists, [all or nothing](AGENTS.md#review) |
 | `pnpm accept unproved` | Records the listed obligations as simulated only. The user's decision |
 | `pnpm new [<path>]` | Fills an empty root index or creates a child [starter spec](AGENTS.md#writing-a-spec) |
 | `node vibestack/spec.ts migrate [<dir>]` | Consolidates old review ledgers into `spec/lock.json`, keeping their approvals; proof exceptions in the old list form are dropped and must be proved or accepted again |
-| `node vibestack/spec.ts init [<dir>]` | Sets up an existing project; see [Using it from another package](AGENTS.md#using-it-from-another-package) |
+| `node vibestack/spec.ts init [<dir>]` | Sets up an existing project; see [Using it from another package](#using-it-from-another-package) |
 | `pnpm demo` | Runs the order example's scripted checkout session |
 | `pnpm selftest` | Breaks the pipeline one way at a time and checks each break is caught |
 | `pnpm build` | Compiles the tools into `dist/`, the packaged `spec` command |
@@ -260,6 +263,41 @@ current one. Installed as a package, use `pnpm exec spec <command> [<dir>]`.
 | 0 | green |
 | 1 | a `✗`, or an error |
 | 2 | bad arguments; prints the usage line |
+
+## Using it from another package
+
+The toolchain is a package with a `spec` command, installed from a path or
+a tarball made with `pnpm pack`.
+
+```sh
+pnpm add -D /path/to/vibestack-0.1.0.tgz
+pnpm exec spec init          # adds what is missing; updates only its own marked instructions
+pnpm exec spec new           # fill an empty spec/index.md
+pnpm exec spec new <name>    # a starter spec/<name>/index.md
+pnpm check
+```
+
+| `spec init` adds | |
+|---|---|
+| `.claude/skills/sync/`, `.claude/skills/design/`, `AGENTS.md` | the agent's procedure and the spec reference; existing AGENTS content is kept around a marked Vibestack section |
+| `.agents/skills/` | links to the same skills in `.claude/skills/` |
+| `CLAUDE.md` | imports `AGENTS.md`, preserving any existing instructions |
+| an empty `spec/index.md` | |
+| `tsconfig.json` | for the VibeLang compiler: `src`, `test`, `gen/*.ts` and `gen/*.vibe`, emitting to `dist/`, with the compiler's declarations in `.vibe/declarations` |
+| `vitest.config.ts` | `project({ root: import.meta.dirname })` from `vibestack/testing/vitest`, the one configuration ([AGENTS.md, "Tests"](AGENTS.md#tests)) |
+| `.gitignore` | `gen/`, `.spec-cache/`, `.studio/`, `dist/`, `.vibe/` |
+| `package.json` | scripts `dev`, `check`, `gen`, `accept`, `build` (`vibelang`) and `test` (`vitest run`); the VibeLang toolchain it lacks, at its pins; `"type": "module"` if unset |
+
+It replaces no file that exists, and no script or dependency already there.
+It writes no tests: `check` adds a `test` script when `test/` first appears,
+and a driver to fill in when `src/` first keeps a machine's state.
+
+`spec` works on `spec/**/*.md`, and optionally `src/`, the package's tests
+and a `tsconfig.json`, in the directory it is run from. Without a
+`tsconfig.json`, a package containing `src/` or `test/` fails the types
+stage; a spec-only package reports that there is no code to typecheck. To
+hand the generated code to another package, compile `gen/*.ts` with `tsc`;
+it has no dependencies. `gen/*.effect.vibe` needs the VibeLang toolchain.
 
 ## Examples
 
