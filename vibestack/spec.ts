@@ -11,7 +11,7 @@ import { readSpecs, badSpecName, specFiles, specName, importedMeanings, isStd, l
 import { contracts, pending, pendingKey, pendingContracts, acceptAllReviews, pendingSpecs, migrateLocks, moved, showPending, ledgerFile, readLedger, writeLedger, type Pending, type Accepted, type Lock } from "./review.ts";
 import { entry, remembered, collectGarbage, type Memory } from "./cache.ts";
 import { generated, typecheckAll, proofUnits, proofFiles, strayProofFiles } from "./units.ts";
-import { SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, LASSO_TRACES, STEPS, DEPTHS, SEARCHED, simulate, search, firstBreak, lasso, showTrace, replay, type Step } from "./simulate.ts";
+import { SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, LASSO_TRACES, STEPS, DEPTHS, SEARCHED, simulate, search, firstBreak, lasso, showTrace, replay } from "./simulate.ts";
 import { sha, indent, packageScripts, tests, readSrc, projectRoot, type SrcFile } from "./util.ts";
 
 export { readSpecs, badSpecName, parseSpec, expandListHelpers, type Spec, type Rule, type Story } from "./parse.ts";
@@ -311,7 +311,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
           const proofText = fs.existsSync(proofPath) ? fs.readFileSync(proofPath, "utf8") : undefined;
           proofTexts.set(u.unit, proofText);
           running.set(u.unit, (async () => {
-            if (proofText !== undefined) await Promise.allSettled(u.laws.map((l) => running.get(l.from)));
+            if (proofText !== undefined) await Promise.allSettled(u.laws.flatMap((l) => running.get(l.from) ?? []));
             // A law of an imported module is offered only if its own unit proved it, in this run.
             const laws = u.laws.filter(({ law, from }) => {
               const p = proved.get(from);

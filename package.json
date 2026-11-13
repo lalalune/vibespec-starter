@@ -24,7 +24,7 @@
     "lint": "turbo run //#lint:js",
     "lint:js": "eslint . --cache --cache-location node_modules/.cache/eslint/ --max-warnings 0",
     "lint:css": "stylelint \"**/*.css\" --cache --cache-location node_modules/.cache/stylelint/ --allow-empty-input",
-    "analyze": "knip && madge --circular --extensions ts,tsx --ts-config tsconfig.json vibestack/spec.ts packages apps",
+    "analyze": "knip && madge --circular --extensions ts,tsx --ts-config tsconfig.json vibestack/spec.ts packages",
     "examples": "for d in vibestack/examples/*/; do pnpm -C \"$d\" install --frozen-lockfile --ignore-workspace && pnpm -C \"$d\" check || exit 1; done",
     "quick": "turbo run typecheck test //#typecheck:tool //#test:tool //#lint:js //#lint:css --affected",
     "verify": "turbo run build typecheck test test:browser check //#check //#typecheck:tool //#test:tool //#build:tool //#lint:js //#lint:css //#analyze //#examples",

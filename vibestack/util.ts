@@ -59,7 +59,7 @@ function manifest(dir: string) {
   try {
     return JSON.parse(fs.readFileSync(file, "utf8"));
   } catch (e) {
-    throw new Error(`${file}: ${(e as Error).message}`);
+    throw new Error(`${file}: ${(e as Error).message}`, { cause: e });
   }
 }
 /** A package's scripts. */

@@ -737,7 +737,7 @@ async function copyPrompt() {
   try { await navigator.clipboard.writeText(S.snap!.prompt); toast("Sync prompt copied"); } catch { toast("Could not copy"); }
 }
 function signOff() {
-  if (confirm(`Sign off ${reviewCount()}?`)) start("accept");
+  if (confirm(`Sign off ${reviewCount()}?`)) void start("accept");
 }
 function discard() {
   if (!confirm(`Discard unpublished changes to ${dirtySpecs().map((s) => s.file).join(", ")}?`)) return;
@@ -777,7 +777,7 @@ function openPublish() {
         spec.deleted ? "" : diff(spec.orig ?? "", publishedText(spec)!)))),
     h("footer", {},
       h("button", { class: "btn", value: "cancel" }, "Cancel"),
-      h("button", { class: "btn primary", value: "publish", disabled: unsound.length > 0, onclick: (e: MouseEvent) => { e.preventDefault(); dialog.close(); publish(); } }, icon("check"), "Publish"))));
+      h("button", { class: "btn primary", value: "publish", disabled: unsound.length > 0, onclick: (e: MouseEvent) => { e.preventDefault(); dialog.close(); void publish(); } }, icon("check"), "Publish"))));
   dialog.showModal();
 }
 
@@ -841,6 +841,6 @@ events.addEventListener("job", (e) => {
   const { session, jobs, check } = JSON.parse((e as MessageEvent).data);
   const ended = S.snap!.session.job !== "Idle" && session.job === "Idle";
   Object.assign(S.snap!, { session, jobs, check });
-  if (ended) refresh();
+  if (ended) void refresh();
   else renderBuild();
 });

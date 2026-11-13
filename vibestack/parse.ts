@@ -147,7 +147,7 @@ export function parseSpec(root: string, file: string, text = fs.readFileSync(loc
     importSources.set(spec, sources);
     return spec;
   } catch (e) {
-    throw new Error(`${file}:${(e as Error).message}`);
+    throw new Error(`${file}:${(e as Error).message}`, { cause: e });
   }
 }
 
