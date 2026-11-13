@@ -135,10 +135,10 @@ pure def stepEachRequestRaisesTheVersionByAtMostOne(before: Server, after: Serve
     and (after.version == before.version or after.version == before.version + 1)
 ```
 
-### Two clients can both change the list, and a request can be refused after a change
+### Two clients can both change the list, and a server that has accepted a change can also hold a refusal
 
-The refusal is asked of a server that has also accepted an edit, so that it
-is not witnessed by a server that only ever refuses.
+The refusal is asked of a server that has also accepted an edit, before or
+after it, so that it is not witnessed by a server that only ever refuses.
 
 ```quint
 pure def sometimesTwoClientsChangedIt(s: Server): bool =
