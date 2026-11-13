@@ -749,6 +749,7 @@ In the vibestack repository:
 | `vibestack/studio/` | Studio, a workspace package with its own spec, checked by `npm run check --workspace vibestack-studio`: change `spec/`, then its shell in `src/` |
 | `vibestack/prove.ts` | proves one unit: checks and splices the proof file, runs LemmaScript and `dafny audit`, verifies again with every assertion isolated each definition that fails, and alone every postcondition a failing one could hide |
 | `vibestack/proof/lib.dfy` | the library proof files call |
+| `vibestack/std/` | specs that ship with the tools, which any spec may import, each with its proof file |
 | `vibestack/gen.ts` | the translator: reads what a module imports and defines |
 | `vibestack/gen/types.ts` | everything decided by a type |
 | `vibestack/gen/print.ts` | expressions |

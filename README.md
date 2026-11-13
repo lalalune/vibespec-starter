@@ -67,7 +67,8 @@ there:
 - **Generated, not written.** Types, guards, transitions and rule checks in
   `gen/<name>.ts` come from the spec. Nobody edits them.
 - **Simulated.** Thousands of random traces look for a reachable state that
-  breaks a rule, and report the shortest one.
+  breaks a rule, or a fair run that never reaches what a
+  [`leadsTo` rule](AGENTS.md#liveness) waits for, and report the shortest one.
 - **Proved.** Dafny proves that every transition keeps every rule, for all
   states and all inputs, and that your hand-written logic meets its contract.
 - **Reviewed.** Every rule that changed is shown with its sentence and its
@@ -84,7 +85,7 @@ flowchart LR
   qnt -- generate --> ts
   ts -- import --> app
 
-  qnt -. "simulate: always / step / law / sometimes" .-> v1([counterexample or witness trace])
+  qnt -. "simulate: always / step / law / leadsTo / sometimes" .-> v1([counterexample or witness trace])
   qnt -. "compare every state and definition" .-> ts
   ts -. "LemmaScript + Dafny" .-> v2([proof for all states and inputs])
   app -. "LemmaScript + Dafny" .-> v2
