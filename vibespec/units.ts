@@ -188,7 +188,7 @@ export function checkVerifiedSource(file: string, code: string) {
       || (ts.isVariableStatement(s) && (s.declarationList.flags & ts.NodeFlags.BlockScoped) === ts.NodeFlags.Const);
     if (!allowed) refuse(s.getStart(), "verified code may hold only imports, functions with a body, interfaces, type aliases and const declarations, each exported in its own declaration or not at all");
   }
-  // Every comment is the leading trivia of a token; JSDoc is skipped, since its parts lie inside a comment.
+  // Comments may lead or trail a token; JSDoc is skipped, since its parts lie inside a comment.
   const lineComments: [number, number][] = [];
   const visit = (n: TS.Node) => {
     if (n.kind >= ts.SyntaxKind.FirstJSDocNode && n.kind <= ts.SyntaxKind.LastJSDocNode) return;
@@ -200,7 +200,8 @@ export function checkVerifiedSource(file: string, code: string) {
         || ts.isImportClause(declaration) || ts.isNamespaceImport(declaration)) && declaration.name === n)
         refuse(n.getStart(), `\`${n.text}\` names a Dafny library in the proof; use another name`);
     }
-    for (const c of ts.getLeadingCommentRanges(code, n.pos) ?? []) if (c.kind === ts.SyntaxKind.SingleLineCommentTrivia) lineComments.push([c.pos, c.end]);
+    for (const c of [...(ts.getLeadingCommentRanges(code, n.pos) ?? []), ...(ts.getTrailingCommentRanges(code, n.end) ?? [])])
+      if (c.kind === ts.SyntaxKind.SingleLineCommentTrivia) lineComments.push([c.pos, c.end]);
     n.getChildren(sf).forEach(visit);
   };
   visit(sf);
