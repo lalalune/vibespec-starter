@@ -46,6 +46,20 @@ export const stateFile = (root: string) => path.join(root, ".studio", "state.jso
 /** @throws {never} */
 export const manifestFile = (root: string) => path.join(root, ".studio", "manifest.json");
 
+/**
+ * The script that runs the project's app (spec/index.md, "The app can be started and stopped whenever, beside any job"):
+ * `start`, or `dev` when that is not the studio; undefined when there is none. A trusted call.
+ */
+export const appScript = trusted(function appScript(root: string): string | undefined {
+  const scripts = readJson<{ scripts?: Record<string, string> }>(path.join(root, "package.json"))?.scripts ?? {};
+  return scripts.start ? "start" : scripts.dev && !/\bspec(\.ts)? studio\b/.test(scripts.dev) ? "dev" : undefined;
+}, [Error]);
+
+/** A terminal colour code, which development servers print around their address. */
+const COLOUR = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g");
+/** The address a development server says it serves at, in a line it printed. @throws {never} */
+export const servedAt = (line: string) => line.replace(COLOUR, "").match(/https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\]):\d+[^\s]*/)?.[0];
+
 /** `spec studio [<directory>]`'s project: the directory, which must hold a spec tree. A trusted call. */
 export const studioRoot = trusted(function studioRoot(cwd: string, directory: string): string {
   const root = projectRoot(directory, cwd);
@@ -153,6 +167,8 @@ export interface Snapshot {
   check?: Check;
   jobs: Partial<Record<"check" | "agent" | "accept", JobView>>;
   agents: { id: string; label: string; available: boolean; link?: string }[];
+  /** The project's app: the script that runs it, where it serves once it says so, and the last of what it printed. */
+  app: { script?: string; url?: string; log: string[] };
 }
 
 /** What the page asks to publish: each file as it was loaded (`base`, a hash) and as it is now (`text`, null to delete). */
