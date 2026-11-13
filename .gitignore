@@ -10,3 +10,5 @@ _apalache-out/
 .claude/worktrees/
 .turbo/
 .cache/
+generated/
+storybook-static/
