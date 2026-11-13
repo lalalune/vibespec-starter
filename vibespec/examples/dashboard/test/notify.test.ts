@@ -5,7 +5,7 @@ import { messages, send } from "../src/notify.ts";
 
 const handles = { ana: "@ana", ben: "@ben", cal: "@cal" };
 
-// spec/tracker.md, "A person named twice in a cell is told once"
+// spec/tracker.md, "Nothing is sent twice"
 test("a name typed twice is told once", async () => {
   let s: Tracker = handAddOwner(handAddOwner(create(initial, "ben"), 1, "ana"), 1, "ana");
   assert.deepEqual(s.tasks[0]!.owners, ["ana", "ana"]);
@@ -19,10 +19,10 @@ test("a name typed twice is told once", async () => {
 
 test("one message per person with a chat handle", () => {
   const notes: Note[] = [
-    { kind: "Update", task: 1, to: "ana", version: 0, at: 3 },
-    { kind: "Soon", task: 2, to: "ben", version: 4, at: 3 },
-    { kind: "Today", task: 2, to: "ana", version: 1, at: 3 },
-    { kind: "Update", task: 1, to: "ama", version: 0, at: 3 },
+    { kind: "Update", task: 1, to: "ana", version: 0, at: 3, by: "ben" },
+    { kind: "Soon", task: 2, to: "ben", version: 4, at: 3, by: "" },
+    { kind: "Today", task: 2, to: "ana", version: 1, at: 3, by: "" },
+    { kind: "Update", task: 1, to: "ama", version: 0, at: 3, by: "ben" },
   ];
   assert.deepEqual(messages(notes, handles), [
     { to: "ana", handle: "@ana", text: "✎ #1 changed\n⚠ #2 due today" },

@@ -19,9 +19,9 @@ Not modelled: the chat app, HTTP, spreadsheet access, the web dashboard.
 ## What the checks found
 
 - **A name typed twice was notified twice.** A cell is a list, not a set
-  (`ana, ana`), and "Nothing is sent twice" failed in simulation. Fixed by
-  the rule "A person named twice in a cell is told once"; `test/notify.test.ts`
-  types a name twice.
+  (`ana, ana`), and "Nothing is sent twice" failed in simulation. Fixed: the
+  notifier treats a cell as a set of people, and `test/notify.test.ts` types
+  a name twice.
 - **A rename left a name in a cell twice.** Fixed: a rename removes duplicate
   names from every owners cell.
 

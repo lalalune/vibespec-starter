@@ -70,7 +70,10 @@ pure val initial: Assistant = {
 > As a person, I want to ask for help and have the assistant work through it
 > one step at a time, and always come back to me.
 
-### Only the person starts a turn
+### Only the person starts a turn, and not while one is under way
+
+A turn can start before the first one or after the last one is done, not
+while the assistant is planning or asking.
 
 ```quint
 pure def canBegin(s: Assistant, by: Actor): bool =
@@ -84,8 +87,10 @@ pure def begin(s: Assistant, by: Actor): Assistant =
 
 Looking the bill up sends a new request. Reviewing checks an amount that has
 arrived. Filling types saved card details, and only into the biller's own
-page. Paying asks the person. Reciting would read the saved card aloud, so it
-is refused. The turn ends when the model finishes or the budget runs out.
+page. Paying asks the person, once the bill is reviewed and not yet paid.
+Reciting would read the saved card aloud, so it is refused. A choice that
+cannot be carried out still costs one. The turn ends when the model finishes
+or the budget runs out.
 
 ```quint
 pure def canChoose(s: Assistant, choice: Choice, by: Actor): bool =
@@ -112,7 +117,7 @@ pure def alwaysBudgetBounded(s: Assistant): bool =
 
 ### Every choice spends the budget
 
-At most four model choices occur between turns. Waiting for the person or
+So a turn holds at most four model choices. Waiting for the person or
 the outside world has no time bound; this is a bound on model actions, not a
 proof that every participant eventually responds.
 
@@ -132,10 +137,11 @@ pure def sometimesTurnEnds(s: Assistant): bool = s.phase == Done
 > As a person, I want the assistant to fetch my bill from the biller, and
 > never to act on an answer that came too late.
 
-### A reply counts only for the request still waiting
+### Only the world replies, and only to the request still waiting
 
 A reply to an older request, or one that arrives after the bill is paid, is
-refused. A new amount must be reviewed again.
+refused, and a reply must carry a positive amount. A new amount must be
+reviewed again.
 
 ```quint
 pure def canReply(s: Assistant, request: int, amount: int, by: Actor): bool =
@@ -159,6 +165,12 @@ pure def stepAmountOnlyFromReply(before: Assistant, via: str, after: Assistant):
   after.bill.amount != before.bill.amount implies via == "reply"
 ```
 
+### A bill's amount can arrive
+
+```quint
+pure def sometimesAmountArrived(s: Assistant): bool = s.bill.amount > 0
+```
+
 ## Story: Pay a bill
 
 > As a person, I want a bill paid only after its amount was checked, only on
@@ -172,7 +184,10 @@ pure def canLoad(s: Assistant, by: Actor): bool = by == World
 pure def load(s: Assistant, page: Page, by: Actor): Assistant = { ...s, page: page }
 ```
 
-### Only the person confirms a payment
+### Only the person confirms a payment, and only while asked
+
+The person can confirm only on the biller's own page, for a reviewed bill not
+yet paid. The turn then goes back to planning, or ends if no budget is left.
 
 ```quint
 pure def canConfirm(s: Assistant, by: Actor): bool =
@@ -182,7 +197,10 @@ pure def confirm(s: Assistant, by: Actor): Assistant =
   { ...s, phase: if (s.budget > 0) Planning else Done, bill: { ...s.bill, paid: true }, charged: s.charged + 1 }
 ```
 
-### The person can say no
+### Only the person declines a payment
+
+Declining leaves the bill unpaid. The turn goes back to planning, or ends if
+no budget is left.
 
 ```quint
 pure def canDecline(s: Assistant, by: Actor): bool = by == Person and s.phase == Asking
@@ -241,6 +259,13 @@ pure def alwaysFilledOnlyGenuine(s: Assistant): bool =
   s.outbox.every(e => match e { | Filled(f) => f.page == Genuine | _ => true })
 ```
 
+### Card details can be filled in
+
+```quint
+pure def sometimesFilled(s: Assistant): bool =
+  s.outbox.some(e => match e { | Filled(f) => true | _ => false })
+```
+
 ### Nothing secret is said aloud
 
 ```quint
@@ -267,4 +292,17 @@ from before it, and a late reply to the old one is refused.
 ```quint
 pure def restart(s: Assistant): Assistant =
   { ...s, phase: Idle, budget: 0, page: Unknown, waiting: false }
+```
+
+### A request number never goes back
+
+```quint
+pure def stepRequestNeverGoesBack(before: Assistant, via: str, after: Assistant): bool =
+  after.request >= before.request
+```
+
+### A restart can come after a payment
+
+```quint
+pure def sometimesRestartedAfterPaying(s: Assistant): bool = s.phase == Idle and s.bill.paid
 ```

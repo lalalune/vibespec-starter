@@ -113,7 +113,7 @@ negative would give its next edit a number below 1.
 pure def alwaysTheEditCountIsNotNegative(c: Client): bool = c.made >= 0
 ```
 
-### Edits can be queued while offline
+### A tab can go offline and back online, and queue edits while offline
 
 ```quint
 pure def canGoOffline(c: Client): bool = c.online
@@ -151,11 +151,20 @@ pure def catchUp(version: int, todos: List[Todo], c: Client): Client =
 
 pure def stepTheConfirmedVersionNeverGoesBack(before: Client, after: Client): bool =
   after.seen >= before.seen
+```
 
+### The confirmed version is never negative
+
+The server's versions start at 0.
+
+```quint
 pure def alwaysTheConfirmedVersionIsNotNegative(c: Client): bool = c.seen >= 0
 ```
 
 ### The client hears answers and other people's changes only while online
+
+A refusal of an edit that is still queued is counted, so that the page can
+tell the user.
 
 ```quint
 pure def canReceiveAck(c: Client, seq: int, version: int, todos: List[Todo]): bool = c.online
@@ -187,7 +196,7 @@ pure def sometimesRefused(c: Client): bool = c.refusals >= 1
 > the client's state invariants stated as laws, so that my proofs can use
 > them rather than prove them again.
 
-### Queueing an edit or hearing an answer keeps every rule of the client
+### Queueing an edit or hearing an answer keeps the client's state invariants
 
 For these laws, the client's rules are its four state invariants: queued
 edits have valid distinct numbers, and the edit count and confirmed version

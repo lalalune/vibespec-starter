@@ -71,17 +71,18 @@ lemma IdsAppend(todos: seq<todo_Todo>, x: todo_Todo)
   }
 }
 
-// An edit other than a creation keeps every id where it was.
+// An edit other than a creation keeps every id where it was, and every removed to-do removed.
 lemma IdsEdit(todos: seq<todo_Todo>, op: todo_Op)
   requires op.kind != "create"
   requires !(exists t :: t in todos && !(|ProofLib.Filter((u: todo_Todo) => (u.id == t.id), todos)| == 1))
   ensures |todo_applyOp(todos, op)| == |todos|
   ensures forall i :: 0 <= i < |todos| ==> todo_applyOp(todos, op)[i].id == todos[i].id
+  ensures forall i :: 0 <= i < |todos| ==> todos[i].deleted ==> todo_applyOp(todos, op)[i].deleted
   ensures !(exists t :: t in todo_applyOp(todos, op) && !(|ProofLib.Filter((u: todo_Todo) => (u.id == t.id), todo_applyOp(todos, op))| == 1))
 {
   var after := todo_applyOp(todos, op);
   assert |after| == |todos|;
-  forall i | 0 <= i < |todos| ensures after[i].id == todos[i].id { }
+  forall i | 0 <= i < |todos| ensures after[i].id == todos[i].id && (todos[i].deleted ==> after[i].deleted) { }
   forall i | 0 <= i < |after|
     ensures |ProofLib.Filter((u: todo_Todo) => (u.id == after[i].id), after)| == 1
   {
@@ -113,12 +114,12 @@ lemma CommitKeeps(s: Server, client: string, seq_: int, op: todo_Op)
     var t := todo_Todo(op.id, op.title, false, false);
     IdsAppend(s.todos, t);
     assert after.todos == s.todos + [t];
-    forall i | 0 <= i < |s.todos| ensures exists u :: u in after.todos && u.id == s.todos[i].id {
+    forall i | 0 <= i < |s.todos| ensures exists u :: u in after.todos && u.id == s.todos[i].id && (u.deleted || !s.todos[i].deleted) {
       assert after.todos[i] in after.todos;
     }
   } else {
     IdsEdit(s.todos, op);
-    forall i | 0 <= i < |s.todos| ensures exists u :: u in after.todos && u.id == s.todos[i].id {
+    forall i | 0 <= i < |s.todos| ensures exists u :: u in after.todos && u.id == s.todos[i].id && (u.deleted || !s.todos[i].deleted) {
       assert after.todos[i] in after.todos;
     }
   }
@@ -198,7 +199,7 @@ lemma RefuseKeeps(s: Server, client: string, seq_: int, op: todo_Op)
   OnceBridge(after);
   OnceAppend(s.log, x);
   assert after.todos == s.todos;
-  forall i | 0 <= i < |s.todos| ensures exists u :: u in after.todos && u.id == s.todos[i].id {
+  forall i | 0 <= i < |s.todos| ensures exists u :: u in after.todos && u.id == s.todos[i].id && (u.deleted || !s.todos[i].deleted) {
     assert after.todos[i] in after.todos;
   }
 }

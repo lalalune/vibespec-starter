@@ -703,6 +703,7 @@ lemma UnmadeNotOnWire(sys: System, who: string, n: int)
 lemma ActInStep(sys: System, who: string, op: todo_Op, owner: string)
   requires inv(sys) && canAct(sys, who, op) && isClient(owner)
   ensures lone(act(sys, who, op), owner) ==> inStep(act(sys, who, op), owner)
+  ensures lone(act(sys, who, op), owner) ==> clientOf(act(sys, who, op), owner).refusals == 0
 {
   var after := act(sys, who, op);
   var c := clientOf(sys, who);
@@ -713,6 +714,7 @@ lemma ActInStep(sys: System, who: string, op: todo_Op, owner: string)
     assert c.made >= 0;
     assert who == owner;
     assert lone(sys, who) && inStep(sys, who);
+    assert c.refusals == 0;
     assert sys.forged == 0;
     assert clientOf(after, who) == queued;
     assert queued.pending == c.pending + [item];
@@ -773,6 +775,7 @@ lemma ActInStep(sys: System, who: string, op: todo_Op, owner: string)
 lemma ServeInStep(sys: System, i: int, owner: string)
   requires inv(sys) && canServe(sys, i) && isClient(owner)
   ensures lone(serve(sys, i), owner) ==> inStep(serve(sys, i), owner)
+  ensures lone(serve(sys, i), owner) ==> clientOf(serve(sys, i), owner).refusals == 0
 {
   var after := serve(sys, i);
   if lone(after, owner) {
@@ -781,6 +784,7 @@ lemma ServeInStep(sys: System, i: int, owner: string)
     var c := clientOf(sys, owner);
     var s := sys.server;
     assert lone(sys, owner) && inStep(sys, owner);
+    assert clientOf(after, owner) == c && c.refusals == 0;
     WireProperties(sys, m);
     DropAtSubset(sys.net, i);
     assert m.kind.Request?;

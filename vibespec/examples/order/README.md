@@ -15,3 +15,6 @@ npm run demo
 | `src/app.ts` | Order storage, input parsing and rejection reporting |
 | `src/demo.ts` | Scripted checkout session |
 | `test/app.test.ts` | Checkout journeys through the real shell |
+
+The shell parses external events, stores allowed events and replays them
+through the generated core.
