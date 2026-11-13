@@ -114,6 +114,13 @@ pure def add(a: int, b: int): int = a + b`);
   });
 
   test("transitions return effects and step rules inspect their order", async () => {
+    const lists = oneRule("lists", "State and effects share a type", `type State = List[int]
+type Did = { state: State, out: List[int] }
+pure val initial: State = List()
+pure def push(s: State, n: int): Did = { state: s.append(n), out: List(n) }
+pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = out.length() == 1`);
+    const model = await gen(lists, parseSpec(lists, "spec/lists.md"));
+    assert.equal(model.evals.find((e) => e.name === "stepHasOneEffect")?.params.at(-1)?.from, "emitted");
     const root = fixtures(["mailer"]);
     const result = await run(root);
     assert.deepEqual(result.failed, ["review"], result.text);

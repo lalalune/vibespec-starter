@@ -68,12 +68,12 @@ export function harness(
   const uncompared: string[] = [];
   const evals: Eval[] = funs.flatMap((d): Eval[] => {
     const { params, result } = sig(d);
-    const onStates = stateType ? params.filter((p) => shape(p.type) === stateShape).length : 0;
-    let seen = 0;
     // A step rule's `out` is what the last transition output.
     const emitted = steps.some((r) => r.name === d.name && r.out);
-    const sources = params.map((p, i) => (stateType && shape(p.type) === stateShape ? (onStates === 2 && seen++ === 0 ? "prev" as const : "state" as const)
-      : emitted && i === params.length - 1 ? "emitted" as const : "pick" as const));
+    const onStates = stateType ? params.filter((p, i) => !(emitted && i === params.length - 1) && shape(p.type) === stateShape).length : 0;
+    let seen = 0;
+    const sources = params.map((p, i) => (emitted && i === params.length - 1 ? "emitted" as const
+      : stateType && shape(p.type) === stateShape ? (onStates === 2 && seen++ === 0 ? "prev" as const : "state" as const) : "pick" as const));
     params.forEach((p, i) => sources[i] === "pick" && given(p, d.name)); // a mismatched set is a mistake in the spec, not a reason to skip
     try {
       if (onStates > 2) fail("the simulator holds two states at most: the state and the one before it");
