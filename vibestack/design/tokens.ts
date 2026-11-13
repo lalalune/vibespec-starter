@@ -41,7 +41,7 @@ export function parseTokens(input: unknown): Tokens {
   }).concat(required.filter((path) => !found.some(([at]) => at === path)).map((path) => `${path}: missing`))
   if (problems.length) throw new Error(problems.join("\n"))
   const given = structuredClone(input) as Partial<Tokens>
-  return { shadow: {}, breakpoint: {}, ...given, motion: { duration: {}, ease: {}, ...given.motion } } as Tokens
+  return { ...given, shadow: given.shadow ?? {}, motion: { duration: {}, ease: {}, ...given.motion }, breakpoint: given.breakpoint ?? {} } as Tokens
 }
 
 const linear = (color: string) => {
