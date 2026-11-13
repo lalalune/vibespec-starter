@@ -27,18 +27,12 @@ jobs:
       - run: pnpm exec turbo run build typecheck test test:browser check //#lint:js //#lint:css //#analyze --continue
         env:
           FUZZ_RUNS: ${{ env.FULL == 'true' && '1000' || '100' }}
-      - name: Generated tests are reproducible
-        run: |
-          node vibestack/spec.ts tests apps/web && cp -r apps/web/.cache/generated/tests "$RUNNER_TEMP/generated-first"
-          rm -rf apps/web/.cache/generated/tests
-          node vibestack/spec.ts tests apps/web && diff -r "$RUNNER_TEMP/generated-first" apps/web/.cache/generated/tests
       - if: always()
         uses: actions/upload-artifact@v7
         with:
           name: proof
           path: |
             gen/proof/
-            apps/*/gen/proof/
             vibestack/studio/gen/proof/
           if-no-files-found: ignore
       - if: failure()

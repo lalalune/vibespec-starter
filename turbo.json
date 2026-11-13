@@ -27,6 +27,7 @@
     "build": {
       "dependsOn": [
         "gen",
+        "//#gen",
         "^build"
       ],
       "inputs": [
@@ -45,6 +46,7 @@
     "typecheck": {
       "dependsOn": [
         "gen",
+        "//#gen",
         "^build"
       ],
       "inputs": [
@@ -59,6 +61,7 @@
     "test": {
       "dependsOn": [
         "gen",
+        "//#gen",
         "^build"
       ],
       "inputs": [
@@ -73,6 +76,7 @@
     "test:browser": {
       "dependsOn": [
         "gen",
+        "//#gen",
         "^build"
       ],
       "inputs": [
@@ -106,13 +110,17 @@
     "//#gen": {
       "inputs": [
         "spec/**",
+        "apps/*/package.json",
+        "packages/*/package.json",
         "vibestack/*.ts",
         "vibestack/gen/**",
         "vibestack/std/**",
         "package.json"
       ],
       "outputs": [
-        "gen/**"
+        "gen/**",
+        "apps/*/gen/**",
+        "packages/*/gen/**"
       ]
     },
     "//#build": {
@@ -204,14 +212,18 @@
       "dependsOn": [
         "//#build",
         "//#typecheck",
-        "//#test"
+        "//#test",
+        "@repo/app#build",
+        "@repo/app#typecheck",
+        "@repo/app#test",
+        "@repo/app#test:browser"
       ],
       "cache": false
     },
     "//#lint:js": {
       "dependsOn": [
         "@repo/design-system#build",
-        "@repo/web#typecheck"
+        "@repo/app#typecheck"
       ],
       "inputs": [
         "apps/**",
