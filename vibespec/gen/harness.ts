@@ -9,6 +9,11 @@ export interface Eval { name: string; params: (Param & { from: "state" | "prev" 
 /** A fair event cannot be put off for ever: weakly, while it stays possible; strongly, while it keeps becoming possible. */
 export type Fairness = "weak" | "strong";
 
+/** The harness's variables, in the order it declares them. */
+const VARS = ["state", "prev", "moved", "last", "lawsHold", "outcome", "emitted", "fairEnabled"];
+/** Every name the harness binds itself, which a spec parameter would hide (TAKEN in gen.ts). */
+export const HARNESS = [...VARS, "fairOn", "init", "step", "probe", "inv", "Out", "Nothing"];
+
 /** Values the simulator tries for a parameter of each scalar type (the proof covers all values). */
 const TRIED: Record<string, string> = { int: "(-1).to(6)", bool: "Set(true, false)", str: 'Set("", "a", "b")' };
 
@@ -86,9 +91,8 @@ export function harness(
     }
   });
 
-  // Harness variables: the state, the state before the last event, whether an event has happened and which, whether
-  // The last law, evaluated definition, emitted effects and fair-enabled event set.
-  const vars = [...(stateType ? ["state", "prev", "moved", "last"] : []), "lawsHold", ...(evals.length ? ["outcome"] : []), ...(output ? ["emitted"] : []), ...(fair.size ? ["fairEnabled"] : [])];
+  const declared: Record<string, unknown> = { state: stateType, prev: stateType, moved: stateType, last: stateType, lawsHold: true, outcome: evals.length, emitted: output, fairEnabled: fair.size };
+  const vars = VARS.filter((v) => declared[v]);
   /** An action body: the given conditions and assignments, with every other variable left as it is. */
   const frame = (conditions: string[], set: Record<string, string>) =>
     `all { ${[...conditions, ...vars.map((v) => `${v}' = ${set[v] ?? v}`)].join(", ")} }`;
@@ -99,11 +103,11 @@ export function harness(
       { state: t.emits ? `${result}.state` : result, emitted: t.emits ? `${result}.out` : "List()", prev: "state", moved: "true", last: JSON.stringify(t.name), fairEnabled: `fairOn(${t.emits ? `${result}.state` : result})` }))}`;
   };
 
-  /** Whether a fair event is possible in state `s`: its guard allows it for some value the simulator tries. */
+  /** Whether a fair event is possible in state `x0`: its guard allows it for some value the simulator tries. */
   const possible = (t: Transition) => t.guardParams.reduceRight((inner, name) => {
     const p = t.params.find((p) => p.name === name)!;
     return `${given(p, t.name) ?? byType(p, p.type)}.exists(${name} => ${inner})`;
-  }, t.guard ? call(t.guard, t.guardParams, "s") : "true");
+  }, t.guard ? call(t.guard, t.guardParams, "x0") : "true");
   // A law is tried on values picked for each parameter. One that takes the state is also evaluated on the states the
   // simulator reaches (below); if the spec gives no `<param>Values` for that parameter, that is the only way it is tried.
   const onReached = (l: Law) => evals.some((v) => v.name === l.name);
@@ -134,7 +138,7 @@ export function harness(
     ...(output ? [`  var emitted: ${qType(output.out)}`] : []),
     `  var lawsHold: bool`,
     ...(fair.size ? [`  var fairEnabled: Set[str]`,
-      `  pure def fairOn(s: ${qType(stateType)}): Set[str] = Set(${[...fair.keys()].map((e) => JSON.stringify(e)).join(", ")}).filter(e => or { ${transitions.filter((t) => fair.has(t.name)).map((t) => `e == ${JSON.stringify(t.name)} and ${possible(t)}`).join(", ")} })`] : []),
+      `  pure def fairOn(x0: ${qType(stateType)}): Set[str] = Set(${[...fair.keys()].map((e) => JSON.stringify(e)).join(", ")}).filter(x1 => or { ${transitions.filter((t) => fair.has(t.name)).map((t) => `x1 == ${JSON.stringify(t.name)} and ${possible(t)}`).join(", ")} })`] : []),
     `  action init = ${frame([], { state: "M::initial", prev: "M::initial", moved: "false", last: '""', lawsHold: "true", outcome: "Nothing", emitted: "List()", fairEnabled: "fairOn(M::initial)" })}`,
     ...transitions.map(action),
     ...sampled.map(lawAction),

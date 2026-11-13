@@ -7,7 +7,7 @@
   },
   "scripts": {
     "dev": "node vibespec/spec.ts studio",
-    "check": "node vibespec/spec.ts check && npm run check --workspaces --if-present",
+    "check": "node vibespec/spec.ts check",
     "gen": "node vibespec/spec.ts gen",
     "accept": "node vibespec/spec.ts accept",
     "new": "node vibespec/spec.ts new",

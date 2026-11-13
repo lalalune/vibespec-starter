@@ -8,9 +8,9 @@ import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import ts from "typescript";
-import { parseSpec, pending, readSpecs, type Result } from "../../spec.ts";
+import { parseSpec, pending, pendingKey, readSpecs, type Lock, type Result } from "../../spec.ts";
 import { specFiles, specName } from "../../parse.ts";
-import { projectRoot } from "../../util.ts";
+import { filesUnder, projectRoot } from "../../util.ts";
 import { enabled, initial, step, type Event, type Session, type Verdict } from "../gen/index.ts";
 import { manifestOf, nodesOf, promptFor, type Ids, type Manifest } from "./doc.ts";
 import { outlineOf } from "./markdown.ts";
@@ -81,13 +81,6 @@ function specTexts(root: string): Record<string, string> {
   return Object.fromEntries(specFiles(root).map((file) => [file, fs.readFileSync(path.join(root, file), "utf8")]));
 }
 
-/** The projects under `repo`: the repository itself, and each package in vibespec/examples/ that has specs. */
-export function projectsOf(repo: string): Project[] {
-  const examples = path.join(repo, "vibespec", "examples");
-  const found = fs.existsSync(examples) ? fs.readdirSync(examples).sort().filter((d) => fs.existsSync(path.join(examples, d, "spec"))) : [];
-  return [{ id: ".", name: projectName(repo), root: repo }, ...found.map((d) => ({ id: `vibespec/examples/${d}`, name: d, root: path.join(examples, d) }))];
-}
-
 /** The command a person or agent runs in a project to check it: its own script if it can, else the tools of this repository. */
 function checkCommand(root: string): string {
   const scripts = readJson<{ scripts?: Record<string, string> }>(path.join(root, "package.json"))?.scripts ?? {};
@@ -102,6 +95,12 @@ function skillPath(root: string): string {
     if (fs.existsSync(file)) return path.relative(root, file);
     if (dir === path.dirname(dir)) return ".claude/skills/sync/SKILL.md";
   }
+}
+
+/** The review ledgers and Studio state belong to the tools, not the sync agent. */
+function ownedFiles(root: string): Record<string, string> {
+  return Object.fromEntries([...filesUnder(root, "spec").filter((f) => f.endsWith("lock.json")), ...filesUnder(root, ".studio")]
+    .map((f) => [f, hash(fs.readFileSync(path.join(root, f), "utf8"))]));
 }
 
 const installed = new Map<string, boolean>();
@@ -131,8 +130,8 @@ function snapshot(live: Live, agents: Record<string, Agent>) {
   try {
     texts = specTexts(root);
     const specs = readSpecs(root);
-    review = Object.fromEntries(specs.map((s) => [s.file, Object.fromEntries(pending(root, s, specs).map((p) => [
-      p.story ? `## ${p.story.title}` : p.rule?.key ?? p.where.split("  ")[1], p.status + (p.note ?? "")]))]));
+    const locks = new Map<string, Lock>();
+    review = Object.fromEntries(specs.map((s) => [s.file, Object.fromEntries(pending(root, s, specs, locks).map((p) => [pendingKey(p), p.status + (p.note ?? "")]))]));
   } catch (e) {
     problem = (e as Error).message;
   }
@@ -244,7 +243,10 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
       const stopped = job.status === "stopped";
       if (!stopped) job.status = code === 0 ? "passed" : "failed";
       // A stopped job's end was already stepped (spec/index.md, "A running job can be stopped, and then nothing is known of its result").
-      if (!stopped) try { done(job, out); } catch (e) { job.log.push(`✗ ${(e as Error).message}`); }
+      if (!stopped) try { done(job, out); } catch (e) {
+        job.status = "failed";
+        job.log.push(`✗ ${(e as Error).message}`);
+      }
       changed(live);
     });
     changed(live);
@@ -386,9 +388,20 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
           if (!agent) return send(res, 400, { error: `no agent ${body.agent}` });
           act(live, { type: "sync" });
           const check = checkCommand(root);
+          const owned = ownedFiles(root);
           run(live, "agent", agent.label, agent.command({ root, check }), promptFor(readJson<Manifest>(manifestFile(root)), { skill: skillPath(root), check }), readable, (job) => {
+            // The review ledgers and Studio's state are the tools' to write: a sync that touched them is not trusted.
+            // Whatever happens here, the sync ends (spec/index.md, "A sync that ends well leaves nothing waiting and checks again").
+            try {
+              const now = ownedFiles(root);
+              const touched = [...new Set([...Object.keys(owned), ...Object.keys(now)])].filter((f) => owned[f] !== now[f]);
+              if (touched.length) { job.status = "failed"; job.log.push(`✗ the agent changed ${touched.join(", ")}: not marked synced`); }
+              if (job.status === "passed") clearManifest(root);
+            } catch (e) {
+              job.status = "failed";
+              job.log.push(`✗ ${(e as Error).message}`);
+            }
             const ok = job.status === "passed";
-            if (ok) clearManifest(root);
             act(live, { type: "synced", ok });
             if (ok) runCheck(live);
           });
@@ -442,28 +455,16 @@ export async function startStudio({ projects, open = projects[0].id, port = 4321
   };
 }
 
-/** `spec studio [<example-or-directory>] [--port <n>]`: select a project and open its page. */
-export async function serve(repo: string, args: string[]) {
-  repo = projectRoot(repo);
-  const projects = projectsOf(repo);
-  const target = args[0] === "--port" ? undefined : args[0];
+
+/** `spec studio [<directory>] [--port <n>]`: open the selected project's spec tree. */
+export async function serve(cwd: string, args: string[]) {
   const at = args.indexOf("--port");
   const port = at < 0 ? undefined : Number(args[at + 1]);
   if (port !== undefined && !(Number.isInteger(port) && port >= 0 && port < 65536)) throw new Error(`--port ${args[at + 1]}: not a port`);
-  let open = ".";
-  if (target !== undefined) {
-    const example = projects.find((p) => p.id === `vibespec/examples/${target}`);
-    const root = projectRoot(example?.root ?? target, repo);
-    let selected = projects.find((p) => fs.realpathSync(p.root) === root);
-    if (!selected) {
-      const name = projectName(root);
-      selected = { id: root, name: projects.some((p) => p.name === name) ? `${name} (${root})` : name, root };
-      projects.push(selected);
-    }
-    open = selected.id;
-  }
-  const studio = await startStudio({ projects, open, port });
-  const url = `${studio.url}/?project=${encodeURIComponent(open)}`;
+  const root = projectRoot(args[0] === "--port" ? "." : args[0] ?? ".", cwd);
+  if (!fs.statSync(path.join(root, "spec"), { throwIfNoEntry: false })?.isDirectory()) throw new Error(`${root}: no spec/ directory; run \`spec init\` in the project first`);
+  const studio = await startStudio({ projects: [{ id: ".", name: projectName(root), root }], port });
+  const url = `${studio.url}/?project=.`;
   console.log(`studio: ${url}`);
   if (process.stdout.isTTY) spawn(process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer" : "xdg-open", [url], { stdio: "ignore", detached: true }).on("error", () => {}).unref();
   return studio;

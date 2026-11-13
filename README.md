@@ -4,6 +4,10 @@
 
 **Write user stories. Get formally verified TypeScript.**
 
+</div>
+
+<div align="center">
+
 A Markdown spec tree starts at `spec/index.md` and holds the stories, the
 rules each story implies, and under every rule a few lines of
 [Quint](https://quint-lang.org) that say it exactly. Link to child specs to
@@ -15,17 +19,54 @@ model in step; you sign off.
 
 [![check](https://github.com/lalalune/vibespec-starter/actions/workflows/check.yml/badge.svg)](https://github.com/lalalune/vibespec-starter/actions/workflows/check.yml)
 
-[Quick start](#quick-start) ·
-[Examples](#run-and-test-examples) ·
+[Quickstart](#quickstart) ·
+[Getting started](#getting-started) ·
 [Project setup](#set-up-a-new-project) ·
-[Tutorial](#tutorial) ·
-[How it works](#what-npm-run-check-checks) ·
-[Guarantees](#what-is-and-is-not-guaranteed) ·
+[Studio](#studio) ·
+[Build your project](#build-your-project) ·
+[Examples](#examples) ·
 [Spec reference](AGENTS.md#spec-reference)
 
 </div>
 
 ---
+
+## Quickstart
+
+**Starting a new project? Paste this into your agent:**
+
+```text
+Help me build a new project from https://github.com/lalalune/vibespec-starter.
+
+Start by asking what I want to build, who it is for, and its main workflows.
+Then:
+1. Use the template in a new project directory, or use my existing copy.
+   Read AGENTS.md and README.md in full and follow their design and sync skills.
+2. Check for Node.js 24+ and Dafny 4.11 on PATH, run npm install, and follow
+   the README's "Set up a new project" section.
+3. Write my stories and rules in spec/index.md, with Quint under each rule.
+4. Build the app in src/ using the generated code in gen/. Add tests for
+   user journeys through the UI, API, storage, or other external services.
+5. Run npm run check and fix failures until only my review remains.
+   Never edit generated files or weaken rules to pass checks.
+6. Show me how to run the app, summarize what needs review, and wait for
+   my request before running npm run accept.
+```
+
+[![Start in ChatGPT](https://img.shields.io/badge/Start_in_ChatGPT-212121?style=for-the-badge)](https://chatgpt.com/?q=Help%20me%20build%20a%20new%20project%20from%20https%3A%2F%2Fgithub.com%2Flalalune%2Fvibespec-starter.%0A%0AStart%20by%20asking%20what%20I%20want%20to%20build%2C%20who%20it%20is%20for%2C%20and%20its%20main%20workflows.%0AThen%3A%0A1.%20Use%20the%20template%20in%20a%20new%20project%20directory%2C%20or%20use%20my%20existing%20copy.%0A%20%20%20Read%20AGENTS.md%20and%20README.md%20in%20full%20and%20follow%20their%20design%20and%20sync%20skills.%0A2.%20Check%20for%20Node.js%2024%2B%20and%20Dafny%204.11%20on%20PATH%2C%20run%20npm%20install%2C%20and%20follow%0A%20%20%20the%20README's%20%22Set%20up%20a%20new%20project%22%20section.%0A3.%20Write%20my%20stories%20and%20rules%20in%20spec%2Findex.md%2C%20with%20Quint%20under%20each%20rule.%0A4.%20Build%20the%20app%20in%20src%2F%20using%20the%20generated%20code%20in%20gen%2F.%20Add%20tests%20for%0A%20%20%20user%20journeys%20through%20the%20UI%2C%20API%2C%20storage%2C%20or%20other%20external%20services.%0A5.%20Run%20npm%20run%20check%20and%20fix%20failures%20until%20only%20my%20review%20remains.%0A%20%20%20Never%20edit%20generated%20files%20or%20weaken%20rules%20to%20pass%20checks.%0A6.%20Show%20me%20how%20to%20run%20the%20app%2C%20summarize%20what%20needs%20review%2C%20and%20wait%20for%0A%20%20%20my%20request%20before%20running%20npm%20run%20accept.)
+[![Start in Claude](https://img.shields.io/badge/Start_in_Claude-B54A32?style=for-the-badge)](https://claude.ai/new?q=Help%20me%20build%20a%20new%20project%20from%20https%3A%2F%2Fgithub.com%2Flalalune%2Fvibespec-starter.%0A%0AStart%20by%20asking%20what%20I%20want%20to%20build%2C%20who%20it%20is%20for%2C%20and%20its%20main%20workflows.%0AThen%3A%0A1.%20Use%20the%20template%20in%20a%20new%20project%20directory%2C%20or%20use%20my%20existing%20copy.%0A%20%20%20Read%20AGENTS.md%20and%20README.md%20in%20full%20and%20follow%20their%20design%20and%20sync%20skills.%0A2.%20Check%20for%20Node.js%2024%2B%20and%20Dafny%204.11%20on%20PATH%2C%20run%20npm%20install%2C%20and%20follow%0A%20%20%20the%20README's%20%22Set%20up%20a%20new%20project%22%20section.%0A3.%20Write%20my%20stories%20and%20rules%20in%20spec%2Findex.md%2C%20with%20Quint%20under%20each%20rule.%0A4.%20Build%20the%20app%20in%20src%2F%20using%20the%20generated%20code%20in%20gen%2F.%20Add%20tests%20for%0A%20%20%20user%20journeys%20through%20the%20UI%2C%20API%2C%20storage%2C%20or%20other%20external%20services.%0A5.%20Run%20npm%20run%20check%20and%20fix%20failures%20until%20only%20my%20review%20remains.%0A%20%20%20Never%20edit%20generated%20files%20or%20weaken%20rules%20to%20pass%20checks.%0A6.%20Show%20me%20how%20to%20run%20the%20app%2C%20summarize%20what%20needs%20review%2C%20and%20wait%20for%0A%20%20%20my%20request%20before%20running%20npm%20run%20accept.)
+[![Start in Cursor](https://img.shields.io/badge/Start_in_Cursor-212121?style=for-the-badge)](https://cursor.com/link/prompt?text=Help%20me%20build%20a%20new%20project%20from%20https%3A%2F%2Fgithub.com%2Flalalune%2Fvibespec-starter.%0A%0AStart%20by%20asking%20what%20I%20want%20to%20build%2C%20who%20it%20is%20for%2C%20and%20its%20main%20workflows.%0AThen%3A%0A1.%20Use%20the%20template%20in%20a%20new%20project%20directory%2C%20or%20use%20my%20existing%20copy.%0A%20%20%20Read%20AGENTS.md%20and%20README.md%20in%20full%20and%20follow%20their%20design%20and%20sync%20skills.%0A2.%20Check%20for%20Node.js%2024%2B%20and%20Dafny%204.11%20on%20PATH%2C%20run%20npm%20install%2C%20and%20follow%0A%20%20%20the%20README's%20%22Set%20up%20a%20new%20project%22%20section.%0A3.%20Write%20my%20stories%20and%20rules%20in%20spec%2Findex.md%2C%20with%20Quint%20under%20each%20rule.%0A4.%20Build%20the%20app%20in%20src%2F%20using%20the%20generated%20code%20in%20gen%2F.%20Add%20tests%20for%0A%20%20%20user%20journeys%20through%20the%20UI%2C%20API%2C%20storage%2C%20or%20other%20external%20services.%0A5.%20Run%20npm%20run%20check%20and%20fix%20failures%20until%20only%20my%20review%20remains.%0A%20%20%20Never%20edit%20generated%20files%20or%20weaken%20rules%20to%20pass%20checks.%0A6.%20Show%20me%20how%20to%20run%20the%20app%2C%20summarize%20what%20needs%20review%2C%20and%20wait%20for%0A%20%20%20my%20request%20before%20running%20npm%20run%20accept.)
+[![Start in Grok Bot](https://img.shields.io/badge/Start_in_Grok_Bot-212121?style=for-the-badge)](https://cursor.com/grok-bot/link/v1/prompt?text=Help%20me%20build%20a%20new%20project%20from%20https%3A%2F%2Fgithub.com%2Flalalune%2Fvibespec-starter.%20%20Start%20by%20asking%20what%20I%20want%20to%20build%2C%20who%20it%20is%20for%2C%20and%20its%20main%20workflows.%20Then%3A%201.%20Use%20the%20template%20in%20a%20new%20project%20directory%2C%20or%20use%20my%20existing%20copy.%20%20%20%20Read%20AGENTS.md%20and%20README.md%20in%20full%20and%20follow%20their%20design%20and%20sync%20skills.%202.%20Check%20for%20Node.js%2024%2B%20and%20Dafny%204.11%20on%20PATH%2C%20run%20npm%20install%2C%20and%20follow%20%20%20%20the%20README's%20%22Set%20up%20a%20new%20project%22%20section.%203.%20Write%20my%20stories%20and%20rules%20in%20spec%2Findex.md%2C%20with%20Quint%20under%20each%20rule.%204.%20Build%20the%20app%20in%20src%2F%20using%20the%20generated%20code%20in%20gen%2F.%20Add%20tests%20for%20%20%20%20user%20journeys%20through%20the%20UI%2C%20API%2C%20storage%2C%20or%20other%20external%20services.%205.%20Run%20npm%20run%20check%20and%20fix%20failures%20until%20only%20my%20review%20remains.%20%20%20%20Never%20edit%20generated%20files%20or%20weaken%20rules%20to%20pass%20checks.%206.%20Show%20me%20how%20to%20run%20the%20app%2C%20summarize%20what%20needs%20review%2C%20and%20wait%20for%20%20%20%20my%20request%20before%20running%20npm%20run%20accept.)
+[![Start in Muse](https://img.shields.io/badge/Start_in_Muse-0866FF?style=for-the-badge)](https://muse.ai/thread/new?prompt=Help%20me%20build%20a%20new%20project%20from%20https%3A%2F%2Fgithub.com%2Flalalune%2Fvibespec-starter.%0A%0AStart%20by%20asking%20what%20I%20want%20to%20build%2C%20who%20it%20is%20for%2C%20and%20its%20main%20workflows.%0AThen%3A%0A1.%20Use%20the%20template%20in%20a%20new%20project%20directory%2C%20or%20use%20my%20existing%20copy.%0A%20%20%20Read%20AGENTS.md%20and%20README.md%20in%20full%20and%20follow%20their%20design%20and%20sync%20skills.%0A2.%20Check%20for%20Node.js%2024%2B%20and%20Dafny%204.11%20on%20PATH%2C%20run%20npm%20install%2C%20and%20follow%0A%20%20%20the%20README's%20%22Set%20up%20a%20new%20project%22%20section.%0A3.%20Write%20my%20stories%20and%20rules%20in%20spec%2Findex.md%2C%20with%20Quint%20under%20each%20rule.%0A4.%20Build%20the%20app%20in%20src%2F%20using%20the%20generated%20code%20in%20gen%2F.%20Add%20tests%20for%0A%20%20%20user%20journeys%20through%20the%20UI%2C%20API%2C%20storage%2C%20or%20other%20external%20services.%0A5.%20Run%20npm%20run%20check%20and%20fix%20failures%20until%20only%20my%20review%20remains.%0A%20%20%20Never%20edit%20generated%20files%20or%20weaken%20rules%20to%20pass%20checks.%0A6.%20Show%20me%20how%20to%20run%20the%20app%2C%20summarize%20what%20needs%20review%2C%20and%20wait%20for%0A%20%20%20my%20request%20before%20running%20npm%20run%20accept.)
+
+Cursor requires its app; Grok Bot requires its app and a primary Bot.
+Muse requires sign-in. If a chat opens without the prompt, paste it from above.
+Use an agent with file and terminal access to build and check the project.
+
+For [Hermes](https://hermes-agent.nousresearch.com/desktop) or
+[OpenClaw](https://docs.openclaw.ai/start/getting-started), open your configured
+agent and paste the prompt above. Their native links do not provide a portable
+way to open this full prompt from a GitHub README.
 
 ## Why
 
@@ -60,162 +101,68 @@ flowchart LR
   app -. "LemmaScript + Dafny" .-> v2
 ```
 
-The [order example](vibespec/examples/order/README.md) is a checkout
-(`vibespec/examples/order/spec/index.md`, about 250 lines): fill a draft, submit, pay
-in instalments, hold, cancel, reopen. The template's own `spec/index.md` is
-blank.
+The template's `spec/index.md` is blank, ready for your application.
 
-| Order example | |
-|---|---|
-| Model | 10 transitions, 6 `always`, 1 `step`, 3 `sometimes` rules |
-| Proved, spec | 72 obligations, all states and inputs |
-| Proved, `vibespec/examples/order/src/ledger.ts` | 2 hand-written functions, 3 obligations |
-
-## Quick start
+## Getting started
 
 **Needs** Node 24+ and [Dafny](https://github.com/dafny-lang/dafny/releases)
 4.11 on the `PATH`. Packages with `src/` or `test/` also need a
 `tsconfig.json` so the generated contract is checked against the application.
 
 1. Click **[Use this template](https://github.com/lalalune/vibespec-starter/generate)**
-   to create your own repository, then clone it.
-2. Install and check the template:
-
-```bash
-npm install
-```
-
-```bash
-npm run check
-```
-
-```bash
-npm run demo
-```
-
-`npm install` builds the `spec` command and generates `gen/` when every spec
-is valid. `npm run check` checks the template and every example workspace,
-ending each project with a `next:` line.
-`npm run demo` generates and runs `vibespec/examples/order`, driving the verified checkout
-through a scripted session; every `✗` is a rule refusing an event:
-
-```
-✗ {"type":"submit"}              submit is not allowed for a Draft order
-✓ {"type":"addItem","qty":2}     {"status":"Draft","units":2,"due":10,"paid":0}
-✓ {"type":"submit"}              {"status":"Pending","units":2,"due":10,"paid":0}
-✓ {"type":"pay","amount":4}      {"status":"Pending","units":2,"due":10,"paid":4}
-✗ {"type":"pay","amount":7}      pay is not allowed for a Pending order
-✓ {"type":"pay","amount":6}      {"status":"Paid","units":2,"due":10,"paid":10}
-✗ {"type":"cancel"}              cancel is not allowed for a Paid order
-balance 0
-```
-
-## Run and test examples
-
-Run these commands from the repository root after `npm install`. Pass the
-project directory containing `spec/`, rather than an individual Markdown spec.
-Its `package.json`, when present, supplies the application's run scripts.
-
-```bash
-npx spec check vibespec/examples/order
-npx spec gen vibespec/examples/order
-npm --prefix vibespec/examples/order run demo
-```
-
-`check` runs the selected project's models, simulation, proofs, typechecking
-and tests. `gen` only rebuilds its generated code. Output and caches stay in
-that project; the root's blank `spec/index.md` is unchanged. Relative paths,
-quoted paths containing spaces and absolute paths all work.
-
-| Example directory | What to run |
-|---|---|
-| `vibespec/examples/order` | The checkout demo above |
-| `vibespec/examples/dashboard` | `npx spec check vibespec/examples/dashboard` for the task model and notification tests |
-| `vibespec/examples/assistant` | `npx spec check vibespec/examples/assistant` for the trusted-sender and payment model |
-| `vibespec/examples/fullstack` | Check it, then start the shared to-do app as shown below |
-
-```bash
-npx spec check vibespec/examples/fullstack
-npm --prefix vibespec/examples/fullstack run start
-```
-
-Open [http://localhost:3000](http://localhost:3000) in two browser windows to
-try the shared list.
-
-To check every bundled example, use the workspace command:
-
-```bash
-npm run check --workspaces --if-present
-```
-
-The same directory argument works with `npx spec accept <directory>`
-when you are ready to sign off on that project's reviews. To recheck while
-editing, run `npx spec watch <directory>`; stop it with Ctrl-C. Omitting the
-directory keeps the `spec` commands on the current project. The root
-`npm run check` script checks the template and all example workspaces.
-
-## Set up a new project
-
-This repository keeps its examples so people can try the template. When you
-use it for a new project, finish this cleanup before feature work:
-
-1. **Remove the examples.** Delete `vibespec/examples/`, including the order
-   example. Remove their workspace entries, npm scripts and CI steps, such
-   as `demo` and `check:dashboard`. Set `check` to `node vibespec/spec.ts check`
-   after removing the workspaces, and replace the package metadata and
-   repository links with the new project's.
-2. **Keep the toolchain guide with the toolchain.** Move this README to
-   `vibespec/README.md` (the toolchain directory formerly called `tools/`).
-   Update its relative links and the guide references in `AGENTS.md` and the
-   skills. Keep the original template license in `vibespec/LICENSE` alongside
-   the retained Vibespec code.
-3. **Write the project's own files.** Create a new root `README.md` describing
-   what the project does and how to install, run and check it. Rewrite the root
-   `LICENSE` for the project's chosen terms and copyright holder. Add the
-   project's initial stories and rules under `spec/`.
-4. **Check and sign off.** Run `npm install` and `npm run check`, resolve what
-   they report, and have the project owner review and accept the new spec with
-   `npm run accept`.
-5. **Commit the starting point.** Commit all setup changes, including the
-   deletions and reviewed spec ledgers, then confirm the working tree is clean:
+   to create your own repository, then clone it and enter its directory.
+2. Install the toolchain and open your project in Studio:
 
    ```bash
-   git add -A
-   git commit -m "Initialize project"
-   git status --short
+   npm install
+   npm run dev
    ```
 
-An empty status means the project is ready for its first feature.
+3. In `spec/index.md`, give your application a title and add its first story:
+   who it is for, what they need to do, and why. You can write it in Studio
+   or edit the Markdown file directly.
+4. Publish your edits, then ask the coding agent to sync. It writes the
+   rules and Quint, runs checks, and reports what needs your review.
+5. Build your application's UI, API or other shell in `src/`, importing the
+   generated code from `gen/`. Follow [Build your project](#build-your-project).
+
+`npm install` builds the `spec` command and generates `gen/` when every spec
+is valid. Nothing needs to be copied from an example. To adopt your project's
+own metadata and documentation, see [project setup](#set-up-a-new-project).
 
 ## Studio
 
-`npm run dev` opens Studio on the root project. To open an example immediately,
-pass its short name or its directory. To work on another application, pass
-that application's directory instead:
-
 ```bash
 npm run dev
-npm run dev -- order
-npm run dev -- vibespec/examples/order
-npm run dev -- ../my-app --port 4310
 ```
 
-Absolute directories and quoted paths containing spaces work too. Pass the
-project folder, not its `spec/` folder or `spec/index.md`. With no argument,
-Studio still opens the root project and offers the bundled examples in its
-project selector. A supplied folder is selected when Studio opens.
+Studio opens the current project. Start in its blank `spec/index.md`: edit
+the title, use **Story** to describe a user need, and add rules as they become
+clear. **Publish** saves your edits to disk and runs checks. Use the sync
+prompt with Claude Code or Codex to turn those requirements into a checked
+model. After reviewing the result, **Sign off** records the same approval as
+`npm run accept`.
 
-Edit stories and rules, then publish. Studio records the changes, runs checks,
-and can hand the sync work to Claude Code or Codex. Sign-off uses the same
-`accept` command as the terminal. `npx spec watch <directory>` provides the
-same rechecking loop without Studio.
+To open another project, pass its directory:
+
+```bash
+npm run dev -- ../my-project
+npm run dev -- "/absolute/path/to/my project"
+```
+
+The path is the project root containing `spec/`; relative paths are resolved
+from the directory where you run the command. With the packaged CLI, use
+`npx spec studio <project-path>`. Studio opens only the selected project, using
+its specs, source, tests and review ledger throughout. See [Examples](#examples)
+for the bundled project paths.
 
 Studio is built the way it asks you to build: it is a Vibespec application of
 its own, in `vibespec/studio/`. [Its session](vibespec/studio/spec/index.md)
 (what may be published, synced, checked or signed off, and when) and
 [the outline of a spec](vibespec/studio/spec/outline.md) (adding, editing,
-removing, reordering and regrouping stories and rules) are specs, checked by
-`npm run check` like any other. The server and the page are the shell around
+removing, reordering and regrouping stories and rules) are specs, checked like
+any other package with `npm run check --workspace vibespec-studio` (and with
+the examples by `npm run check --workspaces`). The server and the page are the shell around
 the generated code: they act only through its `enabled` and `step`, so a
 button is offered exactly when the spec allows its event. To change what
 Studio does, open it on itself:
@@ -224,133 +171,57 @@ Studio does, open it on itself:
 npm run dev -- vibespec/studio
 ```
 
-## Tutorial
+For a terminal workflow, `node vibespec/spec.ts watch` reruns checks when a
+spec, source file or test changes.
 
-### 1. Read a spec
+## Build your project
 
-In [the order spec](vibespec/examples/order/spec/index.md), `##` is a story, `###` a
-rule, and the `quint` block under a rule is its formal half.
+### 1. Write your requirements
 
-````markdown
-## Story: Check out
+Start with your application's stories in `spec/index.md`. A `##` heading is
+a story, a `###` heading is a rule, and a `quint` block under a rule states
+its formal meaning. Describe the behavior you want in prose first; the
+agent can write the rules and their Quint.
 
-> As a shopper, I want to submit my order and pay it off in one or more
-> payments, so that I do not need the whole amount at once.
+If you want a small scaffold to replace with your requirements, run
+`npm run new`. It fills an empty root index with one story, a state, a
+guarded transition, an `always` rule and a `sometimes` rule. It never
+replaces a non-empty spec.
 
-### A payment never exceeds the balance
+### 2. Sync and check
 
-A payment is a positive amount toward a pending order. The payment that
-clears the balance marks the order as paid.
-
-```quint
-pure def canPay(o: Order, amount: int): bool =
-  o.status == Pending and amount > 0 and o.paid + amount <= o.due
-
-pure def pay(o: Order, amount: int): Order =
-  val paid = o.paid + amount
-  { ...o, paid: paid, status: if (paid == o.due) Paid else Pending }
-```
-
-### A pending order still has a balance
-
-```quint
-pure def alwaysPendingHasBalance(o: Order): bool =
-  o.status == Pending implies o.paid < o.due
-```
-````
-
-There is no state machine to write. A definition's name and signature give
-its role ([all of them](AGENTS.md#what-goes-in-the-quint-blocks)):
-
-| You write | It is |
-|---|---|
-| `pure val initial: Order` | the initial state; its type is the state type |
-| `pure def pay(o: Order, …): Order` | a transition, and an event `{ type: "pay", amount }` |
-| `pure def canPay(o: Order, …): bool` | the guard of `pay` |
-| `pure def alwaysX(o: Order): bool` | holds in every reachable state |
-| `pure def stepX(before: Order, after: Order): bool` | holds across every transition |
-| `pure def sometimesX(o: Order): bool` | some reachable state has it |
-| `pure def leadsToX(o: Order, later: Order): bool` | every fair run from `o` reaches such a `later` |
-| `pure def lawX(…): bool` | true for every argument |
-
-The example's `gen/index.ts` gets the same definitions in TypeScript. Each
-transition carries one obligation per rule, which Dafny proves:
-
-```ts
-/** Story: Check out / A payment never exceeds the balance (spec/index.md:73) */
-//@ pure
-export function pay(o: Order, amount: number): Order {
-  //@ ensures (inv(o) && canPay(o, amount)) ==> alwaysPendingHasBalance(\result)
-  //@ ensures (inv(o) && canPay(o, amount)) ==> stepNothingIsPaidOnHold(o, \result)
-  // … one per always and step rule
-  const paid = o.paid + amount;
-  return { ...o, paid: paid, status: paid === o.due ? "Paid" : "Pending" };
-}
-
-export function parseEvent(x: unknown): Event | undefined  // untrusted input → event, or not
-export function enabled(current: Order, event: Event): boolean
-export function step(current: Order, event: Event): Order
-export function inv(current: Order): boolean               // every always rule at once
-```
-
-### 2. Start your own application
-
-```bash
-npm run new
-```
-
-This fills the blank `spec/index.md` with a
-[starter spec](AGENTS.md#writing-a-spec) that passes every stage but `review`:
-one story, a state, one guarded transition, an `always` and a `sometimes`
-rule. Replace its story with yours. The order app remains in `vibespec/examples/order/`.
-
-As the application grows, `npm run new -- billing` creates
-`spec/billing/index.md`, and `npm run new -- billing/payments` creates
-`spec/billing/payments/index.md`. Once those areas exist, link from an index
-to its child specs:
-
-```markdown
-# Application
-
-[Billing](./billing/)
-```
-
-Directory links resolve to `index.md`. `check` discovers every Markdown spec
-recursively, including children; links organize navigation, while Quint
-imports share definitions. For example, a billing spec can write
-`import currency.* from "../shared/currency"` under a rule. The generated
-module names reflect paths: `spec/index.md` → `gen/index.ts`,
-`spec/billing/index.md` → `gen/billing.ts`, and
-`spec/billing/payments/index.md` → `gen/billing__payments.ts`.
-All paths stay inside `spec/`; see the [spec reference](AGENTS.md#writing-a-spec).
-
-For a repository created from the template, follow [project setup](#set-up-a-new-project)
-to remove the examples and establish the project's own documentation and license.
-
-### 3. Write a story; let the agent write the rules
-
-Add a story in prose only:
-
-```markdown
-## Story: Start again
-
-> As a user, I want to reset my tally to zero, so that I can count again.
-```
-
-Then ask the agent in your session (Claude Code, or any agent that reads
-[AGENTS.md](AGENTS.md)) to sync. It follows the
-[`sync` skill](.claude/skills/sync/SKILL.md):
+Ask the agent in your session to sync. Claude Code loads the
+[`sync` skill](.claude/skills/sync/SKILL.md); other agents follow
+[AGENTS.md](AGENTS.md).
 
 ```mermaid
 flowchart LR
-  edit["You edit<br/>a story, a rule or Quint"] --> check["npm run check"]
-  check -- "✗" --> agent["Agent in your session<br/>sync skill"]
-  agent -- "edits spec/, src/" --> check
-  check -- "only sign-off left" --> accept["You read the diff<br/>npm run accept"]
-  accept --> use["src/ imports gen/name.ts<br/>tsc flags what must follow"]
+  edit["You write stories and rules"] --> check["npm run check"]
+  check -- "needs work" --> agent["Agent syncs prose, Quint and code"]
+  agent --> check
+  check -- "only review remains" --> accept["You read the diff and sign off"]
 ```
 
-Each kind of report asks for one translation:
+You can run the same checks from the terminal:
+
+```bash
+npm run check
+```
+
+That command checks the root project: `spec/index.md`, its child specs and
+the related source and tests. To check a project in another directory, use
+the CLI directly:
+
+```bash
+node vibespec/spec.ts check .
+node vibespec/spec.ts check ../my-project
+```
+
+CI runs this root check only. Examples and tool selftests run locally;
+changes confined to the examples do not trigger CI.
+
+Each report ends with a `next:` line. The agent follows it until only your
+review remains:
 
 | `npm run check` reports | The agent writes |
 |---|---|
@@ -361,121 +232,111 @@ Each kind of report asks for one translation:
 | a trace breaks a rule | the missing reason, as a new rule |
 | not proved | a proof, or the missing fact as a new rule |
 
-For the story above it might write:
+The agent reports any rules discovered by the checks and anything it could
+not formalize or prove. It runs `npm run accept` only when you ask.
 
-````markdown
-### A tally that has counted something can be reset to zero
+### 3. Build on the generated code
 
-```quint
-pure def canReset(t: Tally): bool = t.count > 0
-pure def reset(t: Tally): Tally = { count: 0 }
-```
-````
-
-It then stops and reports the rules it added, the rules the checks forced,
-and anything it could not formalize or prove. It runs `npm run accept` only
-when you ask.
-
-### 4. When simulation finds a missing rule
-
-Weaken `canSubmit` in the order example to `o.status == Draft`, and the
-`always` stage finds the shortest trace to a broken rule:
-
-```
-✗ always    spec/index.md: a reachable state breaks "Story: Check out /
-            A pending order still has a balance" (spec/index.md:93)
-      initial                        -> {"status":"Draft","units":0,"due":0,"paid":0}
-      {"type":"submit"}              -> {"status":"Pending","units":0,"due":0,"paid":0}
-      last event: "Story: Check out / Only a non-empty draft can be submitted" (spec/index.md:63); its guard canSubmit let it through
-      fallback: refuse submit when its result would break alwaysPendingHasBalance
-      seed …; to simulate again: npx quint run gen/index.run.qnt …
-```
-
-The fix is the *reason*, written as a rule in the user's words. Rules found
-this way say so: see "No more can be removed than the order holds" in
-[the order spec](vibespec/examples/order/spec/index.md).
-
-### 5. When a proof fails
-
-A rule can hold on every trace and still not be provable, because the proof
-starts from *any* state that satisfies the rules, reachable or not. Delete
-"Drafts and cancelled orders hold no money" from the order example: every
-trace still passes, but Dafny now considers a draft that is already paid,
-and `submit` can no longer be proved to leave a balance.
-
-[Three ways out](AGENTS.md#when-a-proof-does-not-go-through). First
-decide whether the obligation holds in every state that satisfies the rules.
-If you can name one where it does not, as with the paid draft here, no proof
-can help.
-
-1. **Prove it**, if it holds, in `spec/<path>.proof.dfy`, with Dafny lemmas
-   only. The tools refuse anything that would assume rather than prove.
-2. **State the missing fact** as a new `always` rule, if it does not. "An
-   order on hold still has a balance" in the order example was found this way.
-3. **Accept it as simulated only**, with `npm run accept -- unproved`, for a
-   spec only: hand-written code must be proved. Your decision, never the
-   agent's, and it lapses when the spec or its proof file changes.
-
-### 6. Build on the generated code
-
-Application code goes through `parseEvent`, `enabled` and `step`, as
-[the order shell](vibespec/examples/order/src/app.ts) does:
+`npm run check` generates your types, guards and transitions in `gen/`.
+For a state machine, import its `initial`, `parseEvent`, `enabled` and
+`step` into your application:
 
 ```ts
-dispatch(id: string, input: unknown): Order {
-  const event = parseEvent(input);
-  if (!event) throw new Rejected("not a well-formed event");
-  const order = this.get(id);
-  if (!enabled(order, event)) throw new Rejected(`${event.type} is not allowed …`);
-  …
-}
+import { initial, parseEvent, enabled, step } from "../gen/index.ts";
 ```
 
-Logic Quint cannot express, such as a loop over an event log, is written in
-TypeScript with [LemmaScript](https://github.com/midspiral/LemmaScript)
-contracts and proved too. From [the order ledger](vibespec/examples/order/src/ledger.ts):
+Keep the current state in your shell. Parse incoming data with `parseEvent`,
+check whether `enabled` allows it, then apply `step` and save the resulting
+state. Pass stored state through `parseState` when loading it. If the spec
+uses a sender parameter named `by`, authenticate that sender in your shell
+and pass it separately to `enabled` and `step`.
 
-```ts
-export function replay(events: Event[]): Order {
-  //@ ensures inv(\result)
-  …
-}
+Put UI, HTTP, storage and other I/O in `src/`, with whole-journey tests in
+`test/`. Keep pure logic in the spec wherever Quint can express it. Logic
+that needs TypeScript, such as a loop, can carry
+[LemmaScript](https://github.com/midspiral/LemmaScript) contracts and be
+proved too. When the spec changes, `tsc` points at application code that
+must follow. Never edit `gen/`.
+
+### 4. Grow the spec by area
+
+`npm run new -- billing` creates `spec/billing/index.md`;
+`npm run new -- billing/payments` creates a nested area. Link to child
+specs from their parent index:
+
+```markdown
+[Billing](./billing/)
 ```
 
-When the spec changes, `tsc` points at every line of `src/` that must follow.
+`check` discovers every Markdown spec recursively. Links organize
+navigation; Quint imports share definitions. Module names follow paths:
+`spec/index.md` → `gen/index.ts`, `spec/billing/index.md` → `gen/billing.ts`,
+and `spec/billing/payments/index.md` → `gen/billing__payments.ts`.
+See the [spec reference](AGENTS.md#writing-a-spec).
 
-### 7. Sign off
+### 5. Review and sign off
 
-When only `review` items are left, read the diff of `spec/`, `src/` and `test/`, and
-check that each rule's sentence and its Quint say the same thing. Then:
+When only `review` items remain, read the diff of `spec/`, `src/` and `test/`.
+Check that each rule's sentence and Quint say the same thing, then run:
 
 ```bash
 npm run accept
 ```
 
 `accept` checks afresh and records what `review` lists in `spec/lock.json`,
-[all or nothing](AGENTS.md#review). Commit them with the spec.
+[all or nothing](AGENTS.md#review). Commit the ledger with the spec.
+
+## Set up a new project
+
+Before committing your application's starting point:
+
+1. **Remove the example projects.** Delete `vibespec/examples/` and remove
+   its workspace entries and npm scripts such as `demo` and
+   `check:dashboard`. Update the package name, description and repository
+   links for your project.
+2. **Keep the toolchain guide with the toolchain.** Move this README to
+   `vibespec/README.md`, update its relative links and the guide references
+   in `AGENTS.md` and the skills, and keep the template license in
+   `vibespec/LICENSE` alongside the retained Vibespec code.
+3. **Write your project's documentation.** Create a root `README.md` with
+   the project's purpose and install, run and check commands. Set the root
+   `LICENSE` to the project's chosen terms and copyright holder.
+4. **Check and commit.** Run `npm install` and `npm run check`, resolve their
+   reports, and review and accept the spec. Commit the setup and reviewed
+   ledger, then confirm `git status --short` is empty.
 
 ## Commands
 
 | Command | Does |
 |---|---|
-| `npm run dev -- <example-or-directory>` | Opens Studio on that project; omit the argument for the root |
-| `npm run check` | Checks the root specification and every example workspace; ends each project with a `next:` line |
-| `npm run check --workspaces --if-present` | Checks each example workspace |
-| `npx spec check <directory>` | Every stage below for that project; omit the directory for the current project |
-| `npx spec check <directory> --json` | That project's check as one JSON object ([shape](AGENTS.md#changing-the-tools)) |
-| `npx spec gen <directory>` | Generates that project's `gen/` only |
-| `npx spec watch <directory>` | Rechecks that project when its spec, source or tests change |
-| `npx spec accept <directory>` | The user's sign-off: checks afresh and records what `review` lists, [all or nothing](AGENTS.md#review) |
+| `npm run dev` / `npm run dev -- <project-path>` | Opens Studio for the current project or the supplied project directory |
+| `npx spec studio <project-path>` | Opens another project with the packaged CLI |
+| `npm run check` | Checks the root project’s spec, source and tests; ends with a `next:` line |
+| `npm run check --workspaces --if-present` | Checks all bundled example workspaces |
+| `node vibespec/spec.ts check <directory>` | Checks only the selected project |
+| `node vibespec/spec.ts check <directory> --json` | The selected project's check as one JSON object ([shape](AGENTS.md#changing-the-tools)) |
+| `npm run gen` | Generates `gen/` only |
+| `node vibespec/spec.ts gen <directory>` | Generates the selected project's `gen/` only |
+| `node vibespec/spec.ts watch <directory>` | Rechecks the selected project when its spec, source or tests change |
+| `npm run accept` | The user's sign-off: checks afresh and records what `review` lists, [all or nothing](AGENTS.md#review) |
+| `node vibespec/spec.ts accept <directory>` | Signs off on the selected project's reviewed changes |
 | `npm run accept -- unproved` | Records the listed obligations as simulated only. The user's decision |
 | `npm run new` / `npm run new -- <path>` | Fills an empty root index or creates a child [starter spec](AGENTS.md#writing-a-spec) |
-| `npx spec migrate <directory>` | Consolidates that project's old review ledgers into `spec/lock.json`, preserving their recorded approvals |
-| `npm run demo` | A scripted session against the verified core |
+| `node vibespec/spec.ts migrate <directory>` | Consolidates that project's old review ledgers into `spec/lock.json`, preserving their recorded approvals |
+| `npm run demo` | Runs the order example's scripted checkout session |
 | `npm run check:dashboard` | `check` on `vibespec/examples/dashboard` |
 | `npm run selftest` | Breaks the pipeline one way at a time and checks each break is caught |
 | `npm run build` | Compiles the tools into `dist/`, the packaged `spec` command |
-| `npx spec init <directory>` | Sets up an existing project folder; see [Using it from another package](AGENTS.md#using-it-from-another-package) |
+| `node vibespec/spec.ts init <directory>` | Sets up an existing project folder; see [Using it from another package](AGENTS.md#using-it-from-another-package) |
+
+Run the `node vibespec/spec.ts` commands from this repository's root. When
+Vibespec is installed as a package in another project, use `npx spec` with
+the same command and arguments instead.
+
+Omit `<directory>` to use the current project.
+Pass a project folder, not an individual Markdown file; `init` creates its
+`spec/` directory when needed.
+Relative paths, absolute paths and quoted paths containing spaces are supported.
 
 | Exit code | Means |
 |---|---|
@@ -483,131 +344,34 @@ npm run accept
 | 1 | a `✗`, or an error |
 | 2 | bad arguments; prints the usage line |
 
-## What `npm run check` checks
+## Examples
 
-Stages run cheapest first. `✓` passed, `✗` failed, `-` skipped: blocked by a
-`✗` above, or (`types`) there is no `tsconfig.json` and no source or tests to typecheck.
+These projects are optional references. From the repository root, pass an
+example's directory to open its specs in Studio:
 
-| Stage | Question | Strength |
+| Project | What it covers | Open in Studio |
 |---|---|---|
-| `model` | Is the spec well-typed and inside the supported subset? | exact; anything unsupported is refused by name |
-| `always` | Does a reachable state break an `always` rule, a step break a `step` rule, a sampled argument break a law, or a fair run that stops or loops break a [`leadsTo` rule](AGENTS.md#liveness)? | 10,000 random traces; a failure comes with the shortest trace and its seed |
-| `sometimes` | Can each `sometimes` goal be reached? Does each guard allow its event in some reachable state? | a witness trace is a proof; a failure means searches of 20, 40 and 100 events found none (200,000 traces at depth 20, with proportionally fewer at larger depths). [Guards never seen to refuse](AGENTS.md#writing-good-rules) are listed, not failed |
-| `replay` | Does the generated TypeScript mean what the Quint means? | 400 sampled traces and every witness: every state, every law, and every definition the simulator can evaluate. The rest are listed |
-| `types` | Does the application fit the generated contract? | exact |
-| `proof` | Does every transition preserve every `always` and `step` rule, does every law hold, and does hand-written logic meet its `//@` contract? | all states, all inputs, counted per obligation under a fixed resource limit. What Dafny cannot prove alone is proved in a proof file (`spec/<path>.proof.dfy`: lemmas only, checked to add nothing but proof), or listed; a listed obligation passes only once the user records it in `spec/lock.json` under `unproved`, for that text of the unit |
-| `tests` | Does the shell work with the real services around it? | whole user journeys, where the checks above cannot see ([AGENTS.md](AGENTS.md#tests)) |
-| `review` | Does every story have rules and every rule Quint? Has every new or changed story, rule and `//@` contract been reconciled? | exact |
+| [Order checkout](vibespec/examples/order/README.md) | Guards, payments, cancellation and a proved event ledger | `npm run dev -- vibespec/examples/order` |
+| [Team dashboard](vibespec/examples/dashboard/README.md) | Shared spreadsheets, chat notifications and a project registry | `npm run dev -- vibespec/examples/dashboard` |
+| [Shared to-do list](vibespec/examples/fullstack/README.md) | HTTP server, browser client and two tabs over an unreliable network | `npm run dev -- vibespec/examples/fullstack` |
+| [Assistant](vibespec/examples/assistant/README.md) | Trusted senders, bounded turns, late replies and confirmation before payment | `npm run dev -- vibespec/examples/assistant` |
 
-## What lives where
+The same argument accepts any project directory containing `spec/`, including
+projects outside this repository. Studio edits and checks the selected
+project; the examples with executable applications have run commands in
+their linked project guides. Check or generate one example by passing its path:
 
-Keep `spec/`, `src/`, `test/` and `vibespec/` in git, lock files included.
-`gen/`, `dist/` and `.spec-cache/` are derived and ignored by git; never edit them.
+```bash
+node vibespec/spec.ts check vibespec/examples/order
+node vibespec/spec.ts gen vibespec/examples/order
+```
 
-| Path | Role |
-|---|---|
-| `spec/index.md`, `spec/**/index.md`, `spec/**/*.md` | The spec tree: stories, rules, Quint and links; the template root is blank |
-| `spec/lock.json` | Versioned review ledger: `specs` by source path, `contracts` by source file, and `unproved` by proof unit |
-| `spec/<path>.proof.dfy`, `src/<path>.proof.dfy` | Proofs, in Dafny lemmas, of obligations Dafny cannot prove alone. Written by the agent; optional |
-| `.spec-cache/` | Remembered results, and `lock`: one check or accept per project at a time |
-| `.claude/skills/sync/SKILL.md` | How the agent in your session keeps stories, rules and model in step |
-| `.claude/skills/design/SKILL.md` | How the agent designs what a person sees: only what the spec asks, visual first, few words |
-| `vibespec/spec.ts` | The pipeline and command line |
-| `vibespec/parse.ts`, `vibespec/review.ts` | Literate specs and review ledgers |
-| `vibespec/cache.ts`, `vibespec/run.ts` | Stage caches and bounded tool execution |
-| `vibespec/units.ts`, `vibespec/simulate.ts`, `vibespec/util.ts` | Generation, proof units, simulation, replay and shell tests |
-| `vibespec/prove.ts`, `vibespec/proof/lib.dfy` | The proof stage for one unit, with the checks on proof files, and the library of general lemmas proof files call |
-| `vibespec/gen.ts`, `vibespec/gen/` | Quint → TypeScript and the simulation harness |
-| `vibespec/selftest.ts`, `vibespec/fixtures/` | Tests of the pipeline itself, and the small specs they use |
-| `vibespec/scan.ts` | How a spec's lines are read, shared by the parser and Studio's page |
-| `vibespec/studio/` | Studio, a package with its own spec: `spec/index.md` (the session) and `spec/outline.md` (editing one spec), the server and page in `src/`, and journeys in `test/` |
-| `vibespec/examples/order/src/ledger.ts` | Hand-written logic, proved against the generated contract |
-| `vibespec/examples/order/src/app.ts`, `vibespec/examples/order/src/demo.ts` | Unverified shell: storage, input parsing, error reporting; and the demo |
-| `vibespec/examples/order/test/app.test.ts` | Tests of the shell, run by the `tests` stage |
-| `vibespec/examples/order/` | Complete checkout example, with its own spec, shell and tests |
-| `vibespec/examples/dashboard/` | A larger, synthesized example, as a separate package |
-| `.github/workflows/check.yml` | Continuous integration: `npm run check` without the cache |
-| **Derived** (not in git) | |
-| `gen/<name>.ts`, `gen/<name>.qnt` | Generated TypeScript, and the tangled Quint model |
-| `gen/<name>.run.qnt` | The simulation harness that `npx quint run` and `quint verify` take |
-| `gen/traces/`, `gen/proof/` | The last simulated traces; the final Dafny and logs of each proof unit |
-| `dist/` | The built `spec` command, from `npm run build` |
+Replace the path to work on any other project. Output and caches stay in the
+selected project. Check every bundled example with:
 
-## A larger example
-
-`vibespec/examples/dashboard` is a synthesized team task dashboard with made-up names
-and data: tasks live in a shared spreadsheet that people also edit by hand, a
-chat app carries commands and notifications, and a web page shows the state.
-
-| Spec | Models | Rules | Proved |
-|---|---|---|---|
-| `kernel.md` | Arithmetic library | 10 laws | 10 obligations |
-| `tracker.md` | One project's sheet: guarded dashboard edits, unguarded hand edits | 20 transitions; 10 `always`, 4 `step`, 4 `sometimes` | 282 obligations |
-| `projects.md` | The registry of projects | 4 transitions; 2 `always`, 1 `step`, 1 `sometimes`, 1 law | 15 obligations |
-| `src/columns.ts` | Hand-written logic | `//@` contracts | 4 obligations |
-
-Every obligation is proved for all states and inputs.
-
-Modelling an owners cell as a list, not a set, exposed a case a set cannot
-express: a name typed twice. The rule "A person named twice in a cell is told
-once" covers it, and `src/notify.ts` sends each person one message.
-
-Two more examples exercise different boundaries:
-
-- [Shared to-do list](vibespec/examples/fullstack/README.md): an HTTP server, browser
-  client and a model of two tabs exchanging messages over an unreliable network.
-- [Assistant](vibespec/examples/assistant/README.md): trusted senders, a bounded agent
-  turn, late replies and a bill payment that requires the person's confirmation.
-
-## What is and is not guaranteed
-
-Proved for all states and inputs: the initial state satisfies every `always`
-rule, every transition preserves every `always` and `step` rule, every law
-holds, and hand-written `//@ ensures` hold, except for obligations listed in
-`spec/lock.json` under `unproved` (spec units only; hand-written code must be proved)
-and those resting on them, which every proof line lists. The order example has
-none. Proof files add only lemmas, and those are proved too
-([what they may use](AGENTS.md#proof-files)).
-
-Trusted, not proved:
-
-- **The prose.** Whether the Quint under a rule means what the sentence above
-  it says is a judgement. The `review` stage makes sure someone made it.
-- **The generator** (`vibespec/gen.ts`, `vibespec/gen/`). Simulation checks the Quint model; the proof checks the
-  TypeScript. `replay` ties the two together on sampled traces only.
-- **The shell** (`vibespec/examples/order/src/app.ts`), LemmaScript, Dafny and Quint.
-- **Built-ins.** The proofs assume that built-ins such as `Math` and
-  `Array.prototype` are not modified at run time, anywhere in the process.
-- **Preconditions.** A `//@ requires` that can never hold makes a contract
-  vacuous: everything after it is proved. That is why contracts are reviewed,
-  through `spec/lock.json` under `contracts`.
-- **Numbers.** The proofs treat `number` as an unbounded integer. The
-  generated `parseEvent` admits only safe integers, but nothing stops sums of
-  them from passing 2^53, where JavaScript arithmetic is no longer exact.
-- **The working directory.** Anyone who can edit `gen/`, `.spec-cache/` or the
-  tools can make `check` say what they like. `accept` ignores the cache, and
-  continuous integration starts without `.spec-cache/`, which is not in git.
-
-## FAQ
-
-**Do I need to know Quint or Dafny?** To read a spec, a little Quint: it
-reads like typed functional pseudocode, and each block sits under the
-sentence it formalizes. Dafny you rarely see; when a proof needs help, the
-agent writes the lemmas.
-
-**What can a spec express?** Records, variants, lists, sets, maps, integers,
-strings and booleans, with folds instead of loops. Anything outside the
-subset is refused by name ([supported Quint](AGENTS.md#supported-quint)).
-
-**What about I/O, HTTP and storage?** That is the shell, written by hand
-around the generated core and covered by tests.
-
-**Which agent?** Claude Code loads the skills in `.claude/skills/` directly.
-Any other agent reads [AGENTS.md](AGENTS.md).
-
-**Can I check harder than simulation?** Yes: run the Apalache model checker
-on the generated harness, exhaustively up to a depth
-([checking harder](AGENTS.md#checking-harder)).
+```bash
+npm run check --workspaces --if-present
+```
 
 ## Contributing
 

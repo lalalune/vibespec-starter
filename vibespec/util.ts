@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { exec } from "./prove.ts";
-import type { Spec, Rule } from "./parse.ts";
+import { exec } from "./run.ts";
+import { heading, type Spec } from "./parse.ts";
+import type { Result } from "./spec.ts";
 import ts from "typescript";
 
 export const digest = (text: string) => createHash("sha256").update(text).digest("hex");
@@ -10,6 +11,11 @@ export const digest = (text: string) => createHash("sha256").update(text).digest
 export const sha = (...parts: string[]) => digest(JSON.stringify(parts));
 export const short = (text: string) => digest(text).slice(0, 12);
 export const indent = (s: string, by = 6) => s.split("\n").map((l) => " ".repeat(by) + l).join("\n");
+
+/** Files and symbolic links below a project directory, excluding directory entries. */
+export const filesUnder = (root: string, dir: string) => !fs.existsSync(path.join(root, dir)) ? []
+  : fs.readdirSync(path.join(root, dir), { recursive: true, withFileTypes: true }).filter((e) => e.isFile() || e.isSymbolicLink())
+    .map((e) => path.relative(root, path.join(e.parentPath, e.name)).split(path.sep).join("/")).sort();
 
 /** Resolve a project folder before a command reads or writes its files. */
 export function projectRoot(directory: string, base = process.cwd()): string {
@@ -39,7 +45,7 @@ export interface SrcFile { file: string; code: string; ts: boolean }
 /** Every such file, read once: a check proves and reviews the same text, even if a file changes while it runs. */
 export function readSrc(root: string): SrcFile[] {
   const src = path.join(root, "src");
-  const files = fs.existsSync(src) ? (fs.readdirSync(src, { recursive: true }) as string[]).filter((f) => /\.(?:[mc]?ts|tsx|[mc]?jsx?)$/.test(f)).sort() : [];
+  const files = filesUnder(root, "src").map((f) => f.slice(4)).filter((f) => /\.(?:[mc]?ts|tsx|[mc]?jsx?)$/.test(f));
   return files.map((f) => ({ file: f, code: fs.readFileSync(path.join(src, f), "utf8"), ts: /\.ts$/.test(f) })).filter((u) => u.code.includes("//@"));
 }
 /** Compatibility view of the verified or unsupported source files. */
@@ -47,9 +53,17 @@ export function srcUnits(root: string, other = false): { file: string; code: str
   return readSrc(root).filter((u) => other ? !u.ts : u.ts).map(({ file, code }) => ({ file, code }));
 }
 
-/** The tests stage: citations that name nothing, then the package's own tests; each result as `report` takes it. */
-export async function tests(root: string, specs: Spec[]): Promise<[boolean, "tests", string, string?, string?][]> {
-  const said: [boolean, "tests", string, string?, string?][] = [];
+/** One result as `report` in spec.ts takes it. */
+export type Reported<S extends Result["stage"] = Result["stage"]> = [ok: boolean, stage: S, summary: string, detail?: string, where?: string];
+
+/** A directory's package.json, or nothing. */
+const manifest = (dir: string) => fs.existsSync(path.join(dir, "package.json")) ? JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8")) : {};
+/** A package's scripts. */
+export const packageScripts = (root: string): Record<string, string> => manifest(root).scripts ?? {};
+
+/** The tests stage: citations that name nothing, then the package's own tests. */
+export async function tests(root: string, specs: Spec[], scripts: Record<string, string>): Promise<Reported<"tests">[]> {
+  const said: Reported<"tests">[] = [];
   try {
     const dangling = danglingCitations(root, specs);
     if (dangling.length) said.push([false, "tests", `${dangling.length} citations name no story or rule of the spec`, indent(dangling.join("\n"))]);
@@ -57,9 +71,8 @@ export async function tests(root: string, specs: Spec[]): Promise<[boolean, "tes
     if (directOracle.length) said.push([false, "tests", "conformance drivers must reach the application, not call the generated oracle", indent(directOracle.join("\n"))]);
     // The package's own tests, in whatever runner it chose (AGENTS.md, "Tests"): its `test` script, or else
     // Node's on test/**/*.test.ts. The placeholder `npm init` writes is no script.
-    const pkg = fs.existsSync(path.join(root, "package.json")) ? JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) : {};
-    const script = /no test specified/.test(pkg.scripts?.test ?? "") ? undefined : pkg.scripts?.test;
-    const files = fs.existsSync(path.join(root, "test")) ? (fs.readdirSync(path.join(root, "test"), { recursive: true }) as string[]).filter((f) => f.endsWith(".test.ts")).map((f) => `test/${f}`) : [];
+    const script = /no test specified/.test(scripts.test ?? "") ? undefined : scripts.test;
+    const files = filesUnder(root, "test").filter((f) => f.endsWith(".test.ts"));
     const [command, args] = script ? [packageManager(root), ["run", "test"]] : [process.execPath, ["--test", ...files]];
     if (script || files.length) {
       const { NODE_TEST_CONTEXT: _, ...env } = process.env;
@@ -79,8 +92,7 @@ export async function tests(root: string, specs: Spec[]): Promise<[boolean, "tes
  * `file:line  citation`. Build output and packages nested inside it, which have specs of their own, are not read.
  */
 export function danglingCitations(root: string, specs: Spec[]): string[] {
-  const heading = (s: Spec, r: Rule) => r.key.slice((s.stories.findLast((t) => t.line < r.line)?.title ?? "").length + 3);
-  const names = (s: Spec, h: string) => s.stories.some((t) => t.title === h) || s.rules.some((r) => heading(s, r) === h);
+  const names = (s: Spec, h: string) => s.stories.some((t) => t.title === h) || s.rules.some((r) => heading(r) === h);
   return packageCode(root).flatMap((f) =>
     fs.readFileSync(path.join(root, f), "utf8").split("\n").flatMap((line, i) =>
       [...line.matchAll(/(?<![\w/.-])(spec\/(?:[A-Za-z0-9]+\/)*[A-Za-z0-9]+\.md), "([^"]+)"/g)]
@@ -141,7 +153,7 @@ function conformanceImports(root: string): string[] {
 function packageManager(root: string): string {
   const locks: Record<string, string> = { "pnpm-lock.yaml": "pnpm", "bun.lock": "bun", "bun.lockb": "bun", "yarn.lock": "yarn", "package-lock.json": "npm" };
   for (let dir = path.resolve(root); ; dir = path.dirname(dir)) {
-    const pkg = fs.existsSync(path.join(dir, "package.json")) ? JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8")) : {};
+    const pkg = manifest(dir);
     if (pkg.packageManager) return pkg.packageManager.split("@")[0];
     const lock = Object.keys(locks).find((f) => fs.existsSync(path.join(dir, f)));
     if (lock) return locks[lock];

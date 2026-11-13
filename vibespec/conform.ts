@@ -5,9 +5,9 @@ import path from "node:path";
 import readline from "node:readline";
 import { compareObservation, departure, transition, type Found, type Line, type Oracle } from "./conformance.ts";
 import type { Model } from "./gen.ts";
-import type { Spec } from "./parse.ts";
+import { heading, type Spec } from "./parse.ts";
 import type { Step } from "./simulate.ts";
-import { indent } from "./util.ts";
+import { indent, type Reported } from "./util.ts";
 
 export interface Machine { domain: Oracle<any, any>; model: Model; found: Found<any> }
 
@@ -29,8 +29,7 @@ export function conformanceFound(domain: any, model: Model, spec: Spec, traces: 
     events: [...events.values()].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
     journeys: witnesses.map(({ w, trace }) => {
       const rule = spec.rules.find((rule) => rule.defs.includes(w))!;
-      const story = rule.story;
-      return { story, rule: rule.key.slice(story.length + 3), events: trace.flatMap((step) => step.event ? [step.event] : []) };
+      return { story: rule.story, rule: heading(rule), events: trace.flatMap((step) => step.event ? [step.event] : []) };
     }),
     traces: traces.slice(0, 100).map((trace) => trace.flatMap((step) => step.event ? [step.event] : [])),
   };
@@ -101,15 +100,19 @@ async function drive(root: string, machine: Machine, command: string): Promise<s
       const resetProblem = compareObservation(domain, found, domain.initial, initial.state);
       if (resetProblem) return `trace ${n + 1}: reset ${resetProblem}`;
       let current = domain.initial;
+      const request = ({ by, ...event }: any): Line => model.sender ? { event, by } : { event };
+      const send = async (input: Line) => { lines.push({ ...input, ...await program.ask(input) }); };
+      // Before each event and after the last, up to two that the spec refuses in that state.
+      const refuse = async () => { for (const line of found.events.map(request).filter((line) => !domain.enabled(current, line.event, line.by)).slice(0, 2)) await send(line); };
       for (const sent of events) {
-        const request = ({ by, ...event }: any): Line => model.sender ? { event, by } : { event };
+        await refuse();
         const next = request(sent);
-        const refused = found.events.map(request).filter((line) => !domain.enabled(current, line.event, line.by)).slice(0, 2);
-        for (const input of [...refused, next]) lines.push({ ...input, ...await program.ask(input) });
+        await send(next);
         const applied = transition(domain, found, current, next.event, next.by);
         if (typeof applied === "string") return applied;
         current = applied.after;
       }
+      await refuse();
       const off = departure(domain, found, lines);
       if (off) return `trace ${n + 1}, line ${off.line}: ${off.why}\n${lines.map((line) => JSON.stringify(line)).join("\n")}`;
     }
@@ -117,8 +120,8 @@ async function drive(root: string, machine: Machine, command: string): Promise<s
 }
 
 /** Every configured trace and program is run afresh; outside service state is not part of a source-code cache key. */
-export async function conformance(root: string, machines: Map<string, Machine>): Promise<[boolean, "traces", string, string, string][]> {
-  const results: [boolean, "traces", string, string, string][] = [];
+export async function conformance(root: string, machines: Map<string, Machine>, scripts: Record<string, string>): Promise<Reported<"traces">[]> {
+  const results: Reported<"traces">[] = [];
   const add = (where: string, problem: string | undefined, summary: string) => results.push([!problem, "traces", problem ? `${where}: the program departs from the spec` : `${where}: ${summary}`, problem ? indent(problem) : "", where]);
   const dir = path.join(root, TRACES);
   for (const file of fs.existsSync(dir) ? fs.readdirSync(dir).filter((file) => file.endsWith(".jsonl")).sort() : []) {
@@ -127,8 +130,6 @@ export async function conformance(root: string, machines: Map<string, Machine>):
     const off = machine && departure(machine.domain, machine.found, lines);
     add(`${TRACES}/${file}`, machine ? off && `line ${off.line}: ${off.why}` : "no state-machine spec has this name", `${lines.length} recorded lines agree with ${machine?.model.source}${machine?.found.outputShape ? "; effects checked where out is reported" : ""}`);
   }
-  const manifest = path.join(root, "package.json");
-  const scripts = fs.existsSync(manifest) ? JSON.parse(fs.readFileSync(manifest, "utf8")).scripts ?? {} : {};
   for (const [name, command] of Object.entries(scripts).filter(([name]) => name.startsWith("driver:"))) {
     const machine = machines.get(name.slice("driver:".length));
     const problem = machine && typeof command === "string" ? await drive(root, machine, command).catch((error: Error) => error.message) : "no state-machine spec has this name, or its driver is not a command";

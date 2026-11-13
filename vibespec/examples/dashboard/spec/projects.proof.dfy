@@ -5,8 +5,9 @@
 // The two `always` rules count with Std.Collections.Seq.Filter. The bridges
 // below restate the generated definitions with ProofLib.Filter, whose facts
 // meet the generated terms, and then as "no two entries have the same sheet"
-// (or key). Each transition is then argued on that plain form. Lambdas passed
-// to ProofLib are copied verbatim from gen/proof/projects/projects.dfy.
+// (or key). Each transition is then argued on that plain form. Predicates passed
+// to ProofLib.Filter are copied verbatim from gen/proof/projects/projects.dfy;
+// the key functions given to DistinctBy are our own.
 
 // ---- obligations ----
 
@@ -17,7 +18,7 @@ lemma connect_ensures(r: Registry, key: string, sheet: string, channel: string)
 {
   if inv(r) && canConnect(r, key, sheet, channel) {
     ConnectKeepsInv(r, key, sheet, channel);
-    ConnectStep(r, key, sheet, channel);
+    PairsKeptStep(r, connect(r, key, sheet, channel));
   }
 }
 
@@ -28,7 +29,8 @@ lemma disconnect_ensures(r: Registry, key: string)
 {
   if inv(r) {
     DisconnectKeepsInv(r, key);
-    DisconnectStep(r, key);
+    forall x ensures x in disconnect(r, key).entries ==> x in r.entries { DisconnectKeeps(r, key, x); }
+    PairsKeptStep(r, disconnect(r, key));
   }
 }
 
@@ -139,29 +141,14 @@ lemma DisconnectKeeps(r: Registry, key: string, x: Entry)
 
 // ---- the step rule, transition by transition ----
 
-lemma ConnectStep(r: Registry, key: string, sheet: string, channel: string)
-  requires canConnect(r, key, sheet, channel)
-  ensures stepTheAdminScreenNeverSharesAChannel(r, connect(r, key, sheet, channel))
+// A step whose every pair of entries sharing a channel was already there shares no new channel.
+lemma PairsKeptStep(r: Registry, after: Registry)
+  requires forall a, b :: a in after.entries && b in after.entries && a.channel == b.channel && a.channel != "" && b.key != a.key ==> a in r.entries && b in r.entries
+  ensures stepTheAdminScreenNeverSharesAChannel(r, after)
 {
-  var after := connect(r, key, sheet, channel);
   forall c | c in sharedChannels(after) ensures c in sharedChannels(r) {
     SharedMem(after, c);
     SharedMem(r, c);
-    var a, b :| a in after.entries && b in after.entries && a.channel == c && b.channel == c && b.key != a.key;
-    assert a in r.entries && b in r.entries;
-  }
-}
-
-lemma DisconnectStep(r: Registry, key: string)
-  ensures stepTheAdminScreenNeverSharesAChannel(r, disconnect(r, key))
-{
-  var after := disconnect(r, key);
-  forall c | c in sharedChannels(after) ensures c in sharedChannels(r) {
-    SharedMem(after, c);
-    SharedMem(r, c);
-    var a, b :| a in after.entries && b in after.entries && a.channel == c && b.channel == c && b.key != a.key;
-    DisconnectKeeps(r, key, a);
-    DisconnectKeeps(r, key, b);
   }
 }
 

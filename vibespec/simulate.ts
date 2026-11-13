@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import type { Model } from "./gen.ts";
 import { SENDER } from "./gen/classify.ts";
-import { run } from "./prove.ts";
+import { run } from "./run.ts";
 import { digest } from "./util.ts";
 
 export const SAMPLES = 10000;
@@ -54,10 +54,10 @@ function readTrace(file: string, model: Model): Step[] {
 }
 
 /**
- * The simulator's seed: SPEC_SEED if it is set, otherwise one derived from what is simulated, so that the same
- * harness always gives the same traces and a counterexample can be had again.
+ * The simulator's seed, derived from what is simulated, so that the same harness always gives the same traces and a
+ * counterexample can be had again.
  */
-const seedFor = (...what: string[]) => process.env.SPEC_SEED?.trim() || String(parseInt(digest(what.join("\0")).slice(0, 12), 16));
+const seedFor = (...what: string[]) => String(parseInt(digest(what.join("\0")).slice(0, 12), 16));
 
 /**
  * Quint installs its evaluator the first time it simulates, and runs started together would race to. Until it is
@@ -95,13 +95,12 @@ const MAX_SHARDS = 4;
  * Simulate the harness until `invariant` breaks; returns the traces Quint wrote, and the command that runs the same
  * simulation again. One run of Quint uses one core, so with `split` a large budget is split among up to four runs of a
  * single thread, each with a seed of its own; how it is split depends only on the budget, so the same harness always gives
- * the same traces. With SPEC_SEED set, nothing is split, and the seed is the one given. When a run breaks the
- * invariant, the command is the one for that run.
+ * the same traces. When a run breaks the invariant, the command is the one for that run.
  */
 export async function simulate(root: string, model: Model, invariant: string, traces: number, samples: number, step = "step", split = false, steps = STEPS): Promise<{ broken: boolean; traces: Step[][]; again: string }> {
   const dir = path.join(root, "gen/traces", `${model.name}.${invariant}.${step}`);
   fs.rmSync(dir, { recursive: true, force: true });
-  const shards = !split || process.env.SPEC_SEED?.trim() ? 1 : Math.max(1, Math.min(MAX_SHARDS, Math.floor(samples / SHARD_SAMPLES)));
+  const shards = !split ? 1 : Math.max(1, Math.min(MAX_SHARDS, Math.floor(samples / SHARD_SAMPLES)));
   const runs = Array.from({ length: shards }, async (_, k) => {
     const out = shards === 1 ? dir : path.join(dir, String(k));
     fs.mkdirSync(out, { recursive: true });
@@ -187,9 +186,11 @@ export function firstBreak(domain: any, model: Model, trace: Step[], cite: (def:
  * trace up to state `end`, then for ever either nothing (`loop === end`), which is fair if that state allows no fair event,
  * or the states from `loop` to `end`, equal at both ends, again and again, which is fair if it takes every weakly fair
  * event that each of its states allows and every strongly fair one that any allows. It breaks the rule if some state
- * `from` on it is followed by none, itself included, that the rule relates it to.
+ * `from` on it is followed by none, itself included, that the rule relates it to. A rule with a bound (`within_<rule>`)
+ * is also broken by a trace in which that many events follow `from` and neither it nor any state they reach is related
+ * to it; then `loop === end` is the state the last of them reaches, and `within` the bound.
  */
-export function lasso(domain: any, model: Model, trace: Step[]): { broken?: { rule: string; from: number; loop: number; end: number }; loops: number } {
+export function lasso(domain: any, model: Model, trace: Step[]): { broken?: { rule: string; from: number; loop: number; end: number; within?: number }; loops: number } {
   const keys = trace.map((s) => JSON.stringify(s.state));
   const memo = new Map<string, boolean>();
   const relates = (rule: string, i: number, j: number) => {
@@ -202,6 +203,10 @@ export function lasso(domain: any, model: Model, trace: Step[]): { broken?: { ru
     const taken = trace.slice(loop + 1, end + 1).map((s) => s.event?.type);
     return [...model.fair].every(([e, how]) => taken.includes(e) || !(how === "weak" ? allowed.every((a) => a.includes(e)) : allowed.some((a) => a.includes(e))));
   };
+  for (const [rule, within] of model.within)
+    for (let from = 0; from < trace.length; from++)
+      for (let end = from, taken = 0; end < trace.length && !relates(rule, from, end); end++)
+        if (end > from && trace[end].event && ++taken === within) return { broken: { rule, from, loop: end, end, within }, loops: 0 };
   let loops = 0;
   for (let end = 0; end < trace.length; end++)
     for (let loop = 0; loop <= end; loop++) {
@@ -229,11 +234,15 @@ const changes = (a: any, b: any, at = ""): string[] =>
     ? [...new Set([...Object.keys(a), ...Object.keys(b)])].flatMap((k) => changes(a[k], b[k], at ? `${at}.${k}` : k))
     : [`${at || "state"} = ${JSON.stringify(b)}`];
 
-/** A trace as the initial state, then each event with only what it changed, and what it output if anything. */
-export const showTrace = (trace: Step[]) =>
-  trace.filter((s, i) => i === 0 || s.event || s.lawsHold === false).map(({ event, law, evaluated, state, out, lawsHold }, i, shown) => {
+/**
+ * A trace as the initial state, then each event with only what it changed, and what it output if anything, with `marks`
+ * on the steps they name. A step not shown leaves the state as it was, so its mark goes on the last one shown before it.
+ */
+export const showTrace = (trace: Step[], marks: [number, string][] = []) =>
+  trace.map((s, at) => ({ ...s, at })).filter((s) => s.at === 0 || s.event || s.lawsHold === false).map(({ event, law, evaluated, state, out, lawsHold, at }, i, shown) => {
     const { type, ...args } = event ?? { type: "" };
     const what = event ? type + (Object.keys(args).length ? JSON.stringify(args) : "") : law ? `${law.name}${JSON.stringify(law.args)}` : evaluated ? `${evaluated.name}${JSON.stringify(evaluated.picks)}` : "initial";
     const result = (law || evaluated) && !event ? String(lawsHold) : i ? [...changes(shown[i - 1].state, state), ...(event && out?.length ? [`out ${JSON.stringify(out)}`] : [])].join(", ") || "no change" : JSON.stringify(state);
-    return `      ${what.padEnd(30)} -> ${result}`;
+    const mark = marks.filter(([m]) => m >= at && m < (shown[i + 1]?.at ?? Infinity)).map(([, text]) => text).join("; ");
+    return `      ${what.padEnd(30)} -> ${result}${mark && `   <- ${mark}`}`;
   }).join("\n");

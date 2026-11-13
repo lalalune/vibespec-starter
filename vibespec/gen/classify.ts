@@ -28,7 +28,10 @@ export const SENDER = "by";
 /** The parameter of a `step` rule that names the transition taken (AGENTS.md, "What goes in the Quint blocks"). */
 export const VIA = "via";
 /** The last parameter of a `step` rule that sees what the transition output (AGENTS.md, "Transitions with output"). */
-export const OUT = "out";
+const OUT = "out";
+/** The prefixes that make a definition a rule; all but `law` are rules about states. */
+const STATE_ROLES = ["always", "sometimes", "step", "leadsTo"];
+export const ROLES = [...STATE_ROLES, "law"];
 
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
 
@@ -52,12 +55,13 @@ export function classify(funs: Json[], stateType: Json | undefined, sig: (d: Jso
   };
   // A rule whose name is nearly right would otherwise be an unchecked helper.
   for (const d of funs) {
-    const role = ["always", "sometimes", "step", "leadsTo", "law"].find((r) => d.name.toLowerCase().startsWith(r.toLowerCase()));
+    const role = ROLES.find((r) => d.name.toLowerCase().startsWith(r.toLowerCase()));
     if (role && !new RegExp(`^${role}[A-Z]`).test(d.name) && d.name.toLowerCase() !== role.toLowerCase()) fail(`${d.name}: write \`${role}\` rules as ${role}Something`);
     if (/^Can[A-Z]/.test(d.name)) fail(`${d.name}: write guards as can${d.name.slice(3)}`);
   }
   const named = (prefix: string) => funs.filter((d) => new RegExp(`^${prefix}[A-Z]`).test(d.name));
-  if (!stateType) for (const d of named("(always|sometimes|step|leadsTo)")) fail(`${d.name}: \`${d.name.match(/^(always|sometimes|step|leadsTo)/)![0]}\` rules need a state, so the spec must define \`pure val initial\``);
+  const stateRole = `(${STATE_ROLES.join("|")})`;
+  if (!stateType) for (const d of named(stateRole)) fail(`${d.name}: \`${d.name.match(new RegExp(`^${stateRole}`))![0]}\` rules need a state, so the spec must define \`pure val initial\``);
   const stateRule = (prefix: string): string[] => named(prefix).map((d) =>
     isBool(d) && sig(d).params.length === 1 && onState(d) ? d.name : fail(`${d.name}: a \`${prefix}\` rule takes the state and returns bool`));
   const always = stateRule("always");

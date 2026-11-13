@@ -212,9 +212,9 @@ is generated. The role of a definition comes from its name and signature:
 | `pure def leadsToPaid(o: Order, later: Order): bool` | a liveness rule: from every reachable state `o`, every fair run reaches a state `later` that it relates to `o` (`o` itself counts) | a search of simulated traces for a fair run that breaks it ("Liveness", below) |
 | `pure def lawTotalIsNotNegative(xs: List[int]): bool` | a law: true for every value of its parameters | a function proved to return `true`, and sampled by the simulator |
 | `pure val idValues = Set(1, 2, 3)` | what the simulator tries for a parameter named `id`. It must be a set whose elements match the parameter type; any supported Quint is allowed in it | nothing: it never reaches TypeScript |
-
 | `pure val weight_pay = 5` | how often the simulator tries `pay`: a whole number from 1 to 100, times as often as an event of weight 1 (the default). For deep interleavings, such as a message lost, repeated and reordered | nothing |
 | `pure val fair_pay = "weak"` or `"strong"` | an assumption for `leadsTo` rules: a fair run does not put `pay` off for ever while its guard keeps allowing it (`"weak"`), or while it allows it again and again (`"strong"`) | nothing |
+| `pure val within_leadsToPaid = 3` | a bound for a `leadsTo` rule: every run meets it within 3 events, from 1 to 100 | a search of simulated traces for a run that does not ("Liveness", below) |
 | any other `pure val` or `pure def` | a constant or helper | the same constant or function |
 
 A transition parameter named `by` identifies its sender. All such parameters
@@ -279,7 +279,7 @@ TypeScript a name from another module is spelled
 | records | interfaces | Nest as deep as you like |
 | `type Status = Draft \| Paid` | `"Draft" \| "Paid"` | |
 | `type Parcel = Packed({ weight: int }) \| Lost` | `{ tag: "Packed"; weight: number } \| { tag: "Lost" }` | Read with `match p { \| Packed(x) => … \| _ => … }` |
-| `List[T]` | `T[]` | `List(…)`, `append`, `concat`, `length`, `nth`, `head`, `tail`, `select`, `foldl`, and `every`, `some`, `includes`, `listMap` |
+| `List[T]` | `T[]` | `List(…)`, `append`, `concat`, `length`, `nth`, `nthOr`, `removeAt`, `head`, `tail`, `select`, `foldl`, and `every`, `some`, `includes`, `listMap` |
 | `Set[T]` of simple values | `T[]` that never holds a value twice | `Set(…)`, `union`, `intersect`, `exclude`, `filter`, `map`, `forall`, `exists`, `contains`, `in`, `subseteq`, `size` |
 | `K -> T` | `Record<K, T>` | Keys are integers, strings or plain variants; `Map()`, `put`, `get`, `getOr`, `m.keys().contains(k)` |
 
@@ -313,8 +313,8 @@ stage with the name of the construct.
   real thing and a list when they are not.
 - **A map is a lookup table.** It cannot be listed or iterated; keep a list of
   keys beside it, or use a list of records with a key field. An event cannot
-  carry one. In the generated state its keys carry a `$` in front, so that no
-  key can collide with a property every JavaScript object has.
+  carry one. In the generated state a string key carries a `$` in front, so
+  that no key can collide with a property every JavaScript object has.
 - **In a `match` arm, use the fields of what the variant carries**
   (`x.weight`), or rebuild the variant (`Packed({ ...x, weight: 2 })`). The
   carried value cannot be passed on whole. `match` must be on a name.
@@ -325,7 +325,8 @@ stage with the name of the construct.
 - **The simulator tries small values**: integers −1…6, both booleans, three
   strings, every variant of a plain sum type, and short lists and sets of
   those. Define `<param>Values` to choose, which a record or a variant that
-  carries data needs.
+  carries data needs. The sets of an imported spec apply too; the spec's own
+  win.
 
 ### Writing good rules
 
@@ -367,6 +368,10 @@ the state marked.
 - An event lost and sent again forever loops; only `"strong"` fairness of
   the delivery rules that out (`vibespec/fixtures/ping.md`).
 - "Allows" is for the values the simulator tries (`<param>Values`).
+- `within_<rule> = n` also asks that the rule be met within `n` events of
+  any state, whatever events they are: a run that takes `n` without meeting
+  it breaks the rule, fair or not. Events of the environment count too, so a
+  bound holds only where nothing can delay the answer without limit.
 - A loop needs a state reached twice. A counter that only grows rules loops
   out, and then only runs that stop are checked: the stage says how many
   loops it found. Nothing proves a `leadsTo` rule.
@@ -501,7 +506,7 @@ a body.
   `FilterNone`, `FilterOne`, `FilterTwo`, `FilterCountOneIffUnique`,
   `FilterDistinctCountOne`, `FilterKeepsDistinctBy`, `FilterLengthPointwise`,
   `FilterPointwise`, `FilterSamePredicate`, `FilterOfFilterShorter`) and folds
-  (`FoldLeftMax`, `FoldLeftPointwise`, `FoldLeftConcatEmpty`, `FoldLeftDedupDistinct`).
+  (`FoldLeftAppend`, `FoldLeftMax`, `FoldLeftPointwise`, `FoldLeftConcatEmpty`, `FoldLeftDedupDistinct`).
   Read the file for what each states. A lemma general enough for any project
   belongs there, with its proof; one about your spec belongs in your proof
   file.
@@ -537,7 +542,7 @@ supply one to replace it.
    them all.
 
 `vibespec/fixtures/highest.md` is the smallest example: its law needs induction
-over a fold, and this proof file proves it (the selftest runs it):
+over a fold, and `vibespec/fixtures/highest.proof.dfy` proves it (the selftest runs it):
 
 ```dafny
 lemma lawTheHighestIsAtLeastTheStart_ensures(xs: seq<int>, start: int)
@@ -581,6 +586,19 @@ line.
   `vibespec/examples/order/src/app.ts` does.
 - `gen/` is rebuilt by `npm run gen` and `npm run check`, and by
   `npm install` when every spec is valid.
+
+### Conformance
+
+Three ways to run the real application against a state machine's spec:
+
+| | How | Checked by |
+|---|---|---|
+| `gen/<name>.conformance.ts` | `conformance(driver, options)` in a test: a journey per `sometimes` rule, then random walks | the test |
+| `test/traces/<name>.jsonl` | recorded lines: `{state}` starts, `{event, by?, state?, out?}` steps; at least one state observed | `check`, `traces` |
+| `driver:<name>` script | a program that answers each `{}` (reset) or `{event, by?}` line with one `{state, out?}` line | `check`, `traces`, on the simulated traces |
+
+A `Driver` has `reset`, `dispatch` (returns `"accepted"` or `"refused"`),
+`observe` and, for a spec that emits effects, `observeOutput`.
 
 ## Hand-written verified logic
 
@@ -686,7 +704,7 @@ In the vibespec-starter repository:
 | `vibespec/units.ts`, `vibespec/simulate.ts` | generation, proof units, simulation and replay |
 | `vibespec/util.ts` | source discovery, test execution and citations |
 | `vibespec/scan.ts` | how a spec's lines are read; imports nothing, so Studio's page uses it too |
-| `vibespec/studio/` | Studio, a workspace package with its own spec, checked by `npm run check`: change `spec/`, then its shell in `src/` |
+| `vibespec/studio/` | Studio, a workspace package with its own spec, checked by `npm run check --workspace vibespec-studio`: change `spec/`, then its shell in `src/` |
 | `vibespec/prove.ts` | proves one unit: checks and splices the proof file, runs LemmaScript and `dafny audit`, and rechecks alone every postcondition a failing one could hide |
 | `vibespec/proof/lib.dfy` | the library proof files call |
 | `vibespec/gen.ts` | the translator: reads what a module imports and defines |

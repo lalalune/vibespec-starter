@@ -4,6 +4,7 @@ import path from "node:path";
 import { danglingCitations, dependencies, parseSpec, type Spec } from "../../spec.ts";
 import { itemsOf, nodeId, outlineOf, ruleKey, storyKey } from "./markdown.ts";
 import { readSpecs, specName } from "../../parse.ts";
+import { filesUnder } from "../../util.ts";
 
 // --- identity: which node of the baseline a node of the current specs is -----------------------------
 
@@ -173,8 +174,8 @@ export function manifestOf(root: string, baseline: Record<string, string>, curre
   };
   for (const s of specs) if (edited.includes(s.file)) visit(s, "edited");
   const modules = new Set(regenerate.map((r) => r.gen.slice(4)).concat(Object.keys(baseline).filter((f) => !(f in current)).map((f) => `${specName(f)}.ts`)));
-  const code = ["src", "test"].flatMap((dir) => fs.existsSync(path.join(root, dir)) ? (fs.readdirSync(path.join(root, dir), { recursive: true }) as string[]).map((f) => path.join(dir, f)) : [])
-    .filter((f) => /\.[cm]?tsx?$/.test(f) && [...modules].some((m) => fs.readFileSync(path.join(root, f), "utf8").includes(`gen/${m}`))).map((f) => f.split(path.sep).join("/")).sort();
+  const code = ["src", "test"].flatMap((dir) => filesUnder(root, dir))
+    .filter((f) => /\.[cm]?tsx?$/.test(f) && [...modules].some((m) => fs.readFileSync(path.join(root, f), "utf8").includes(`gen/${m}`)));
   let citations: string[] = [];
   try { citations = danglingCitations(root, specs); } catch { /* no code to read */ }
   return { published: new Date().toISOString(), changes, regenerate, code, citations };
