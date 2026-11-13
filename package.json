@@ -68,7 +68,7 @@
     "@effect/vitest": "4.1.1",
     "@eslint-react/eslint-plugin": "catalog:",
     "@eslint/js": "catalog:",
-    "@types/node": "catalog:",
+    "@types/node": "^26.6.6",
     "@vitest/browser": "catalog:",
     "@vitest/browser-playwright": "catalog:",
     "eslint": "catalog:",

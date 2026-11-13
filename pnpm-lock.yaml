@@ -172,7 +172,7 @@ importers:
         specifier: 'catalog:'
         version: 10.0.1(eslint@10.14.0(jiti@2.7.0))
       '@types/node':
-        specifier: 'catalog:'
+        specifier: ^26.6.6
         version: 26.6.6
       '@vitest/browser':
         specifier: 'catalog:'
