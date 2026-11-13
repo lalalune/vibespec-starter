@@ -58,7 +58,7 @@ export async function entry(root: string, stage: "model" | "simulate" | "prove",
 /** What an entry holds, or undefined. An entry that cannot be read, cut short by a kill or a full disk, is deleted and is a miss. */
 export function recall<T>(memory: Memory, { name, file }: Entry): T | undefined {
   memory.used.add(name);
-  if (memory.fresh || process.env.SPEC_NO_CACHE) return undefined;
+  if (memory.fresh) return undefined;
   let text: string;
   try {
     text = fs.readFileSync(file, "utf8");
@@ -92,8 +92,8 @@ export function store(memory: Memory, { name, file }: Entry, value: unknown) {
 /**
  * `produce()`, or what it returned the last time for the same key, if that was
  * worth keeping. This is what keeps a check proportional to what changed. The
- * cache is a convenience: `accept` never reads it, nor does a check with
- * SPEC_NO_CACHE set. Every entry read or written is recorded as used, so that a
+ * cache is a convenience: `accept` never reads it, and `rm -rf .spec-cache` runs
+ * a check without it. Every entry read or written is recorded as used, so that a
  * full check can delete the ones no longer used.
  */
 export async function remembered<T>(memory: Memory, at: Entry | Promise<Entry>, produce: () => T | Promise<T>, keep: (result: T) => boolean): Promise<T> {
