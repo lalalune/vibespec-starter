@@ -101,7 +101,7 @@ flowchart LR
 ```
 
 What is generated from what, which test is for what, and what a green check
-means are in [docs/architecture.md](docs/architecture.md).
+means are in [CONTRIBUTING.md](CONTRIBUTING.md#architecture).
 
 ## Getting started
 
@@ -302,7 +302,7 @@ current one. Installed as a package, use `pnpm exec spec <command> [<dir>]`.
 
 CI runs `pnpm verify` on each pull request and push, with larger property
 budgets for what is headed for `main`, and a nightly run with a new seed
-([CI](docs/architecture.md#ci)).
+([CI](CONTRIBUTING.md#ci)).
 
 ## Examples
 
@@ -327,7 +327,7 @@ workspace.
 | `vibestack/` | The tools: generator, simulator, prover, Studio, testing and design helpers |
 | `.claude/skills/` | What agents read before each kind of work: `sync`, `shell`, `prove`, `design` |
 | `.agents/skills/` | Relative links to the same skills for Codex discovery |
-| [AGENTS.md](AGENTS.md), [SPEC.md](SPEC.md), [docs/architecture.md](docs/architecture.md) | The procedure, the spec reference, and the map |
+| [AGENTS.md](AGENTS.md), [SPEC.md](SPEC.md), [CONTRIBUTING.md](CONTRIBUTING.md#architecture) | The procedure, the spec reference, and the map |
 
 ## Contributing
 
