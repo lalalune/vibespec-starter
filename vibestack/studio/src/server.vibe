@@ -7,13 +7,12 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest"
 import * as HttpServerResponse from "effect/http/HttpServerResponse"
 import { ChildProcess } from "effect/process"
 import { ChildProcessSpawner } from "effect/process/ChildProcessSpawner"
-import type { Result } from "../../spec.ts"
 import { Machine, enabled, machine } from "../gen/index.effect.vibe"
 import type { Event, Session } from "../gen/index.ts"
 import { promptFor, type Manifest } from "./doc.ts"
 import {
-  NODE, PUBLIC, SPEC, checkCommand, createServer, finder, interactive, manifestFile, opener, ownedFiles, buildPage,
-  planPublish, projectName, readManifest, skillPath, specsOf, stateFile, studioRoot, verdictOf, type Publish,
+  NODE, PUBLIC, SPEC, checkCommand, createServer, finder, interactive, manifestFile, opener, ownedFiles, buildPage, componentsOf,
+  planPublish, projectName, readManifest, skillPath, specsOf, stateFile, studioRoot, verdictOf, type Check, type JobView, type Publish, type Snapshot,
 } from "./project.ts"
 
 const DEEPLINK_LIMIT = 5000 // characters of a prompt a claude-cli:// link carries
@@ -44,9 +43,7 @@ export const AGENTS: Record<string, Agent> = {
 
 type Kind = "check" | "agent" | "accept"
 /** The process behind the session's job, and what it printed. The last of each kind is kept, for its log. */
-interface Job { label: string; status: "running" | "passed" | "failed" | "stopped"; started: number; finished?: number; log: string[]; fiber?: Fiber.Fiber<void> }
-export type JobView = Omit<Job, "fiber">
-type Check = { ok: boolean; results: Result[]; next: string; finished: number }
+interface Job extends JobView { fiber?: Fiber.Fiber<void> }
 
 /** A request this server does not take, with its HTTP status. */
 error Refused { status: number; message: string; conflicts?: string[] }
@@ -170,7 +167,7 @@ effect function studio(project: Project, agents: Record<string, Agent>) {
   }
 
   /** Everything the page shows for the project. */
-  effect function snapshot() {
+  effect function snapshot(): Snapshot!(PlatformError.PlatformError | Error) {
     // The specs; what is wrong if they cannot be read.
     const read: { manifest?: Manifest; specs: ReturnType<typeof specsOf>; problem?: string } =
       effect { return { manifest: readManifest(root), specs: specsOf(root) } } catch (e) => ({ problem: e.message, specs: [] })
@@ -299,6 +296,12 @@ effect function studio(project: Project, agents: Record<string, Agent>) {
     handle: effect (method: string, route: string, request: HttpServerRequest.HttpServerRequest) => {
       if (route === "/api/events") return HttpServerResponse.stream(events, { contentType: "text/event-stream", headers: { "cache-control": "no-store", connection: "keep-alive" } })
       if (method === "GET" && route === "/api/project") return json(200, try snapshot())
+      // The Components view (./page/Components.tsx): absent when the project has no catalog.
+      if (method === "GET" && route === "/api/components") {
+        const index = componentsOf(root)
+        if (!index) throw new Refused({ status: 404, message: "no component catalog: run the story generator" })
+        return json(200, index)
+      }
       if (method !== "POST") throw new Refused({ status: 405, message: "method not allowed" })
       if (request.headers["content-type"]?.split(";")[0].trim().toLowerCase() !== "application/json") throw new Refused({ status: 415, message: "send application/json" })
       const text = request.text catch () => ""
@@ -307,9 +310,6 @@ effect function studio(project: Project, agents: Record<string, Agent>) {
     },
   }
 }
-
-/** Everything the page shows for a project (./page.ts). */
-export type Snapshot = Effect.Success<ReturnType<Effect.Success<ReturnType<typeof studio>>["snapshot"]>>
 
 /** The studio's HTTP server on 127.0.0.1, at `port` or the next free one after it. `open` is the project shown first. */
 export effect function startStudio({ projects, open = projects[0].id, port = 4321, agents = AGENTS }: { projects: Project[]; open?: string; port?: number; agents?: Record<string, Agent> }) {
@@ -350,7 +350,7 @@ export effect function startStudio({ projects, open = projects[0].id, port = 432
       return try live.handle(request.method, url.pathname, request)
     } catch (e) => json(e instanceof Refused ? e.status : 400, e instanceof Refused && e.conflicts ? { error: e.message, conflicts: e.conflicts } : { error: messageOf(e) })
     return HttpServerResponse.setHeaders(response, {
-      "content-security-policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; object-src 'none'; frame-ancestors 'none'",
+      "content-security-policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-src http://localhost:* http://127.0.0.1:*; base-uri 'none'; object-src 'none'; frame-ancestors 'none'",
       "x-content-type-options": "nosniff",
     })
   }

@@ -5,6 +5,7 @@ import { S, can, connect, current, dirtySpecs, doneEditing, focusLater, toast, u
 import { Build, PublishDialog } from "./Build.tsx";
 import { Rail } from "./Rail.tsx";
 import { Spec } from "./Spec.tsx";
+import { Components } from "./Components.tsx";
 
 export function App() {
   useStudio();
@@ -18,7 +19,7 @@ export function App() {
       if ((e.metaKey || e.ctrlKey) && e.key === "s") { e.preventDefault(); openPublish(); }
       else if ((e.metaKey || e.ctrlKey) && e.key === "z" && !typing && S.history.length) { e.preventDefault(); undo(); }
       else if (e.key === "Escape" && typing && S.editing.size && !document.querySelector("[role=dialog]")) {
-        const id = (document.activeElement!.closest("[data-uid]") as HTMLElement | null)?.dataset.uid;
+        const id = document.activeElement?.closest<HTMLElement>("[data-uid]")?.dataset.uid;
         if (id && S.editing.has(id)) { doneEditing(id); focusLater(`[data-uid="${id}"] > [data-row]`); }
       }
     };
@@ -34,7 +35,9 @@ export function App() {
     <>
       <div className="grid h-screen grid-cols-[240px_minmax(0,1fr)_340px] max-lg:h-auto max-lg:grid-cols-[200px_minmax(0,1fr)] max-sm:grid-cols-1">
         <Rail />
-        <main className="overflow-auto px-8 pt-6 pb-30 max-sm:px-4">{spec && <Spec spec={spec} />}</main>
+        <main className="overflow-auto px-8 pt-6 pb-30 max-sm:px-4">
+          {S.view === "components" && S.components ? <Components index={S.components} /> : spec && <Spec spec={spec} />}
+        </main>
         <div className="flex max-lg:col-span-full [&>aside]:flex-1">
           <Build onPublish={openPublish} />
         </div>

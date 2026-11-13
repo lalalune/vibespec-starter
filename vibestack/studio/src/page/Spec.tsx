@@ -187,27 +187,32 @@ function RuleItem({ spec, story, rule, r, byKey }: { spec: Working; story: Story
       </Row>
       {open && (editing ? <RuleEditor id={id} rule={rule} /> : (
         <div data-body className="flex flex-col gap-3 px-3 pb-3 pl-13">
-          {items.map((i, k) => (i.quint ? <Quint key={k} code={i.text} /> : <Markdown key={k} text={i.text} file={spec.file} />))}
+          {items.map((i) => (i.quint ? <Quint key={`q${i.text}`} code={i.text} /> : <Markdown key={`p${i.text}`} text={i.text} file={spec.file} />))}
           {review && <Status mark="review">{review}</Status>}
-          {fails?.map((f, k) => <Status key={k} mark="bad">{f}</Status>)}
+          {fails?.map((f) => <Status key={f} mark="bad">{f}</Status>)}
         </div>
       ))}
     </li>
   );
 }
 
+const blockKeys = new WeakMap<Item, number>();
+let blocks = 0;
+
 /** A rule's heading, prose and Quint blocks being edited; each change is one `editRule` event (spec/outline.md). */
 function RuleEditor({ id, rule }: { id: string; rule: Rule }) {
   if (!S.items.has(id)) S.items.set(id, itemsOf(rule.body).length ? itemsOf(rule.body) : [{ quint: false, text: "" }]);
   const items = S.items.get(id)!;
   const set = (next: Item[]) => { S.items.set(id, next); editRule(id, rule.title, next); redraw(); };
+  /** Each block keeps its key while it is edited and moved, so its text box keeps the caret. */
+  const keyOf = (item: Item) => { if (!blockKeys.has(item)) blockKeys.set(item, ++blocks); return blockKeys.get(item)!; };
   return (
     <div data-edit className="flex flex-col gap-2 px-3 pb-3 pl-13">
       <Heading value={rule.title} label="One checkable sentence" onChange={(v) => editRule(id, v)} />
       {items.map((item, k) => (
-        <div key={k} className="flex items-start gap-1">
+        <div key={keyOf(item)} className="flex items-start gap-1">
           <TextBox value={item.text} code={item.quint} label={item.quint ? "Quint" : "Prose"} placeholder={item.quint ? "pure def …" : "Prose (optional)"}
-            onChange={(v) => set(items.map((x, i) => (i === k ? { ...x, text: v } : x)))} />
+            onChange={(v) => { item.text = v; set([...items]); }} />
           <div className="flex flex-col gap-0.5 pt-0.5">
             {k > 0 && <IconButton name="up" label="Move up" onClick={() => set([...items.slice(0, k - 1), item, items[k - 1], ...items.slice(k + 1)])} />}
             <IconButton name="close" label="Remove" danger onClick={() => set(items.filter((_, i) => i !== k))} />

@@ -69,12 +69,12 @@ function inline(s: string, file: string): ReactNode[] {
 export function Markdown({ text, file, className }: { text: string; file: string; className?: string }) {
   return (
     <div className={cn("flex flex-col gap-2", className)}>
-      {text.trim().split(/\n\s*\n/).map((block, i) =>
-        /^\s*(`{3,}|~{3,})/.test(block) ? <Code key={i}>{block.split("\n").slice(1, -1).join("\n")}</Code>
-        : /^\|/.test(block) ? <Code key={i}>{block}</Code>
-        : /^>/.test(block) ? <blockquote key={i} className="border-l-3 border-border pl-3">{inline(block.replace(/^>\s?/gm, ""), file)}</blockquote>
-        : /^\s*[-*] /.test(block) ? <ul key={i} className="list-disc pl-5">{block.split(/\n(?=\s*[-*] )/).map((l, j) => <li key={j}>{inline(l.replace(/^\s*[-*] /, ""), file)}</li>)}</ul>
-        : <p key={i}>{inline(block, file)}</p>)}
+      {[...text.trim().matchAll(/(?:.|\n(?!\s*\n))+/g)].map(({ 0: block, index: at }) =>
+        /^\s*(`{3,}|~{3,})/.test(block) ? <Code key={at}>{block.split("\n").slice(1, -1).join("\n")}</Code>
+        : /^\|/.test(block) ? <Code key={at}>{block}</Code>
+        : /^>/.test(block) ? <blockquote key={at} className="border-l-3 border-border pl-3">{inline(block.replace(/^>\s?/gm, ""), file)}</blockquote>
+        : /^\s*[-*] /.test(block) ? <ul key={at} className="list-disc pl-5">{[...block.matchAll(/^\s*[-*] (.*(?:\n(?!\s*[-*] ).*)*)/gm)].map((l) => <li key={l.index}>{inline(l[1], file)}</li>)}</ul>
+        : <p key={at}>{inline(block, file)}</p>)}
     </div>
   );
 }

@@ -9,9 +9,10 @@ import { trusted } from "vibelang-runtime";
 import { acceptable, parseSpec, pending, pendingKey, readSpecs, type Lock, type Result } from "../../spec.ts";
 import { specFiles, specName } from "../../parse.ts";
 import { filesUnder, projectRoot, short } from "../../util.ts";
-import type { Verdict } from "../gen/index.ts";
+import type { Session, Verdict } from "../gen/index.ts";
 import { manifestOf, nodesOf, type Ids, type Manifest } from "./doc.ts";
 import { outlineOf, specOrder } from "./markdown.ts";
+import type { ComponentIndex } from "./page/Components.tsx";
 
 const EXT = path.extname(import.meta.filename);
 /** The tools: vibestack/ from source, dist/ when built. */
@@ -106,11 +107,50 @@ export async function buildPage(): Promise<void> {
   const built = fs.statSync(path.join(PUBLIC, "index.html"), { throwIfNoEntry: false })?.mtimeMs ?? 0;
   const newest = (dir: string): number => fs.readdirSync(dir, { withFileTypes: true }).reduce((n, e) => e.name === "node_modules" ? n
     : Math.max(n, e.isDirectory() ? newest(path.join(dir, e.name)) : fs.statSync(path.join(dir, e.name)).mtimeMs), 0);
-  const inputs = [path.join(studio, "src"), path.join(studio, "gen"), path.join(studio, "vite.config.ts"),
+  const inputs = [path.join(studio, "src"), path.join(studio, "gen"), path.join(studio, "vite.config.ts"), path.join(TOOLS, "design"),
     path.dirname(fileURLToPath(import.meta.resolve("@repo/ui"))), fileURLToPath(import.meta.resolve("@repo/design-system/tokens.json"))];
   if (inputs.every((f) => (fs.statSync(f).isDirectory() ? newest(f) : fs.statSync(f).mtimeMs) < built)) return;
   const { build } = await import("vite");
   await build({ configFile: path.join(studio, "vite.config.ts") });
+}
+
+/**
+ * The component catalogs `vibestack/stories/cli.ts gen` wrote in the project and in its workspace packages, as one,
+ * each source path from the project root; undefined when there are none. A trusted call.
+ */
+export const componentsOf = trusted(function componentsOf(root: string): ComponentIndex | undefined {
+  const dirs = [".", ...["apps", "packages"].flatMap((d) => (fs.existsSync(path.join(root, d)) ? fs.readdirSync(path.join(root, d)).map((n) => `${d}/${n}`) : []))];
+  const found = dirs.flatMap((dir) => {
+    const index = readJson<ComponentIndex>(path.join(root, dir, "generated/stories/catalog.json"));
+    return index ? [{ dir, index }] : [];
+  });
+  if (!found.length) return undefined;
+  return {
+    version: 1,
+    storybook: { url: found.find((f) => f.index.storybook.url)?.index.storybook.url },
+    // A component catalogued both in the project and in its package is shown once.
+    components: [...new Map(found.flatMap(({ dir, index }) => index.components.map((c) => {
+      const file = path.posix.join(dir, c.source.file);
+      return [`${file}#${c.name}`, { ...c, source: { ...c.source, file } }] as const;
+    }))).values()],
+  };
+}, [Error]);
+
+/** A job as the page sees it: what ran, how it ended, and the last of what it printed. */
+export interface JobView { label: string; status: "running" | "passed" | "failed" | "stopped"; started: number; finished?: number; log: string[] }
+/** The last check's report, and when it finished. */
+export interface Check { ok: boolean; results: Result[]; next: string; finished: number }
+/** Everything the page (./page/) shows for a project, as ./server.vibe answers `GET /api/project`. */
+export interface Snapshot {
+  project: { id: string; name: string; root: string };
+  session: Session;
+  specs: ReturnType<typeof specsOf>;
+  problem?: string;
+  manifest?: Manifest;
+  prompt: string;
+  check?: Check;
+  jobs: Partial<Record<"check" | "agent" | "accept", JobView>>;
+  agents: { id: string; label: string; available: boolean; link?: string }[];
 }
 
 /** What the page asks to publish: each file as it was loaded (`base`, a hash) and as it is now (`text`, null to delete). */

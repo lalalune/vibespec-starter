@@ -4,16 +4,16 @@ import { useEffect, useRef, useState } from "react";
 import { Button, Dialog, DialogClose, DialogContent, DialogTitle, cn } from "@repo/ui";
 import { headingsAreSound } from "../../gen/outline.ts";
 import { SIGN } from "../markdown.ts";
-import type { JobView } from "../server.vibe";
+import type { JobView } from "../project.ts";
 import { S, can, dirtySpecs, discard, publish, publishedText, reviewCount, start, toast } from "./studio.ts";
 import { Code, Dot, Icon, IconButton } from "./text.tsx";
 
-const elapsed = (job: JobView) => { const s = Math.round(((job.finished ?? Date.now()) - job.started) / 1000); return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`; };
+const elapsed = (job: JobView, now: number) => { const s = Math.round(((job.finished ?? now) - job.started) / 1000); return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`; };
 /** A running job's time, ticking. */
 function Elapsed({ job }: { job: JobView }) {
-  const [, tick] = useState(0);
-  useEffect(() => { if (job.status !== "running") return; const t = setInterval(() => tick((n) => n + 1), 1000); return () => clearInterval(t); }, [job.status]);
-  return <span className="text-xs text-muted-foreground tabular-nums">{elapsed(job)}</span>;
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { if (job.status !== "running") return; const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); }, [job.status]);
+  return <span className="text-xs text-muted-foreground tabular-nums">{elapsed(job, now)}</span>;
 }
 
 type StageState = "idle" | "todo" | "active" | "running" | "ok" | "bad";
@@ -34,16 +34,18 @@ function diff(a: string, b: string) {
   const n = x.length, m = y.length;
   const t = Array.from({ length: n + 1 }, () => new Int32Array(m + 1));
   for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) t[i][j] = x[i] === y[j] ? t[i + 1][j + 1] + 1 : Math.max(t[i + 1][j], t[i][j + 1]);
-  const ops: [string, string][] = [];
+  // Each line of the diff is named by where it is in the old and the new text.
+  const ops: { op: string; line: string; at: string }[] = [];
   let i = 0, j = 0;
   while (i < n || j < m) {
-    if (i < n && j < m && x[i] === y[j]) { ops.push([" ", x[i]]); i++; j++; }
-    else if (j < m && (i >= n || t[i][j + 1] >= t[i + 1][j])) ops.push(["+", y[j++]]);
-    else ops.push(["-", x[i++]]);
+    const at = `${i}:${j}`;
+    if (i < n && j < m && x[i] === y[j]) { ops.push({ op: " ", line: x[i], at }); i++; j++; }
+    else if (j < m && (i >= n || t[i][j + 1] >= t[i + 1][j])) ops.push({ op: "+", line: y[j++], at });
+    else ops.push({ op: "-", line: x[i++], at });
   }
-  const near = ops.map((_, k) => ops.slice(Math.max(0, k - 3), k + 4).some(([op]) => op !== " "));
-  return ops.flatMap(([op, line], k) => near[k] ? [<div key={k} className={cn("px-2.5 whitespace-pre-wrap", op === "+" && "bg-ok/15", op === "-" && "bg-destructive/15")}>{`${op} ${line}`}</div>]
-    : near[k - 1] || k === 0 ? [<div key={k} className="bg-muted px-2.5 text-muted-foreground">…</div>] : []);
+  const near = ops.map((_, k) => ops.slice(Math.max(0, k - 3), k + 4).some(({ op }) => op !== " "));
+  return ops.flatMap(({ op, line, at }, k) => near[k] ? [<div key={at} className={cn("px-2.5 whitespace-pre-wrap", op === "+" && "bg-ok/15", op === "-" && "bg-destructive/15")}>{`${op} ${line}`}</div>]
+    : near[k - 1] || k === 0 ? [<div key={at} className="bg-muted px-2.5 text-muted-foreground">…</div>] : []);
 }
 
 /** What publishing writes: each changed spec's diff. Refused while a spec has a heading that is empty or not unique. */
@@ -65,7 +67,7 @@ export function PublishDialog({ open, onOpenChange }: { open: boolean; onOpenCha
         </div>
         <div className="flex justify-end gap-2 border-t border-border px-6 py-3">
           <DialogClose asChild><Button variant="outline">Cancel</Button></DialogClose>
-          <Button disabled={unsound.length > 0} onClick={() => { onOpenChange(false); publish(); }}><Icon name="check" />Publish</Button>
+          <Button disabled={unsound.length > 0} onClick={() => { onOpenChange(false); void publish(); }}><Icon name="check" />Publish</Button>
         </div>
       </DialogContent>
     </Dialog>
@@ -73,9 +75,9 @@ export function PublishDialog({ open, onOpenChange }: { open: boolean; onOpenCha
 }
 
 export function Build({ onPublish }: { onPublish: () => void }) {
-  const log = useRef<HTMLPreElement>(null);
+  const logRef = useRef<HTMLPreElement>(null);
   const snap = S.snap;
-  useEffect(() => { if (log.current) log.current.scrollTop = log.current.scrollHeight; });
+  useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; });
   if (!snap) return <aside aria-label="Build" className="border-l border-border bg-card" />;
   const dirty = dirtySpecs();
   const { job: running, verdict, waiting } = snap.session;
@@ -84,7 +86,7 @@ export function Build({ onPublish }: { onPublish: () => void }) {
   const job = [jobs.agent, jobs.accept].filter((j): j is JobView => !!j).sort((a, b) => b.started - a.started)[0];
   const blocking = (check?.results ?? []).filter((r) => !r.ok && r.stage !== "review");
   const review = reviewCount();
-  const copyPrompt = async () => { try { await navigator.clipboard.writeText(snap.prompt); toast("Sync prompt copied"); } catch { toast("Could not copy"); } };
+  const copyPrompt = () => { navigator.clipboard.writeText(snap.prompt).then(() => toast("Sync prompt copied"), () => toast("Could not copy")); };
 
   return (
     <aside aria-label="Build" className="flex flex-col gap-6 overflow-auto border-l border-border bg-card p-4">
@@ -105,8 +107,8 @@ export function Build({ onPublish }: { onPublish: () => void }) {
       {manifest && (
         <div className="flex flex-col gap-2">
           <ul className="m-0 flex max-h-60 list-none flex-col gap-1 overflow-auto p-0 text-[13px]">
-            {manifest.changes.map((c, i) => (
-              <li key={i} className="grid grid-cols-[14px_1fr] gap-1.5">
+            {manifest.changes.map((c) => (
+              <li key={`${c.action} ${c.kind} ${c.key}`} className="grid grid-cols-[14px_1fr] gap-1.5">
                 <span aria-label={c.action} className={cn("font-mono font-semibold", c.action === "added" ? "text-ok" : c.action === "deleted" ? "text-destructive" : "text-warn")}>{SIGN[c.action]}</span>
                 <span>{c.kind === "spec" ? c.key : c.key.replace(/^## /, "").replace(/^Story: /, "")}
                   {c.what.length > 0 && <div className="text-xs text-muted-foreground">{c.what.join(" · ")}</div>}</span>
@@ -137,7 +139,7 @@ export function Build({ onPublish }: { onPublish: () => void }) {
             <Elapsed job={job} />
             {job.status === "running" && can({ type: "stop" }) && <IconButton name="stop" label="Stop" onClick={() => start("stop")} />}
           </div>
-          <pre ref={log} className="m-0 max-h-80 overflow-auto bg-muted px-3 py-2 font-mono text-[11.5px] leading-normal break-words whitespace-pre-wrap">{job.log.join("\n") || "…"}</pre>
+          <pre ref={logRef} className="m-0 max-h-80 overflow-auto bg-muted px-3 py-2 font-mono text-[11.5px] leading-normal break-words whitespace-pre-wrap">{job.log.join("\n") || "…"}</pre>
         </div>
       )}
 
@@ -148,8 +150,8 @@ export function Build({ onPublish }: { onPublish: () => void }) {
           <details open className="text-xs"><summary className="cursor-pointer text-destructive">The check did not finish</summary><Code className="mt-1 max-h-65 whitespace-pre-wrap">{jobs.check.log.join("\n")}</Code></details>
         ) : null}
         {check && <div className="text-[13px]">{check.next}</div>}
-        {blocking.map((r, i) => (
-          <details key={i} className="text-xs"><summary className="cursor-pointer text-destructive">{r.stage}: {r.summary}</summary>{r.detail && <Code className="mt-1 max-h-65 whitespace-pre-wrap">{r.detail}</Code>}</details>
+        {blocking.map((r) => (
+          <details key={`${r.stage} ${r.summary}`} className="text-xs"><summary className="cursor-pointer text-destructive">{r.stage}: {r.summary}</summary>{r.detail && <Code className="mt-1 max-h-65 whitespace-pre-wrap">{r.detail}</Code>}</details>
         ))}
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="outline" size="sm" disabled={!can({ type: "check" })} onClick={() => start("check")}><Icon name="play" />Run check</Button>

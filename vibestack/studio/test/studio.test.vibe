@@ -11,8 +11,8 @@ import { ChildProcess } from "effect/process"
 import { ChildProcessSpawner } from "effect/process/ChildProcessSpawner"
 import { acceptReviews, readSpecs, type Result } from "../../spec.ts"
 import { nodesOf } from "../src/doc.ts"
-import { NODE, TOOLS } from "../src/project.ts"
-import { serve, startStudio, type Agent, type Snapshot } from "../src/server.vibe"
+import { NODE, TOOLS, type Snapshot } from "../src/project.ts"
+import { serve, startStudio, type Agent } from "../src/server.vibe"
 
 const services = Layer.merge(NodeServices.layer, NodeHttpClient.layerNodeHttp)
 const check = (f: () => void) => Effect.try(f)

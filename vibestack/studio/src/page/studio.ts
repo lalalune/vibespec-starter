@@ -6,7 +6,8 @@ import { enabled as allowed, type Event as SessionEvent, type Session } from "..
 import { enabled, step, type Event as Edit, type Outline, type Rule, type Story } from "../../gen/outline.ts";
 import { bodyOf, nodeId, ruleKey, specOrder, storyKey, textBody, textOf, type Item } from "../markdown.ts";
 import type { Result } from "../../../spec.ts";
-import type { Snapshot } from "../server.vibe";
+import type { Snapshot } from "../project.ts";
+import type { ComponentIndex } from "./Components.tsx";
 
 export type SpecView = Snapshot["specs"][number];
 /** One spec as this page holds it: the outline being edited, and what it was when loaded (`base` is its hash on disk). */
@@ -28,6 +29,9 @@ export const S = {
   history: [] as string[],
   conflicts: [] as string[],
   publishing: false,
+  /** The project's components (./Components.tsx), if it has a catalog, and which view the page shows. */
+  components: undefined as ComponentIndex | undefined,
+  view: "specs" as "specs" | "components",
   toast: undefined as { text: string; action?: { label: string; run: () => void } } | undefined,
 };
 
@@ -128,8 +132,8 @@ export async function refresh() {
 }
 
 /** Ask the server to act; what it refuses, the page says. */
-export async function start(route: string, body: unknown = {}) {
-  try { await api(route, body); } catch (e) { toast((e as Error).message); }
+export function start(route: string, body: unknown = {}) {
+  api(route, body).catch((e: Error) => toast(e.message));
 }
 
 /** Load the projects and the one this page shows, and follow what the server says of it. */
@@ -138,13 +142,15 @@ export async function connect() {
   S.projects = projects;
   S.project ||= open;
   await refresh();
+  S.components = await api("components").catch(() => undefined);
+  redraw();
   const events = new EventSource(`/api/events?project=${encodeURIComponent(S.project)}`);
-  events.addEventListener("files", () => refresh());
+  events.addEventListener("files", () => { refresh().catch((e: Error) => toast(e.message)); });
   events.addEventListener("job", (e) => {
     const { session, jobs, check } = JSON.parse((e as MessageEvent).data);
     const ended = S.snap!.session.job !== "Idle" && session.job === "Idle";
     Object.assign(S.snap!, { session, jobs, check });
-    if (ended) refresh();
+    if (ended) refresh().catch((error: Error) => toast(error.message));
     else redraw();
   });
 }
@@ -238,6 +244,7 @@ export function toggle(id: string) {
 }
 export function select(file: string) {
   S.sel = file;
+  S.view = "specs";
   redraw();
 }
 
