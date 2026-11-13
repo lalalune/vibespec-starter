@@ -46,7 +46,7 @@ export function nodeRunsVibelang(version = process.versions.node): boolean {
 /**
  * The workspace package a spec belongs to by name, as a path from the root: `spec/<name>/…` is `apps/<name>` or
  * `packages/<name>`, if that is a package with no `spec/` of its own. The root's check generates into its `gen/` and
- * checks its code (AGENTS.md, "One spec tree").
+ * checks its code (SPEC.md, "One spec tree").
  */
 export function owner(root: string, spec: string): string | undefined {
   const [top, name, below] = spec.split("/");

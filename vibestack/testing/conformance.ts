@@ -1,4 +1,4 @@
-// Vitest tests over a spec's generated gen/<name>.conformance.ts (AGENTS.md, "Conformance"): every saved
+// Vitest tests over a spec's generated gen/<name>.conformance.ts (SPEC.md, "Conformance"): every saved
 // counterexample first, as regressions, then the journeys and seeded walks. generate.ts writes the call.
 import { afterAll, describe, it } from "@effect/vitest";
 import { ManagedRuntime, type Effect, type Layer } from "effect";

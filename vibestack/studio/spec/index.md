@@ -244,7 +244,8 @@ pure def sometimesSigningOff(s: Session): bool = s.job == SigningOff
 
 ### The app is built from published specs, when no job runs
 
-The build is the project's own `build` script.
+The build is the project's own `build` script, or, at the root of a workspace,
+the `build` script of every app under `apps/`.
 
 ```quint
 pure def canBuild(s: Session): bool = s.job == Idle and not(s.unpublished)
