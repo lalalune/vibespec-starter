@@ -19,6 +19,12 @@ jobs:
           node-version: 26
           cache: npm
       - run: npm ci
+      # Quint's evaluator, which it would otherwise download on every run. `.spec-cache/` is never restored: CI
+      # checks from scratch (README, "What is and is not guaranteed").
+      - uses: actions/cache@v4
+        with:
+          path: ~/.quint
+          key: quint-${{ hashFiles('package-lock.json') }}
       - run: node vibespec/spec.ts check
       - if: always()
         uses: actions/upload-artifact@v7
@@ -51,5 +57,10 @@ jobs:
           cache: npm
       - if: steps.changed.outputs.tools == 'true'
         run: npm ci
+      - if: steps.changed.outputs.tools == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.quint
+          key: quint-${{ hashFiles('package-lock.json') }}
       - if: steps.changed.outputs.tools == 'true'
         run: npm run selftest
