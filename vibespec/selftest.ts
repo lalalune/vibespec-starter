@@ -420,7 +420,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     assert.deepEqual(ok.failed, ["review"], ok.text);
     assert.ok(ok.said("always", /no fair run that stops or loops in \d+ of them breaks a `leadsTo` rule \([1-9]\d* loops found\)/), ok.text);
     assert.ok(ok.said("proof", /^net\.ts: all \d+ obligations proved/), ok.text);
-    assert.ok(!ok.said("review", /std\/net\.md/), ok.text);
+    assert.ok(!ok.said("review", /^std\/net\.md:/), ok.text);
     assert.ok(weak.said("always", /a fair run breaks "Story: Ask until answered \/ A question asked is answered".*may repeat its loop for ever[\s\S]*the run goes round from here/), weak.text);
     assert.ok(unfair.said("always", /a fair run breaks .*may stop at the last state, since no fair event is possible there/), unfair.text);
   });
@@ -854,7 +854,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     fs.mkdirSync(path.join(root, "gen"), { recursive: true });
     fs.writeFileSync(path.join(root, "gen/renamed.ts"), "export const stale = true;\n");
     await check(root);
-    assert.deepEqual(fs.readdirSync(path.join(root, "gen")).filter((f) => f.endsWith(".ts")), ["order.ts"]);
+    assert.deepEqual(fs.readdirSync(path.join(root, "gen")).filter((f) => f.endsWith(".ts")).sort(), ["_conformance.ts", "order.conformance.ts", "order.ts"]);
   });
 
   test("the studio publishes a spec with its origins, checks it, and refuses remote or concurrent writes", async () => {
@@ -1283,7 +1283,7 @@ pure def stepHasOneEffect(before: State, after: State, out: List[int]): bool = o
     const spliced = (body: string) => splice(gen, { proof: { file: "p.dfy", text: `${header}${body}\n}\n` }, axioms: [], lib }).dfy;
     // Std.Ordinal.TimesIncreasingOnLeft is a false {:axiom}; dafny audit reports it only against the library's own file.
     assert.throws(() => spliced("  Std.Ordinal.TimesIncreasingOnLeft(0, 0, 0);"), /p\.dfy:4: `Std\.Ordinal\.TimesIncreasingOnLeft` is not allowed[^\n]*\(Std\.Collections\.Seq\.All\)/);
-    assert.throws(() => spliced("  ProofLib.Seq.LemmaFlattenConcat<int>([], []);"), /`ProofLib\.Seq\.LemmaFlattenConcat` is not a lemma or function of tools\/proof\/lib\.dfy/);
+    assert.throws(() => spliced("  ProofLib.Seq.LemmaFlattenConcat<int>([], []);"), /`ProofLib\.Seq\.LemmaFlattenConcat` is not a lemma or function of vibespec\/proof\/lib\.dfy/);
     assert.throws(() => spliced("  assert (xs).Std.Ordinal == 0;"), /`Std` may only begin a name/);
     assert.ok(spliced("  assert Std.Collections.Seq.All(xs, (x: int) => x > 0) == f(xs);\n  ProofLib.FilterNil((x: int) => true, []);").includes("ProofLib.FilterNil"));
   });
