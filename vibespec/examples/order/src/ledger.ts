@@ -17,11 +17,13 @@ export function replay(events: Event[]): Order {
   return order;
 }
 
-/** What the shopper still owes. Never negative, and zero once the order is paid. */
+/** What the shopper still owes. Never negative, zero once the order is paid, and more than zero
+ * while it is pending or on hold. */
 //@ pure
 export function balance(order: Order): number {
   //@ requires inv(order)
   //@ ensures \result >= 0
   //@ ensures order.status === "Paid" ==> \result === 0
+  //@ ensures (order.status === "Pending" || order.status === "OnHold") ==> \result > 0
   return order.due - order.paid;
 }

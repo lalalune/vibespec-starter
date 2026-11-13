@@ -19,8 +19,6 @@ lemma create_ensures(s: Tracker, actor: string)
 {
   if inv(s) && canCreate(s, actor) {
     var s2 := create(s, actor);
-    TWarningList(s2);
-    TNoOneToldTwice(s2);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     kernel_lawNextIsAboveTheCounter_ensures(numbersInUse(s), s.lastId);
@@ -28,6 +26,15 @@ lemma create_ensures(s: Tracker, actor: string)
     assert s2.tasks == s.tasks + [n];
     assert n.id > s.lastId;
     TAppendFreshUnique(s.tasks, n);
+    kernel_lawNextIsAboveEverythingSeen_ensures(numbersInUse(s), s.lastId);
+    assert forall x :: x in numbersInUse(s) ==> n.id > x;
+    forall j | 0 <= j < |s2.tasks|
+      ensures hasTask(s, s2.tasks[j].id) || !(s2.tasks[j].id in numbersInUse(s))
+    {
+      if j < |s.tasks| {
+        assert s.tasks[j] in s.tasks;
+      }
+    }
     forall j | 0 <= j < |s2.tasks|
       ensures s2.tasks[j].id > s.lastId || exists i :: 0 <= i < |s.tasks| && s.tasks[i] == s2.tasks[j]
     {
@@ -63,11 +70,10 @@ lemma setStatus_ensures(s: Tracker, id: int, status: Status, actor: string)
 {
   if inv(s) && canSetStatus(s, id, status, actor) {
     var s2 := setStatus(s, id, status, actor);
-    TWarningList(s2);
-    TNoOneToldTwice(s2);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
+    TSameIdsOldNumbers(s, s2);
     TSameShapeProblems(s, s2);
     TSubsetNoNewProblem(s, s2);
   }
@@ -91,11 +97,10 @@ lemma setDue_ensures(s: Tracker, id: int, due: int, actor: string)
 {
   if inv(s) && canSetDue(s, id, due, actor) {
     var s2 := setDue(s, id, due, actor);
-    TWarningList(s2);
-    TNoOneToldTwice(s2);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
+    TSameIdsOldNumbers(s, s2);
     TSameShapeProblems(s, s2);
     TSubsetNoNewProblem(s, s2);
   }
@@ -119,11 +124,10 @@ lemma addOwner_ensures(s: Tracker, id: int, owner: string, actor: string)
 {
   if inv(s) && canAddOwner(s, id, owner, actor) {
     var s2 := addOwner(s, id, owner, actor);
-    TWarningList(s2);
-    TNoOneToldTwice(s2);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
+    TSameIdsOldNumbers(s, s2);
     forall i | 0 <= i < |s.tasks|
       ensures problemsOf(s2, s.tasks[i]) == problemsOf(s2, s2.tasks[i])
     {
@@ -154,11 +158,10 @@ lemma removeOwner_ensures(s: Tracker, id: int, owner: string, actor: string)
 {
   if inv(s) && canRemoveOwner(s, id, owner, actor) {
     var s2 := removeOwner(s, id, owner, actor);
-    TWarningList(s2);
-    TNoOneToldTwice(s2);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
+    TSameIdsOldNumbers(s, s2);
     forall i, o | 0 <= i < |s.tasks| && o in s2.tasks[i].owners && !(o in s2.owners)
       ensures o in s.tasks[i].owners && !(o in s.owners)
     {
@@ -188,11 +191,10 @@ lemma addParent_ensures(s: Tracker, id: int, other: int, actor: string)
 {
   if inv(s) && canAddParent(s, id, other, actor) {
     var s2 := addParent(s, id, other, actor);
-    TWarningList(s2);
-    TNoOneToldTwice(s2);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
+    TSameIdsOldNumbers(s, s2);
     forall i | 0 <= i < |s.tasks|
       ensures forall q :: q in problemsOf(s2, s2.tasks[i]) ==> q in problemsOf(s, s.tasks[i])
     {
@@ -220,11 +222,10 @@ lemma removeParent_ensures(s: Tracker, id: int, other: int, actor: string)
 {
   if inv(s) && canRemoveParent(s, id, other, actor) {
     var s2 := removeParent(s, id, other, actor);
-    TWarningList(s2);
-    TNoOneToldTwice(s2);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
+    TSameIdsOldNumbers(s, s2);
     forall i | 0 <= i < |s.tasks|
       ensures forall q :: q in problemsOf(s2, s2.tasks[i]) ==> q in problemsOf(s, s.tasks[i])
     {
@@ -252,11 +253,10 @@ lemma relate_ensures(s: Tracker, id: int, other: int, actor: string)
 {
   if inv(s) && canRelate(s, id, other, actor) {
     var s2 := relate(s, id, other, actor);
-    TWarningList(s2);
-    TNoOneToldTwice(s2);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
+    TSameIdsOldNumbers(s, s2);
     forall i | 0 <= i < |s.tasks|
       ensures forall q :: q in problemsOf(s2, s2.tasks[i]) ==> q in problemsOf(s, s.tasks[i])
     {
@@ -284,11 +284,10 @@ lemma unrelate_ensures(s: Tracker, id: int, other: int, actor: string)
 {
   if inv(s) && canUnrelate(s, id, other, actor) {
     var s2 := unrelate(s, id, other, actor);
-    TWarningList(s2);
-    TNoOneToldTwice(s2);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
+    TSameIdsOldNumbers(s, s2);
     forall i | 0 <= i < |s.tasks|
       ensures forall q :: q in problemsOf(s2, s2.tasks[i]) ==> q in problemsOf(s, s.tasks[i])
     {
@@ -316,8 +315,6 @@ lemma deleteTask_ensures(s: Tracker, id: int)
 {
   if inv(s) && canDeleteTask(s, id) {
     var s2 := deleteTask(s, id);
-    TWarningList(s2);
-    TNoOneToldTwice(s2);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     var kept := ProofLib.Filter((t: Task) => (t.id != id), s.tasks);
@@ -333,6 +330,12 @@ lemma deleteTask_ensures(s: Tracker, id: int)
       var i :| 0 <= i < |s.tasks| && s.tasks[i] == kept[j];
     }
     TSentRecordedKept(s, s2);
+    forall j | 0 <= j < |s2.tasks|
+      ensures hasTask(s, s2.tasks[j].id)
+    {
+      assert kept[j] in s.tasks;
+    }
+    TOldNumbers(s, s2);
     forall j | 0 <= j < |s2.tasks|
       ensures exists i :: 0 <= i < |s.tasks| && forall q :: q in problemsOf(s2, s2.tasks[j]) ==> q in problemsOf(s, s.tasks[i])
     {
@@ -360,11 +363,10 @@ lemma renameOwner_ensures(s: Tracker, owner: string, name: string)
 {
   if inv(s) && canRenameOwner(s, owner, name) {
     var s2 := renameOwner(s, owner, name);
-    TWarningList(s2);
-    TNoOneToldTwice(s2);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
+    TSameIdsOldNumbers(s, s2);
     forall i, o | 0 <= i < |s.tasks| && o in s2.tasks[i].owners && !(o in s2.owners)
       ensures o in s.tasks[i].owners && !(o in s.owners)
     {
@@ -402,11 +404,10 @@ lemma deleteOwner_ensures(s: Tracker, owner: string)
 {
   if inv(s) && canDeleteOwner(s, owner) {
     var s2 := deleteOwner(s, owner);
-    TWarningList(s2);
-    TNoOneToldTwice(s2);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
+    TSameIdsOldNumbers(s, s2);
     forall i, o | 0 <= i < |s.tasks| && o in s2.tasks[i].owners && !(o in s2.owners)
       ensures o in s.tasks[i].owners && !(o in s.owners)
     {
@@ -435,11 +436,10 @@ lemma handAddOwner_ensures(s: Tracker, id: int, name: string)
 {
   if inv(s) && canHandAddOwner(s, id, name) {
     var s2 := handAddOwner(s, id, name);
-    TWarningList(s2);
-    TNoOneToldTwice(s2);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
+    TSameIdsOldNumbers(s, s2);
   }
 }
 
@@ -461,11 +461,10 @@ lemma handAddParent_ensures(s: Tracker, id: int, other: int)
 {
   if inv(s) && canHandAddParent(s, id, other) {
     var s2 := handAddParent(s, id, other);
-    TWarningList(s2);
-    TNoOneToldTwice(s2);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
+    TSameIdsOldNumbers(s, s2);
   }
 }
 
@@ -487,11 +486,10 @@ lemma handAddRelated_ensures(s: Tracker, id: int, other: int)
 {
   if inv(s) && canHandAddRelated(s, id, other) {
     var s2 := handAddRelated(s, id, other);
-    TWarningList(s2);
-    TNoOneToldTwice(s2);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
+    TSameIdsOldNumbers(s, s2);
   }
 }
 
@@ -513,8 +511,6 @@ lemma handDeleteTask_ensures(s: Tracker, id: int)
 {
   if inv(s) && canHandDeleteTask(s, id) {
     var s2 := handDeleteTask(s, id);
-    TWarningList(s2);
-    TNoOneToldTwice(s2);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TFilterKeepsUnique((t: Task) => (t.id != id), s.tasks);
@@ -525,6 +521,12 @@ lemma handDeleteTask_ensures(s: Tracker, id: int)
       assert s2.tasks[j] in s.tasks;
     }
     TSentRecordedKept(s, s2);
+    forall j | 0 <= j < |s2.tasks|
+      ensures hasTask(s, s2.tasks[j].id)
+    {
+      assert s2.tasks[j] in s.tasks;
+    }
+    TOldNumbers(s, s2);
   }
 }
 
@@ -546,8 +548,7 @@ lemma handDeleteOwner_ensures(s: Tracker, owner: string)
 {
   if inv(s) && canHandDeleteOwner(s, owner) {
     var s2 := handDeleteOwner(s, owner);
-    TWarningList(s2);
-    TNoOneToldTwice(s2);
+    TSameIdsOldNumbers(s, s2);
   }
 }
 
@@ -569,11 +570,10 @@ lemma fix_ensures(s: Tracker, index: int)
 {
   if inv(s) && canFix(s, index) {
     var s2 := fix(s, index);
-    TWarningList(s2);
-    TNoOneToldTwice(s2);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
+    TSameIdsOldNumbers(s, s2);
     forall k | 0 <= k < |s.tasks|
       ensures forall q :: q in problemsOf(s2, s2.tasks[k]) ==> q in problemsOf(s, s.tasks[k])
     {
@@ -602,8 +602,7 @@ lemma tick_ensures(s: Tracker)
 {
   if inv(s) {
     var s2 := tick(s);
-    TWarningList(s2);
-    TNoOneToldTwice(s2);
+    TSameIdsOldNumbers(s, s2);
     TSameShapeProblems(s, s2);
     TSubsetNoNewProblem(s, s2);
   }
@@ -627,14 +626,13 @@ lemma notify_ensures(s: Tracker)
 {
   if inv(s) {
     var s2 := notify(s);
-    TWarningList(s2);
     TNotifyAnnouncedAndTimely(s);
     TNotifyRecorded(s);
     TNotifyNothingSentTwice(s);
-    TNoOneToldTwice(s2);
     TUniqueBridge(s);
     TUniqueBridge(s2);
     TIdsKeptUnique(s.tasks, s2.tasks);
+    TSameIdsOldNumbers(s, s2);
     TSameShapeProblems(s, s2);
     TSubsetNoNewProblem(s, s2);
   }
@@ -717,8 +715,8 @@ lemma TTaskClean(s: Tracker, t: Task)
   ProofLib.FilterNone((r: int) => (((r != t.id) && hasTask(s, r)) && !(linksBack(s, r, t.id))), t.related);
 }
 
-lemma TWarningList(s: Tracker)
-  ensures alwaysTheWarningListIsTheTruth(s)
+lemma lawTheWarningListIsTheTruth_ensures(s: Tracker)
+  ensures (lawTheWarningListIsTheTruth(s) == true)
 {
   ProofLib.FoldLeftConcatEmpty((acc: seq<Problem>, t: Task) => (acc + problemsOf(s, t)), (t: Task) => problemsOf(s, t), [], s.tasks);
   forall i | 0 <= i < |s.tasks|
@@ -728,20 +726,42 @@ lemma TWarningList(s: Tracker)
   }
 }
 
-// ===== No one is told twice in one pass, for every state =====
+// ===== Each name is listed once =====
 
-lemma TNoOneToldTwice(s: Tracker)
-  ensures alwaysNoOneIsToldTwiceInOnePass(s)
+lemma lawEachNameIsListedOnce_ensures(xs: seq<string>)
+  ensures (lawEachNameIsListedOnce(xs) == true)
 {
-  forall i, k | 0 <= i < |s.tasks| && 0 <= k < |knownOwners(s, s.tasks[i])|
-    ensures var o := knownOwners(s, s.tasks[i])[k]; |ProofLib.Filter((x: string) => (x == o), knownOwners(s, s.tasks[i]))| == 1
+  var d := distinctNames(xs);
+  ProofLib.FoldLeftDedupDistinct((acc: seq<string>, x: string) => (if (x in acc) then acc else (acc + [x])), [], xs);
+  forall k | 0 <= k < |d|
+    ensures var o := d[k]; |ProofLib.Filter((x: string) => (x == o), d)| == 1
   {
-    var t := s.tasks[i];
-    var ko := knownOwners(s, t);
-    ProofLib.FoldLeftDedupDistinct((acc: seq<string>, x: string) => (if (x in acc) then acc else (acc + [x])), [], ProofLib.Filter((o: string) => (o in s.owners), t.owners));
-    var o := ko[k];
-    ProofLib.FilterDistinctCountOne((x: string) => (x == o), ko, o);
+    var o := d[k];
+    ProofLib.FilterDistinctCountOne((x: string) => (x == o), d, o);
   }
+}
+
+// ===== A step issues no new number, except create =====
+
+// Every task after has the number of a task before.
+lemma TOldNumbers(s: Tracker, s2: Tracker)
+  requires forall j :: 0 <= j < |s2.tasks| ==> hasTask(s, s2.tasks[j].id)
+  ensures stepANewNumberIsUnreferenced(s, s2)
+{
+}
+
+// The same, when every task keeps its number and its position.
+lemma TSameIdsOldNumbers(s: Tracker, s2: Tracker)
+  requires |s.tasks| == |s2.tasks|
+  requires forall i :: 0 <= i < |s.tasks| ==> s.tasks[i].id == s2.tasks[i].id
+  ensures stepANewNumberIsUnreferenced(s, s2)
+{
+  forall j | 0 <= j < |s2.tasks|
+    ensures hasTask(s, s2.tasks[j].id)
+  {
+    assert s.tasks[j] in s.tasks;
+  }
+  TOldNumbers(s, s2);
 }
 
 // ===== Problems depend only on the members and each task's number, owners and links =====
@@ -893,14 +913,33 @@ lemma TFoldConcatMember<A, T>(f: (seq<A>, T) -> seq<A>, h: T -> seq<A>, init: se
   }
 }
 
-// A note of one task's pass names the task, goes out now, and is due.
+// One task's notes of a pass: the edit announcements, then the heads-ups, then the due-day reminders.
+lemma TNotesForParts(s: Tracker, t: Task)
+  ensures var ko := knownOwners(s, t); var up := ProofLib.Filter((o: string) => (o != t.updatedBy), ko);
+    notesFor(s, t) ==
+      (if updateIsDue(t, s.now) then seq(|up|, i requires 0 <= i < |up| => Note(NoteKind.Update, t.id, up[i], t.updatedAt, s.now, t.updatedBy)) else [])
+      + (if reminder(t, s.now).DueSoon? then seq(|ko|, i requires 0 <= i < |ko| => Note(NoteKind.Soon, t.id, ko[i], t.due, s.now, "")) else [])
+      + (if reminder(t, s.now).DueToday? then seq(|ko|, i requires 0 <= i < |ko| => Note(NoteKind.Today, t.id, ko[i], t.due, s.now, "")) else [])
+{
+}
+
+// A note of one task's pass names the task, goes out now, and is due; an announcement skips its editor.
 lemma TNoteFacts(s: Tracker, t: Task, x: Note)
   requires x in notesFor(s, t)
   ensures x.task == t.id && x.at == s.now
-  ensures x.kind.Update? ==> updateIsDue(t, s.now) && x.version == t.updatedAt
+  ensures x.kind.Update? ==> updateIsDue(t, s.now) && x.version == t.updatedAt && x.by == t.updatedBy && x.to != x.by
   ensures x.kind.Soon? ==> reminder(t, s.now).DueSoon? && x.version == t.due
   ensures x.kind.Today? ==> reminder(t, s.now).DueToday? && x.version == t.due
 {
+  var ko := knownOwners(s, t);
+  var up := ProofLib.Filter((o: string) => (o != t.updatedBy), ko);
+  TNotesForParts(s, t);
+  if x.kind.Update? {
+    var a := seq(|up|, i requires 0 <= i < |up| => Note(NoteKind.Update, t.id, up[i], t.updatedAt, s.now, t.updatedBy));
+    assert updateIsDue(t, s.now) && x in a;
+    var k :| 0 <= k < |a| && a[k] == x;
+    ProofLib.FilterMember((o: string) => (o != t.updatedBy), ko, up[k]);
+  }
 }
 
 // A note of one notifier pass comes from one task.
@@ -923,10 +962,11 @@ lemma TUniqueIndex(s: Tracker, i: int, j: int)
   ProofLib.FilterCountOneIffUnique((b: Task) => (b.id == a.id), s.tasks, (t: Task) => t.id, i);
 }
 
-// The notes of a pass are announced after the quiet period and timely, so the rules still hold after it.
+// The notes of a pass are announced after the quiet period, not to their editor, and timely, so the rules still hold after it.
 lemma TNotifyAnnouncedAndTimely(s: Tracker)
   requires inv(s)
   ensures alwaysAnEditIsAnnouncedAfterTheQuietPeriod(notify(s))
+  ensures alwaysNoOneIsToldOfTheirOwnEdit(notify(s))
   ensures alwaysRemindersAreTimely(notify(s))
 {
   var s2 := notify(s);
@@ -934,6 +974,7 @@ lemma TNotifyAnnouncedAndTimely(s: Tracker)
   assert s2.sent == s.sent + newNotes;
   forall k | 0 <= k < |s2.sent|
     ensures (!(s2.sent[k].kind.Update?) || ((s2.sent[k].at - s2.sent[k].version) >= debounce))
+    ensures (!(s2.sent[k].kind.Update?) || (s2.sent[k].to != s2.sent[k].by))
     ensures ((!(s2.sent[k].kind.Today?) || ((s2.sent[k].version <= today(s2.sent[k].at)) && ((today(s2.sent[k].at) - s2.sent[k].version) <= lateDays))) && (!(s2.sent[k].kind.Soon?) || (((s2.sent[k].version - today(s2.sent[k].at)) >= 1) && ((s2.sent[k].version - today(s2.sent[k].at)) <= soonDays))))
   {
     if k < |s.sent| {
@@ -1066,9 +1107,10 @@ lemma TNotesForDistinct(s: Tracker, t: Task)
   assert ProofLib.DistinctBy(ko, (o: string) => o);
   var up := ProofLib.Filter((o: string) => (o != t.updatedBy), ko);
   ProofLib.FilterKeepsDistinctBy((o: string) => (o != t.updatedBy), ko, (o: string) => o);
-  var a := if updateIsDue(t, s.now) then seq(|up|, i requires 0 <= i < |up| => Note(NoteKind.Update, t.id, up[i], t.updatedAt, s.now)) else [];
-  var b := if reminder(t, s.now).DueSoon? then seq(|ko|, i requires 0 <= i < |ko| => Note(NoteKind.Soon, t.id, ko[i], t.due, s.now)) else [];
-  var c := if reminder(t, s.now).DueToday? then seq(|ko|, i requires 0 <= i < |ko| => Note(NoteKind.Today, t.id, ko[i], t.due, s.now)) else [];
+  var a := if updateIsDue(t, s.now) then seq(|up|, i requires 0 <= i < |up| => Note(NoteKind.Update, t.id, up[i], t.updatedAt, s.now, t.updatedBy)) else [];
+  var b := if reminder(t, s.now).DueSoon? then seq(|ko|, i requires 0 <= i < |ko| => Note(NoteKind.Soon, t.id, ko[i], t.due, s.now, "")) else [];
+  var c := if reminder(t, s.now).DueToday? then seq(|ko|, i requires 0 <= i < |ko| => Note(NoteKind.Today, t.id, ko[i], t.due, s.now, "")) else [];
+  TNotesForParts(s, t);
   assert notesFor(s, t) == a + b + c;
   assert ProofLib.DistinctBy(a, key);
   assert ProofLib.DistinctBy(b, key);

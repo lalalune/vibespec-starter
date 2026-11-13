@@ -3,7 +3,8 @@
 The small calculations behind the dashboard's promises: the number a new task
 row receives, when a task's owners hear about a change, which due-date reminder
 is next, and where a page of a list begins. Whole numbers only. The other specs
-import this one.
+import this one. Paging and request freshness serve a chat shell this example
+does not include.
 
 ## Story: An ID is never issued twice
 
@@ -12,9 +13,9 @@ import this one.
 
 ### A new number is above the stored counter and above every number seen
 
-`seen` holds every number in the spreadsheet and every number a link refers
-to, dangling links included. `stored` is the highest number ever handed out,
-and it survives row deletions.
+The caller must pass as `seen` every number in the spreadsheet and every
+number a link refers to, dangling links included, and as `stored` the highest
+number ever handed out, which survives row deletions.
 
 ```quint
 pure def nextNumber(seen: List[int], stored: int): int =
@@ -50,7 +51,7 @@ pure def lawAFreshEditIsNotDue(updatedAt: int, notifiedAt: int, debounce: int): 
 > As a task owner, I want one heads-up a few days before a due date and one
 > on the date itself, so that I am reminded without being pestered.
 
-### At most one reminder is due for a task at a time
+### A reminder that was sent is not sent again, and each goes out only at its distance from the due date
 
 `left` counts the days until the due date; a negative value means overdue. A
 reminder for the day itself that was missed still goes out up to `lateDays`
@@ -64,8 +65,9 @@ pure def reminderFor(left: int, lateDays: int, soonDays: int, toldDue: bool, tol
   else if (left >= 1 and left <= soonDays and not(toldSoon)) DueSoon
   else NoReminder
 
-pure def lawNothingIsRepeated(left: int, lateDays: int, soonDays: int): bool =
-  reminderFor(left, lateDays, soonDays, true, true) == NoReminder
+pure def lawNothingIsRepeated(left: int, lateDays: int, soonDays: int, toldDue: bool, toldSoon: bool): bool =
+  (toldDue implies reminderFor(left, lateDays, soonDays, toldDue, toldSoon) != DueToday)
+    and (toldSoon implies reminderFor(left, lateDays, soonDays, toldDue, toldSoon) != DueSoon)
 
 pure def lawDueTodayMeansOnOrAfterTheDay(left: int, lateDays: int, soonDays: int, toldDue: bool, toldSoon: bool): bool =
   reminderFor(left, lateDays, soonDays, toldDue, toldSoon) == DueToday implies (left <= 0 and left >= 0 - lateDays)
@@ -79,10 +81,11 @@ pure def lawDueSoonMeansAhead(left: int, lateDays: int, soonDays: int, toldDue: 
 > As someone paging through tasks in the chat app, I want an outdated "next
 > page" button to show the final page, so that I never get an empty list.
 
-### A page starts inside the list
+### A page starts inside the list: an existing page where it is, a page beyond the end at the final page
 
 A page number beyond the end, because the list got shorter after the button
-was shown, falls back to the final page.
+was shown, falls back to the final page. A page number of 0 or below gives the
+first page.
 
 ```quint
 pure def pageStart(total: int, page: int, pageSize: int): int =
@@ -95,13 +98,17 @@ pure def lawAPageStartsInsideTheList(total: int, page: int, pageSize: int): bool
 
 pure def lawAnExistingPageIsNotMoved(total: int, page: int, pageSize: int): bool =
   (page >= 0 and pageSize >= 1 and page * pageSize < total) implies pageStart(total, page, pageSize) == page * pageSize
+
+pure def lawAPageBeyondTheEndIsTheFinalPage(total: int, page: int, pageSize: int): bool =
+  (total > 0 and pageSize >= 1 and page * pageSize >= total)
+    implies (pageStart(total, page, pageSize) + pageSize >= total and pageStart(total, page, pageSize) % pageSize == 0)
 ```
 
 ## Story: Only recent requests are accepted
 
 > As the operator, I want a request from the chat app accepted only when its
 > timestamp is near the current time, so that a recorded request cannot be
-> sent again later.
+> replayed once the window has passed.
 
 ### A request is fresh within the window, either way
 
@@ -109,6 +116,6 @@ pure def lawAnExistingPageIsNotMoved(total: int, page: int, pageSize: int): bool
 pure def isFresh(at: int, stamp: int, window: int): bool =
   at - stamp <= window and stamp - at <= window
 
-pure def lawFreshnessIsSymmetric(at: int, stamp: int, window: int): bool =
-  isFresh(at, stamp, window) == isFresh(stamp, at, window)
+pure def lawAnOldRequestIsRefused(at: int, stamp: int, window: int): bool =
+  at - stamp > window implies not(isFresh(at, stamp, window))
 ```

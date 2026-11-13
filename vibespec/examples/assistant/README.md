@@ -8,7 +8,7 @@ it and runs [the trust-boundary test](test/assistant.test.ts).
 |---|---|
 | Every model choice spends a bounded budget | `stepChoicesSpendBudget`, `alwaysBudgetBounded` |
 | The sender comes from the session, never the message | `by`; `step(s, e, by)` |
-| A late reply is refused, before or after a restart | `stepReplyAnswersWaiting` |
+| A late reply is refused, before or after a restart | `stepReplyAnswersWaiting`, `stepRequestNeverGoesBack` |
 | A bill is reviewed, then paid once, after the person's confirmation | `alwaysPaidOnlyReviewed`, `alwaysChargedOnce`, `stepChargedOnlyOnConfirm` |
 | Card details and payment go only to the biller's own page | `alwaysFilledOnlyGenuine`, `stepPaidOnlyOnGenuine` |
 | The model cannot have the card read aloud | `alwaysNothingSecretSaid` |

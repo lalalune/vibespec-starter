@@ -1,4 +1,4 @@
-// spec/server.md, "A request is answered only once"; spec/server.md, "A new request can be refused, which is logged with its edit and changes nothing else"
+// spec/server.md, "The log tells which requests were answered, and with which edit each was accepted"; spec/server.md, "A new request can be refused, which is logged with its edit and changes nothing else"
 // The backend: the unverified shell around the generated server machine
 // (gen/server.ts). It parses requests, applies the ones the rules allow, logs
 // and refuses the rest, repeats the logged answer to a retried request (the
