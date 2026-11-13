@@ -11,6 +11,7 @@ import { entry, remembered, collectGarbage, dafnyVersion, type Memory } from "./
 import { gen, generated, typecheckAll, proofUnits, strayProofFiles } from "./units.ts";
 import { SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, STEPS, DEPTHS, SEARCHED, simulate, search, firstBreak, showTrace, replay, type Step } from "./simulate.ts";
 import { sha, indent, tests } from "./util.ts";
+import { conformance } from "./conform.ts";
 
 export { readSpecs, badSpecName, parseSpec, scanSpec, expandListHelpers, type Spec, type Rule, type Story } from "./parse.ts";
 export { pending, pendingContracts, acceptReviews, acceptContracts, fingerprint, dependencies, type Pending } from "./review.ts";
@@ -18,7 +19,7 @@ export { gen, checkVerifiedSource } from "./units.ts";
 export { replay, type Step } from "./simulate.ts";
 export { danglingCitations } from "./util.ts";
 
-export interface Result { ok: boolean; stage: "model" | "always" | "sometimes" | "replay" | "types" | "proof" | "tests" | "review" | "skipped"; summary: string; detail: string; where?: string }
+export interface Result { ok: boolean; stage: "model" | "always" | "sometimes" | "replay" | "types" | "proof" | "tests" | "traces" | "review" | "skipped"; summary: string; detail: string; where?: string }
 export const show = ({ ok, stage, summary, detail }: Result) => `${stage === "skipped" ? "-" : ok ? "✓" : "✗"} ${stage.padEnd(9)} ${summary}${detail ? "\n" + detail.trimEnd() : ""}`;
 
 /** The one most useful thing to do after a check, given what it found. */
@@ -34,6 +35,7 @@ export function nextStep(results: Result[]): string {
       types: "update src/ and test/ to the generated contract",
       proof: "prove what is listed in the unit's proof file, or fix what Dafny could not check",
       tests: "fix the application or its tests",
+      traces: "fix the program where it departs from the spec, or the spec if the program is right",
     };
     return `${first.stage}${about} is the first ✗: ${what[first.stage]}, then run \`npm run check\` again`;
   }
@@ -110,6 +112,8 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
   fs.rmSync(path.join(root, "gen"), { recursive: true, force: true }); // nothing stale survives a rename
   const valid: Spec[] = [];
   const models = new Map<string, Model>();
+  /** The state machines, loaded, for the traces stage. */
+  const machines = new Map<string, { domain: any; model: Model }>();
   const typed = typecheckAll(memory, specs);
   // Node caches imported modules by path, so each run loads its generated code from a directory of its own.
   const loaded = path.join(root, "gen", `run-${Date.now()}`);
@@ -134,6 +138,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
       continue;
     }
     valid.push(spec);
+    if (model.stateType) machines.set(spec.name, { domain, model });
     const parts = [[model.transitions.length, "transitions"], [model.always.length, "always"], [model.steps.length, "step"], [model.sometimes.length, "sometimes"], [model.laws.length, "laws"]];
     report(true, "model", `${spec.file}: ${parts.filter(([n]) => n).map((p) => p.join(" ")).join(", ") || "definitions only"}`, "", spec.file);
     if (!model.stateType && !model.laws.length && !model.evals.length) continue;
@@ -242,7 +247,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
   }
 
   const complete = allOk;
-  if (!allOk) skip("types, proof and tests", "a stage above failed, and their failures would only restate it");
+  if (!allOk) skip("types, proof, tests and traces", "a stage above failed, and their failures would only restate it");
   if (allOk) {
     let proofsRan = false;
     /** The proof stage, run while the typecheck does; what it would report, in order. */
@@ -349,6 +354,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
     }
     for (const r of await proofsDone) report(...r);
     for (const r of await tests(root, specs)) report(...r);
+    for (const r of await conformance(root, memory, machines)) report(...r);
     if (complete && proofsRan) collectGarbage(memory);
   }
   fs.rmSync(loaded, { recursive: true, force: true });

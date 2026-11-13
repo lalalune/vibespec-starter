@@ -104,7 +104,7 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     assert.equal(trace?.ok, false, first.text);
     assert.match(trace!.detail, /seed \d+; to simulate again: npx quint run gen\/order\.run\.qnt .* --seed \d+/);
     assert.equal(again.said("always", /./)?.detail, trace!.detail, "the same harness gives the same trace");
-    assert.ok(first.said("skipped", /^types, proof and tests: /), first.text);
+    assert.ok(first.said("skipped", /^types, proof, tests and traces: /), first.text);
     assert.match(first.next, /^always \(spec\/order\.md\) is the first ✗/);
   });
 
@@ -234,6 +234,40 @@ describe("each check catches its own kind of mistake", { concurrency: true }, ()
     const untyped = copyOfProject();
     fs.rmSync(path.join(untyped, "tsconfig.json"));
     assert.ok((await run(untyped)).failed.includes("types"));
+  });
+
+  test("a program's own traces, and a driver fed simulated traces, are caught where they depart from the spec", async () => {
+    const root = copyOfProject();
+    const order = (status: string, units: number, paid: number) => ({ status, units, due: 5 * units, paid });
+    const traces: Record<string, unknown[]> = {
+      good: [{ event: { type: "addItem", qty: 2 }, state: order("Draft", 2, 0) }, { event: { type: "submit" } }, { event: { type: "pay", amount: 4 }, state: order("Pending", 2, 4) },
+        { event: { type: "pay", amount: 7 }, state: order("Pending", 2, 4) }, { state: order("Pending", 2, 4) }, { event: { type: "pay", amount: 6 }, state: order("Paid", 2, 10) }],
+      early: [{ event: { type: "addItem", qty: 2 } }, { event: { type: "submit" } }, { event: { type: "pay", amount: 4 }, state: order("Paid", 2, 4) }],
+      refused: [{ event: { type: "submit" }, state: order("Pending", 0, 0) }],
+      restored: [{ state: order("Pending", 0, 0) }],
+      garbage: ["hello"],
+    };
+    fs.mkdirSync(path.join(root, "test/traces"));
+    for (const [name, lines] of Object.entries(traces)) fs.writeFileSync(path.join(root, `test/traces/order.${name}.jsonl`), lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+    fs.writeFileSync(path.join(root, "test/traces/lamp.jsonl"), "{}\n");
+    fs.copyFileSync(path.join(project, "tools/fixtures/driver.mjs"), path.join(root, "driver.mjs"));
+    const driver = (command: string) => fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ scripts: { "driver:order": command } }));
+    driver("node driver.mjs");
+    const { failed, said, text } = await run(root);
+    assert.deepEqual(failed, ["traces"], text);
+    assert.ok(said("traces", /^test\/traces\/order\.good\.jsonl: 6 lines agree/), text);
+    assert.ok(said("traces", /order\.early\.jsonl:3: after \{"type":"pay","amount":4\} the spec gives paid = 4; the program's state differs at status = "Paid"/), text);
+    assert.ok(said("traces", /order\.refused\.jsonl:1: .*the spec refuses it here \(canSubmit is false\)/), text);
+    assert.ok(said("traces", /order\.restored\.jsonl:1: the program started from .* breaks an `always` rule/), text);
+    assert.ok(said("traces", /order\.garbage\.jsonl:1: "hello" is not/), text);
+    assert.ok(said("traces", /^test\/traces\/lamp\.jsonl: there is no spec\/lamp\.md/), text);
+    assert.ok(said("traces", /^script driver:order: agrees with the spec on 100 simulated traces/), text);
+    // Simulated traces hold only events the spec allows; the driver is also sent events it refuses.
+    for (const f of fs.readdirSync(path.join(root, "test/traces"))) if (!f.includes("good")) fs.rmSync(path.join(root, "test/traces", f));
+    driver("node driver.mjs unguarded");
+    const unguarded = await run(root);
+    assert.deepEqual(unguarded.failed, ["traces"], unguarded.text);
+    assert.ok(unguarded.said("traces", /^script driver:order: the program departs[\s\S]*simulated trace \d+, line \d+: after .* the spec refuses it here[\s\S]*what the driver was sent/), unguarded.text);
   });
 
   test("Markdown the tools would read differently from a viewer is refused or read as a viewer does", async () => {

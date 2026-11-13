@@ -571,14 +571,41 @@ with `tsc`; it has no dependencies.
   hand-written around the generated core, as `examples/dashboard/src/notify.ts`
   does for sending messages.
 
+## Checking a running program
+
+The `traces` stage holds a program to the spec through the generated `step`;
+it runs once `tests` has, so a test may write the traces it checks. A trace is
+JSON Lines, one object per line:
+
+| Line | Means |
+|---|---|
+| `{"event": {...}, "by": ..., "state": {...}}` | the program took this event, from this sender (only for a spec with [senders](#what-goes-in-the-quint-blocks)), and reached this state. `state` is optional |
+| `{}` or `{"state": {...}}` | the program started, from `initial` or from this state, which `parseState` must accept |
+
+A state is written as the generated TypeScript holds it. An event the spec
+refuses must leave the state unchanged, as `step` does.
+
+- **Traces the program wrote**: `test/traces/<spec>.jsonl`, or
+  `test/traces/<spec>.<anything>.jsonl`. The stage names the first line where
+  the program departs from the spec, and what differs.
+- **A driver**, for code in any language: a `package.json` script
+  `driver:<spec>` that starts a program which reads one line at a time on
+  stdin, `{}` (start again from `initial`) or `{"event": {...}, "by": ...}`,
+  and answers each with one line `{"state": {...}}` on stdout. The stage feeds
+  it 100 simulated traces and, before each event, up to two events the spec
+  refuses in that state, then checks its answers as a trace it wrote; on a
+  departure it prints what the driver was sent, to send again by hand.
+  `tools/fixtures/driver.mjs` in the vibespec-starter repository is one.
+
 ## Checking harder
 
 Simulation is seeded from what it simulates, so a run repeats exactly. A
 failing `always` rule or an unreached `sometimes` goal prints its seed and the
 `npx quint run` command that replays it.
 
-To check a model exhaustively up to a depth with the Apalache model checker
-(needs Java 17+, downloads Apalache on first use):
+The Apalache model checker checks a model exhaustively up to a depth (it
+needs Java 17+ and downloads Apalache on first use). It is not a stage of
+`check`: on the order example it takes minutes even at depth 1.
 
 ```sh
 npx quint verify gen/order.run.qnt --main order_run --invariant inv --max-steps 10
@@ -598,6 +625,7 @@ In the vibespec-starter repository:
 | `tools/gen/print.ts` | expressions |
 | `tools/gen/classify.ts` | which definition is a transition, a guard or a rule |
 | `tools/gen/typescript.ts`, `tools/gen/harness.ts` | the two outputs |
+| `tools/conform.ts` | the `traces` stage: a program's traces and drivers, replayed through `step` |
 
 Node runs all of it directly; `npm run build` compiles it for the packaged
 `spec` command.

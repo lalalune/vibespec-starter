@@ -349,6 +349,7 @@ Stages run cheapest first. `✓` passed, `✗` failed, `-` skipped: blocked by a
 | `types` | Does the application fit the generated contract? | exact |
 | `proof` | Does every transition preserve every `always` and `step` rule, does every law hold, and does hand-written logic meet its `//@` contract? | all states, all inputs, counted per obligation under a fixed resource limit. What Dafny cannot prove alone is proved in a proof file (`spec/<name>.proof.dfy`: lemmas only, checked to add nothing but proof), or listed; a listed obligation passes only once the user records it in `spec/unproved.lock.json`, for that text of the unit |
 | `tests` | Does the shell work with the real services around it? | whole user journeys, where the checks above cannot see ([AGENTS.md](AGENTS.md#tests)) |
+| `traces` | Does the running program do what the spec says? | every line of the traces it wrote (`test/traces/<spec>.jsonl`), and a driver of code in any language (`driver:<spec>` script) fed 100 simulated traces and refused events ([AGENTS.md](AGENTS.md#checking-a-running-program)); silent when there are neither |
 | `review` | Does every story have rules and every rule Quint? Has every new or changed story, rule and `//@` contract been reconciled? | exact |
 
 ## What lives where
