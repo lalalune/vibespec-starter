@@ -3,12 +3,7 @@
 import { expect, it } from "@effect/vitest";
 import { Arbitrary, Effect, Equal, Schema } from "effect";
 import { Base64 } from "effect/encoding";
-
-function budget(name: string, fallback: number, least: number) {
-  const text = globalThis.process?.env[name] ?? String(fallback), n = Number(text);
-  if (!/^\d+$/.test(text) || !Number.isSafeInteger(n) || n < least) throw new Error(`${name} must be a whole number, ${least} or more, but is ${JSON.stringify(text)}`);
-  return n;
-}
+import { budget } from "../conformance.ts";
 
 /** How many values a property sees and the seed they come from: `FUZZ_RUNS` and `FUZZ_SEED`. */
 export const fuzz = { runs: budget("FUZZ_RUNS", 100, 1), seed: budget("FUZZ_SEED", 1, 0) };

@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { pathToFileURL } from "node:url";
-import { check, compareObservation, ConformanceError, departure, replay, transition, type Found, type Line, type Oracle, type Sent } from "./conformance.ts";
+import { budget, check, compareObservation, ConformanceError, departure, replay, transition, type Found, type Line, type Oracle, type Sent } from "./conformance.ts";
 import type { Model } from "./gen.ts";
 import { heading, type Spec } from "./parse.ts";
 import type { Step } from "./simulate.ts";
@@ -119,13 +119,6 @@ async function drive(root: string, machine: Machine, command: string): Promise<s
       if (off) return `trace ${n + 1}, line ${off.line}: ${off.why}\n${lines.map((line) => JSON.stringify(line)).join("\n")}`;
     }
   } finally { await program.end(); }
-}
-
-/** `FUZZ_RUNS` or `FUZZ_SEED`, a whole number of at least `least`, or `fallback` where it is not set. */
-function budget(name: string, fallback: number, least: number) {
-  const text = process.env[name] || String(fallback), n = Number(text);
-  if (!/^\d+$/.test(text) || !Number.isSafeInteger(n) || n < least) throw new Error(`${name} must be a whole number, ${least} or more, but is ${JSON.stringify(text)}`);
-  return n;
 }
 
 /**

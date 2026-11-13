@@ -316,3 +316,10 @@ export function departure<S, E>(oracle: Oracle<S, E>, found: Found<E>, lines: un
   }
   if (!observed) return { line: Math.max(1, lines.length), why: "the trace contains no observed state" };
 }
+
+/** `FUZZ_RUNS` or `FUZZ_SEED`, a whole number of at least `least`, or `fallback` where it is not set. */
+export function budget(name: string, fallback: number, least: number) {
+  const text = globalThis.process?.env[name] || String(fallback), n = Number(text);
+  if (!/^\d+$/.test(text) || !Number.isSafeInteger(n) || n < least) throw new Error(`${name} must be a whole number, ${least} or more, but is ${JSON.stringify(text)}`);
+  return n;
+}
