@@ -189,7 +189,7 @@ pure def isMember(s: Tracker, actor: str): bool = s.owners.includes(actor)
 
 After any edit through the dashboard, each task either carries a signature
 (when and by whom it was last updated) that a task of the same number had
-before the edit, or is signed by someone who was on the team before the edit.
+before the edit, or is signed by someone who is on the team after the edit.
 The rule does not say which member signs, nor that only the edited task's
 signature changes: it rules out an edit through the dashboard leaving a task
 signed by someone outside the team. A fix, a hand edit and the notifier are
@@ -202,7 +202,7 @@ pure def keepsItsSignature(before: Tracker, t: Task): bool =
   before.tasks.some(b => b.id == t.id and b.updatedAt == t.updatedAt and b.updatedBy == t.updatedBy)
 
 pure def stepADashboardEditIsSignedByAMember(before: Tracker, after: Tracker): bool =
-  after.last == App implies after.tasks.every(t => keepsItsSignature(before, t) or isMember(before, t.updatedBy))
+  after.last == App implies after.tasks.every(t => keepsItsSignature(before, t) or isMember(after, t.updatedBy))
 ```
 
 ### Only a hand edit can make the data worse
@@ -353,8 +353,14 @@ pure def deleteTask(s: Tracker, id: int, actor: str): Tracker =
 
 A person can be renamed only to a name no team member has. Renaming a person
 removes duplicate names from every owners cell, even if the new name had
-already been entered there directly. Removing a person takes them off the team
-and out of every owners cell.
+already been entered there directly. It also renames them as the author of
+each task's last edit: every task they last edited is signed with the name
+that joined the team, and every other task keeps its author, so they are
+still not told of their own edits and no one else is left out instead.
+Removing a person takes them off the team and out of every owners cell, but
+leaves their name as the author of the tasks they last edited. That is
+harmless: only owners on the team are told of an edit, and the author is
+left out of them, so the name keeps out only someone later renamed to it.
 
 ```quint
 pure def canRenameOwner(s: Tracker, owner: str, name: str, actor: str): bool =
@@ -363,7 +369,15 @@ pure def canRenameOwner(s: Tracker, owner: str, name: str, actor: str): bool =
 pure def renameOwner(s: Tracker, owner: str, name: str, actor: str): Tracker =
   { ...s, last: App,
     owners: s.owners.listMap(o => if (o == owner) name else o),
-    tasks: s.tasks.listMap(t => { ...t, owners: distinctNames(t.owners.listMap(o => if (o == owner) name else o)) }) }
+    tasks: s.tasks.listMap(t => { ...t,
+      owners: distinctNames(t.owners.listMap(o => if (o == owner) name else o)),
+      updatedBy: if (t.updatedBy == owner) name else t.updatedBy }) }
+
+pure def stepARenamedPersonSignsTheirEditsUnderTheNewName(before: Tracker, via: str, after: Tracker): bool =
+  via == "renameOwner" implies after.tasks.every(t => before.tasks.some(b => b.id == t.id and
+    (if (isMember(before, b.updatedBy) and not(isMember(after, b.updatedBy)))
+       isMember(after, t.updatedBy) and not(isMember(before, t.updatedBy))
+     else t.updatedBy == b.updatedBy)))
 
 pure def canDeleteOwner(s: Tracker, owner: str, actor: str): bool = isMember(s, actor) and s.owners.includes(owner)
 
@@ -471,9 +485,10 @@ pure def tick(s: Tracker): Tracker = { ...s, last: Clock, now: s.now + 1 }
 ### One pass of the notifier sends everything that is due and records that it was sent
 
 An edit is announced to the task's owners who are project members, apart from
-the person who made it. When two people edit a task within the quiet period,
-only the last of them is left out. Deleting a task, renaming or removing a
-person, and a fix are not announced. A reminder goes to all such owners. A
+the person who made it. A hand edit is announced with `sheet` as its editor, so
+every such owner is told of it, unless one is named `sheet`. When two people
+edit a task within the quiet period, only the last of them is left out.
+Deleting a task, renaming or removing a person, and a fix are not announced. A reminder goes to all such owners. A
 finished task, or one without a due date (a due date of 0 or less), gets no
 reminder.
 
