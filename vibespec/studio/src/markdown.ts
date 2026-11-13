@@ -11,6 +11,10 @@ export const storyKey = (title: string) => `## ${title.trim()}`;
 export const ruleKey = (story: string, title: string) => `${story.trim()} / ${title.trim()}`;
 /** Which story or rule of which spec a node is, as the manifest and the page's origins name it. */
 export const nodeId = (file: string, key: string) => `${file}\0${key}`;
+/** The order specs are listed in: each index.md before the specs beside it. */
+export const specOrder = (file: string) => file.replace(/(?:^spec\/|\/)index\.md$/, "/");
+/** The mark of each kind of change in the manifest (./doc.ts), in the prompt and on the page. */
+export const SIGN = { added: "+", deleted: "-", changed: "~" } as const;
 
 /**
  * The outline of a spec's text. Numbers run from 1 in the order of the text, and each story and rule keeps the key it

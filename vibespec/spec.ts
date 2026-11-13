@@ -4,7 +4,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Model } from "./gen.ts";
-import type { Found } from "./conformance.ts";
 import { conformance, conformanceFound, writeConformance, type Machine, type Simulated } from "./conform.ts";
 import { ensuresOf, LIB_FILE, dafnyVersion, proofPaths, prove, type Offered, type Proof } from "./prove.ts";
 import { run } from "./run.ts";
@@ -15,17 +14,21 @@ import { generated, typecheckAll, proofUnits, proofFiles, strayProofFiles } from
 import { SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, LASSO_TRACES, STEPS, DEPTHS, SEARCHED, simulate, search, firstBreak, lasso, showTrace, replay, type Step } from "./simulate.ts";
 import { sha, indent, packageScripts, tests, readSrc, projectRoot, allDone, type SrcFile } from "./util.ts";
 
-export { readSpecs, badSpecName, parseSpec, scanSpec, expandListHelpers, type Spec, type Rule, type Story } from "./parse.ts";
+export { readSpecs, badSpecName, parseSpec, expandListHelpers, type Spec, type Rule, type Story } from "./parse.ts";
 export { pending, pendingKey, pendingContracts, acceptReviews, acceptContracts, dependencies, type Lock, type Pending } from "./review.ts";
 export { generated, typecheckAll, checkVerifiedSource } from "./units.ts";
 export { replay, type Step } from "./simulate.ts";
 export { danglingCitations } from "./util.ts";
+export { scanSpec } from "./scan.ts";
 
 export interface Result { ok: boolean; stage: "model" | "always" | "sometimes" | "replay" | "types" | "proof" | "tests" | "traces" | "review" | "skipped"; summary: string; detail: string; where?: string }
 export const show = ({ ok, stage, summary, detail }: Result) => `${stage === "skipped" ? "-" : ok ? "✓" : "✗"} ${stage.padEnd(9)} ${summary}${detail ? "\n" + detail.trimEnd() : ""}`;
 
 /** The one simulation result that is not remembered: anything else comes back the same from the same harness and seed. */
 const COULD_NOT_RUN = "the simulator could not run";
+
+/** Whether `accept` can record a check: every stage but review passed, every story has rules and every rule has Quint. */
+export const acceptable = (results: Result[]) => results.every((r) => r.ok || r.stage === "review") && !results.some((r) => !r.ok && /story has no rules|not formalized/.test(r.detail));
 
 /** The one most useful thing to do after a check, given what it found. */
 export function nextStep(results: Result[]): string {
@@ -44,9 +47,8 @@ export function nextStep(results: Result[]): string {
     };
     return `${first.stage}${about} is the first ✗: ${what[first.stage]}, then run \`npm run check\` again`;
   }
-  const reviews = results.filter((r) => !r.ok);
-  if (!reviews.length) return "all green";
-  if (reviews.some((r) => /story has no rules|not formalized/.test(r.detail))) return "write the rules and Quint the review items ask for, then run `npm run check` again";
+  if (results.every((r) => r.ok)) return "all green";
+  if (!acceptable(results)) return "write the rules and Quint the review items ask for, then run `npm run check` again";
   return "read each review item above; when prose and Quint agree, the user runs `npm run accept`";
 }
 
@@ -130,7 +132,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
   // Node caches imported modules by path, so each run loads its generated code from a directory of its own.
   const loaded = path.join(root, "gen", `run-${Date.now()}`);
   /** Each spec's simulation starts once its model is generated; they run at once and are reported in the specs' order. */
-  const simulations: { spec: Spec; model: Model; domain: any; simulated: Promise<{ said: Result[]; tested?: Found<any> }> }[] = [];
+  const simulations: { spec: Spec; model: Model; domain: any; simulated: Promise<{ said: Result[]; tested?: Simulated }> }[] = [];
 
   for (const spec of specs) {
     const cite = (def: string) => {
@@ -156,9 +158,10 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
     report(true, "model", `${spec.file}: ${parts.filter(([n]) => n).map((p) => p.join(" ")).join(", ") || "definitions only"}`, "", spec.file);
     if (!model.stateType && !model.laws.length && !model.evals.length) continue;
 
-    // A spec whose model and harness are unchanged, and that passed, is not simulated again.
+    // A spec whose model and harness are unchanged is not simulated again: its fixed seed repeats a failure too.
+    // Only a simulator that could not run is tried again.
     const simulationSteps = STEPS + Math.max(0, ...model.within.values());
-    const simulated = await remembered<{ said: Result[]; tested?: Simulated }>(memory, entry(root, "simulate", [importedMeanings(spec, specs), spec.meaning, model.harness, String([SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, LASSO_TRACES, simulationSteps, ...DEPTHS])]), async () => {
+    const simulated = remembered<{ said: Result[]; tested?: Simulated }>(memory, entry(root, "simulate", [importedMeanings(spec, specs), spec.meaning, model.harness, String([SAMPLES, WITNESS_SAMPLES, COMPARED_SAMPLES, REPLAYED, LASSO_TRACES, simulationSteps, ...DEPTHS]), process.env.SPEC_SEED?.trim() ?? ""]), async () => {
       const said: Result[] = [];
       let tested: Simulated | undefined;
       const say = (ok: boolean, stage: Result["stage"], summary: string, detail = "") => said.push({ ok, stage, summary, detail });
@@ -187,7 +190,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
         // comes first (see the harness). All of them finish before anything is reported, failures included.
         // The usual starting states each get a whole bounded interval after them.
         const sim = await simulate(root, model, "inv", model.leadsTo.length ? LASSO_TRACES : REPLAYED, SAMPLES, "step", true, simulationSteps);
-        const settled = await Promise.allSettled([
+        const [probe, ...searches] = await allDone([
           simulate(root, model, "inv", REPLAYED, COMPARED_SAMPLES, "probe", true),
           ...model.sometimes.map((w) => search(root, model, `never_${w}`)),
         ]);
@@ -248,12 +251,12 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
         for (const { w, run } of witnesses) {
           const reached = run.broken && run.traces.some((t) => domain[w](t.at(-1)?.state));
           say(reached, "sometimes", reached ? `${w} is reachable`
-            : `${cite(w)} was not reached in ${SEARCHED()}: a guard is too strict, a transition is missing, or the goal needs values the simulator does not try`, reached ? "" : `      ${run.again}`);
+            : `${cite(w)} was not reached in ${SEARCHED}: a guard is too strict, a transition is missing, or the goal needs values the simulator does not try`, reached ? "" : `      ${run.again}`);
         }
         for (const { t, again } of neverAllowed) {
           const causes = ["the guard is too strict", "a transition that leads to the states it needs is missing", `the event becomes possible only after more than ${DEPTHS.at(-1)} events`,
             ...(t.guardParams.length ? [`it needs values the simulator does not try (define ${t.guardParams.map((p) => `${p}Values`).join(" or ")})`] : [])];
-          say(false, "sometimes", `${t.name} in ${cite(t.name)} never happened: its guard ${t.guard} refused it in every state reached${again ? ` in ${SEARCHED()}` : ""}, so every rule holds of it trivially. Either ${causes.slice(0, -1).join(", ")} or ${causes.at(-1)}`, again ? `      ${again}` : "");
+          say(false, "sometimes", `${t.name} in ${cite(t.name)} never happened: its guard ${t.guard} refused it in every state reached${again ? ` in ${SEARCHED}` : ""}, so every rule holds of it trivially. Either ${causes.slice(0, -1).join(", ")} or ${causes.at(-1)}`, again ? `      ${again}` : "");
         }
         if (guarded.some((t) => seen.get(t.guard!)!.allows))
           say(true, "sometimes", `${guarded.filter((t) => seen.get(t.guard!)!.allows).length} of ${guarded.length} guards allow their event in some reachable state`
@@ -303,7 +306,7 @@ async function checkLocked(root: string, accept: false | "reviews" | "unproved",
         const ledger: Record<string, Accepted> = {};
         let recordable = true;
         fs.rmSync(path.join(root, "gen/proof"), { recursive: true, force: true });
-        const units = await proofUnits(root, [...models.values()], srcFiles);
+        const units = proofUnits(root, [...models.values()], srcFiles);
         for (const f of strayProofFiles(root, units))
           said(false, "proof", `${f} belongs to no proof unit: spec/<name>.proof.dfy belongs to spec/<name>.md, and src/<path>.proof.dfy to src/<path>.ts if that file contains //@`, "", f);
         const lib = fs.readFileSync(LIB_FILE, "utf8");

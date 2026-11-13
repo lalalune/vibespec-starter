@@ -3,7 +3,6 @@ import path from "node:path";
 import { BUILTINS, LIST_HELPERS } from "./gen/print.ts";
 import { scanSpec } from "./scan.ts";
 import { plainText } from "./util.ts";
-export { scanSpec } from "./scan.ts";
 
 /** `defs` are the rule's top-level definitions and types; `locals` the names it binds inside a definition (`val x = …` in a body). */
 export interface Rule { key: string; story: string; line: number; prose: string; code: string; defs: string[]; locals: string[] }

@@ -113,12 +113,18 @@ pure def markSynced(s: Session): Session = { ...s, waiting: 0 }
 ### What is waiting goes down only by a sync, by hand, or by publishing what undoes a change
 
 What waits is measured against the specs as last synced, so publishing an
-edit that puts a story back as it was leaves less to sync. Discovered by
-simulation: the first version of this rule left that case out.
+edit that puts a story back as it was leaves less to sync.
 
 ```quint
 pure def stepWaitingGoesDownOnlyBySyncOrUndo(before: Session, via: str, after: Session): bool =
   (after.waiting < before.waiting) implies (via == "synced" or via == "markSynced" or via == "publish")
+```
+
+### A studio that starts again picks up what was waiting
+
+```quint
+pure def canResume(s: Session, changes: int): bool = s.job == Idle and s.waiting == 0 and changes >= 0
+pure def resume(s: Session, changes: int): Session = { ...s, waiting: changes }
 ```
 
 ### A sync can be under way

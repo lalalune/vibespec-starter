@@ -12,7 +12,6 @@
 // failing postcondition assumes it, so every obligation of such a lemma is
 // counted as not proved too.
 
-import { execFile } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -75,20 +74,19 @@ export function solver(): Promise<{ path: string; version: string }> {
       } catch { /* try the next solver supplied by this installation */ }
     }
     throw new Error("the proof stage needs the Z3 solver bundled with Dafny or on the PATH");
-  })();
+  })().catch((e) => { selected = undefined; throw e; });
 }
 
-/** The version of Dafny on the PATH, read once and without blocking, or why it could not be read. */
+/** The version of Dafny on the PATH, read once it is read without a problem, or why it could not be read. */
 let dafny: Promise<{ version?: string; problem?: string }> | undefined;
 export function dafnyVersion(): Promise<{ version?: string; problem?: string }> {
-  return (dafny ??= new Promise((resolve) => {
-    execFile("dafny", ["--version"], { encoding: "utf8", timeout: 60_000 }, (error, stdout, stderr) => {
-      const version = !error ? (stdout ?? "").match(/\d+\.\d+\.\d+/)?.[0] : undefined;
-      const problem = !version ? `Dafny could not be run (${(error && !stdout && !stderr ? error.message : undefined) ?? (`${stdout ?? ""}${stderr ?? ""}`.trim().split("\n")[0] || error?.message || "it printed no version")})`
-        : !version.startsWith("4.11.") ? `this is Dafny ${version}, and LemmaScript targets Dafny 4.11.x` : undefined;
-      resolve({ version, problem: problem && `${problem}: ${NEEDS_DAFNY} (see README, "Getting started")` });
-    });
-  }));
+  return (dafny ??= exec("dafny", ["--version"], process.cwd()).then((r) => {
+    const version = r.status === 0 ? r.stdout.match(/\d+\.\d+\.\d+/)?.[0] : undefined;
+    const problem = !version ? `Dafny could not be run (${`${r.stdout}${r.stderr}`.trim().split("\n")[0] || "it printed no version"})`
+      : !version.startsWith("4.11.") ? `this is Dafny ${version}, and LemmaScript targets Dafny 4.11.x` : undefined;
+    return { version, problem: r.stopped ?? (problem && `${problem}: ${NEEDS_DAFNY} (see README, "Getting started")`) };
+  }, (e: Error) => ({ problem: `Dafny could not be run (${e.message}): ${NEEDS_DAFNY} (see README, "Getting started")` }))
+    .then((r) => { if (r.problem) dafny = undefined; return r; }));
 }
 
 // --- proof files ---------------------------------------------------------------
@@ -475,8 +473,10 @@ export function readVerdict(out: string, dfy: string, file: string, regions: Reg
       const related = block.find((r) => r.what.includes("postcondition") && regions[r.line - 1] && regions[r.line - 1] === regions[m.line - 1]);
       if (related) fail(related.line, clause(related.line), false);
       else v.errors.add(`${defAt(m.line)}: ${m.what}, and Dafny named no postcondition of it: ${clause(m.line)}`);
-    } else if (m.kind === "Error" && /out of resource|timed out/.test(m.what)) {
+    } else if (m.kind === "Error" && /out of resource/.test(m.what)) {
       fail(m.line, ensured(source[m.line - 1] ?? "") ?? "the prover ran out of resources", true);
+    } else if (m.kind === "Error" && /timed out/.test(m.what)) {
+      v.errors.add(`${defAt(m.line)}: Dafny stopped after ${TIME_LIMIT} s of wall-clock time (machine load), not a verdict`);
     } else if (m.kind === "Error") v.errors.add(`${defAt(m.line)}: ${m.what}: ${clause(m.line)}`);
     else if (m.kind === "Warning") v.errors.add(`${defAt(m.line)}: ${m.what}`);
   });

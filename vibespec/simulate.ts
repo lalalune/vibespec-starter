@@ -127,7 +127,7 @@ export async function search(root: string, model: Model, invariant: string, step
   for (const steps of depths) if ((run = await simulate(root, model, invariant, 1, Math.ceil(samples * STEPS / steps), step, false, steps)).broken) break;
   return run;
 }
-export const SEARCHED = () => `${WITNESS_SAMPLES} traces of ${STEPS} events and longer ones up to ${DEPTHS.at(-1)}`;
+export const SEARCHED = `${WITNESS_SAMPLES} traces of ${STEPS} events and longer ones up to ${DEPTHS.at(-1)}`;
 
 /**
  * Replay one Quint trace through the TypeScript domain; throws at the first difference. With the model, sets are
