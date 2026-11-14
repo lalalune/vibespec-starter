@@ -1,0 +1,36 @@
+Review of the whole vibestack: sounder checks, more generated, less hand-written
+
+Pipeline: tests and traces are skipped once types or proof fail; spec gen takes
+the project lock and shares generation with check; one Node floor; a malformed
+package.json is a result, not a crash; check --json streams one line per result;
+Result.rules names the rules a result concerns; a proof failure writes a
+scaffold with the exact lemma headers; accepted-unproved obligations are
+fingerprinted on meaning; the legacy migrate path is gone.
+
+Generator: the persisted Machine layer stored(key) and the React hook
+useMachine (gen/<name>.react.ts) replace hand-written copies; partial
+operations throw in the Node render; std_ is refused in spec source; one
+validator per named type; every supported operator is exercised by a fixture.
+
+Studio: problem, loading, disconnected and empty states; a review dialog that
+shows what is signed; failures open their rule; per-stage marks while a check
+streams; a change on disk is checked; @repo/ui components in place of
+hand-written ones.
+
+Examples: the sender is the by parameter in order and the dashboard tracker;
+fullstack's Op is a sum type and its system proof calls the imported units'
+lemmas instead of restating them as laws.
+
+The hello-world app exercises one of each feature; design lint and tokens close
+their gaps (3:1 control edges); jscpd joins analyze; a tag-triggered release.
+
+# Conflicts:
+#	CONTRIBUTING.md
+#	package.json
+#	vibestack/cache.ts
+#	vibestack/examples/assistant/package.json
+#	vibestack/examples/dashboard/package.json
+#	vibestack/selftest.ts
+#	vibestack/simulate.ts
+#	vibestack/spec.ts
+#	vibestack/testing/properties.ts
