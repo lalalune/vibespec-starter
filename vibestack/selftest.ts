@@ -1635,24 +1635,21 @@ pure def lawOwn(own: int): bool = shadowOwn(own) == own`));
       assert.equal((await request("GET", "f".repeat(16))).status, 404);
       assert.equal((await request("PUT", "e".repeat(16), reader, "x", { "Content-Length": "1" })).status, 403);
       assert.equal((await request("GET", "not-a-hash")).status, 400);
-      // remote-cache.ts rejects the declared size before consuming the upload.
-      const endpoint = await cache.ready;
-      const oversizedSize = 64 * 1024 * 1024 + 1;
-      const oversized = await new Promise<number>((resolve, reject) => {
-        let answered = false;
-        const upload = httpRequest(new URL(`/v8/artifacts/${"d".repeat(16)}`, endpoint), {
-          method: "PUT", headers: { Authorization: `Bearer ${writer}`, "Content-Length": String(oversizedSize) },
-        }, (response) => {
-          answered = true;
+      const oversized = new URL(`/v8/artifacts/${"d".repeat(16)}`, await cache.ready);
+      const status = await new Promise<number | undefined>((resolve, reject) => {
+        const failed = (error: Error) => { upload.destroy(); reject(error); };
+        const upload = httpRequest(oversized, { method: "PUT", headers: {
+          Authorization: `Bearer ${writer}`, "Content-Length": String(64 * 1024 * 1024 + 1), Expect: "100-continue",
+        } }, (response) => {
           response.resume();
-          resolve(response.statusCode ?? 0);
-          upload.destroy();
+          response.on("error", failed);
+          response.on("end", () => { resolve(response.statusCode); upload.destroy(); });
         });
-        upload.on("error", (error) => { if (!answered) reject(error); });
-        upload.setTimeout(30_000, () => upload.destroy(new Error("oversized upload did not receive a response")));
-        upload.end(new Uint8Array(oversizedSize));
+        upload.on("error", failed);
+        // The Worker rejects the declared length before the client sends the body.
+        upload.flushHeaders();
       });
-      assert.equal(oversized, 413);
+      assert.equal(status, 413);
       assert.equal((await request("POST", "events", reader, "private telemetry")).status, 200);
       response = await cache.dispatchFetch("https://cache.test/v8/artifacts", {
         method: "POST", headers: { Authorization: `Bearer ${reader}` }, body: JSON.stringify({ hashes: [hash, "f".repeat(16)] }),
