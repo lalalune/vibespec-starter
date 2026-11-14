@@ -23,7 +23,7 @@
     "lint": "node vibestack/spec.ts tasks //#lint:js //#lint:css",
     "lint:js": "eslint . --max-warnings 0",
     "lint:css": "stylelint \"**/*.css\" --allow-empty-input",
-    "analyze": "knip && madge --circular vibestack packages apps",
+    "analyze": "knip && madge --circular vibestack packages apps && jscpd .",
     "examples": "failed=0; for d in vibestack/examples/*/; do pnpm -C \"$d\" install --frozen-lockfile --ignore-workspace && pnpm -C \"$d\" check || failed=1; done; exit $failed",
     "quick": "node vibestack/spec.ts tasks typecheck test //#lint:js //#lint:css",
     "verify": "node vibestack/spec.ts tasks build typecheck test test:browser check //#lint:js //#lint:css //#analyze //#selftest",
@@ -53,6 +53,7 @@
   "files": [
     "dist",
     ".claude/skills",
+    ".claude/settings.json",
     "README.md",
     "AGENTS.md",
     "SPEC.md",
@@ -60,10 +61,10 @@
   ],
   "dependencies": {
     "@effect/platform-node": "4.1.1",
-    "@informalsystems/quint": "^0.33.1",
+    "@informalsystems/quint": "0.33.1",
     "effect": "4.1.1",
-    "lemmascript": "^0.6.8",
-    "typescript": "^6.0.3",
+    "lemmascript": "0.6.9",
+    "typescript": "6.0.3",
     "vibelang-runtime": "0.0.13"
   },
   "devDependencies": {
@@ -78,6 +79,7 @@
     "eslint-plugin-boundaries": "catalog:",
     "eslint-plugin-react-hooks": "catalog:",
     "happy-dom": "catalog:",
+    "jscpd": "catalog:",
     "jsdom": "catalog:",
     "knip": "catalog:",
     "madge": "catalog:",
@@ -93,6 +95,7 @@
     "vitest": "5.1.0"
   },
   "peerDependencies": {
+    "@effect/vitest": "4.1.1",
     "@vitest/browser-playwright": "5.1.0",
     "vibelang-vite": "0.0.13",
     "vite": "8.3.5",
