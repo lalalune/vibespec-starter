@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { request as httpRequest } from "node:http";
 import { stripTypeScriptTypes } from "node:module";
 import os from "node:os";
 import path from "node:path";
@@ -1634,8 +1635,24 @@ pure def lawOwn(own: int): bool = shadowOwn(own) == own`));
       assert.equal((await request("GET", "f".repeat(16))).status, 404);
       assert.equal((await request("PUT", "e".repeat(16), reader, "x", { "Content-Length": "1" })).status, 403);
       assert.equal((await request("GET", "not-a-hash")).status, 400);
-      response = await request("PUT", "d".repeat(16), writer, new Uint8Array(64 * 1024 * 1024 + 1));
-      assert.equal(response.status, 413, await response.text());
+      // remote-cache.ts rejects the declared size before consuming the upload.
+      const endpoint = await cache.ready;
+      const oversizedSize = 64 * 1024 * 1024 + 1;
+      const oversized = await new Promise<number>((resolve, reject) => {
+        let answered = false;
+        const upload = httpRequest(new URL(`/v8/artifacts/${"d".repeat(16)}`, endpoint), {
+          method: "PUT", headers: { Authorization: `Bearer ${writer}`, "Content-Length": String(oversizedSize) },
+        }, (response) => {
+          answered = true;
+          response.resume();
+          resolve(response.statusCode ?? 0);
+          upload.destroy();
+        });
+        upload.on("error", (error) => { if (!answered) reject(error); });
+        upload.setTimeout(30_000, () => upload.destroy(new Error("oversized upload did not receive a response")));
+        upload.end(new Uint8Array(oversizedSize));
+      });
+      assert.equal(oversized, 413);
       assert.equal((await request("POST", "events", reader, "private telemetry")).status, 200);
       response = await cache.dispatchFetch("https://cache.test/v8/artifacts", {
         method: "POST", headers: { Authorization: `Bearer ${reader}` }, body: JSON.stringify({ hashes: [hash, "f".repeat(16)] }),
