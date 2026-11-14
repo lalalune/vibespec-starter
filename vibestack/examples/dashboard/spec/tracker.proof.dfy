@@ -627,7 +627,11 @@ lemma handDeleteOwner_ensures(s: Tracker, owner: string)
 {
   if inv(s) && canHandDeleteOwner(s, owner) {
     var s2 := handDeleteOwner(s, owner);
+    TUniqueBridge(s);
+    TUniqueBridge(s2);
+    TIdsKeptUnique(s.tasks, s2.tasks);
     TSameIdsOldNumbers(s, s2);
+    TSentRecordedKept(s, s2);
   }
 }
 
