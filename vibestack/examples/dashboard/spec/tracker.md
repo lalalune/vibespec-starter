@@ -495,9 +495,9 @@ the current member who made it. A hand edit is announced with `sheet` as its
 editor and reaches every such owner. An edit by a former member also reaches
 every current owner, including someone who now uses that former name. When two people
 edit a task within the quiet period, only the last of them is left out.
-Deleting a task, renaming or removing a person, and a fix are not announced. A reminder goes to all such owners. A
-finished task, or one without a due date (a due date of 0 or less), gets no
-reminder.
+Deleting a task, renaming or removing a person, and a fix are not announced.
+A reminder goes to all such owners. A finished task, or one without a due date
+(a due date of 0 or less), gets no reminder.
 
 ```quint
 pure def knownOwners(s: Tracker, t: Task): List[str] = distinctNames(t.owners.select(o => s.owners.includes(o)))
