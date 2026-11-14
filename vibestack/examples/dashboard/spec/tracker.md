@@ -12,8 +12,11 @@ here (task `#12` is 12) and time is counted in ticks.
 
 Each task lists its owners, the tasks it waits on (its parents) and the tasks
 linked to it as related. Children are derived from parents and not stored. A
-note is a single message to a single person; `by` names the editor an
-announced edit came from, and is empty for a reminder.
+note is a single message to a single person. `by` names the editor an
+announced edit came from and is empty for a reminder. `authorIsMember`
+distinguishes a current member from a former member or the spreadsheet
+editor, even when their names coincide. Notes retain that distinction as
+it stood when they were sent.
 
 ```quint
 import kernel.* from "./kernel"
@@ -22,10 +25,10 @@ type Status = Blocked | Review | Todo | Doing | Done
 type Writer = App | Sheet | Fix | Clock | Notifier
 type Task = {
   id: int, status: Status, owners: List[str], parents: List[int], related: List[int], due: int,
-  updatedAt: int, updatedBy: str, notifiedAt: int, toldSoon: List[int], toldDue: List[int],
+  updatedAt: int, updatedBy: str, authorIsMember: bool, notifiedAt: int, toldSoon: List[int], toldDue: List[int],
 }
 type NoteKind = Update | Soon | Today
-type Note = { kind: NoteKind, task: int, to: str, version: int, at: int, by: str }
+type Note = { kind: NoteKind, task: int, to: str, version: int, at: int, by: str, authorIsMember: bool }
 type Tracker = { tasks: List[Task], owners: List[str], lastId: int, now: int, sent: List[Note], last: Writer }
 ```
 
@@ -71,7 +74,7 @@ pure val weight_notify = 5
 pure val sValues =
   val blank = {
     id: 1, status: Todo, owners: List("ana"), parents: List(), related: List(), due: 0,
-    updatedAt: 0, updatedBy: "ana", notifiedAt: -1, toldSoon: List(), toldDue: List(),
+    updatedAt: 0, updatedBy: "ana", authorIsMember: true, notifiedAt: -1, toldSoon: List(), toldDue: List(),
   }
   Set(
     initial,
@@ -96,7 +99,8 @@ pure def addName(xs: List[str], x: str): List[str] = if (xs.includes(x)) xs else
 pure def dropName(xs: List[str], x: str): List[str] = xs.select(y => y != x)
 pure def distinctNames(xs: List[str]): List[str] =
   xs.foldl(List(), (acc, x) => if (acc.includes(x)) acc else acc.append(x))
-pure def touched(t: Task, actor: str, at: int): Task = { ...t, updatedAt: at, updatedBy: actor }
+pure def touched(t: Task, actor: str, at: int, member: bool): Task =
+  { ...t, updatedAt: at, updatedBy: actor, authorIsMember: member }
 ```
 
 ## Story: See what is wrong with the data
@@ -237,7 +241,7 @@ pure def create(s: Tracker, actor: str): Tracker =
   val id = nextNumber(numbersInUse(s), s.lastId)
   { ...s, last: App, lastId: id, tasks: s.tasks.append({
     id: id, status: Todo, owners: List(), parents: List(), related: List(), due: 0,
-    updatedAt: s.now, updatedBy: actor, notifiedAt: -1, toldSoon: List(), toldDue: List(),
+    updatedAt: s.now, updatedBy: actor, authorIsMember: true, notifiedAt: -1, toldSoon: List(), toldDue: List(),
   }) }
 
 pure def stepANewNumberIsUnreferenced(before: Tracker, after: Tracker): bool =
@@ -270,12 +274,12 @@ pure def stepANumberIsNeverReissued(before: Tracker, after: Tracker): bool =
 pure def canSetStatus(s: Tracker, id: int, status: Status, actor: str): bool = isMember(s, actor) and hasTask(s, id)
 
 pure def setStatus(s: Tracker, id: int, status: Status, actor: str): Tracker =
-  { ...s, last: App, tasks: s.tasks.listMap(t => if (t.id == id) touched({ ...t, status: status }, actor, s.now) else t) }
+  { ...s, last: App, tasks: s.tasks.listMap(t => if (t.id == id) touched({ ...t, status: status }, actor, s.now, true) else t) }
 
 pure def canSetDue(s: Tracker, id: int, due: int, actor: str): bool = isMember(s, actor) and hasTask(s, id)
 
 pure def setDue(s: Tracker, id: int, due: int, actor: str): Tracker =
-  { ...s, last: App, tasks: s.tasks.listMap(t => if (t.id == id) touched({ ...t, due: due }, actor, s.now) else t) }
+  { ...s, last: App, tasks: s.tasks.listMap(t => if (t.id == id) touched({ ...t, due: due }, actor, s.now, true) else t) }
 ```
 
 ### An owner added through the dashboard must be a project member
@@ -288,12 +292,12 @@ pure def canAddOwner(s: Tracker, id: int, owner: str, actor: str): bool =
   isMember(s, actor) and hasTask(s, id) and s.owners.includes(owner)
 
 pure def addOwner(s: Tracker, id: int, owner: str, actor: str): Tracker =
-  { ...s, last: App, tasks: s.tasks.listMap(t => if (t.id == id) touched({ ...t, owners: addName(t.owners, owner) }, actor, s.now) else t) }
+  { ...s, last: App, tasks: s.tasks.listMap(t => if (t.id == id) touched({ ...t, owners: addName(t.owners, owner) }, actor, s.now, true) else t) }
 
 pure def canRemoveOwner(s: Tracker, id: int, owner: str, actor: str): bool = isMember(s, actor) and hasTask(s, id)
 
 pure def removeOwner(s: Tracker, id: int, owner: str, actor: str): Tracker =
-  { ...s, last: App, tasks: s.tasks.listMap(t => if (t.id == id) touched({ ...t, owners: dropName(t.owners, owner) }, actor, s.now) else t) }
+  { ...s, last: App, tasks: s.tasks.listMap(t => if (t.id == id) touched({ ...t, owners: dropName(t.owners, owner) }, actor, s.now, true) else t) }
 ```
 
 ### A parent must exist and must not already depend on the task
@@ -306,12 +310,12 @@ pure def canAddParent(s: Tracker, id: int, other: int, actor: str): bool =
   isMember(s, actor) and hasTask(s, id) and hasTask(s, other) and id != other and not(ancestors(s, other).includes(id))
 
 pure def addParent(s: Tracker, id: int, other: int, actor: str): Tracker =
-  { ...s, last: App, tasks: s.tasks.listMap(t => if (t.id == id) touched({ ...t, parents: add(t.parents, other) }, actor, s.now) else t) }
+  { ...s, last: App, tasks: s.tasks.listMap(t => if (t.id == id) touched({ ...t, parents: add(t.parents, other) }, actor, s.now, true) else t) }
 
 pure def canRemoveParent(s: Tracker, id: int, other: int, actor: str): bool = isMember(s, actor) and hasTask(s, id)
 
 pure def removeParent(s: Tracker, id: int, other: int, actor: str): Tracker =
-  { ...s, last: App, tasks: s.tasks.listMap(t => if (t.id == id) touched({ ...t, parents: drop(t.parents, other) }, actor, s.now) else t) }
+  { ...s, last: App, tasks: s.tasks.listMap(t => if (t.id == id) touched({ ...t, parents: drop(t.parents, other) }, actor, s.now, true) else t) }
 ```
 
 ### Related is written on both tasks at once
@@ -326,7 +330,7 @@ pure def canRelate(s: Tracker, id: int, other: int, actor: str): bool =
 
 pure def relate(s: Tracker, id: int, other: int, actor: str): Tracker =
   { ...s, last: App, tasks: s.tasks.listMap(t =>
-    if (t.id == id) touched({ ...t, related: add(t.related, other) }, actor, s.now)
+    if (t.id == id) touched({ ...t, related: add(t.related, other) }, actor, s.now, true)
     else if (t.id == other) { ...t, related: add(t.related, id) }
     else t) }
 
@@ -334,7 +338,7 @@ pure def canUnrelate(s: Tracker, id: int, other: int, actor: str): bool = isMemb
 
 pure def unrelate(s: Tracker, id: int, other: int, actor: str): Tracker =
   { ...s, last: App, tasks: s.tasks.listMap(t =>
-    if (t.id == id) touched({ ...t, related: drop(t.related, other) }, actor, s.now)
+    if (t.id == id) touched({ ...t, related: drop(t.related, other) }, actor, s.now, true)
     else if (t.id == other) { ...t, related: drop(t.related, id) }
     else t) }
 ```
@@ -357,10 +361,10 @@ already been entered there directly. It also renames them as the author of
 each task's last edit: every task they last edited is signed with the name
 that joined the team, and every other task keeps its author, so they are
 still not told of their own edits and no one else is left out instead.
-Removing a person takes them off the team and out of every owners cell, but
-leaves their name as the author of the tasks they last edited. That is
-harmless: only owners on the team are told of an edit, and the author is
-left out of them, so the name keeps out only someone later renamed to it.
+Removing a person takes them off the team and out of every owners cell.
+Their recorded author name stays, with `authorIsMember` set to false, so
+reusing that name does not suppress another member's notifications. A later
+rename changes author names only for current members.
 
 ```quint
 pure def canRenameOwner(s: Tracker, owner: str, name: str, actor: str): bool =
@@ -371,11 +375,11 @@ pure def renameOwner(s: Tracker, owner: str, name: str, actor: str): Tracker =
     owners: s.owners.listMap(o => if (o == owner) name else o),
     tasks: s.tasks.listMap(t => { ...t,
       owners: distinctNames(t.owners.listMap(o => if (o == owner) name else o)),
-      updatedBy: if (t.updatedBy == owner) name else t.updatedBy }) }
+      updatedBy: if (t.authorIsMember and t.updatedBy == owner) name else t.updatedBy }) }
 
 pure def stepARenamedPersonSignsTheirEditsUnderTheNewName(before: Tracker, via: str, after: Tracker): bool =
   via == "renameOwner" implies after.tasks.every(t => before.tasks.some(b => b.id == t.id and
-    (if (isMember(before, b.updatedBy) and not(isMember(after, b.updatedBy)))
+    (if (b.authorIsMember and isMember(before, b.updatedBy) and not(isMember(after, b.updatedBy)))
        isMember(after, t.updatedBy) and not(isMember(before, t.updatedBy))
      else t.updatedBy == b.updatedBy)))
 
@@ -383,7 +387,8 @@ pure def canDeleteOwner(s: Tracker, owner: str, actor: str): bool = isMember(s, 
 
 pure def deleteOwner(s: Tracker, owner: str, actor: str): Tracker =
   { ...s, last: App, owners: dropName(s.owners, owner),
-    tasks: s.tasks.listMap(t => { ...t, owners: dropName(t.owners, owner) }) }
+    tasks: s.tasks.listMap(t => { ...t, owners: dropName(t.owners, owner),
+      authorIsMember: t.authorIsMember and t.updatedBy != owner }) }
 ```
 
 ## Story: Edit the spreadsheet directly
@@ -400,24 +405,24 @@ and a person may be removed from the team, leaving their name in owners cells.
 Rows are added only through the dashboard. The task number and bookkeeping
 columns (last edit, last announcement, reminders sent) are protected from
 direct edits; when a hand edit to a row arrives, the system records the time,
-and `sheet` as the editor, so no owner counts as its author unless a team
-member is named `sheet`.
+and `sheet` as the editor, with `authorIsMember` false. Every current owner
+is eligible for its announcement, including a member named `sheet`.
 
 ```quint
 pure def canHandAddOwner(s: Tracker, id: int, name: str): bool = hasTask(s, id)
 
 pure def handAddOwner(s: Tracker, id: int, name: str): Tracker =
-  { ...s, last: Sheet, tasks: s.tasks.listMap(t => if (t.id == id) touched({ ...t, owners: t.owners.append(name) }, "sheet", s.now) else t) }
+  { ...s, last: Sheet, tasks: s.tasks.listMap(t => if (t.id == id) touched({ ...t, owners: t.owners.append(name) }, "sheet", s.now, false) else t) }
 
 pure def canHandAddParent(s: Tracker, id: int, other: int): bool = hasTask(s, id)
 
 pure def handAddParent(s: Tracker, id: int, other: int): Tracker =
-  { ...s, last: Sheet, tasks: s.tasks.listMap(t => if (t.id == id) touched({ ...t, parents: add(t.parents, other) }, "sheet", s.now) else t) }
+  { ...s, last: Sheet, tasks: s.tasks.listMap(t => if (t.id == id) touched({ ...t, parents: add(t.parents, other) }, "sheet", s.now, false) else t) }
 
 pure def canHandAddRelated(s: Tracker, id: int, other: int): bool = hasTask(s, id)
 
 pure def handAddRelated(s: Tracker, id: int, other: int): Tracker =
-  { ...s, last: Sheet, tasks: s.tasks.listMap(t => if (t.id == id) touched({ ...t, related: add(t.related, other) }, "sheet", s.now) else t) }
+  { ...s, last: Sheet, tasks: s.tasks.listMap(t => if (t.id == id) touched({ ...t, related: add(t.related, other) }, "sheet", s.now, false) else t) }
 
 pure def canHandDeleteTask(s: Tracker, id: int): bool = hasTask(s, id)
 
@@ -427,7 +432,8 @@ pure def handDeleteTask(s: Tracker, id: int): Tracker =
 pure def canHandDeleteOwner(s: Tracker, owner: str): bool = s.owners.includes(owner)
 
 pure def handDeleteOwner(s: Tracker, owner: str): Tracker =
-  { ...s, last: Sheet, owners: dropName(s.owners, owner) }
+  { ...s, last: Sheet, owners: dropName(s.owners, owner),
+    tasks: s.tasks.listMap(t => { ...t, authorIsMember: t.authorIsMember and t.updatedBy != owner }) }
 ```
 
 ### A hand edit can leave a problem behind
@@ -485,8 +491,9 @@ pure def tick(s: Tracker): Tracker = { ...s, last: Clock, now: s.now + 1 }
 ### One pass of the notifier sends everything that is due and records that it was sent
 
 An edit is announced to the task's owners who are project members, apart from
-the person who made it. A hand edit is announced with `sheet` as its editor, so
-every such owner is told of it, unless one is named `sheet`. When two people
+the current member who made it. A hand edit is announced with `sheet` as its
+editor and reaches every such owner. An edit by a former member also reaches
+every current owner, including someone who now uses that former name. When two people
 edit a task within the quiet period, only the last of them is left out.
 Deleting a task, renaming or removing a person, and a fix are not announced. A reminder goes to all such owners. A
 finished task, or one without a due date (a due date of 0 or less), gets no
@@ -503,10 +510,10 @@ pure def reminder(t: Task, at: int): Reminder =
 
 pure def notesFor(s: Tracker, t: Task): List[Note] =
   (if (updateIsDue(t, s.now))
-     knownOwners(s, t).select(o => o != t.updatedBy).listMap(o => { kind: Update, task: t.id, to: o, version: t.updatedAt, at: s.now, by: t.updatedBy })
+     knownOwners(s, t).select(o => not(t.authorIsMember) or o != t.updatedBy).listMap(o => { kind: Update, task: t.id, to: o, version: t.updatedAt, at: s.now, by: t.updatedBy, authorIsMember: t.authorIsMember })
    else List())
-    .concat(if (reminder(t, s.now) == DueSoon) knownOwners(s, t).listMap(o => { kind: Soon, task: t.id, to: o, version: t.due, at: s.now, by: "" }) else List())
-    .concat(if (reminder(t, s.now) == DueToday) knownOwners(s, t).listMap(o => { kind: Today, task: t.id, to: o, version: t.due, at: s.now, by: "" }) else List())
+    .concat(if (reminder(t, s.now) == DueSoon) knownOwners(s, t).listMap(o => { kind: Soon, task: t.id, to: o, version: t.due, at: s.now, by: "", authorIsMember: false }) else List())
+    .concat(if (reminder(t, s.now) == DueToday) knownOwners(s, t).listMap(o => { kind: Today, task: t.id, to: o, version: t.due, at: s.now, by: "", authorIsMember: false }) else List())
 
 pure def recorded(t: Task, at: int): Task =
   { ...t,
@@ -535,9 +542,13 @@ pure def stepAPassSendsWhatItRecords(before: Tracker, via: str, after: Tracker, 
 
 ### No one is told of their own edit
 
+A notification skips its author while that author is still a member.
+Former authors and spreadsheet edits retain their recorded labels without
+excluding a current member who happens to use the same name.
+
 ```quint
 pure def alwaysNoOneIsToldOfTheirOwnEdit(s: Tracker): bool =
-  s.sent.every(n => n.kind == Update implies n.to != n.by)
+  s.sent.every(n => (n.kind == Update and n.authorIsMember) implies n.to != n.by)
 ```
 
 ### Owners hear about an edit only after the quiet period

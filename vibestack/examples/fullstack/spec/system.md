@@ -356,8 +356,7 @@ pure def alwaysARetryIsTheSameEdit(sys: System): bool =
 
 Discovered by the proof: without it, an acknowledgement left on the network
 could carry the number the tab gives its next edit, and acknowledge that edit
-before it was sent. A tab's request is one the tab sent; forged messages and
-pushes of a change belong to no edit and are not checked.
+before it was sent. A tab's request is one the tab sent.
 
 ```quint
 pure def numbered(sys: System, who: str, seq: int): bool =

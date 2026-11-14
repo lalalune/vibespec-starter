@@ -417,7 +417,7 @@ lemma renameOwner_ensures(s: Tracker, owner: string, name: string, actor: string
     assert !(owner in s2.owners);
     forall i | 0 <= i < |s2.tasks|
       ensures var b := s.tasks[i]; var t := s2.tasks[i];
-        b in s.tasks && b.id == t.id && (if b.updatedBy in s.owners && !(b.updatedBy in s2.owners) then t.updatedBy in s2.owners && !(t.updatedBy in s.owners) else t.updatedBy == b.updatedBy)
+        b in s.tasks && b.id == t.id && (if b.authorIsMember && b.updatedBy in s.owners && !(b.updatedBy in s2.owners) then t.updatedBy in s2.owners && !(t.updatedBy in s.owners) else t.updatedBy == b.updatedBy)
     {
       var x := s.tasks[i].updatedBy;
       if x in s.owners && x != owner {
@@ -1005,11 +1005,11 @@ lemma TSentRecordedKept(s: Tracker, s2: Tracker)
 
 // One task's notes of a pass: the edit announcements, then the heads-ups, then the due-day reminders.
 lemma TNotesForParts(s: Tracker, t: Task)
-  ensures var ko := knownOwners(s, t); var up := ProofLib.Filter((o: string) => (o != t.updatedBy), ko);
+  ensures var ko := knownOwners(s, t); var up := ProofLib.Filter((o: string) => (!t.authorIsMember || o != t.updatedBy), ko);
     notesFor(s, t) ==
-      (if updateIsDue(t, s.now) then seq(|up|, i requires 0 <= i < |up| => Note(NoteKind.Update, t.id, up[i], t.updatedAt, s.now, t.updatedBy)) else [])
-      + (if reminder(t, s.now).DueSoon? then seq(|ko|, i requires 0 <= i < |ko| => Note(NoteKind.Soon, t.id, ko[i], t.due, s.now, "")) else [])
-      + (if reminder(t, s.now).DueToday? then seq(|ko|, i requires 0 <= i < |ko| => Note(NoteKind.Today, t.id, ko[i], t.due, s.now, "")) else [])
+      (if updateIsDue(t, s.now) then seq(|up|, i requires 0 <= i < |up| => Note(NoteKind.Update, t.id, up[i], t.updatedAt, s.now, t.updatedBy, t.authorIsMember)) else [])
+      + (if reminder(t, s.now).DueSoon? then seq(|ko|, i requires 0 <= i < |ko| => Note(NoteKind.Soon, t.id, ko[i], t.due, s.now, "", false)) else [])
+      + (if reminder(t, s.now).DueToday? then seq(|ko|, i requires 0 <= i < |ko| => Note(NoteKind.Today, t.id, ko[i], t.due, s.now, "", false)) else [])
 {
 }
 
@@ -1017,18 +1017,18 @@ lemma TNotesForParts(s: Tracker, t: Task)
 lemma TNoteFacts(s: Tracker, t: Task, x: Note)
   requires x in notesFor(s, t)
   ensures x.task == t.id && x.at == s.now
-  ensures x.kind.Update? ==> updateIsDue(t, s.now) && x.version == t.updatedAt && x.by_ == t.updatedBy && x.to != x.by_
+  ensures x.kind.Update? ==> updateIsDue(t, s.now) && x.version == t.updatedAt && x.by_ == t.updatedBy && x.authorIsMember == t.authorIsMember && (x.authorIsMember ==> x.to != x.by_)
   ensures x.kind.Soon? ==> reminder(t, s.now).DueSoon? && x.version == t.due
   ensures x.kind.Today? ==> reminder(t, s.now).DueToday? && x.version == t.due
 {
   var ko := knownOwners(s, t);
-  var up := ProofLib.Filter((o: string) => (o != t.updatedBy), ko);
+  var up := ProofLib.Filter((o: string) => (!t.authorIsMember || o != t.updatedBy), ko);
   TNotesForParts(s, t);
   if x.kind.Update? {
-    var a := seq(|up|, i requires 0 <= i < |up| => Note(NoteKind.Update, t.id, up[i], t.updatedAt, s.now, t.updatedBy));
+    var a := seq(|up|, i requires 0 <= i < |up| => Note(NoteKind.Update, t.id, up[i], t.updatedAt, s.now, t.updatedBy, t.authorIsMember));
     assert updateIsDue(t, s.now) && x in a;
     var k :| 0 <= k < |a| && a[k] == x;
-    ProofLib.FilterMember((o: string) => (o != t.updatedBy), ko, up[k]);
+    ProofLib.FilterMember((o: string) => (!t.authorIsMember || o != t.updatedBy), ko, up[k]);
   }
 }
 
@@ -1064,7 +1064,7 @@ lemma TNotifyAnnouncedAndTimely(s: Tracker)
   assert s2.sent == s.sent + newNotes;
   forall k | 0 <= k < |s2.sent|
     ensures (!(s2.sent[k].kind.Update?) || ((s2.sent[k].at - s2.sent[k].version) >= debounce))
-    ensures (!(s2.sent[k].kind.Update?) || (s2.sent[k].to != s2.sent[k].by_))
+    ensures (!(s2.sent[k].kind.Update? && s2.sent[k].authorIsMember) || (s2.sent[k].to != s2.sent[k].by_))
     ensures ((!(s2.sent[k].kind.Today?) || ((s2.sent[k].version <= today(s2.sent[k].at)) && ((today(s2.sent[k].at) - s2.sent[k].version) <= lateDays))) && (!(s2.sent[k].kind.Soon?) || (((s2.sent[k].version - today(s2.sent[k].at)) >= 1) && ((s2.sent[k].version - today(s2.sent[k].at)) <= soonDays))))
   {
     if k < |s.sent| {
@@ -1153,11 +1153,11 @@ lemma TNotesForDistinct(s: Tracker, t: Task)
   ProofLib.FoldLeftDedupDistinct((acc: seq<string>, x: string) => (if (x in acc) then acc else (acc + [x])), [], ProofLib.Filter((o: string) => (o in s.owners), t.owners));
   assert ProofLib.Distinct(ko);
   assert ProofLib.DistinctBy(ko, (o: string) => o);
-  var up := ProofLib.Filter((o: string) => (o != t.updatedBy), ko);
-  ProofLib.FilterKeepsDistinctBy((o: string) => (o != t.updatedBy), ko, (o: string) => o);
-  var a := if updateIsDue(t, s.now) then seq(|up|, i requires 0 <= i < |up| => Note(NoteKind.Update, t.id, up[i], t.updatedAt, s.now, t.updatedBy)) else [];
-  var b := if reminder(t, s.now).DueSoon? then seq(|ko|, i requires 0 <= i < |ko| => Note(NoteKind.Soon, t.id, ko[i], t.due, s.now, "")) else [];
-  var c := if reminder(t, s.now).DueToday? then seq(|ko|, i requires 0 <= i < |ko| => Note(NoteKind.Today, t.id, ko[i], t.due, s.now, "")) else [];
+  var up := ProofLib.Filter((o: string) => (!t.authorIsMember || o != t.updatedBy), ko);
+  ProofLib.FilterKeepsDistinctBy((o: string) => (!t.authorIsMember || o != t.updatedBy), ko, (o: string) => o);
+  var a := if updateIsDue(t, s.now) then seq(|up|, i requires 0 <= i < |up| => Note(NoteKind.Update, t.id, up[i], t.updatedAt, s.now, t.updatedBy, t.authorIsMember)) else [];
+  var b := if reminder(t, s.now).DueSoon? then seq(|ko|, i requires 0 <= i < |ko| => Note(NoteKind.Soon, t.id, ko[i], t.due, s.now, "", false)) else [];
+  var c := if reminder(t, s.now).DueToday? then seq(|ko|, i requires 0 <= i < |ko| => Note(NoteKind.Today, t.id, ko[i], t.due, s.now, "", false)) else [];
   TNotesForParts(s, t);
   assert notesFor(s, t) == a + b + c;
   assert ProofLib.DistinctBy(a, key);
