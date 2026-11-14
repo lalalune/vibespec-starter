@@ -1,5 +1,5 @@
 // Copied into gen/ by `spec gen`, beside each spec's <name>.conformance.ts: runs the real application against its
-// spec, with the generated module as the oracle (AGENTS.md, "Conformance"). It needs no test runner: it throws.
+// spec, with the generated module as the oracle (SPEC.md, "Conformance"). It needs no test runner: it throws.
 
 /** What the application did with an event. Anything else (a crash, a 500, a timeout) must throw. */
 export type Outcome = "accepted" | "refused";

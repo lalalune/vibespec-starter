@@ -4,7 +4,7 @@ The application, blank: a page shell on `@repo/ui` and the design-system theme, 
 
 Its requirements are [`spec/app/index.md`](../../spec/app/index.md), in the one spec tree at the repository root. `pnpm check`
 there generates `gen/app.ts` and `gen/app.effect.vibe` here, and checks this package's types, tests and traces
-(AGENTS.md, "One spec tree").
+(SPEC.md, "One spec tree").
 
 To add the first rule:
 

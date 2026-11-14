@@ -93,7 +93,7 @@ export function typeWalks(typedefs: Json[], module: string, prefix = "") {
     if (t.kind === "set") return `${tsType(setElem(t))}[]`;
     if (t.kind === "fun") return `Record<${tsType(keyOf(t))}, ${tsType(t.res)}>`;
     const d = named(t);
-    return d ? typeName(d) : fail(`a ${t.kind} type is not in the Quint a spec may use (AGENTS.md, "Supported Quint"); name it with \`type\` or use a supported one`);
+    return d ? typeName(d) : fail(`a ${t.kind} type is not in the Quint a spec may use (SPEC.md, "Supported Quint"); name it with \`type\` or use a supported one`);
   };
   /** The TypeScript declaration of one of the module's own types. */
   const declaration = (d: Json): string => {

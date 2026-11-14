@@ -34,32 +34,59 @@ lemma FoldShort<T>(f: (seq<T>, T) -> seq<T>, at: int, x: T, acc: seq<T>, ys: seq
   }
 }
 
+lemma {:induction false} FoldInsertHead<T>(f: (seq<T>, T) -> seq<T>, at: int, x: T, acc: seq<T>, ys: seq<T>)
+  requires forall a: seq<T>, y: T :: f(a, y) == (if |a| == at then a + [x, y] else a + [y])
+  requires |acc| == at && 0 < |ys|
+  ensures Std.Collections.Seq.FoldLeft(f, acc, ys) == acc + [x] + ys
+{
+  var t := ys[1..];
+  assert ys == [ys[0]] + t;
+  assert f(acc, ys[0]) == acc + [x, ys[0]];
+  FoldPast(f, at, x, acc + [x, ys[0]], t);
+  calc {
+    Std.Collections.Seq.FoldLeft(f, acc, ys);
+    == Std.Collections.Seq.FoldLeft(f, acc + [x, ys[0]], t);
+    == acc + [x, ys[0]] + t;
+    == acc + [x] + ys;
+  }
+}
+
+lemma {:induction false} FoldInsertTail<T>(f: (seq<T>, T) -> seq<T>, at: int, x: T, acc: seq<T>, ys: seq<T>)
+  requires forall a: seq<T>, y: T :: f(a, y) == (if |a| == at then a + [x, y] else a + [y])
+  requires |acc| < at < |acc| + |ys|
+  requires Std.Collections.Seq.FoldLeft(f, acc + [ys[0]], ys[1..]) == (acc + [ys[0]]) + ys[1..][..at - |acc| - 1] + [x] + ys[1..][at - |acc| - 1..]
+  ensures Std.Collections.Seq.FoldLeft(f, acc, ys) == acc + ys[..at - |acc|] + [x] + ys[at - |acc|..]
+{
+  var k := at - |acc|;
+  var t := ys[1..];
+  var a := acc + [ys[0]];
+  assert f(acc, ys[0]) == a;
+  assert ys[..k] == [ys[0]] + t[..k - 1];
+  assert ys[k..] == t[k - 1..];
+  assert a + t[..k - 1] == acc + ys[..k];
+  calc {
+    Std.Collections.Seq.FoldLeft(f, acc, ys);
+    == Std.Collections.Seq.FoldLeft(f, a, t);
+    == a + t[..k - 1] + [x] + t[k - 1..];
+    == acc + ys[..k] + [x] + ys[k..];
+  }
+}
+
 // Within reach, the item lands exactly at the position.
-lemma FoldInsert<T>(f: (seq<T>, T) -> seq<T>, at: int, x: T, acc: seq<T>, ys: seq<T>)
+lemma {:induction false} FoldInsert<T>(f: (seq<T>, T) -> seq<T>, at: int, x: T, acc: seq<T>, ys: seq<T>)
   requires forall a: seq<T>, y: T :: f(a, y) == (if |a| == at then a + [x, y] else a + [y])
   requires |acc| <= at < |acc| + |ys|
   ensures Std.Collections.Seq.FoldLeft(f, acc, ys) == acc + ys[..at - |acc|] + [x] + ys[at - |acc|..]
   decreases |ys|
 {
-  var k := at - |acc|;
-  var t := ys[1..];
-  assert ys == [ys[0]] + t;
-  if k == 0 {
-    assert f(acc, ys[0]) == acc + [x, ys[0]];
-    FoldPast(f, at, x, acc + [x, ys[0]], t);
-    assert ys[..0] == [];
-    assert acc + ys[..0] == acc;
-    assert ys[0..] == ys;
-    assert acc + [x, ys[0]] == acc + [x] + [ys[0]];
-    assert acc + [x] + [ys[0]] + t == acc + [x] + ([ys[0]] + t);
+  if |acc| == at {
+    FoldInsertHead(f, at, x, acc, ys);
   } else {
     var a := acc + [ys[0]];
-    assert f(acc, ys[0]) == a;
+    var t := ys[1..];
+    assert at - |a| == at - |acc| - 1;
     FoldInsert(f, at, x, a, t);
-    assert at - |a| == k - 1;
-    assert ys[..k] == [ys[0]] + t[..k - 1];
-    assert ys[k..] == t[k - 1..];
-    assert a + t[..k - 1] == acc + ys[..k];
+    FoldInsertTail(f, at, x, acc, ys);
   }
 }
 

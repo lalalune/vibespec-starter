@@ -12,11 +12,7 @@
       "node",
       "vite/client"
     ],
-    "rootDir": ".",
-    "rootDirs": [
-      ".",
-      ".vibe/declarations"
-    ]
+    "rootDir": "."
   },
   "include": [
     "src",
