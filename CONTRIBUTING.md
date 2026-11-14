@@ -216,7 +216,8 @@ The task entry point disables Turbo telemetry. Selftest waits for the root and
 Studio test tasks so those integration journeys do not compete with it.
 Pull requests read shared results; only branch pushes receive the publishing
 credential, protected by the `turbo-cache-publish` environment's branch
-policy. Newer runs replace older runs for the same branch or pull request.
+policy. Newer commits replace an older run of the same pull request.
+Every pushed commit can finish. Completed tasks are shared through the cache.
 Local `pnpm` task commands read the operator's cache credential from
 `~/.config/vibestack/turbo-cache.json`, outside the repository. Credentials
 are never part of a task fingerprint.

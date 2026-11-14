@@ -233,7 +233,7 @@ pure def forge(sys: System, who: str, seq: int, op: Op): System =
 > successful synchronization in which both people finish their edits and
 > see the server's current list.
 
-### The server and both tabs keep their own rules
+### The server and both tabs keep their own state rules
 
 ```quint
 pure def alwaysEachPartKeepsItsRules(sys: System): bool = and {
@@ -352,13 +352,11 @@ pure def alwaysARetryIsTheSameEdit(sys: System): bool =
     or clientOf(sys, m.client).pending.every(p => p.seq != m.seq or sameOp(p.op, m.op)))
 ```
 
-### Every request and answer of a tab belongs to an edit the tab has numbered, and every answer to one the server answered
+### Every request, acknowledgement and refusal of a tab belongs to an edit the tab has numbered, and every acknowledgement and refusal to one the server answered
 
-Discovered by the proof: without it, an answer left on the network could
-carry the number the tab gives its next edit, and acknowledge that edit
-before it was sent. A tab's request is one the tab sent, not a forged one, and
-an answer is an acknowledgement or a refusal: a push of a change belongs to no
-edit.
+Discovered by the proof: without it, an acknowledgement left on the network
+could carry the number the tab gives its next edit, and acknowledge that edit
+before it was sent. A tab's request is one the tab sent.
 
 ```quint
 pure def numbered(sys: System, who: str, seq: int): bool =

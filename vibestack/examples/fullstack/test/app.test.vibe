@@ -119,6 +119,12 @@ it.live("change the list over HTTP, and keep it across a restart", () => effect 
           { unchanged, titles: saved.todos.slice(-2).map((t) => t.title), logged: saved.log.slice(-2).map((r) => r.op.title) },
           { unchanged: before, titles: ["typed", "outside"], logged: ["typed", "outside"] },
         ))
+        // spec/server.md, "The server holds the list, its version and a log of every request it answered"
+        const isolated = try effect {
+          provide served(`${file}.other`) { return try post(request("isolated", 1, create("isolated-1", "separate"))) }
+        }
+        const retained = try store.get()
+        try Effect.try(() => assert.deepStrictEqual([isolated.body.version, retained], [1, saved]))
       }
 
       // Stopped and started again on the same file: spec/server.md, "The server holds the list, its version and a log of every request it answered";

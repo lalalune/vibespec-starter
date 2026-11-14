@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import { request as httpRequest } from "node:http";
 import { stripTypeScriptTypes } from "node:module";
 import os from "node:os";
 import path from "node:path";
@@ -1496,11 +1497,11 @@ pure def lawOwn(own: int): bool = shadowOwn(own) == own`));
   test("nothing stale survives in gen/", async () => {
     const root = copyOfProject();
     fs.mkdirSync(path.join(root, "gen"), { recursive: true });
-    for (const stale of ["renamed.ts", "renamed.effect.vibe"]) fs.writeFileSync(path.join(root, "gen", stale), "export const stale = true;\n");
+    for (const stale of ["renamed.ts", "renamed.effect.vibe", "index.effect.vibe.pure.d.ts"]) fs.writeFileSync(path.join(root, "gen", stale), "export const stale = true;\n");
     await check(root);
-    // index.effect.vibe.pure.d.ts is the VibeLang compiler's: the declarations of the adapter's `module pure` body.
+    // tsconfig.json keeps the compiler's declaration sidecars under .vibe/declarations/.
     assert.deepEqual(fs.readdirSync(path.join(root, "gen")).filter((f) => /\.(ts|vibe)$/.test(f)).sort(),
-      ["_conformance.ts", "index.conformance.ts", "index.effect.vibe", "index.effect.vibe.pure.d.ts", "index.ts"]);
+      ["_conformance.ts", "index.conformance.ts", "index.effect.vibe", "index.ts"]);
   });
 
   test("a truncated cache entry is recomputed and generated modules run in a CommonJS project", async () => {
@@ -1634,8 +1635,21 @@ pure def lawOwn(own: int): bool = shadowOwn(own) == own`));
       assert.equal((await request("GET", "f".repeat(16))).status, 404);
       assert.equal((await request("PUT", "e".repeat(16), reader, "x", { "Content-Length": "1" })).status, 403);
       assert.equal((await request("GET", "not-a-hash")).status, 400);
-      response = await request("PUT", "d".repeat(16), writer, new Uint8Array(64 * 1024 * 1024 + 1));
-      assert.equal(response.status, 413, await response.text());
+      const oversized = new URL(`/v8/artifacts/${"d".repeat(16)}`, await cache.ready);
+      const status = await new Promise<number | undefined>((resolve, reject) => {
+        const failed = (error: Error) => { upload.destroy(); reject(error); };
+        const upload = httpRequest(oversized, { method: "PUT", headers: {
+          Authorization: `Bearer ${writer}`, "Content-Length": String(64 * 1024 * 1024 + 1), Expect: "100-continue",
+        } }, (response) => {
+          response.resume();
+          response.on("error", failed);
+          response.on("end", () => { resolve(response.statusCode); upload.destroy(); });
+        });
+        upload.on("error", failed);
+        // The Worker rejects the declared length before the client sends the body.
+        upload.flushHeaders();
+      });
+      assert.equal(status, 413);
       assert.equal((await request("POST", "events", reader, "private telemetry")).status, 200);
       response = await cache.dispatchFetch("https://cache.test/v8/artifacts", {
         method: "POST", headers: { Authorization: `Bearer ${reader}` }, body: JSON.stringify({ hashes: [hash, "f".repeat(16)] }),
