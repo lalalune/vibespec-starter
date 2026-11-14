@@ -509,6 +509,8 @@ export function init(root: string, warn: (message: string) => void = (message) =
       done.push(`.agents/skills/${name}`);
     }
   }
+  // AGENTS.md links to it.
+  add("SPEC.md", () => fs.readFileSync(path.join(pkg, "SPEC.md"), "utf8"));
   const agents = path.join(root, "AGENTS.md");
   const procedure = fs.readFileSync(path.join(pkg, "AGENTS.md"), "utf8").trim();
   const previous = fs.existsSync(agents) ? fs.readFileSync(agents, "utf8") : "";
@@ -533,7 +535,7 @@ export function init(root: string, warn: (message: string) => void = (message) =
     done.push("CLAUDE.md (imports AGENTS.md)");
   }
   add("tsconfig.json", () => JSON.stringify({
-    compilerOptions: { target: "es2023", module: "nodenext", strict: true, skipLibCheck: true, types: ["node"], rootDir: ".", rootDirs: [".", ".vibe/declarations"], outDir: "dist", noEmitOnError: true, rewriteRelativeImportExtensions: true },
+    compilerOptions: { target: "es2023", module: "nodenext", strict: true, skipLibCheck: true, types: ["node"], rootDir: ".", outDir: "dist", noEmitOnError: true, rewriteRelativeImportExtensions: true },
     include: ["src", "test", "gen/*.ts", "gen/*.vibe"], vibe: { sidecarDir: ".vibe/declarations" },
   }, null, 2) + "\n");
   // A journey that starts a real server takes longer than Vitest's five seconds on a busy machine.
@@ -589,7 +591,7 @@ export function init(root: string, warn: (message: string) => void = (message) =
 const starter = (name: string, fence = "`".repeat(3)) => `# ${name}
 
 What the application is for, in a sentence or two. Replace the story and its
-rules with your own; AGENTS.md says how to write them.
+rules with your own; SPEC.md says how to write them.
 
 ## Story: Keep a tally
 

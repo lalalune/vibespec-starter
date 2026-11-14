@@ -11,10 +11,6 @@
       "node",
       "vite/client"
     ],
-    "rootDirs": [
-      ".",
-      ".vibe/declarations"
-    ],
     "jsx": "react-jsx"
   },
   "include": [

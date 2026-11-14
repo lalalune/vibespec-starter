@@ -216,11 +216,12 @@ export function undo() {
   redraw();
 }
 
-/** Focus after the next redraw, with the caret at the end of any text already there. */
+/** Focus after the next redraw, keeping an active field's selection (spec/outline.md, "A rule's heading and body can be changed"). */
 export const focusLater = (selector: string) => setTimeout(() => {
   const el = document.querySelector<HTMLInputElement>(selector);
-  el?.focus();
-  if (el && "selectionStart" in el && el.value !== undefined) el.selectionStart = el.selectionEnd = el.value.length;
+  if (!el || el === document.activeElement) return;
+  el.focus();
+  if ("selectionStart" in el && el.value !== undefined) el.selectionStart = el.selectionEnd = el.value.length;
 }, 0);
 
 /** Open a story or rule for editing, as one undoable change. */

@@ -34,7 +34,7 @@
         "95e4bd0a0914"
       ],
       "Story: Keep a shared list of things to do / Applying an edit changes only the to-do it names": [
-        "af08bd6450a1",
+        "3f684f744b39",
         "b1f5d09de9a1",
         "95e4bd0a0914"
       ],
@@ -83,12 +83,12 @@
         "e3b0c44298fc"
       ],
       "Domain / A client holds a confirmed copy, its version, and a queue of unanswered edits": [
-        "f795f868d477",
+        "71994ec1c5c1",
         "524e799e1a30",
         "f56cd8e43735"
       ],
       "Domain / A new client is online, has seen version 0 and has nothing queued": [
-        "e3b0c44298fc",
+        "0f668b7a3c02",
         "78aef2525933",
         "9147756354c0"
       ],
@@ -120,9 +120,9 @@
         "9147756354c0"
       ],
       "Story: Edit the list in the browser / A tab can go offline and back online, and queue edits while offline": [
-        "e3b0c44298fc",
-        "8b83e0a6dfc6",
-        "9147756354c0"
+        "4fcfde348b2e",
+        "feae05cf32db",
+        "688baa564ff7"
       ],
       "## Story: Hear back from the server": [
         "41c09bb4ec95"
@@ -147,6 +147,11 @@
         "52c19947724f",
         "47c5471d604f"
       ],
+      "Story: Hear back from the server / A copy of the list leaves the queue alone": [
+        "8baf91df2ceb",
+        "1351f5b87b00",
+        "9147756354c0"
+      ],
       "Story: Hear back from the server / A client can catch up after editing, and can be told of a refusal": [
         "e3b0c44298fc",
         "d6b3728a0c70",
@@ -169,7 +174,7 @@
         "e3b0c44298fc"
       ],
       "Domain / The server holds the list, its version and a log of every request it answered": [
-        "e0ba43e6b426",
+        "e1c72db6dd49",
         "aa99e659601b",
         "f56cd8e43735"
       ],
@@ -191,7 +196,7 @@
         "fd804be3214b"
       ],
       "Story: Change the list over HTTP / A new request whose edit makes sense is applied, raising the version by one": [
-        "e3b0c44298fc",
+        "f8a5a2b7176e",
         "5242047162ed",
         "0544078422d8"
       ],
@@ -216,7 +221,7 @@
         "4ba012e4f56b"
       ],
       "Story: Change the list over HTTP / Two clients can both change the list, and a request can be refused after a change": [
-        "e3b0c44298fc",
+        "69588cd50490",
         "2bb1cf90ebde",
         "4ba012e4f56b"
       ],
@@ -282,14 +287,14 @@
         "1b9d3916d367"
       ],
       "Story: Edit together, online or not / A user edit is queued in the tab, and sent at once if the tab is online and has nothing else queued": [
-        "e3b0c44298fc",
+        "fe5673766dc0",
         "4c916c56849b",
         "8b5ce3a160dc"
       ],
       "Story: Edit together, online or not / A tab can go offline, and sends its oldest queued edit when it comes back": [
         "e3b0c44298fc",
         "f692744de526",
-        "f4184b4547cd"
+        "165059d3792b"
       ],
       "Story: Edit together, online or not / An online tab may send its oldest queued edit again at any time": [
         "fac709956e12",
@@ -305,7 +310,7 @@
         "23751467738a"
       ],
       "Story: The server answers every request once / An online tab takes any answer off the network": [
-        "e3b0c44298fc",
+        "f40f2aaf64ce",
         "149105938aa7",
         "62c1827d3837"
       ],
@@ -337,6 +342,11 @@
         "4ed97b8a87de",
         "031c10f913d8"
       ],
+      "Story: The tabs can synchronize with the server / The history only grows: a step leaves it as it was or adds one list at its end": [
+        "e5e8300bf997",
+        "6569cc854f3a",
+        "031c10f913d8"
+      ],
       "Story: The tabs can synchronize with the server / A tab's confirmed copy is the list exactly as it was at the version the tab has seen": [
         "fd46ed09604f",
         "0f91a56f6e98",
@@ -348,9 +358,9 @@
         "77655d3b1855"
       ],
       "Story: The tabs can synchronize with the server / A tab can queue edits while offline, and an edit can be refused": [
-        "e3b0c44298fc",
-        "6b8e11dda87b",
-        "04fb2707ed87"
+        "eaacd9c225f4",
+        "40eedf4c5cce",
+        "a31351254029"
       ],
       "## Story: Nobody can answer for my edits": [
         "847663cba73b"
@@ -384,7 +394,7 @@
         "9f9e7c435894"
       ],
       "Story: Editing alone is never refused / A lone user's edit is never refused": [
-        "b35cbba29dc9",
+        "5fdb186ec1b7",
         "6ba8f54893d5",
         "031c10f913d8"
       ],
@@ -404,7 +414,7 @@
         "031c10f913d8"
       ],
       "Story: Editing alone is never refused / A lone user's tab keeps in step with the server": [
-        "53c21938ca98",
+        "ac48f1accc6c",
         "a6f17ac3243d",
         "0539cac9a82f"
       ]

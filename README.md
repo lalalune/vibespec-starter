@@ -166,9 +166,9 @@ A `##` heading is a story, a `###` heading is a rule, and a `quint` block
 under a rule states its formal meaning. Write the prose; the agent writes
 the rules and their Quint. `spec/index.md` introduces the product and links
 to each area; `spec/<name>/` holds the requirements of the package
-`apps/<name>` or `packages/<name>` ([one spec tree](AGENTS.md#one-spec-tree)).
+`apps/<name>` or `packages/<name>` ([one spec tree](SPEC.md#one-spec-tree)).
 `pnpm new <name>` writes `spec/<name>/index.md` with a scaffold to replace.
-The format is in the [spec reference](AGENTS.md#writing-a-spec).
+The format is in the [spec reference](SPEC.md#writing-a-spec).
 
 ### 2. Sync and check
 
@@ -221,7 +221,7 @@ pnpm accept
 ```
 
 `accept` checks afresh and records what `review` lists in `spec/lock.json`,
-[all or nothing](AGENTS.md#review). Commit the ledger with the spec.
+[all or nothing](SPEC.md#review). Commit the ledger with the spec.
 
 ## Set up a new project
 
@@ -247,7 +247,8 @@ Before committing your application's starting point:
 
 The tools are also the `spec` command of this package. In an existing
 project, `spec init [<dir>]` adds what the stack needs without replacing
-anything you have: the `sync` and `design` skills, the procedure in
+anything you have: the `sync` and `design` skills, the spec reference in
+`SPEC.md`, the procedure in
 `AGENTS.md` between `<!-- vibestack:start -->` markers (and `CLAUDE.md`
 importing it), a `tsconfig.json` and `vitest.config.ts` for VibeLang, an
 empty `spec/index.md`, `.gitignore` entries for what the tools own, and the
@@ -269,9 +270,9 @@ current one. Installed as a package, use `pnpm exec spec <command> [<dir>]`.
 | `pnpm verify` | Build, types, tests, checks and lint for every workspace package |
 | `pnpm gen [<dir>]` | Generates `gen/` only |
 | `node vibestack/spec.ts watch [<dir>]` | Rechecks when a spec, source file or test changes |
-| `pnpm accept [<dir>]` | The user's sign-off: checks afresh and records what `review` lists, [all or nothing](AGENTS.md#review) |
+| `pnpm accept [<dir>]` | The user's sign-off: checks afresh and records what `review` lists, [all or nothing](SPEC.md#review) |
 | `pnpm accept unproved` | Records the listed obligations as simulated only. The user's decision |
-| `pnpm new [<path>]` | Fills an empty root index or creates a child [starter spec](AGENTS.md#writing-a-spec) |
+| `pnpm new [<path>]` | Fills an empty root index or creates a child [starter spec](SPEC.md#writing-a-spec) |
 | `node vibestack/spec.ts init [<dir>]` | Sets up an existing project ([above](#using-it-from-another-package)) |
 | `node vibestack/spec.ts migrate [<dir>]` | Consolidates old review ledgers into `spec/lock.json`, keeping their approvals |
 | `pnpm demo` | Runs the order example's scripted checkout session |
@@ -311,7 +312,7 @@ workspace.
 | `packages/ui` | Shared React components, with generated stories |
 | `vibestack/` | The tools: generator, simulator, prover, Studio, testing and design helpers |
 | `.claude/skills/` | What agents read before each kind of work: `sync`, `shell`, `prove`, `design` |
-| [AGENTS.md](AGENTS.md), [docs/architecture.md](docs/architecture.md) | The procedure and spec reference, and the map |
+| [AGENTS.md](AGENTS.md), [SPEC.md](SPEC.md), [docs/architecture.md](docs/architecture.md) | The procedure, the spec reference, and the map |
 
 ## Contributing
 

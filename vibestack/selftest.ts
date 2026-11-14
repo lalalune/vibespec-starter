@@ -1045,11 +1045,11 @@ export effect function independent() {
     const scripts = { dev: "spec studio", check: "spec check", gen: "spec gen", accept: "spec accept", build: "vibelang", test: "vitest run" };
 
     const fresh = scratch({ "package.json": '{"name":"fresh"}' });
-    assert.deepEqual(init(fresh), [".claude/skills/sync/SKILL.md", ".agents/skills/sync", ".claude/skills/design/SKILL.md", ".agents/skills/design", "AGENTS.md (Vibestack instructions)", "CLAUDE.md (imports AGENTS.md)",
+    assert.deepEqual(init(fresh), [".claude/skills/sync/SKILL.md", ".agents/skills/sync", ".claude/skills/design/SKILL.md", ".agents/skills/design", "SPEC.md", "AGENTS.md (Vibestack instructions)", "CLAUDE.md (imports AGENTS.md)",
       "tsconfig.json", "vitest.config.ts", "spec/index.md", ".gitignore", "package.json scripts: dev, check, gen, accept, build, test",
       `package.json VibeLang toolchain: ${[...runtime, ...tooling].join(", ")} (run your package manager's install)`, "package.json packageManager: pnpm@10.24.0", "package.json engines.node: >=26", 'package.json "type": "module"']);
     assert.deepEqual(json(fresh, "tsconfig.json"), {
-      compilerOptions: { target: "es2023", module: "nodenext", strict: true, skipLibCheck: true, types: ["node"], rootDir: ".", rootDirs: [".", ".vibe/declarations"], outDir: "dist", noEmitOnError: true, rewriteRelativeImportExtensions: true },
+      compilerOptions: { target: "es2023", module: "nodenext", strict: true, skipLibCheck: true, types: ["node"], rootDir: ".", outDir: "dist", noEmitOnError: true, rewriteRelativeImportExtensions: true },
       include: ["src", "test", "gen/*.ts", "gen/*.vibe"], vibe: { sidecarDir: ".vibe/declarations" },
     });
     assert.equal(read("vitest.config.ts", fresh), 'import vibelang from "vibelang-vite";\nimport { defineConfig } from "vitest/config";\n\nexport default defineConfig({ plugins: [vibelang()], test: { include: ["test/**/*.test.vibe"], passWithNoTests: true, testTimeout: 60_000 } });\n');
@@ -1130,7 +1130,7 @@ export effect function independent() {
     fs.symlinkSync(nodeModules, path.join(root, "node_modules"), "dir");
     const first = await run(root, "reviews");
     assert.deepEqual(first.failed, [], first.text);
-    // Beside them, the compiler leaves its declarations of the adapters.
+    // The owner's generated source modules, separate from the compiler's declaration sidecars.
     assert.deepEqual(fs.readdirSync(path.join(root, "apps/app/gen")).filter((f) => !f.endsWith(".d.ts")).sort(),
       ["_conformance.ts", "app.conformance.ts", "app.effect.vibe", "app.ts", "package.json", "shared__limits.effect.vibe", "shared__limits.ts"]);
     // The service runs in the owner, so its key carries the owner's name; the root's copy carries the root's.
@@ -1279,14 +1279,22 @@ export effect function independent() {
       /^ +test\/app\.test\.vibe:(\d+): driver uses generated apply\n +test\/app\.test\.vibe:\1: driver uses generated initial$/, text);
   });
 
-  test("nothing stale survives in gen/", async () => {
+  test("nothing stale survives in gen/ or hides a renamed source", async () => {
     const root = copyOfProject();
     fs.mkdirSync(path.join(root, "gen"), { recursive: true });
-    for (const stale of ["renamed.ts", "renamed.effect.vibe"]) fs.writeFileSync(path.join(root, "gen", stale), "export const stale = true;\n");
-    await check(root);
-    // index.effect.vibe.pure.d.ts is the VibeLang compiler's: the declarations of the adapter's `module pure` body.
+    for (const stale of ["renamed.ts", "renamed.effect.vibe", "index.effect.vibe.pure.d.ts"]) fs.writeFileSync(path.join(root, "gen", stale), "export const stale = true;\n");
+    const checked = await check(root);
+    assert.equal(checked.ok, true, checked.results.map(show).join("\n"));
     assert.deepEqual(fs.readdirSync(path.join(root, "gen")).filter((f) => /\.(ts|vibe)$/.test(f)).sort(),
-      ["_conformance.ts", "index.conformance.ts", "index.effect.vibe", "index.effect.vibe.pure.d.ts", "index.ts"]);
+      ["_conformance.ts", "index.conformance.ts", "index.effect.vibe", "index.ts"]);
+    // The adapter's `module pure` declarations follow the configured sidecar directory.
+    assert.ok(fs.existsSync(path.join(root, ".vibe/declarations/gen/index.effect.vibe.pure.d.ts")));
+    // Compiler output must not resolve an import whose source no longer exists.
+    assert.ok(fs.existsSync(path.join(root, ".vibe/declarations/src/app.d.vibe.ts")));
+    fs.renameSync(path.join(root, "src/app.vibe"), path.join(root, "src/renamed.vibe"));
+    const renamed = await tool("vibelang", ["--noEmit", "-p", "."], root);
+    assert.equal(renamed.ok, false, renamed.out);
+    assert.match(renamed.out, /error TS2307: Cannot find module ['"][^'"]*app\.vibe['"]/);
   });
 
   test("a truncated cache entry is recomputed and generated modules run in a CommonJS project", async () => {

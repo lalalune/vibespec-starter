@@ -78,9 +78,10 @@ it.effect("Check out", effect () => {
 
 - **`machine()` forgets when the process ends.** A shell that stores state
   writes its own service on `apply` and the decoders.
-- **Match an event by its `type`**: `match (event.type) { when "pay": …; }`.
-  The compiler does not yet check that a `match` on the event itself, or on
-  a variant by its `tag`, covers every case.
+- **Cover every case in a finite match.** Match `event.type` or the event
+  itself with patterns such as `when { type: "pay", let amount }: …`.
+  The compiler rejects missing cases (`EK4701`), including variants
+  distinguished by `tag`.
 - **A `.vibe` file reaches the platform through Effect**, not through
   `node:*` imports, `console`, `fetch` or the DOM: an Effect service
   (`Console`, `FileSystem`, `HttpClient`, …), a `module node { … }` body in
@@ -118,3 +119,6 @@ VibeLang's packages move together, and with one version of Effect: pin them
 exactly, at the versions in the tools' own `package.json`, which `spec init`
 adds. The compiler writes declarations for other tools under `.vibe/`, even
 when it only checks: keep it out of Git, like `dist/`.
+Keep compiler declaration directories out of `compilerOptions.rootDirs`:
+VibeLang resolves `.vibe` sources directly, and searching old declarations
+can hide a deleted source.

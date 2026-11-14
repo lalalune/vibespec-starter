@@ -5,7 +5,7 @@ packages:
 
 # One version of each shared dependency; a package writes "catalog:".
 # Effect and VibeLang are pinned exactly in the root package.json instead,
-# where `spec init` reads them: VibeLang 0.0.12 accepts Effect 4.1.1 only.
+# where `spec init` reads them: VibeLang 0.0.13 accepts Effect 4.1.1 only.
 catalog:
   "@eslint-react/eslint-plugin": ^5.30.2
   "@eslint/js": ^10.0.1
